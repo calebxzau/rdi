@@ -17,6 +17,10 @@ public final class RMixinPlugin implements IMixinConfigPlugin {
             "calebxzhou.rdi.mc.client.mixin.mEuphoriaPatcherWarning";
     private static final String EUPHORIA_WARNING_TARGET =
             "com.euphoriapatches.euphoria_patcher.util.UserInstallErrorMessages";
+    private static final String FARMING_TALES_SERVER_LINKS_MIXIN =
+            "calebxzhou.rdi.mc.client.mixin.mFarmingTalesServerLinks";
+    private static final String FARMING_TALES_SERVER_LINKS_TARGET =
+            "com.farmingtales.serverlinks.client.ClientScreenEvents";
 
     @Override
     public void onLoad(String mixinPackage) {
@@ -34,6 +38,9 @@ public final class RMixinPlugin implements IMixinConfigPlugin {
         }
         if (EUPHORIA_WARNING_MIXIN.equals(mixinClassName)) {
             return classExists(EUPHORIA_WARNING_TARGET);
+        }
+        if (FARMING_TALES_SERVER_LINKS_MIXIN.equals(mixinClassName)) {
+            return classExists(FARMING_TALES_SERVER_LINKS_TARGET);
         }
         return true;
     }
