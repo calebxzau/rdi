@@ -28,7 +28,7 @@ object ModpackModProcessor {
         "i18nupdatemod",
         "modern-ui",
         "controllable",
-        "mekalus"
+        "mekalus-oculus-fork-with-fixed-mekanism-mekasuit"
     )
 
     private val bothSideSlugs = setOf(
