@@ -158,7 +158,7 @@ fun ModpackPlazaScreen(
                 path = "modpack/search",
                 params = buildMap {
                     put("offset", offset)
-                    put("limit", 24)
+                    put("limit", 100)
                     if (requestKeyword.isNotBlank()) {
                         put("q", requestKeyword)
                     }
