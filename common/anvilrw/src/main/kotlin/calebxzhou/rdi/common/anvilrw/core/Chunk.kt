@@ -15,12 +15,13 @@ class Chunk(
     val index: Int,
     val location: Location,
     val timestamp: Int,
-    payload: ByteArray
+    payload: ByteArray,
+    val isExternalPayload: Boolean = false
 ) {
     val x: Int
     val z: Int
     val dataVersion: Int
-    val payload: ChunkPayload = ChunkPayload(payload)
+    val payload: ChunkPayload = ChunkPayload(payload, isExternalPayload)
 
     private var cachedNbtData: NbtCompound? = null
     private var nbtLoaded = false

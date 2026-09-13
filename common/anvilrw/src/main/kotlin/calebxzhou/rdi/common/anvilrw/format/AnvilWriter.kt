@@ -29,6 +29,9 @@ class AnvilWriter(private val anvilFile: File) : Closeable {
     }
 
     fun validateChunk(chunk: calebxzhou.rdi.common.anvilrw.core.Chunk): Boolean {
+        require(!chunk.isExternalPayload) {
+            "Cannot write an externally stored chunk payload through AnvilWriter"
+        }
         return chunk.index in 0 until CHUNKS_PER_REGION
     }
 
@@ -41,6 +44,7 @@ class AnvilWriter(private val anvilFile: File) : Closeable {
     }
 
     private fun writeAnvilFile(region: Region) {
+        region.chunks.forEach(::validateChunk)
         if (backupEnabled && Files.exists(anvilFile.toPath())) {
             val backupFile = File(anvilFile.path + ".bak")
             Files.copy(anvilFile.toPath(), backupFile.toPath(), StandardCopyOption.REPLACE_EXISTING)

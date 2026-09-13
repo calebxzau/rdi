@@ -1,17 +1,17 @@
 package calebxzhou.rdi.mc.server
 
 import calebxzau.rdi.mc.zstdcodec.ZstdCompressionPipeline
+import calebxzau.rdi.mc.server.region.RegionZstdCodec
 import calebxzau.mc.common2021.RdiLoggingConfiguration
 import calebxzhou.rdi.mc.common.RDI
 import calebxzhou.rdi.mc.common.WebSocketClient
-import calebxzhou.rdi.mc.common3.mcs
-import calebxzhou.rdi.mc.common3.sendMessage
+import calebxzau.mc.common2021.mcs
+import calebxzau.mc.common2021.sendMessage
 import calebxzhou.rdi.mc.rcmd.chat.PlayerChatRangeState
 import calebxzhou.rdi.mc.rcmd.tpa.TpaService
 import calebxzhou.rdi.mc.server.firmsection.FirmSectionService
 import calebxzhou.rdi.mc.server.network.RServerNetwork
 import calebxzhou.rdi.mc.server.rcmd.PlayerNbtChatRangeStore
-import calebxzhou.rdi.mc.server.world.TerrainCache211
 import net.minecraft.ChatFormatting
 import net.minecraft.network.chat.ClickEvent
 import net.minecraft.network.chat.Component
@@ -57,7 +57,7 @@ class RDIMain {
 
         @SubscribeEvent @JvmStatic
         fun stopped(e: ServerStoppedEvent) {
-            TerrainCache211.closeAll()
+            RegionZstdCodec.closeAll()
             PlayerChatRangeState.clear()
             TpaService.clear()
             WebSocketClient.stop()

@@ -9,7 +9,7 @@ object RcmdClientCommands {
     init {
         DISPATCHER.register(
             builder("firmsection", "display", "set")
-                .description("开关已设置持久子区块边框")
+                .description("开关已设置同步区域边框")
                 .command(RcmdCommand { context: RcmdContext? -> toggleSetFirmSections(context!!.source as RcmdClientBridge) })
                 .build()
         )
@@ -46,7 +46,7 @@ object RcmdClientCommands {
 
     private fun toggleSetFirmSections(bridge: RcmdClientBridge): RcmdResult {
         val visible = bridge.toggleSetFirmSectionsVisible()
-        return ok("已设定的持久子区块边框：" + (if (visible) "显示" else "隐藏"))
+        return ok("已设定的同步区域边框：" + (if (visible) "显示" else "隐藏"))
     }
 
     private fun toggleNowFirmSection(bridge: RcmdClientBridge): RcmdResult {

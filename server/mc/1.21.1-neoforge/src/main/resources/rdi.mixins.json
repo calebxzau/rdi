@@ -1,8 +1,8 @@
 {
   "required": true,
   "minVersion": "0.8",
-  "package": "calebxzhou.rdi.mc.server.mixin",
-  "plugin": "calebxzhou.rdi.mc.server.mixin.RdiMixinPlugin",
+  "package": "calebxzau.rdi.mc.server.mixin",
+  "plugin": "calebxzau.rdi.mc.server.mixin.RMixinPlugin",
   "compatibilityLevel": "JAVA_21",
   "client": [],
   "injectors": {
@@ -23,7 +23,9 @@
     "mGuardServerLevelTick",
     "mLimitEntitiesInSection",
     "mLimitExecutor",
-    "mOnlySaveFirmSections",
+    "mRegionFileStorage",
+    "mRegionFile",
+    "mRegionFileVersion",
     "mPackListener",
     "mRcmdCommandInput",
     "mResLoca",

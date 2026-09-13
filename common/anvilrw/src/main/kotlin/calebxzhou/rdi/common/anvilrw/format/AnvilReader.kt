@@ -2,6 +2,7 @@ package calebxzhou.rdi.common.anvilrw.format
 
 import calebxzhou.rdi.common.anvilrw.ChunkTooLargeException
 import calebxzhou.rdi.common.anvilrw.core.Chunk
+import calebxzhou.rdi.common.anvilrw.core.ChunkPayload
 import calebxzhou.rdi.common.anvilrw.core.Location
 import calebxzhou.rdi.common.anvilrw.core.Region
 import calebxzhou.rdi.common.anvilrw.util.AnvilConstants.CHUNKS_PER_REGION
@@ -12,8 +13,10 @@ import java.io.Closeable
 import java.io.File
 import java.io.IOException
 import java.io.RandomAccessFile
+import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.time.Instant
+import java.nio.file.Files
 
 class AnvilReader(private val anvilFile: File) : Closeable {
     private val raf: RandomAccessFile
@@ -39,16 +42,8 @@ class AnvilReader(private val anvilFile: File) : Closeable {
             val location = readChunkLocation(chunkIndex)
             val timestamp = readChunkTimestamp(chunkIndex)
             if (location.offset == 0) return null
-            return try {
-                val chunkData = readAndValidateChunkData(location)
-                Chunk(chunkIndex, location, timestamp, chunkData)
-            } catch (e: Exception) {
-                System.err.printf(
-                    "Warning: Corrupt chunk at coordinates (%d,%d), index %d: %s%n",
-                    chunkX, chunkZ, chunkIndex, e.message
-                )
-                null
-            }
+            val chunkData = readAndValidateChunkData(location, chunkX, chunkZ)
+            return Chunk(chunkIndex, location, timestamp, chunkData.payload, chunkData.external)
         } catch (e: Exception) {
             throw IOException("Critical failure reading chunk at coordinates ($chunkX,$chunkZ): ${e.message}", e)
         }
@@ -99,8 +94,10 @@ class AnvilReader(private val anvilFile: File) : Closeable {
                 chunks.add(Chunk(i, Location.createEmpty(), 0, ByteArray(0)))
             } else {
                 try {
-                    val chunkData = readAndValidateChunkData(location)
-                    chunks.add(Chunk(i, location, timestamp, chunkData))
+                    val chunkX = regionX * 32 + (i % 32)
+                    val chunkZ = regionZ * 32 + (i / 32)
+                    val chunkData = readAndValidateChunkData(location, chunkX, chunkZ)
+                    chunks.add(Chunk(i, location, timestamp, chunkData.payload, chunkData.external))
                 } catch (e: Exception) {
                     corruptChunkCount++
                     val chunkX = regionX * 32 + (i % 32)
@@ -216,7 +213,9 @@ class AnvilReader(private val anvilFile: File) : Closeable {
         return AnvilUtils.readInt(timestampBytes, ByteOrder.BIG_ENDIAN)
     }
 
-    private fun readAndValidateChunkData(location: Location): ByteArray {
+    private data class ChunkReadResult(val payload: ByteArray, val external: Boolean)
+
+    private fun readAndValidateChunkData(location: Location, chunkX: Int, chunkZ: Int): ChunkReadResult {
         val offset = location.offset
         val sectorCount = location.sectorCount
         val filePosition = offset.toLong() * AnvilUtils.SECTOR_SIZE
@@ -240,6 +239,38 @@ class AnvilReader(private val anvilFile: File) : Closeable {
             throw ChunkTooLargeException("Chunk length $chunkLength exceeds maximum size $MAX_CHUNK_SIZE_BYTES bytes")
         }
 
+        val compression = sectorData[4].toInt() and 0xff
+        if ((compression and 0x80) != 0) {
+            if (chunkLength != 1) {
+                throw IOException("External chunk ($chunkX,$chunkZ) must have length field 1, got $chunkLength")
+            }
+            val compressionType = compression and 0x7f
+            if (compressionType != 8) {
+                throw IOException("Unsupported external chunk compression type $compressionType at ($chunkX,$chunkZ)")
+            }
+            val sidecar = anvilFile.toPath().resolveSibling("c.$chunkX.$chunkZ.mcc")
+            if (!Files.isRegularFile(sidecar) || !Files.isReadable(sidecar)) {
+                throw IOException("External chunk sidecar is not a readable regular file: $sidecar")
+            }
+            val sidecarSize = Files.size(sidecar)
+            if (sidecarSize <= 0L) {
+                throw IOException("External chunk sidecar is empty: $sidecar")
+            }
+            if (sidecarSize > ChunkPayload.MAX_ZSTD_COMPRESSED_BYTES) {
+                throw IOException("External chunk sidecar exceeds ${ChunkPayload.MAX_ZSTD_COMPRESSED_BYTES} bytes: $sidecar")
+            }
+            val compressed = Files.readAllBytes(sidecar)
+            if (compressed.size.toLong() != sidecarSize) {
+                throw IOException("External chunk sidecar changed while reading: $sidecar")
+            }
+            val normalized = ByteBuffer.allocate(5 + compressed.size).order(ByteOrder.BIG_ENDIAN)
+                .putInt(compressed.size + 1)
+                .put(8.toByte())
+                .put(compressed)
+                .array()
+            return ChunkReadResult(normalized, true)
+        }
+
         val totalChunkSize = chunkLength + 4
         if (totalChunkSize > sectorDataSize) {
             throw IOException("Chunk length field $chunkLength (+4 for length field = $totalChunkSize) exceeds available sector data $sectorDataSize")
@@ -250,7 +281,7 @@ class AnvilReader(private val anvilFile: File) : Closeable {
             throw IOException("Sector count too small: location specifies $sectorCount sectors, but chunk size $totalChunkSize requires at least $expectedSectorCount sectors")
         }
 
-        return sectorData
+        return ChunkReadResult(sectorData, false)
     }
 
     private fun validateFileFormat(file: File) {

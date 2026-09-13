@@ -3,7 +3,7 @@ package calebxzhou.rdi.mc.server.mcpimpl211.handler
 import calebxzhou.rdi.mc.common2.mcp.McpBadSlotError
 import calebxzhou.rdi.mc.common2.mcp.McpContainerError
 import calebxzhou.rdi.mc.common2.mcp.model.*
-import calebxzhou.rdi.mc.common3.resId
+import calebxzau.mc.common2021.resId
 import calebxzhou.rdi.mc.server.mcpimpl211.handler.BlockHandler.mcBpos
 import net.minecraft.core.BlockPos
 import net.minecraft.server.level.ServerPlayer

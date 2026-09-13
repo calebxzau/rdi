@@ -4,9 +4,9 @@ import calebxzhou.rdi.mc.common2.mcp.McpBadBlockStateError
 import calebxzhou.rdi.mc.common2.mcp.McpBadSlotError
 import calebxzhou.rdi.mc.common2.mcp.McpBlockError
 import calebxzhou.rdi.mc.common2.mcp.model.*
-import calebxzhou.rdi.mc.common3.parseResId
-import calebxzhou.rdi.mc.common3.resId
-import calebxzhou.rdi.mc.common3.resolveBlock
+import calebxzau.mc.common2021.parseResId
+import calebxzau.mc.common2021.resId
+import calebxzau.mc.common2021.resolveBlock
 import net.minecraft.core.BlockPos
 import net.minecraft.core.Direction
 import net.minecraft.server.level.ServerPlayer

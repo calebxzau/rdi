@@ -15,6 +15,10 @@ repositories {
 
 dependencies {
     api(libs.knbt)
+    compileOnly(libs.zstd.jni)
+    testImplementation(kotlin("test"))
+    testCompileOnly(libs.zstd.jni)
+    testRuntimeOnly(libs.zstd.jni)
 }
 base {
     archivesName.set("rdi-anvilrw")

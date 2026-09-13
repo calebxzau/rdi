@@ -5,6 +5,8 @@ import calebxzhou.rdi.common.anvilrw.util.AnvilConstants.MAX_CHUNK_SIZE_BYTES
 import calebxzhou.rdi.common.anvilrw.util.AnvilUtils
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
+import java.io.InputStream
+import com.github.luben.zstd.RecyclingBufferPool
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.zip.DeflaterOutputStream
@@ -12,7 +14,7 @@ import java.util.zip.GZIPInputStream
 import java.util.zip.GZIPOutputStream
 import java.util.zip.InflaterInputStream
 
-class ChunkPayload(payload: ByteArray) {
+class ChunkPayload(payload: ByteArray, private val isExternalPayload: Boolean = false) {
     val compressionType: Byte
     var payloadLength: Int
         private set
@@ -22,7 +24,7 @@ class ChunkPayload(payload: ByteArray) {
         private set
 
     init {
-        if (payload.size > MAX_CHUNK_SIZE_BYTES) {
+        if (!isExternalPayload && payload.size > MAX_CHUNK_SIZE_BYTES) {
             throw ChunkTooLargeException(
                 "Chunk payload exceeds maximum size. Size: ${payload.size} bytes, Maximum: $MAX_CHUNK_SIZE_BYTES bytes"
             )
@@ -97,9 +99,10 @@ class ChunkPayload(payload: ByteArray) {
             2 -> InflaterInputStream(ByteArrayInputStream(data)).use { it.readAllBytes() }
             3 -> data
             4 -> throw java.io.IOException("LZ4 compression (type 4) is not yet implemented")
+            8 -> decompressZstd(data)
             127 -> throw java.io.IOException("Custom compression (type 127) is not supported")
             else -> throw java.io.IOException(
-                "Unknown compression type: $compressionType. Supported types: 1 (GZip), 2 (Zlib), 3 (Uncompressed)"
+                "Unknown compression type: $compressionType. Supported types: 1 (GZip), 2 (Zlib), 3 (Uncompressed), 8 (Zstd)"
             )
         }
     }
@@ -127,4 +130,35 @@ class ChunkPayload(payload: ByteArray) {
 
     override fun toString(): String =
         "ChunkPayload{payloadLength=$payloadLength, length=$length, compressionType=$compressionType, chunkData (Bytes)=${compressedData.size}}"
+
+    companion object {
+        const val MAX_ZSTD_COMPRESSED_BYTES: Int = 64 * 1024 * 1024
+        const val MAX_ZSTD_DECOMPRESSED_BYTES: Int = 256 * 1024 * 1024
+
+        internal fun decompressZstd(data: ByteArray, maxBytes: Int = MAX_ZSTD_DECOMPRESSED_BYTES): ByteArray {
+            require(maxBytes >= 0) { "maxBytes must not be negative" }
+            return com.github.luben.zstd.ZstdInputStream(
+                ByteArrayInputStream(data),
+                RecyclingBufferPool.INSTANCE
+            ).use { input ->
+                readAtMost(input, maxBytes)
+            }
+        }
+
+        private fun readAtMost(input: InputStream, maxBytes: Int): ByteArray {
+            val output = ByteArrayOutputStream(minOf(maxBytes, 8192))
+            val buffer = ByteArray(8192)
+            var total = 0
+            while (true) {
+                val allowed = maxBytes - total
+                val count = input.read(buffer, 0, minOf(buffer.size, allowed + 1))
+                if (count < 0) return output.toByteArray()
+                if (count > allowed) {
+                    throw java.io.IOException("Zstd decompressed data exceeds maximum size of $maxBytes bytes")
+                }
+                output.write(buffer, 0, count)
+                total += count
+            }
+        }
+    }
 }

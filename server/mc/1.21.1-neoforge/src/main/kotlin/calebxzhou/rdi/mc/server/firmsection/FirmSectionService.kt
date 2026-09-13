@@ -4,7 +4,7 @@ import calebxzhou.rdi.mc.firmsection.FirmSectionKey
 import calebxzhou.rdi.mc.firmsection.FirmSectionListResult
 import calebxzhou.rdi.mc.firmsection.FirmSectionSetResult
 import calebxzhou.rdi.mc.firmsection.FirmSectionSetStatus
-import calebxzhou.rdi.mc.server.mixin.AChunkMap
+import calebxzau.rdi.mc.server.mixin.AChunkMap
 import calebxzhou.rdi.mc.server.network.RServerNetwork
 import net.minecraft.core.BlockPos
 import net.minecraft.core.SectionPos

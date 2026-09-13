@@ -59,6 +59,7 @@ java {
 
 neoForge {
     version = neo_version
+    addModdingDependenciesTo sourceSets.test
 
     parchment {
         mappingsVersion = parchment_mappings_version
@@ -77,7 +78,6 @@ neoForge {
             programArgument '--nogui'
             systemProperty 'rdi.debug', 'true'
             systemProperty 'rdi.onlySaveFirmSections', 'true'
-            systemProperty "rdi.terrain.cache.path","C:\\Users\\calebxzhou\\Documents\\chunkcachetest\\21"
             systemProperty 'neoforge.enabledGameTestNamespaces', 'rdi'
         }
 
@@ -104,8 +104,8 @@ neoForge {
 
 sourceSets.named('main') {
     java.srcDir '../../../mc/common/2021/src/main/java'
+    kotlin.srcDir '../../../mc/common/2021/src/main/kotlin'
     kotlin.srcDir '../../../mc/common/codec/src/main/kotlin'
-    kotlin.srcDir '../../../mc/common3/1.21/src/main/kotlin'
     kotlin.srcDir '../../../mc/common/all/src/main/kotlin'
     kotlin.srcDir '../../../mc/firmsection/src/main/kotlin'
     kotlin.srcDir '../../../mc/rcmd/src/main/kotlin'
@@ -165,6 +165,7 @@ dependencies {
     testImplementation 'io.netty:netty-codec:4.1.97.Final'
     testImplementation 'io.netty:netty-common:4.1.97.Final'
     testImplementation 'io.netty:netty-transport:4.1.97.Final'
+    testRuntimeOnly 'io.github.llamalad7:mixinextras-common:0.5.3'
 
 
 }
