@@ -22,9 +22,9 @@ enum class McVersion(
         mapOf(
             ModLoader.neoforge to ModLoader.Version(
                 ModLoader.neoforge,
-                "neoforge-21.1.248",
-                "https://maven.neoforged.net/releases/net/neoforged/neoforge/21.1.248/neoforge-21.1.248-installer.jar",
-                "e818014b2ef9cdaa76dc9fedddaf17f46ade8fce"
+                "neoforge-21.1.250",
+                "https://maven.neoforged.net/releases/net/neoforged/neoforge/21.1.250/neoforge-21.1.250-installer.jar",
+                "71467422ca7c37446d0e1e28c010655a361562c0"
             )
         )
     ),
