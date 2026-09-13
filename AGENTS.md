@@ -32,71 +32,119 @@ you can use intellij MCP to check code errors if available
 
 Use subagents according to the following responsibilities:
 use English for subagents regardless main agent use which language.
-* Use `code_explorer` for repository exploration, locating implementations,
-  tracing execution paths, gathering evidence, and investigating bugs.
-* Use `code_worker` for implementing an established implementation specification
-  and running relevant validation.
-* Use `reviewer` for reviewing completed changes for correctness, regressions,
-  security issues, edge cases, and missing tests.
 
-The main agent acts as the senior engineer and owns implementation design.
+* Use `code_explorer` for targeted repository exploration when the relevant implementation, execution path, or repository structure is not sufficiently understood.
+* Use `code_worker` for implementing an established implementation specification and running relevant validation.
+* Use `reviewer` as an independent quality gate for high-risk changes that justify the additional review cost.
 
-`code_worker` acts as the implementation engineer and should primarily execute
-the implementation specification produced by the main agent rather than
-independently designing the solution.
+The main agent acts as the senior engineer and owns implementation design, task classification, escalation decisions, and final decisions.
 
-### Required workflow for non-trivial implementation tasks
+`code_worker` acts as the implementation engineer and should primarily execute the implementation specification produced by the main agent rather than independently designing the solution.
 
-For non-trivial implementation tasks, follow this workflow:
+### Token-efficient tiered workflow
 
-A non-trivial implementation task is one that changes runtime behavior or
-involves API/ABI, protocol, persistence, security, concurrency, lifecycle,
-cross-file or cross-module coordination, or requires behavioral tests or
-validation to demonstrate correctness. Pure documentation, comment, or
-formatting changes, and obvious mechanical single-point changes with no
-runtime, API, or build impact, may skip the full subagent workflow. The
-`code_worker` and `reviewer` steps remain mandatory for non-trivial
-implementation tasks; use `code_explorer` only when the implementation path,
-execution path, or repository structure is not already sufficiently understood.
+Use the lowest tier that is sufficient for the task. Do not invoke a subagent merely because it is available. Escalate only when uncertainty, implementation difficulty, or risk justifies the additional context and token cost.
 
-1. Use `code_explorer` when the relevant implementation, execution path, or
-   repository structure is not already sufficiently understood.
+#### Tier 0 — Main only
 
-2. The main agent analyzes the exploration findings and makes the implementation
-   decisions.
+Use for trivial or mechanical work where delegation would cost more than it saves, for example:
 
-3. The main agent produces a concrete implementation specification.
+* documentation, comments, or formatting;
+* obvious renames or localized mechanical edits;
+* very small low-risk code changes whose implementation and validation path are already clear.
 
-4. Delegate that implementation specification to `code_worker`.
+The main agent may inspect, implement, and validate directly.
 
-5. `code_worker` implements the specification and runs the requested validation.
+#### Tier 1 — Main -> code_worker
 
-6. Delegate the resulting changes to `reviewer`.
+This is the default implementation tier when:
 
-7. The main agent evaluates the review findings and decides whether additional
-   fixes are required.
+* the implementation path is already understood;
+* the task follows an established repository pattern;
+* the change is localized or otherwise straightforward to specify;
+* there is no material security, authorization, concurrency, persistence, transaction, protocol, compatibility, lifecycle, rollback, or data-integrity risk.
 
-8. If fixes are required and the intended solution is already clear, send a
-   focused follow-up implementation specification to `code_worker`.
+Workflow:
+
+1. Main agent inspects enough code to understand the change.
+2. Main agent makes the implementation decisions and writes a compact execution specification.
+3. `code_worker` implements the change and runs relevant validation.
+4. Main agent evaluates the worker result and validation.
+
+Do not invoke `reviewer` by default for Tier 1 work.
+
+#### Tier 2 — code_explorer -> Main -> code_worker
+
+Use when implementation uncertainty is the main problem, for example:
+
+* the responsible files or symbols are not known;
+* the relevant execution path or data flow must be traced;
+* a bug's root cause is not yet established;
+* the change crosses components and the current architecture is not sufficiently understood.
+
+Workflow:
+
+1. `code_explorer` performs targeted exploration and returns repository evidence.
+2. Main agent compresses those findings into the minimum implementation-relevant context, resolves the design, and writes the execution specification.
+3. `code_worker` implements the specification and runs relevant validation.
+4. Main agent evaluates the result.
+
+Do not repeat the explorer report verbatim in the worker delegation. Pass only facts, constraints, symbols, and decisions needed for implementation.
+
+#### Tier 3 — code_explorer -> Main -> code_worker -> reviewer
+
+Use for changes where independent review is worth the extra cost. Typical triggers include:
+
+* security, authentication, authorization, or trust-boundary changes;
+* concurrency, synchronization, race-condition, or ordering-sensitive behavior;
+* persistence, transactions, migrations, consistency, or data-integrity risk;
+* public API, ABI, protocol, schema, serialization, or compatibility changes;
+* lifecycle, cleanup, rollback, resource ownership, or failure-recovery complexity;
+* realistic risk of data loss, corruption, privilege escalation, or major production regression;
+* large or high-impact cross-module changes.
+
+Workflow:
+
+1. Use `code_explorer` when repository evidence is needed to understand the affected behavior. If the implementation is already fully understood, the main agent may skip redundant exploration.
+2. Main agent makes the implementation decisions and writes the implementation specification.
+3. `code_worker` implements the specification and runs validation.
+4. `reviewer` independently reviews the completed change against the specification and repository behavior.
+5. Main agent evaluates findings and decides whether a focused follow-up worker task is required.
 
 Do not use `reviewer` to implement changes.
-
 Do not use `code_explorer` to modify files.
+Do not delegate architectural decisions or an underspecified implementation problem to `code_worker` when the main agent can reasonably resolve those decisions first.
 
-Do not delegate architectural decisions or an underspecified implementation
-problem to `code_worker` when the main agent can reasonably resolve those
-decisions first.
+### Escalation rules
+
+A task may start at a lower tier and be escalated when new information warrants it. Examples:
+
+* Tier 1 -> Tier 2 when the worker or main agent discovers that the actual implementation path is unclear or materially different from the assumed one.
+* Tier 1 or Tier 2 -> Tier 3 when the task reveals meaningful security, concurrency, persistence, compatibility, lifecycle, rollback, or data-integrity risk.
+
+Do not pre-emptively escalate solely for caution. Prefer evidence-based escalation.
+
+### Token-efficiency rules
+
+* Prefer targeted repository reads and searches over broad scans.
+* Reuse established findings instead of asking later agents to rediscover them.
+* Treat the implementation specification as a compression layer: include what the worker needs to execute correctly, not a transcript of the investigation.
+* Keep delegations concise when the task is simple; include detailed control flow, failure behavior, and invariants only when they materially affect correctness.
+* Avoid repeating generic subagent rules already present in the subagent's own configuration.
+* Use expensive independent review selectively, based on risk rather than task size alone.
 
 ---
 
 ## Implementation specification requirements
 
-Before delegating a non-trivial implementation task to `code_worker`, the main
-agent must provide a detailed implementation specification rather than only a
+Before delegating an implementation task to `code_worker`, the main agent must
+provide a concrete, right-sized implementation specification rather than only a
 high-level goal.
 
-The implementation specification should be detailed enough that `code_worker`
-does not need to independently design the solution.
+The specification should be detailed enough that `code_worker` does not need to
+independently design the solution, but concise enough to avoid repeating repository
+evidence or generic rules that the worker already has. Scale detail with task risk
+and complexity.
 
 Include the following whenever applicable:
 
@@ -238,7 +286,8 @@ The main agent should think through the implementation before invoking
 `code_worker`.
 
 For non-trivial logic, provide pseudocode or ordered implementation steps when
-they make the intended behavior clearer.
+they make the intended behavior clearer. For straightforward Tier 1 work, prefer
+a compact execution packet over filling every optional section.
 
 The main agent should decide:
 
@@ -789,13 +838,16 @@ When implementing a feature that touches multiple modules, generally use this or
 
 Adjust the order when dependencies make another sequence more appropriate.
 
-Before implementation, still follow the required workflow:
+Before implementation, still follow the approval requirement, then use the
+lowest sufficient execution tier:
 
 ```text
 Inspect
+-> Classify Tier
 -> Plan
 -> Ask for approval
--> Implement with code_worker
--> Test with code_worker
+-> Execute with the selected tier
+-> Validate
+-> Escalate only if new uncertainty or risk requires it
 ```
 
