@@ -23,6 +23,7 @@ include(
     ":net",
     ":archive",
     ":anvilrw",
+    ":quests",
     ":blessing-skin",
     ":mediaproc",
     ":pack-proc",
@@ -53,6 +54,7 @@ project(":model").projectDir = file("../../common/model")
 project(":net").projectDir = file("../../common/net")
 project(":archive").projectDir = file("../../common/archive")
 project(":anvilrw").projectDir = file("../../common/anvilrw")
+project(":quests").projectDir = file("../../common/quests")
 project(":blessing-skin").projectDir = file("blessing-skin")
 project(":mediaproc").projectDir = file("../mediaproc")
 project(":pack-proc").projectDir = file("../pack-proc")
