@@ -10,6 +10,10 @@ import calebxzhou.rdi.common.model.ModpackUploadSessionCreateDto
 import calebxzhou.rdi.common.model.ModpackUploadSessionVo
 import calebxzhou.rdi.common.model.ModpackVersionCreateFromUploadDto
 import calebxzhou.rdi.common.model.Response
+import calebxzau.rdi.common.model.Content
+import calebxzau.rdi.common.model.ContentPlatform
+import calebxzau.rdi.common.model.ContentSide
+import calebxzau.rdi.common.model.ContentType as ClientContentType
 import calebxzhou.rdi.common.serdesJson
 import calebxzhou.rdi.common.util.urlEncoded
 import io.ktor.client.HttpClient
@@ -81,9 +85,15 @@ class ModpackUploadApiTest {
             assertEquals(session, api.createSession(ModpackUploadSessionCreateDto("pack.zip", 3, "a".repeat(40))))
             api.uploadPart(uploadId, 1, byteArrayOf(1, 2), "b".repeat(40))
             assertEquals(session.copy(ready = true, uploadedParts = listOf(0, 1)), api.completeSession(uploadId))
-            api.publishNew(ModpackCreateFromUploadDto(uploadId, createDto()))
+            val create = createDto()
+            api.publishNew(ModpackCreateFromUploadDto(uploadId, create))
             val modpackId = ObjectId("66a000000000000000000001")
-            api.publishVersion(modpackId, "release candidate", ModpackVersionCreateFromUploadDto(uploadId, mutableListOf()))
+            val version = ModpackVersionCreateFromUploadDto(
+                uploadId,
+                mutableListOf(),
+                mutableListOf(create.clientExtras.single()),
+            )
+            api.publishVersion(modpackId, "release candidate", version)
             assertEquals(emptyList(), api.listMy())
             api.cancelSession(uploadId)
 
@@ -105,6 +115,14 @@ class ModpackUploadApiTest {
             assertEquals(
                 uploadId,
                 serdesJson.decodeFromString<ModpackVersionCreateFromUploadDto>(requests[4].body.asText()).uploadId,
+            )
+            assertEquals(
+                create.clientExtras,
+                serdesJson.decodeFromString<ModpackCreateFromUploadDto>(requests[3].body.asText()).modpack.clientExtras,
+            )
+            assertEquals(
+                version.clientExtras,
+                serdesJson.decodeFromString<ModpackVersionCreateFromUploadDto>(requests[4].body.asText()).clientExtras,
             )
             assertEquals("/modpack/${modpackId.toHexString()}/version/${"release candidate".urlEncoded}/from-upload", requests[4].url.encodedPath)
         } finally {
@@ -154,6 +172,18 @@ class ModpackUploadApiTest {
         verName = "1.0",
         info = "测试简介",
         mods = mutableListOf(),
+        clientExtras = mutableListOf(
+            Content(
+                platform = ContentPlatform.Modrinth,
+                type = ClientContentType.ResPack,
+                projectId = "resource-project",
+                fileId = "resource-file",
+                slug = "resource-pack",
+                hash = "a".repeat(40),
+                path = "resourcepacks/resource.zip",
+                side = ContentSide.Client,
+            )
+        ),
     )
 
     private fun client(engine: MockEngine): HttpClient = HttpClient(engine) {

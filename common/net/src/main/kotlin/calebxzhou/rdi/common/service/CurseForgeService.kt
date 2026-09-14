@@ -1,6 +1,12 @@
 package calebxzhou.rdi.common.service
 
 import calebxzau.rdi.common.logging.Loggers
+import calebxzau.rdi.common.model.Content
+import calebxzau.rdi.common.model.ContentPlatform
+import calebxzau.rdi.common.model.ContentSide
+import calebxzau.rdi.common.model.ContentType as ClientContentType
+import calebxzau.rdi.common.model.validateAndMergeClientExtras
+import calebxzau.rdi.common.model.validateClientExtra
 import calebxzhou.rdi.common.util.openChineseZip
 import calebxzhou.rdi.common.exception.ModpackError
 import calebxzhou.rdi.common.model.*
@@ -241,6 +247,52 @@ object CurseForgeService {
         }
     }
 
+    /** Resolves resourcepack and shaderpack manifest entries without applying the Mod class filter. */
+    suspend fun mapManifestEntriesToContents(files: List<CurseForgePackManifest.File>): List<Content> {
+        if (files.isEmpty()) return emptyList()
+        val modInfoMap = getModsInfoIncludingNonMods(files.map { it.projectId }).associateBy { it.id }
+        val fileInfoMap = getModFilesInfo(files.map { it.fileId }).associateBy { it.id }
+        return resolveManifestEntriesToContents(files, modInfoMap, fileInfoMap)
+    }
+
+    internal fun resolveManifestEntriesToContents(
+        files: List<CurseForgePackManifest.File>,
+        modInfoMap: Map<Int, CurseForgeModInfo>,
+        fileInfoMap: Map<Int, CurseForgeFile>,
+    ): List<Content> = files.mapNotNull { manifestFile ->
+            val modInfo = modInfoMap[manifestFile.projectId]
+                ?: throw ModpackError("无法解析客户端资源项目: ${manifestFile.projectId}/${manifestFile.fileId}")
+            val type = when (modInfo.classId) {
+                12L -> ClientContentType.ResPack
+                6552L -> ClientContentType.ShaderPack
+                else -> return@mapNotNull null
+            }
+            val fileInfo = fileInfoMap[manifestFile.fileId]
+                ?: throw ModpackError("无法解析客户端资源文件: ${manifestFile.fileId}")
+            if (fileInfo.modId != manifestFile.projectId) {
+                throw ModpackError("客户端资源文件不属于声明的项目: ${manifestFile.projectId}/${manifestFile.fileId}")
+            }
+            val fileName = fileInfo.fileName?.trim().orEmpty()
+            val fileNameParts = fileName.replace('\\', '/').split('/')
+            if (fileName.isBlank() || fileNameParts.size != 1 || fileNameParts.any { it == "." || it == ".." || it.isBlank() }) {
+                throw ModpackError("客户端资源文件缺少文件名: ${manifestFile.projectId}/${manifestFile.fileId}")
+            }
+            val pathRoot = if (type == ClientContentType.ResPack) "resourcepacks" else "shaderpacks"
+            Content(
+                platform = ContentPlatform.CurseForge,
+                type = type,
+                projectId = modInfo.id.toString(),
+                fileId = fileInfo.id.toString(),
+                slug = modInfo.slug.ifBlank { modInfo.id.toString() },
+                // CF cache identity is the fingerprint; SHA-1 remains available for local verification.
+                hash = fileInfo.fileFingerprint.toString(),
+                path = "$pathRoot/$fileName",
+                side = ContentSide.Client,
+                required = manifestFile.required,
+                downloadUrls = listOf(fileInfo.realDownloadUrl),
+            ).validateClientExtra()
+        }.validateAndMergeClientExtras()
+
     /**
      * Load and validate a CurseForge modpack from a ZIP file
      * @param zipPath Path to the modpack ZIP file
@@ -465,7 +517,11 @@ object CurseForgeService {
         ).body<CurseForgeFileListResponse>().data
     }
 
-    private suspend fun requestMods(modIds: List<Int>, official: Boolean = false): List<CurseForgeModInfo> {
+    private suspend fun requestMods(
+        modIds: List<Int>,
+        official: Boolean = false,
+        filterModsOnly: Boolean = true,
+    ): List<CurseForgeModInfo> {
         @Serializable
         data class CFModsRequest(val modIds: List<Int>, val filterPcOnly: Boolean = true)
 
@@ -474,9 +530,11 @@ object CurseForgeService {
         return makeRequest(
             "mods",
             HttpMethod.Post,
-            CFModsRequest(modIds),
+            CFModsRequest(modIds, filterPcOnly = filterModsOnly),
             official
-        ).body<CFModsResponse>().data.filter { it.isMod }
+        ).body<CFModsResponse>().data.let { mods ->
+            if (filterModsOnly) mods.filter { it.isMod } else mods
+        }
 
     }
 
@@ -493,6 +551,19 @@ object CurseForgeService {
             mods += requestMods(missingIds, true)
         }
 
+        return mods
+    }
+
+    suspend fun getModsInfoIncludingNonMods(modIds: List<Int>): List<CurseForgeModInfo> {
+        if (modIds.isEmpty()) return emptyList()
+        val distinctIds = modIds.distinct()
+        val mods = requestMods(distinctIds, filterModsOnly = false).toMutableList()
+        val foundIds = mods.mapTo(mutableSetOf()) { it.id }
+        val missingIds = distinctIds.filterNot { it in foundIds }
+        if (missingIds.isNotEmpty()) {
+            lgr.warn { "not found ids：$missingIds, retry official api" }
+            mods += requestMods(missingIds, official = true, filterModsOnly = false)
+        }
         return mods
     }
 

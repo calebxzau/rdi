@@ -243,12 +243,15 @@ fun MenuScreen(
 
     installConfirmTask?.let { install ->
         ModpackDownloadMethodDialog(
-            packName = install.task.title,
+            packName = install.title,
             packVer = "",
             onDismiss = { installConfirmTask = null },
-            onDirectDownload = {
+            onDirectDownload = { includeClientExtras ->
                 installConfirmTask = null
-                val runId = ClientTaskManager.submit(install.task, dedupeKey = install.dedupeKey)
+                val runId = ClientTaskManager.submit(
+                    install.createTask(includeClientExtras),
+                    dedupeKey = install.dedupeKey,
+                )
                 onOpenTaskList(runId)
             },
             onOpenTaskList = onOpenTaskList,

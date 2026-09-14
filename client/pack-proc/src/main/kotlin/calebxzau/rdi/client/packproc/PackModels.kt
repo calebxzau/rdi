@@ -1,5 +1,6 @@
 package calebxzau.rdi.client.packproc
 
+import calebxzau.rdi.common.model.Content
 import calebxzhou.rdi.common.model.McVersion
 import calebxzhou.rdi.common.model.Mod
 import calebxzhou.rdi.common.model.ModLoader
@@ -15,6 +16,19 @@ data class ServerExtraFile(
     val relativePath: String
 )
 
+/** A matched client pack kept in the extracted source tree for archive/test use. */
+data class EmbeddedClientExtraSource(
+    val content: Content,
+    val stagedFile: File,
+    val sourceRelativePath: String,
+    /**
+     * The source-file SHA-1 verified while matching.  CurseForge Content.hash is
+     * its Murmur2 fingerprint, so the SHA-1 is kept only in this transient
+     * source record for local-byte verification.
+     */
+    val verifiedSha1: String,
+)
+
 data class LoadedLocalModpack(
     val sourceType: LocalModpackSourceType,
     val sourceDir: File,
@@ -25,6 +39,8 @@ data class LoadedLocalModpack(
     val mods: List<Mod>,
     val embeddedModOriginalFileNames: Map<String, String> = emptyMap(),
     val embeddedModSources: List<EmbeddedModSource> = emptyList(),
+    val clientExtras: List<Content> = emptyList(),
+    val embeddedClientExtraSources: List<EmbeddedClientExtraSource> = emptyList(),
     val serverExtraFiles: List<ServerExtraFile> = emptyList(),
     val containsExcludedMcaFiles: Boolean = false
 )
@@ -46,6 +62,8 @@ data class UploadPayload(
     val sourceVersion: String,
     var embeddedModOriginalFileNames: Map<String, String> = emptyMap(),
     var embeddedModSources: List<EmbeddedModSource> = emptyList(),
+    var clientExtras: MutableList<Content> = mutableListOf(),
+    var embeddedClientExtraSources: List<EmbeddedClientExtraSource> = emptyList(),
     val serverExtraFiles: List<ServerExtraFile> = emptyList()
 )
 
@@ -70,6 +88,8 @@ fun LoadedLocalModpack.toUploadPayload(): UploadPayload = UploadPayload(
     sourceVersion = packVersion,
     embeddedModOriginalFileNames = embeddedModOriginalFileNames,
     embeddedModSources = embeddedModSources,
+    clientExtras = clientExtras.toMutableList(),
+    embeddedClientExtraSources = embeddedClientExtraSources,
     serverExtraFiles = serverExtraFiles
 )
 
@@ -83,5 +103,7 @@ fun UploadPayload.toLoadedLocalModpack(): LoadedLocalModpack = LoadedLocalModpac
     mods = mods.toList(),
     embeddedModOriginalFileNames = embeddedModOriginalFileNames,
     embeddedModSources = embeddedModSources,
+    clientExtras = clientExtras,
+    embeddedClientExtraSources = embeddedClientExtraSources,
     serverExtraFiles = serverExtraFiles
 )

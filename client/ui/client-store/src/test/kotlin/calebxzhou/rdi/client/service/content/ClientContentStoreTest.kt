@@ -4,6 +4,10 @@ import calebxzhou.rdi.common.net.DownloadProgress
 import calebxzhou.rdi.common.model.EXTRA_MOD_PREFIX
 import calebxzhou.rdi.common.model.CurseForgeFile
 import calebxzhou.rdi.common.model.Mod
+import calebxzau.rdi.common.model.Content
+import calebxzau.rdi.common.model.ContentPlatform
+import calebxzau.rdi.common.model.ContentSide
+import calebxzau.rdi.common.model.ContentType
 import calebxzhou.rdi.common.service.ModService
 import calebxzhou.rdi.common.service.murmur2
 import kotlinx.coroutines.CancellationException
@@ -23,6 +27,161 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
 class ClientContentStoreTest {
+    @Test
+    fun `client extra materialization reuses one cached blob at two placements`() = runBlocking {
+        val bytes = "shared-extra".toByteArray()
+        val hash = digest(bytes, "SHA-1")
+        val cacheRoot = Files.createTempDirectory("rdi-extra-cache")
+        Files.write(cacheRoot.resolve("$hash.sha1"), bytes)
+        val targetRoot = Files.createTempDirectory("rdi-extra-target")
+        val extras = listOf(
+            Content(
+                ContentPlatform.Modrinth,
+                ContentType.ResPack,
+                "p",
+                "f",
+                "shared",
+                hash,
+                "resourcepacks/shared.zip",
+                ContentSide.Client,
+            ),
+            Content(
+                ContentPlatform.Modrinth,
+                ContentType.ShaderPack,
+                "p",
+                "f",
+                "shared",
+                hash,
+                "shaderpacks/shared.zip",
+                ContentSide.Client,
+            ),
+        )
+        val paths = ClientContentStore(cacheRoot).materializeClientExtras(extras, targetRoot).getOrThrow()
+        assertEquals(2, paths.size)
+        assertContentEquals(bytes, Files.readAllBytes(targetRoot.resolve("resourcepacks/shared.zip")))
+        assertContentEquals(bytes, Files.readAllBytes(targetRoot.resolve("shaderpacks/shared.zip")))
+    }
+
+    @Test
+    fun `client extra materialization keeps an existing local winner without download`() = runBlocking {
+        val targetRoot = Files.createTempDirectory("rdi-extra-local")
+        val target = targetRoot.resolve("resourcepacks/local.zip")
+        Files.createDirectories(target.parent)
+        val localBytes = "local-override".toByteArray()
+        Files.write(target, localBytes)
+        val extra = Content(
+            ContentPlatform.Modrinth,
+            ContentType.ResPack,
+            "p",
+            "f",
+            "local",
+            "a".repeat(40),
+            "resourcepacks/local.zip",
+            ContentSide.Client,
+        )
+        val result = ClientContentStore(Files.createTempDirectory("rdi-extra-empty-cache"))
+            .materializeClientExtras(listOf(extra), targetRoot)
+            .getOrThrow()
+        assertEquals(target.toAbsolutePath().normalize(), result.single())
+        assertContentEquals(localBytes, Files.readAllBytes(target))
+    }
+
+    @Test
+    fun `client extra materialization rejects unsafe target and symlink`() = runBlocking {
+        val extra = Content(
+            ContentPlatform.Modrinth,
+            ContentType.ResPack,
+            "p",
+            "f",
+            "bad",
+            "a".repeat(40),
+            "resourcepacks/bad.zip",
+            ContentSide.Client,
+        )
+        assertFailsWith<IllegalArgumentException> {
+            extra.toClientContentRequest("/resourcepacks/bad.zip")
+        }
+        val targetRoot = Files.createTempDirectory("rdi-extra-symlink")
+        val target = targetRoot.resolve("resourcepacks/bad.zip")
+        Files.createDirectories(target.parent)
+        assumeSymbolicLink(target, targetRoot.resolve("elsewhere"))
+        assertTrue(
+            ClientContentStore(Files.createTempDirectory("rdi-extra-symlink-cache"))
+                .materializeClientExtras(listOf(extra), targetRoot)
+                .isFailure
+        )
+    }
+
+    @Test
+    fun `client extra materialization rejects contradictory placement and symlinked target root`() = runBlocking {
+        val base = Content(
+            ContentPlatform.Modrinth,
+            ContentType.ResPack,
+            "p",
+            "f",
+            "pack",
+            "a".repeat(40),
+            "resourcepacks/pack.zip",
+            ContentSide.Client,
+        )
+        val store = ClientContentStore(Files.createTempDirectory("rdi-extra-conflict-cache"))
+        val targetRoot = Files.createTempDirectory("rdi-extra-conflict-target")
+        assertTrue(store.materializeClientExtras(listOf(base, base.copy(fileId = "other")), targetRoot).isFailure)
+
+        val parent = Files.createTempDirectory("rdi-extra-link-parent")
+        val actual = Files.createTempDirectory("rdi-extra-real-root")
+        val link = parent.resolve("link")
+        assumeSymbolicLink(link, actual)
+        val linkedRoot = link.resolve("instance")
+        assertTrue(store.materializeClientExtras(listOf(base), linkedRoot).isFailure)
+    }
+
+    @Test
+    fun `client extra materialization rejects mismatched downloaded bytes`() = runBlocking {
+        val payload = "expected-extra".toByteArray()
+        val content = Content(
+            ContentPlatform.Modrinth,
+            ContentType.ResPack,
+            "p",
+            "f",
+            "bad-digest",
+            digest(payload, "SHA-1"),
+            "resourcepacks/bad.zip",
+            ContentSide.Client,
+            downloadUrls = listOf("https://example.com/bad.zip"),
+        )
+        val store = ClientContentStore(Files.createTempDirectory("rdi-extra-bad-digest-cache"))
+        val request = content.toClientContentRequest().copy(
+            sources = listOf(ContentSource(downloader = { target, _ ->
+                Files.write(target, "wrong-extra".toByteArray())
+                Result.success(target)
+            }))
+        )
+        assertTrue(store.materialize(listOf(request), Files.createTempDirectory("rdi-extra-bad-digest-target")).isFailure)
+    }
+
+    @Test
+    fun `client extra requests retain root relative placement and validate identity`() {
+        val content = Content(
+            platform = ContentPlatform.Modrinth,
+            type = ContentType.ShaderPack,
+            projectId = "shader",
+            fileId = "version",
+            slug = "shader",
+            hash = "a".repeat(40),
+            path = "shaderpacks/shader.zip",
+            side = ContentSide.Client,
+            downloadUrls = listOf("https://example.com/shader.zip"),
+        )
+        val request = content.toClientContentRequest()
+        assertEquals("shaderpacks/shader.zip", request.relativePath)
+        assertEquals(ContentDigestAlgorithm.SHA1, request.digests.single().algorithm)
+        assertTrue(request.id.endsWith(":shaderpacks/shader.zip"))
+        assertFailsWith<IllegalArgumentException> {
+            content.toClientContentRequest("/shaderpacks/shader.zip")
+        }
+    }
+
     @Test
     fun `mod content requests use platform hash contracts`() {
         val curseForge = testCurseForgeMod("101", "1001", hash = "123")
@@ -693,4 +852,3 @@ class ClientContentStoreTest {
         hash = hash,
     )
 }
-

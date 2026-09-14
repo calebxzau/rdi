@@ -1,5 +1,8 @@
 package calebxzhou.rdi.master.service.modpack
 
+import calebxzau.rdi.common.model.Content
+import calebxzau.rdi.common.model.ContentSide
+import calebxzau.rdi.common.model.validateAndMergeClientExtras
 import calebxzhou.rdi.common.DEBUG
 import calebxzhou.rdi.common.archive.PackArchiveFormat
 import calebxzhou.rdi.common.archive.detectArchiveFormat
@@ -180,7 +183,14 @@ object ModpackUploadService {
         )
         modpack.dir.mkdirs()
         try {
-            val prepared = prepareVersionUpload(modpack, metadata.normalizedVerName, uploadFile, mods, uploaderId = player._id)
+            val prepared = prepareVersionUpload(
+                modpack,
+                metadata.normalizedVerName,
+                uploadFile,
+                mods,
+                clientExtras = validateClientExtras(clientExtras),
+                uploaderId = player._id,
+            )
             var published = false
             var inserted = false
             runCatching {
@@ -203,7 +213,12 @@ object ModpackUploadService {
         } finally { deleteUploadTempFile(uploadFile, "创建整合包结束") }
     }
 
-    suspend fun ModpackContext.createVersion(verName: String, uploadFile: File, mods: MutableList<Mod>) {
+    suspend fun ModpackContext.createVersion(
+        verName: String,
+        uploadFile: File,
+        mods: MutableList<Mod>,
+        clientExtras: MutableList<Content> = arrayListOf(),
+    ) {
         val normalizedVerName = ModpackQueryService.run { verName.validateVerName() }.getOrThrow()
         requireModpackUploadVersion(modpack.mcVer)
         try {
@@ -225,6 +240,7 @@ object ModpackUploadService {
                         freshVersionName,
                         uploadFile,
                         mods,
+                        clientExtras = validateClientExtras(clientExtras),
                         uploaderId = player._id,
                         stageArchive = false,
                     )
@@ -521,6 +537,7 @@ object ModpackUploadService {
         verName: String,
         uploadFile: File,
         mods: MutableList<Mod>,
+        clientExtras: MutableList<Content> = arrayListOf(),
         uploaderId: org.bson.types.ObjectId,
         stageArchive: Boolean = true,
     ): PreparedVersionUpload {
@@ -531,6 +548,7 @@ object ModpackUploadService {
             changelog = "新上传",
             status = Modpack.Status.WAIT,
             mods = ModpackModProcessor.processMods(mods),
+            clientExtras = clientExtras,
             time = System.currentTimeMillis(),
             uploaderId = uploaderId,
         )
@@ -543,6 +561,16 @@ object ModpackUploadService {
             deleteOwnedFile(stagedArchive)
             throw error
         }
+    }
+
+    private fun validateClientExtras(extras: MutableList<Content>): MutableList<Content> {
+        return runCatching {
+            extras.forEach { extra ->
+                require(extra.side != ContentSide.Server) { "客户端额外内容不能仅支持服务端" }
+            }
+            extras.validateAndMergeClientExtras().toMutableList()
+        }
+            .getOrElse { error -> throw RequestError(error.message ?: "客户端额外内容无效") }
     }
 
     private fun reserveStagedArchive(version: Modpack.Version, format: PackArchiveFormat): File {

@@ -84,7 +84,11 @@ interface ModpackInfoGateway {
 
     suspend fun isVersionInstalled(pack: Modpack.DetailVo, version: Modpack.Version): Result<Boolean>
 
-    fun queueInstall(pack: Modpack.DetailVo, version: Modpack.Version): Result<String>
+    fun queueInstall(
+        pack: Modpack.DetailVo,
+        version: Modpack.Version,
+        includeClientExtras: Boolean = true,
+    ): Result<String>
 }
 
 class RdiModpackInfoGateway : ModpackInfoGateway {
@@ -141,9 +145,15 @@ class RdiModpackInfoGateway : ModpackInfoGateway {
     override fun queueInstall(
         pack: Modpack.DetailVo,
         version: Modpack.Version,
+        includeClientExtras: Boolean,
     ): Result<String> = runCatching {
         ClientTaskManager.submit(
-            task = version.startInstallTask2(pack.mcVer, pack.modloader, pack.name),
+            task = version.startInstallTask2(
+                mcVersion = pack.mcVer,
+                modLoader = pack.modloader,
+                modpackName = pack.name,
+                includeClientExtras = includeClientExtras,
+            ),
             dedupeKey = modpackInstallTaskKey(version.modpackId, version.name),
         )
     }
@@ -308,7 +318,7 @@ class ModpackInfoViewModel(
         }
     }
 
-    fun installVersion(versionName: String) {
+    fun installVersion(versionName: String, includeClientExtras: Boolean = false) {
         val state = _uiState.value
         val pack = state.pack
         val version = pack?.versions?.firstOrNull { it.name == versionName }
@@ -326,7 +336,7 @@ class ModpackInfoViewModel(
         }
         viewModelScope.launch {
             try {
-                val runId = gateway.queueInstall(pack, version).getOrThrow()
+                val runId = gateway.queueInstall(pack, version, includeClientExtras).getOrThrow()
                 eventChannel.send(ModpackInfoEvent.InstallQueued(runId))
             } catch (cancel: CancellationException) {
                 throw cancel

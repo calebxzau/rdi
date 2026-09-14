@@ -2,6 +2,12 @@ package calebxzhou.rdi.client.service.content
 
 import calebxzau.rdi.common.logging.Loggers
 import calebxzhou.rdi.common.model.Mod
+import calebxzau.rdi.common.model.Content
+import calebxzau.rdi.common.model.ContentType
+import calebxzau.rdi.common.model.ContentSide
+import calebxzau.rdi.common.model.validateClientExtra
+import calebxzau.rdi.common.model.normalizeClientExtraPath
+import calebxzau.rdi.common.model.validateAndMergeClientExtras
 import calebxzhou.rdi.common.model.Task2
 import calebxzhou.rdi.common.model.Task2Progress
 import calebxzhou.rdi.common.model.CurseForgeFile
@@ -307,6 +313,43 @@ open class ClientContentStore(
         throw cancel
     } catch (error: Throwable) {
         lgr.error(error) { "客户端内容落盘失败" }
+        Result.failure(error)
+    }
+
+    suspend fun materializeClientExtras(
+        extras: List<Content>,
+        targetRoot: Path,
+        onProgress: (Task2Progress) -> Unit = {},
+    ): Result<List<Path>> = try {
+        val normalizedExtras = extras.validateAndMergeClientExtras()
+            .filter { it.side != ContentSide.Server }
+        val normalizedRequests = validateRequests(
+            normalizedExtras.map { it.toClientContentRequest(it.targetRelativePath) }
+        )
+        val normalizedRoot = prepareTargetRoot(targetRoot)
+        val targetByRequest = normalizedRequests.associateWith { request ->
+            resolveTarget(normalizedRoot, request.relativePath)
+        }
+        val localWinners = normalizedRequests.associateWith { request ->
+            val target = targetByRequest.getValue(request)
+            if (!Files.exists(target, LinkOption.NOFOLLOW_LINKS)) return@associateWith null
+            require(!Files.isSymbolicLink(target) && Files.isRegularFile(target, LinkOption.NOFOLLOW_LINKS)) {
+                "客户端额外内容目标不是安全的普通文件: ${request.relativePath}"
+            }
+            target
+        }
+        val missing = normalizedRequests.filter { localWinners.getValue(it) == null }
+        val materializedMissing: Map<ContentRequest, Path> = if (missing.isEmpty()) emptyMap() else {
+            val paths = materialize(missing, normalizedRoot, onProgress).getOrThrow()
+            missing.zip(paths).toMap()
+        }
+        Result.success(normalizedRequests.map { request ->
+            localWinners.getValue(request) ?: materializedMissing.getValue(request)
+        })
+    } catch (cancel: CancellationException) {
+        throw cancel
+    } catch (error: Throwable) {
+        lgr.error(error) { "客户端额外内容安装失败" }
         Result.failure(error)
     }
 
@@ -1103,6 +1146,48 @@ fun Mod.toClientContentRequest(
     displayName = slug,
     curseForgeMod = takeIf { platform.equals("cf", ignoreCase = true) }
 )
+
+/** Builds the shared cache request for a published client-side resource or shader pack. */
+fun Content.toClientContentRequest(
+    targetRelativePath: String = this.targetRelativePath,
+    size: Long? = null,
+): ContentRequest {
+    val validated = copy(path = targetRelativePath).validateClientExtra()
+    val normalizedPath = normalizeClientExtraPath(validated.targetRelativePath)
+    val digest = when (platform.name.lowercase()) {
+        "curseforge" -> ContentDigest(ContentDigestAlgorithm.MURMUR2, hash)
+        "modrinth" -> ContentDigest(ContentDigestAlgorithm.SHA1, hash)
+        "github" -> if (ModService.githubUsesSha1(hash)) {
+            ContentDigest(ContentDigestAlgorithm.SHA1, hash)
+        } else {
+            ContentDigest(ContentDigestAlgorithm.SHA256, hash)
+        }
+        else -> ContentDigest(ContentDigestAlgorithm.SHA1, hash)
+    }
+    val urls = validated.downloadUrls
+    val fallbackMod = Mod(
+        platform = when (platform.name.lowercase()) {
+            "curseforge" -> "cf"
+            "modrinth" -> "mr"
+            else -> "github"
+        },
+        projectId = projectId,
+        slug = slug,
+        fileId = fileId,
+        hash = hash,
+        downloadUrls = urls,
+    )
+    return ContentRequest(
+        id = "${platform}:${projectId}:${fileId}:${hash}:$normalizedPath",
+        relativePath = normalizedPath,
+        size = size,
+        digests = listOf(digest),
+        sources = if (urls.isNotEmpty()) urls.map { url ->
+            ContentSource(url = url, headers = if (platform.name.equals("CurseForge", true)) CurseForgeService.downloadHeadersFor(url) else emptyMap(), name = "${platform.name}:${slug}")
+        } else listOf(ContentSource(downloader = { target, onProgress -> ModService.downloadModToPath(fallbackMod, target, onProgress) }, name = "${platform.name}:${slug}")),
+        displayName = slug,
+    )
+}
 
 fun List<Mod>.toClientContentRequests(
     targetRelativePath: (Mod) -> String = { it.fileName },

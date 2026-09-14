@@ -1,6 +1,13 @@
 package calebxzau.rdi.server.service.baseworld
 
 import calebxzhou.rdi.common.model.Host
+import calebxzhou.rdi.common.model.ModLoader
+import calebxzhou.rdi.common.model.Modpack
+import calebxzhou.rdi.common.model.McVersion
+import calebxzau.rdi.common.model.Content
+import calebxzau.rdi.common.model.ContentPlatform
+import calebxzau.rdi.common.model.ContentSide
+import calebxzau.rdi.common.model.ContentType
 import calebxzhou.rdi.model.Role
 import calebxzhou.rdi.common.serdesJson
 import calebxzau.rdi.server.infra.productionMongoCodecRegistry
@@ -18,6 +25,57 @@ import kotlin.test.assertEquals
 import kotlin.test.assertNull
 
 class MongoCodecsTest {
+    @Test
+    fun `production Mongo codecs preserve version client extras and missing field defaults`() {
+        val pack = Modpack(
+            _id = ObjectId("00112233445566778899aabb"),
+            name = "Extras codec",
+            authorId = ObjectId("aabbccddeeff001122334455"),
+            modloader = ModLoader.neoforge,
+            mcVer = McVersion.V211,
+            versions = arrayListOf(
+                Modpack.Version(
+                    time = 1L,
+                    modpackId = ObjectId("00112233445566778899aabb"),
+                    name = "1.0",
+                    changelog = "test",
+                    status = Modpack.Status.WAIT,
+                    clientExtras = arrayListOf(
+                        Content(
+                            platform = ContentPlatform.Modrinth,
+                            type = ContentType.ResPack,
+                            projectId = "p",
+                            fileId = "f",
+                            slug = "pack",
+                            hash = "a".repeat(40),
+                            path = "resourcepacks/pack.zip",
+                            side = ContentSide.Client,
+                        )
+                    ),
+                )
+            ),
+        )
+        val codec = productionMongoCodecRegistry().get(Modpack::class.java)
+        val encoded = BsonDocument().also { document ->
+            codec.encode(BsonDocumentWriter(document), pack, EncoderContext.builder().isEncodingCollectibleDocument(true).build())
+        }
+        assertEquals(1, encoded["versions"]!!.asArray().single().asDocument()["clientExtras"]!!.asArray().size)
+        val decoded = codec.decode(BsonDocumentReader(encoded), DecoderContext.builder().build())
+        assertEquals(pack._id, decoded._id)
+        assertEquals(pack.versions.single().clientExtras, decoded.versions.single().clientExtras)
+        assertEquals(pack.versions.single().modpackId, decoded.versions.single().modpackId)
+        val missing = BsonDocument().apply {
+            putAll(encoded)
+            put("versions", encoded["versions"]!!.asArray().map { value ->
+                BsonDocument().apply {
+                    putAll(value.asDocument())
+                    remove("clientExtras")
+                }
+            }.let { org.bson.BsonArray(it) })
+        }
+        assertEquals(emptyList(), codec.decode(BsonDocumentReader(missing), DecoderContext.builder().build()).versions.single().clientExtras)
+    }
+
     @Test
     fun `production Mongo codecs preserve UUID BSON and ObjectId fields`() {
         val baseWorldId = UUID.fromString("018f0c44-2d1f-7abc-8def-1234567890ab")

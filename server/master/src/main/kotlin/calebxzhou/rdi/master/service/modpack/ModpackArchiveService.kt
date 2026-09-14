@@ -5,6 +5,7 @@ import calebxzau.rdi.common.logging.Loggers
 import calebxzhou.rdi.common.DL_MOD_DIR
 import calebxzhou.rdi.common.exception.RequestError
 import calebxzhou.rdi.common.model.*
+import calebxzau.rdi.common.model.ContentType
 import calebxzhou.rdi.common.service.ModService.modId
 import calebxzhou.rdi.common.service.ModService.readNeoForgeConfig
 import calebxzhou.rdi.master.service.*
@@ -152,14 +153,36 @@ object ModpackArchiveService {
         if (version.clientZip.exists()) version.clientZip.delete()
 
         var entriesCopied = 0
+        val retainedShaderConfigs = version.clientExtras
+            .filter { it.type == ContentType.ShaderPack }
+            .map { "${it.targetRelativePath}.txt".lowercase() }
+            .toSet()
+        val overrideClientExtraPaths = mutableSetOf<String>()
+        forEachArchiveEntry(sourceArchive) { entry ->
+            val overridePath = extractOverridesRelativePath(entry.path)?.lowercase() ?: return@forEachArchiveEntry
+            if (overridePath.startsWith("resourcepacks/") || overridePath.startsWith("shaderpacks/")) {
+                overrideClientExtraPaths += overridePath
+            }
+        }
 
         TarZstArchiveWriter(clientArchive).use { output ->
             val addedDirs = mutableSetOf<String>()
             forEachArchiveEntry(sourceArchive) { entry ->
                 val relative = extractClientPackRelativePath(entry.path) ?: return@forEachArchiveEntry
                 val relativeLower = relative.lowercase()
+                if ((relativeLower.startsWith("resourcepacks/") || relativeLower.startsWith("shaderpacks/")) &&
+                    !entry.path.replace('\\', '/').trim('/').lowercase().startsWith("overrides/") &&
+                    relativeLower in overrideClientExtraPaths
+                ) return@forEachArchiveEntry
                 if (disallowedClientPaths.any { relativeLower.startsWith(it) }) {
-                    return@forEachArchiveEntry
+                    // The upload processor has already removed every shader
+                    // archive and directory.  A surviving .zip.txt is the
+                    // companion of a shader that was matched and retained;
+                    // preserving it keeps shader options usable without
+                    // reintroducing an unmatched shader binary.
+                    if (!relativeLower.endsWith(".zip.txt") || relativeLower !in retainedShaderConfigs) {
+                        return@forEachArchiveEntry
+                    }
                 }
                 if (relativeLower.endsWith(".mca")) {
                     return@forEachArchiveEntry
@@ -310,7 +333,9 @@ object ModpackArchiveService {
         val normalized = entryName.replace('\\', '/').trim('/')
         if (normalized.isEmpty()) return null
         return normalized.takeIf {
-            it.equals("gtnh", ignoreCase = true) || it.startsWith("gtnh/", ignoreCase = true)
+            it.equals("gtnh", ignoreCase = true) || it.startsWith("gtnh/", ignoreCase = true) ||
+                it.equals("resourcepacks", ignoreCase = true) || it.startsWith("resourcepacks/", ignoreCase = true) ||
+                it.equals("shaderpacks", ignoreCase = true) || it.startsWith("shaderpacks/", ignoreCase = true)
         }
     }
 

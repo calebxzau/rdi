@@ -3,6 +3,10 @@ package calebxzau.rdi.modpacktest
 import calebxzhou.rdi.common.model.McVersion
 import calebxzhou.rdi.common.model.Mod
 import calebxzhou.rdi.common.model.ModLoader
+import calebxzau.rdi.common.model.Content
+import calebxzau.rdi.common.model.ContentPlatform
+import calebxzau.rdi.common.model.ContentSide
+import calebxzau.rdi.common.model.ContentType
 import calebxzhou.rdi.common.util.sha1
 import calebxzau.rdi.client.packproc.LoadedLocalModpack
 import calebxzau.rdi.client.packproc.LocalModpackSourceType
@@ -19,6 +23,79 @@ import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class ModpackTestSessionTest {
+    @Test
+    fun `client session resolves extras to instance root after preparing client content`() = runBlocking {
+        val fixture = TestFixture(clientLine = CLIENT_TEST_SUCCESS_MARKER)
+        val extra = fixture.extra("resourcepacks/test.zip", ContentType.ResPack)
+        val bytes = "test-pack".encodeToByteArray()
+        var calls = 0
+        val resolver = ModpackTestClientExtraResolver { extras, target ->
+            calls++
+            assertEquals(listOf(extra), extras)
+            Files.createDirectories(target.toPath().resolve("resourcepacks"))
+            Files.write(target.toPath().resolve("resourcepacks/test.zip"), bytes)
+            Result.success(Unit)
+        }
+        val session = fixture.session(ModpackTestTarget.CLIENT, clientExtras = listOf(extra), extraResolver = resolver)
+        try {
+            session.start(emptyList()).getOrThrow()
+            awaitStatus(session, ModpackTestStatus.PASSED)
+            assertEquals(1, calls)
+            assertContentEquals(bytes, checkNotNull(fixture.launcher.clientVersionDir).resolve("resourcepacks/test.zip").readBytes())
+        } finally {
+            session.close()
+            fixture.close()
+        }
+    }
+
+    @Test
+    fun `client session fails when extra resolver fails or is missing`() = runBlocking {
+        val extra = Content(ContentPlatform.Modrinth, ContentType.ShaderPack, "p", "f", "s", "a".repeat(40), "shaderpacks/s.zip", ContentSide.Client)
+        val fixture = TestFixture()
+        val failed = fixture.session(
+            ModpackTestTarget.CLIENT,
+            clientExtras = listOf(extra),
+            extraResolver = ModpackTestClientExtraResolver { _, _ -> Result.failure(IllegalStateException("resolver failed")) },
+        )
+        try {
+            failed.start(emptyList()).getOrThrow()
+            assertTrue(awaitStatus(failed, ModpackTestStatus.FAILED).errorMessage.orEmpty().contains("resolver failed"))
+            assertEquals(0, fixture.launcher.clientLaunchCount)
+        } finally {
+            failed.close()
+        }
+        val missing = fixture.session(ModpackTestTarget.CLIENT, clientExtras = listOf(extra))
+        try {
+            missing.start(emptyList()).getOrThrow()
+            assertTrue(awaitStatus(missing, ModpackTestStatus.FAILED).errorMessage.orEmpty().contains("缺少资源包和光影包解析器"))
+            assertEquals(0, fixture.launcher.clientLaunchCount)
+        } finally {
+            missing.close()
+            fixture.close()
+        }
+    }
+
+    @Test
+    fun `server session never invokes client extra resolver`() = runBlocking {
+        val fixture = TestFixture(serverLine = "Done (1.0s)! For help")
+        val extra = fixture.extra("shaderpacks/client.zip", ContentType.ShaderPack)
+        var calls = 0
+        val session = fixture.session(
+            ModpackTestTarget.SERVER,
+            clientExtras = listOf(extra),
+            extraResolver = ModpackTestClientExtraResolver { _, _ -> calls++; Result.success(Unit) },
+        )
+        try {
+            session.start(emptyList()).getOrThrow()
+            awaitStatus(session, ModpackTestStatus.PASSED)
+            assertEquals(0, calls)
+            assertFalse(checkNotNull(fixture.launcher.serverWorkDir).resolve("shaderpacks/client.zip").exists())
+        } finally {
+            session.close()
+            fixture.close()
+        }
+    }
+
     @Test
     fun `server success line marks session passed`() = runBlocking {
         val fixture = TestFixture(serverLine = "Done (3.25s)! For help")
@@ -175,7 +252,12 @@ private class TestFixture(
         launcher = launcher,
     )
 
-    fun session(target: ModpackTestTarget, mods: List<Mod> = emptyList()): ModpackTestSession = ModpackTestSession(
+    fun session(
+        target: ModpackTestTarget,
+        mods: List<Mod> = emptyList(),
+        clientExtras: List<Content> = emptyList(),
+        extraResolver: ModpackTestClientExtraResolver? = null,
+    ): ModpackTestSession = ModpackTestSession(
         loadedModpack = LoadedLocalModpack(
             sourceType = LocalModpackSourceType.CURSEFORGE,
             sourceDir = sourceDir,
@@ -184,6 +266,7 @@ private class TestFixture(
             mcVersion = McVersion.V201,
             modloader = ModLoader.forge,
             mods = mods,
+            clientExtras = clientExtras,
         ),
         target = target,
         environment = environment,
@@ -196,6 +279,18 @@ private class TestFixture(
             }
             Result.success(sourceDir)
         },
+        clientExtraResolver = extraResolver,
+    )
+
+    fun extra(path: String, type: ContentType): Content = Content(
+        platform = ContentPlatform.Modrinth,
+        type = type,
+        projectId = "extra",
+        fileId = "file",
+        slug = "extra",
+        hash = "a".repeat(40),
+        path = path,
+        side = ContentSide.Client,
     )
 
     fun mod(
@@ -243,6 +338,8 @@ private class FakeModpackTestLauncher(
         private set
     var serverLaunchCount = 0
         private set
+    var clientLaunchCount = 0
+        private set
 
     override suspend fun prepareClientLoader(
         mcVersion: McVersion,
@@ -263,6 +360,7 @@ private class FakeModpackTestLauncher(
         versionDir: File,
         onLine: (String) -> Unit,
     ): Result<ModpackTestProcess> {
+        clientLaunchCount++
         clientVersionDir = versionDir
         clientLine?.let(onLine)
         return Result.success(FakeModpackTestProcess())

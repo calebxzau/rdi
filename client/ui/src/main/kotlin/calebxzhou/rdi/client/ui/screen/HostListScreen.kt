@@ -214,12 +214,17 @@ fun HostListScreen(
                     installConfirmTask != null -> {
                         val install = installConfirmTask!!
                         ModpackDownloadMethodDialog(
-                            packName = install.task.title,
+                            packName = install.title,
                             packVer = "",
                             onDismiss = { installConfirmTask = null },
-                            onDirectDownload = {
+                            onDirectDownload = { includeClientExtras ->
                                 installConfirmTask = null
-                                onOpenTaskList(ClientTaskManager.submit(install.task, install.dedupeKey))
+                                onOpenTaskList(
+                                    ClientTaskManager.submit(
+                                        install.createTask(includeClientExtras),
+                                        install.dedupeKey,
+                                    )
+                                )
                             },
                             onOpenTaskList = onOpenTaskList,
                             onImportError = viewModel::showError,

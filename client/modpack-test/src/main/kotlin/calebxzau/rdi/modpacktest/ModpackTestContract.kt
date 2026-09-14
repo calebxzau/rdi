@@ -3,6 +3,7 @@ package calebxzau.rdi.modpacktest
 import calebxzhou.rdi.common.model.McVersion
 import calebxzhou.rdi.common.model.Mod
 import calebxzhou.rdi.common.model.ModLoader
+import calebxzau.rdi.common.model.Content
 import java.io.File
 
 enum class ModpackTestTarget {
@@ -33,6 +34,10 @@ data class ModpackTestPaths(
 /** Resolves the selected mods into files owned by the current test directory. */
 fun interface ModpackTestModSourceResolver {
     suspend fun resolve(mods: List<Mod>, testDir: File): Result<File>
+}
+
+fun interface ModpackTestClientExtraResolver {
+    suspend fun resolve(extras: List<Content>, testDir: File): Result<Unit>
 }
 
 class ModpackTestEnvironment(

@@ -23,6 +23,7 @@ import calebxzhou.rdi.client.service.isUploadClientContentAvailable
 import calebxzhou.rdi.client.service.mcInstall
 import calebxzhou.rdi.client.service.modpackTestEnvironment
 import calebxzhou.rdi.client.service.modpackTestModSourceResolver
+import calebxzhou.rdi.client.service.modpackTestClientExtraResolver
 import calebxzhou.rdi.client.service.createUploadModpackTask2
 import calebxzhou.rdi.client.service.hydrateToUiMods
 import calebxzhou.rdi.client.service.hydrateToUiModsInBatches
@@ -33,6 +34,7 @@ import calebxzau.rdi.client.service.ClientContentStores
 import calebxzhou.rdi.client.service.content.ContentDigestAlgorithm
 import calebxzhou.rdi.client.service.content.ContentRequest
 import calebxzhou.rdi.client.service.content.commitEmbeddedModSources
+import calebxzhou.rdi.client.service.content.commitEmbeddedClientExtraSources
 import calebxzhou.rdi.client.service.content.toClientContentRequest
 import calebxzhou.rdi.client.ui.comp.ConsoleState
 import calebxzhou.rdi.common.DEBUG
@@ -349,6 +351,7 @@ class RdiModpackUploadGateway(
             onProgress = onProgress,
         ).getOrThrow()
         commitEmbeddedModSources(pack.embeddedModSources).getOrThrow()
+        commitEmbeddedClientExtraSources(pack.embeddedClientExtraSources).getOrThrow()
         val initialUiMods = defaultCurseForgeUnknownMods(pack.mods.toUiMods())
         val processedUiMods = processUiMods(initialUiMods).getOrThrow()
         PreparedClientPack(
@@ -1089,6 +1092,7 @@ class ModpackUploadViewModel(
             target = ModpackTestTarget.CLIENT,
             environment = modpackTestEnvironment,
             modSourceResolver = modpackTestModSourceResolver,
+            clientExtraResolver = modpackTestClientExtraResolver,
         )
         serverTester = ModpackTestSession(
             loadedModpack = testPack,

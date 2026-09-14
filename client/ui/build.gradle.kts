@@ -317,6 +317,7 @@ val modpackUploadTest by sourceSets.creating {
     kotlin.srcDir("src/test/kotlin")
     kotlin.include("calebxzau/rdi/client/service/ModpackChunkedUploaderTest.kt")
     kotlin.include("calebxzau/rdi/client/service/ModpackUploadApiTest.kt")
+    kotlin.include("calebxzau/rdi/client/service/ModpackClientExtrasInstallTest.kt")
     kotlin.include("calebxzau/rdi/client/ui/viewmodel/ModpackUploadViewModelTest.kt")
     compileClasspath += sourceSets.main.get().output + configurations.testRuntimeClasspath.get()
     runtimeClasspath += output + compileClasspath

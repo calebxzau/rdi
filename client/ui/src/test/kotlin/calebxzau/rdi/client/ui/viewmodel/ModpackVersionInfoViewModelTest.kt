@@ -32,7 +32,7 @@ class ModpackVersionInfoViewModelTest {
 
     @Test
     fun `empty version exposes an empty completed mod list`() = runBlocking {
-        val gateway = FakeGateway(testPack(listOf(version("1.0"))))
+        val gateway = FakeGateway(testPack(listOf(version("1.0").copy(mods = mutableListOf()))))
         val viewModel = ModpackVersionInfoViewModel(noCallCatalog(), gateway, MODPACK_ID, "1.0")
 
         val state = viewModel.uiState.filter { !it.loading && !it.uiModsLoading }.first()
@@ -148,7 +148,11 @@ class ModpackVersionInfoViewModelTest {
         override suspend fun isVersionInstalled(pack: Modpack.DetailVo, version: Modpack.Version): Result<Boolean> =
             Result.success(installed)
 
-        override fun queueInstall(pack: Modpack.DetailVo, version: Modpack.Version): Result<String> {
+        override fun queueInstall(
+            pack: Modpack.DetailVo,
+            version: Modpack.Version,
+            includeClientExtras: Boolean,
+        ): Result<String> {
             queuedVersion = version
             return Result.success(runId)
         }

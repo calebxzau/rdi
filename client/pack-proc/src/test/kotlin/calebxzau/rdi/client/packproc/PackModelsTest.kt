@@ -7,6 +7,16 @@ import calebxzhou.rdi.common.archive.forEachArchiveEntry
 import calebxzhou.rdi.common.model.McVersion
 import calebxzhou.rdi.common.model.Mod
 import calebxzhou.rdi.common.model.ModLoader
+import calebxzau.rdi.common.model.Content
+import calebxzhou.rdi.common.model.LoadProgress
+import kotlin.test.assertFailsWith
+import calebxzau.rdi.common.model.ContentPlatform
+import calebxzau.rdi.common.model.ContentSide
+import calebxzau.rdi.common.model.ContentType
+import calebxzhou.rdi.common.model.CurseForgeFile
+import calebxzhou.rdi.common.model.CurseForgeFileHash
+import calebxzhou.rdi.common.model.CurseForgeModInfo
+import calebxzhou.rdi.common.service.murmur2
 import calebxzhou.rdi.common.util.sha1
 import kotlinx.coroutines.runBlocking
 import java.io.ByteArrayInputStream
@@ -19,6 +29,7 @@ import java.util.zip.ZipEntry
 import java.util.zip.ZipInputStream
 import java.util.zip.ZipOutputStream
 import java.io.File
+import java.io.RandomAccessFile
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
@@ -190,7 +201,10 @@ class PackModelsTest {
                     ),
                 )
             )
-            val loaded = ModpackProcessor(PackProcessingPaths(root.resolve("work")))
+            val loaded = ModpackProcessor(
+                paths = PackProcessingPaths(root.resolve("work")),
+                embeddedClientExtraMatcher = { _, _ -> emptyList() },
+            )
                 .loadLocalModpack(noCallModCatalog(), archive, onProgress = {})
                 .getOrThrow()
             assertTrue(loaded.containsExcludedMcaFiles)
@@ -225,7 +239,10 @@ class PackModelsTest {
                 )
             )
 
-            val loaded = ModpackProcessor(PackProcessingPaths(root.resolve("work")))
+            val loaded = ModpackProcessor(
+                paths = PackProcessingPaths(root.resolve("work")),
+                embeddedClientExtraMatcher = { _, _ -> emptyList() },
+            )
                 .loadLocalModpack(noCallModCatalog(), archive, onProgress = {})
                 .getOrThrow()
 
@@ -379,6 +396,452 @@ class PackModelsTest {
             assertFalse(archiveFiles.containsKey("server/renamed.txt"))
             assertFalse(archiveFiles.containsKey("server/renamed.DISABLED"))
             assertContentEquals(byteArrayOf(3), archiveFiles["server/kept.txt"])
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `matched client extras are excluded while matched shader companion survives`() = runBlocking {
+        val root = Files.createTempDirectory("pack-proc-client-extras").toFile()
+        try {
+            val matchedResource = root.resolve("resourcepacks/matched.zip")
+            writeZip(matchedResource, mapOf("assets/kept.txt" to byteArrayOf(1)))
+            val matchedShader = root.resolve("shaderpacks/matched.zip")
+            writeZip(matchedShader, mapOf("shader.properties" to byteArrayOf(2)))
+            root.resolve("shaderpacks/matched.zip.txt").writeText("profile=high")
+            writeZip(root.resolve("shaderpacks/unmatched.zip"), mapOf("shader.properties" to byteArrayOf(3)))
+            root.resolve("shaderpacks/unmatched.zip.txt").writeText("drop=true")
+
+            val resourceContent = Content(
+                platform = ContentPlatform.Modrinth,
+                type = ContentType.ResPack,
+                projectId = "resource-project",
+                fileId = "resource-file",
+                slug = "matched-resource",
+                hash = matchedResource.sha1,
+                path = "resourcepacks/matched.zip",
+                side = ContentSide.Client,
+            )
+            val shaderContent = Content(
+                platform = ContentPlatform.Modrinth,
+                type = ContentType.ShaderPack,
+                projectId = "shader-project",
+                fileId = "shader-file",
+                slug = "matched-shader",
+                hash = matchedShader.sha1,
+                path = "shaderpacks/matched.zip",
+                side = ContentSide.Client,
+            )
+            val resourceStaging = root.resolve("staged/matched-resource.zip").also { it.parentFile.mkdirs() }
+            val shaderStaging = root.resolve("staged/matched-shader.zip")
+            matchedResource.copyTo(resourceStaging, overwrite = true)
+            matchedShader.copyTo(shaderStaging, overwrite = true)
+            val archive = ModpackProcessor(PackProcessingPaths(root.resolve("work"))).buildUploadArchive(
+                rootDir = root,
+                baseName = "client-extras",
+                clientExtras = listOf(resourceContent, shaderContent),
+                excludedClientExtras = listOf(
+                    EmbeddedClientExtraSource(resourceContent, resourceStaging, "resourcepacks/matched.zip", matchedResource.sha1),
+                    EmbeddedClientExtraSource(shaderContent, shaderStaging, "shaderpacks/matched.zip", matchedShader.sha1),
+                ),
+            )
+            val entries = mutableMapOf<String, ByteArray>()
+            forEachArchiveEntry(archive) { entry ->
+                if (!entry.isDirectory) entries[entry.path] = entry.bytes!!
+            }
+            assertFalse(entries.containsKey("resourcepacks/matched.zip"))
+            assertFalse(entries.containsKey("shaderpacks/matched.zip"))
+            assertTrue(entries.containsKey("shaderpacks/matched.zip.txt"))
+            assertFalse(entries.containsKey("shaderpacks/unmatched.zip"))
+            assertFalse(entries.containsKey("shaderpacks/unmatched.zip.txt"))
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `matched client extra source mutation fails before archive exclusion`() = runBlocking {
+        val root = Files.createTempDirectory("pack-proc-client-extra-mutation").toFile()
+        try {
+            val source = root.resolve("resourcepacks/mutable.zip")
+            writeZip(source, mapOf("assets/original.txt" to byteArrayOf(1)))
+            val content = Content(
+                platform = ContentPlatform.Modrinth,
+                type = ContentType.ResPack,
+                projectId = "project",
+                fileId = "file",
+                slug = "mutable",
+                hash = source.sha1,
+                path = "resourcepacks/mutable.zip",
+                side = ContentSide.Client,
+            )
+            source.appendBytes(byteArrayOf(9))
+            val error = runCatching {
+                ModpackProcessor(PackProcessingPaths(root.resolve("work"))).buildUploadArchive(
+                    rootDir = root,
+                    baseName = "mutation",
+                    excludedClientExtras = listOf(
+                        EmbeddedClientExtraSource(content, source, "resourcepacks/mutable.zip", content.hash),
+                    ),
+                )
+            }.exceptionOrNull()
+            assertTrue(error != null)
+            assertTrue(error.message.orEmpty().contains("发生变化"))
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `unmatched resourcepack size uses strict five mebibyte boundary as one pack`() = runBlocking {
+        val root = Files.createTempDirectory("pack-proc-resourcepack-boundary").toFile()
+        try {
+            val exact = root.resolve("resourcepacks/exact/assets/first.bin")
+                .also { it.parentFile.mkdirs() }
+            RandomAccessFile(exact, "rw").use { it.setLength(5L * 1024L * 1024L) }
+            val oversizedFirst = root.resolve("overrides/resourcepacks/oversized/assets/first.bin")
+                .also { it.parentFile.mkdirs() }
+            val oversizedSecond = root.resolve("overrides/resourcepacks/oversized/assets/second.bin")
+            RandomAccessFile(oversizedFirst, "rw").use { it.setLength(2L * 1024L * 1024L) }
+            RandomAccessFile(oversizedSecond, "rw").use { it.setLength(3L * 1024L * 1024L + 1L) }
+            val exactZip = root.resolve("resourcepacks/exact.zip")
+            writeStoredZipOfSize(exactZip, 5L * 1024L * 1024L)
+            val oversizedZip = root.resolve("overrides/resourcepacks/oversized.zip")
+            writeStoredZipOfSize(oversizedZip, 5L * 1024L * 1024L + 1L)
+            root.resolve("shaderpacks/unmatched/assets/shader.properties")
+                .also { it.parentFile.mkdirs() }
+                .writeText("drop")
+
+            val archive = ModpackProcessor(PackProcessingPaths(root.resolve("work")))
+                .buildUploadArchive(root, "resourcepack-boundary")
+            val entries = mutableSetOf<String>()
+            forEachArchiveEntry(archive) { entry -> if (!entry.isDirectory) entries += entry.path }
+            assertTrue("resourcepacks/exact/assets/first.bin" in entries)
+            assertFalse(entries.any { it.startsWith("overrides/resourcepacks/oversized/") })
+            assertTrue("resourcepacks/exact.zip" in entries)
+            assertFalse("overrides/resourcepacks/oversized.zip" in entries)
+            assertFalse(entries.any { it.startsWith("shaderpacks/") })
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `resourcepack size policy covers reverse roots and whole unpacked packs`() = runBlocking {
+        val root = Files.createTempDirectory("pack-proc-resourcepack-reverse-boundary").toFile()
+        try {
+            val overrideExactZip = root.resolve("overrides/resourcepacks/override-exact.zip")
+            writeStoredZipOfSize(overrideExactZip, 5L * 1024L * 1024L)
+            val directOverZip = root.resolve("resourcepacks/direct-over.zip")
+            writeStoredZipOfSize(directOverZip, 5L * 1024L * 1024L + 1L)
+            val directUnderZip = root.resolve("resourcepacks/direct-under.zip")
+            writeStoredZipOfSize(directUnderZip, 5L * 1024L * 1024L - 1L)
+
+            val overrideExactFile = root.resolve("overrides/resourcepacks/override-exact-dir/assets/payload.bin")
+                .also { it.parentFile.mkdirs() }
+            RandomAccessFile(overrideExactFile, "rw").use { it.setLength(5L * 1024L * 1024L) }
+            val directOverFirst = root.resolve("resourcepacks/direct-over-dir/assets/first.bin")
+                .also { it.parentFile.mkdirs() }
+            val directOverSecond = root.resolve("resourcepacks/direct-over-dir/assets/second.bin")
+            RandomAccessFile(directOverFirst, "rw").use { it.setLength(2L * 1024L * 1024L) }
+            RandomAccessFile(directOverSecond, "rw").use { it.setLength(3L * 1024L * 1024L + 1L) }
+
+            val archive = ModpackProcessor(PackProcessingPaths(root.resolve("work")))
+                .buildUploadArchive(root, "resourcepack-reverse-boundary")
+            val entries = mutableSetOf<String>()
+            forEachArchiveEntry(archive) { if (!it.isDirectory) entries += it.path }
+            assertTrue("overrides/resourcepacks/override-exact.zip" in entries)
+            assertFalse("resourcepacks/direct-over.zip" in entries)
+            assertTrue("resourcepacks/direct-under.zip" in entries)
+            assertTrue("overrides/resourcepacks/override-exact-dir/assets/payload.bin" in entries)
+            assertFalse(entries.any { it.startsWith("resourcepacks/direct-over-dir/") })
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `shadowed direct extra archive is omitted while override source remains`() = runBlocking {
+        val root = Files.createTempDirectory("pack-proc-shadowed-client-extra").toFile()
+        try {
+            writeZip(root.resolve("resourcepacks/shared.zip"), mapOf("assets/direct.txt" to byteArrayOf(1)))
+            writeZip(root.resolve("overrides/resourcepacks/shared.zip"), mapOf("assets/override.txt" to byteArrayOf(2)))
+            root.resolve("resourcepacks/folder/assets/old.bin").also { it.parentFile.mkdirs() }
+                .writeBytes(byteArrayOf(3))
+            root.resolve("overrides/resourcepacks/folder/assets/new.bin").also { it.parentFile.mkdirs() }
+                .writeBytes(byteArrayOf(4))
+            val archive = ModpackProcessor(PackProcessingPaths(root.resolve("work")))
+                .buildUploadArchive(root, "shadowed-client-extra")
+            val entries = mutableMapOf<String, ByteArray>()
+            forEachArchiveEntry(archive) { if (!it.isDirectory) entries[it.path] = it.bytes!! }
+            assertFalse("resourcepacks/shared.zip" in entries)
+            assertTrue("overrides/resourcepacks/shared.zip" in entries)
+            assertNestedZipEntryEquals(entries.getValue("overrides/resourcepacks/shared.zip"), "assets/override.txt", byteArrayOf(2))
+            assertFalse(entries.keys.any { it.startsWith("resourcepacks/folder/") })
+            assertContentEquals(byteArrayOf(4), entries["overrides/resourcepacks/folder/assets/new.bin"])
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `local extra arbitration suppresses same path remote but keeps other and distinct placements`() {
+        val root = Files.createTempDirectory("pack-proc-extra-arbitration").toFile()
+        try {
+            writeZip(root.resolve("resourcepacks/A.zip"), mapOf("assets/local.txt" to byteArrayOf(1)))
+            root.resolve("resourcepacks/A").resolve("assets").mkdirs()
+            root.resolve("resourcepacks/A/assets/dir.txt").writeBytes(byteArrayOf(2))
+            writeZip(root.resolve("resourcepacks/B.zip"), mapOf("assets/b.txt" to byteArrayOf(3)))
+            val content = { path: String, hash: String ->
+                Content(
+                    platform = ContentPlatform.Modrinth,
+                    type = ContentType.ResPack,
+                    projectId = path,
+                    fileId = path,
+                    slug = path,
+                    hash = hash,
+                    path = path,
+                    side = ContentSide.Client,
+                )
+            }
+            val declaredA = content("resourcepacks/A.zip", "a".repeat(40))
+            val declaredOther = content("resourcepacks/other.zip", "b".repeat(40))
+            val matchedB = content("resourcepacks/B.zip", declaredA.hash)
+            val matchedZip = content("resourcepacks/A.zip", declaredA.hash)
+            val matchedDir = content("resourcepacks/A", declaredA.hash)
+            val merged = ModpackProcessor(PackProcessingPaths(root.resolve("work"))).mergeEmbeddedClientExtras(
+                sourceDir = root,
+                declared = listOf(declaredA, declaredOther),
+                matched = listOf(matchedB),
+            )
+            assertEquals(
+                setOf("resourcepacks/other.zip", "resourcepacks/B.zip"),
+                merged.map { it.targetRelativePath }.toSet(),
+            )
+            val distinct = ModpackProcessor(PackProcessingPaths(root.resolve("distinct-work"))).mergeEmbeddedClientExtras(
+                sourceDir = root.resolve("empty").also { it.mkdirs() },
+                declared = emptyList(),
+                matched = listOf(matchedZip, matchedDir),
+            )
+            assertEquals(setOf("resourcepacks/A.zip", "resourcepacks/A"), distinct.map { it.targetRelativePath }.toSet())
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `curseforge fingerprints only promote candidates with matching sha1 and preserve placement`() {
+        val root = Files.createTempDirectory("pack-proc-cf-extra-match").toFile()
+        try {
+            val local = root.resolve("local.zip").also { it.writeText("payload with whitespace") }
+            val platformBytes = root.resolve("platform.zip").also { it.writeText("payloadwithwhitespace") }
+            assertEquals(platformBytes.murmur2, local.murmur2)
+            assertTrue(platformBytes.sha1 != local.sha1)
+            val project = CurseForgeModInfo(
+                id = 17,
+                name = "Local Resource",
+                slug = "local-resource",
+                classId = 12,
+            )
+            val platformFile = CurseForgeFile(
+                id = 23,
+                modId = project.id,
+                fileName = "remote.zip",
+                downloadUrl = "https://example.invalid/remote.zip",
+                fileFingerprint = local.murmur2,
+                hashes = listOf(CurseForgeFileHash(value = platformBytes.sha1, algo = 1)),
+            )
+
+            assertTrue(mapCurseForgeExtraCandidate(local, "resourcepacks/local.zip", platformFile, project) == null)
+            val matchingFile = platformFile.copy(hashes = listOf(CurseForgeFileHash(value = local.sha1, algo = 1)))
+            val firstPlacement = mapCurseForgeExtraCandidate(local, "resourcepacks/local.zip", matchingFile, project)
+            val secondPlacement = mapCurseForgeExtraCandidate(local, "resourcepacks/copy.zip", matchingFile, project)
+            assertEquals("resourcepacks/local.zip", firstPlacement?.path)
+            assertEquals("resourcepacks/copy.zip", secondPlacement?.path)
+            assertEquals(local.murmur2.toString(), firstPlacement?.hash)
+            assertEquals(ContentPlatform.CurseForge, firstPlacement?.platform)
+            assertTrue(
+                mapCurseForgeExtraCandidate(
+                    local,
+                    "resourcepacks/local.zip",
+                    matchingFile.copy(modId = project.id + 1),
+                    project,
+                ) == null
+            )
+            assertTrue(
+                mapCurseForgeExtraCandidate(
+                    local,
+                    "resourcepacks/local.zip",
+                    matchingFile.copy(fileFingerprint = local.murmur2 + 1),
+                    project,
+                ) == null
+            )
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `captured client extra sha1 rejects mutation before staging`() {
+        val root = Files.createTempDirectory("pack-proc-client-extra-stage").toFile()
+        try {
+            val source = root.resolve("resourcepacks/captured.zip").also {
+                it.parentFile.mkdirs()
+                it.writeText("captured bytes")
+            }
+            val expectedSha1 = source.sha1
+            val content = Content(
+                platform = ContentPlatform.CurseForge,
+                type = ContentType.ResPack,
+                projectId = "project",
+                fileId = "file",
+                slug = "captured",
+                hash = "123",
+                path = "resourcepacks/captured.zip",
+                side = ContentSide.Client,
+            )
+            source.writeText("mutated bytes")
+            val staged = root.resolve("staged/captured.zip").also { it.parentFile.mkdirs() }
+            assertFailsWith<IllegalArgumentException> {
+                stageEmbeddedClientExtra(content, source, "resourcepacks/captured.zip", expectedSha1, staged)
+            }
+            assertFalse(staged.exists())
+            assertEquals("mutated bytes", source.readText())
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `matched source path is exact and never falls back across overrides`() = runBlocking {
+        val root = Files.createTempDirectory("pack-proc-client-extra-exact-path").toFile()
+        try {
+            val direct = root.resolve("resourcepacks/a.zip")
+            val override = root.resolve("overrides/resourcepacks/a.zip")
+            writeZip(direct, mapOf("assets/direct.txt" to byteArrayOf(1)))
+            writeZip(override, mapOf("assets/override.txt" to byteArrayOf(2)))
+            val content = Content(
+                platform = ContentPlatform.Modrinth,
+                type = ContentType.ResPack,
+                projectId = "project",
+                fileId = "file",
+                slug = "a",
+                hash = direct.sha1,
+                path = "resourcepacks/a.zip",
+                side = ContentSide.Client,
+            )
+            val missingOverride = root.resolve("staged/a.zip").also { it.parentFile.mkdirs() }
+            direct.copyTo(missingOverride, overwrite = true)
+            val work = root.resolve("missing-work")
+            val missingError = runCatching {
+                ModpackProcessor(PackProcessingPaths(work)).buildUploadArchive(
+                    rootDir = root,
+                    baseName = "missing-override",
+                    excludedClientExtras = listOf(
+                        EmbeddedClientExtraSource(
+                            content,
+                            missingOverride,
+                            "overrides/resourcepacks/a.zip",
+                            direct.sha1,
+                        )
+                    ),
+                )
+            }.exceptionOrNull()
+            assertTrue(missingError != null)
+            assertTrue(work.listFiles().orEmpty().none { it.extension == "zst" })
+
+            val archive = ModpackProcessor(PackProcessingPaths(root.resolve("valid-work"))).buildUploadArchive(
+                rootDir = root,
+                baseName = "exact-direct",
+                excludedClientExtras = listOf(
+                    EmbeddedClientExtraSource(content, direct, "resourcepacks/a.zip", direct.sha1)
+                ),
+            )
+            val entries = mutableMapOf<String, ByteArray>()
+            forEachArchiveEntry(archive) { if (!it.isDirectory) entries[it.path] = it.bytes!! }
+            assertFalse("resourcepacks/a.zip" in entries)
+            assertTrue("overrides/resourcepacks/a.zip" in entries)
+            assertNestedZipEntryEquals(entries.getValue("overrides/resourcepacks/a.zip"), "assets/override.txt", byteArrayOf(2))
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `matched source mutation after preprocessing starts removes partial archive`() = runBlocking {
+        val root = Files.createTempDirectory("pack-proc-client-extra-late-mutation").toFile()
+        try {
+            val source = root.resolve("resourcepacks/mutable.zip")
+            writeZip(source, mapOf("assets/texture.bin" to byteArrayOf(1, 2, 3)))
+            val content = Content(
+                platform = ContentPlatform.Modrinth,
+                type = ContentType.ResPack,
+                projectId = "project",
+                fileId = "file",
+                slug = "mutable",
+                hash = source.sha1,
+                path = "resourcepacks/mutable.zip",
+                side = ContentSide.Client,
+            )
+            var mutated = false
+            val work = root.resolve("work")
+            val error = runCatching {
+                ModpackProcessor(PackProcessingPaths(work)).buildUploadArchive(
+                    rootDir = root,
+                    baseName = "late-mutation",
+                    excludedClientExtras = listOf(
+                        EmbeddedClientExtraSource(content, source, "resourcepacks/mutable.zip", content.hash)
+                    ),
+                    onProgress = { progress ->
+                        if (!mutated && progress is LoadProgress.Phase && progress.text.contains("预处理")) {
+                            mutated = true
+                            source.appendBytes(byteArrayOf(9))
+                        }
+                    },
+                )
+            }.exceptionOrNull()
+            assertTrue(mutated)
+            assertTrue(error != null)
+            assertTrue(work.listFiles().orEmpty().none { it.extension == "zst" })
+            assertTrue(source.exists())
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `manifest matched shader config survives without embedded source`() = runBlocking {
+        val root = Files.createTempDirectory("pack-proc-manifest-shader-config").toFile()
+        try {
+            root.resolve("shaderpacks/manifest-shader.zip.txt")
+                .also { it.parentFile.mkdirs() }
+                .writeText("quality=high")
+            root.resolve("shaderpacks/unmatched.zip.txt").writeText("quality=low")
+            root.resolve("shaderpacks/Dual.ZIP.TXT").writeText("quality=low")
+            root.resolve("overrides/shaderpacks/dual.zip.txt").also { it.parentFile.mkdirs() }
+                .writeText("quality=high")
+            val shader = Content(
+                platform = ContentPlatform.Modrinth,
+                type = ContentType.ShaderPack,
+                projectId = "shader",
+                fileId = "shader-file",
+                slug = "manifest-shader",
+                hash = "a".repeat(40),
+                path = "shaderpacks/manifest-shader.zip",
+                side = ContentSide.Client,
+            )
+            val archive = ModpackProcessor(PackProcessingPaths(root.resolve("work"))).buildUploadArchive(
+                rootDir = root,
+                baseName = "manifest-shader-config",
+                clientExtras = listOf(shader, shader.copy(path = "shaderpacks/dual.zip")),
+            )
+            val paths = mutableSetOf<String>()
+            forEachArchiveEntry(archive) { if (!it.isDirectory) paths += it.path }
+            assertTrue("shaderpacks/manifest-shader.zip.txt" in paths)
+            assertFalse("shaderpacks/unmatched.zip.txt" in paths)
+            assertFalse(paths.any { it.equals("shaderpacks/dual.zip.txt", ignoreCase = true) })
+            assertTrue("overrides/shaderpacks/dual.zip.txt" in paths)
         } finally {
             root.deleteRecursively()
         }
@@ -607,6 +1070,29 @@ class PackModelsTest {
                 }
             }
         }
+    }
+
+    private fun writeStoredZipOfSize(file: File, targetSize: Long) {
+        val entryName = "a"
+        val payloadSize = (targetSize - 98L - 2L * entryName.length).toInt()
+        require(payloadSize >= 0)
+        val bytes = ByteArray(payloadSize)
+        val crc = java.util.zip.CRC32().apply { update(bytes) }.value
+        file.parentFile?.mkdirs()
+        file.outputStream().use { output ->
+            ZipOutputStream(output).use { zip ->
+                val entry = ZipEntry(entryName).apply {
+                    method = ZipEntry.STORED
+                    size = bytes.size.toLong()
+                    compressedSize = bytes.size.toLong()
+                    this.crc = crc
+                }
+                zip.putNextEntry(entry)
+                zip.write(bytes)
+                zip.closeEntry()
+            }
+        }
+        check(file.length() == targetSize) { "Expected stored zip size $targetSize, got ${file.length()}" }
     }
 
     private fun zipBytes(entries: Map<String, ByteArray>): ByteArray =

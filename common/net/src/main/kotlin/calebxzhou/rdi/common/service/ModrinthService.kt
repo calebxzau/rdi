@@ -1,6 +1,12 @@
 package calebxzhou.rdi.common.service
 
 import calebxzau.rdi.common.logging.Loggers
+import calebxzau.rdi.common.model.Content
+import calebxzau.rdi.common.model.ContentPlatform
+import calebxzau.rdi.common.model.ContentSide
+import calebxzau.rdi.common.model.ContentType
+import calebxzau.rdi.common.model.validateAndMergeClientExtras
+import calebxzau.rdi.common.model.validateClientExtra
 import calebxzhou.rdi.common.util.openChineseZip
 import calebxzhou.rdi.common.util.sha1
 import calebxzhou.rdi.common.exception.ModpackError
@@ -28,8 +34,14 @@ object ModrinthService {
         val index: ModrinthModpackIndex,
         val file: File,
         val mods: List<Mod>,
+        val clientExtras: List<Content> = emptyList(),
         val mcVersion: McVersion,
         val modloader: ModLoader
+    )
+
+    internal data class ManifestResolution(
+        val mods: List<Mod>,
+        val clientExtras: List<Content>,
     )
 
     suspend fun loadModpack(
@@ -87,91 +99,153 @@ object ModrinthService {
         }
         val loaderKey = index.dependencies.keys.firstOrNull { ModLoader.from(it) != null } ?: throw ModpackError("不支持的Mod加载器: 未知")
         val parsedModloader = ModLoader.from(loaderKey) ?: throw ModpackError("不支持的Mod加载器: $loaderKey")
-        val fileEntries = index.files.associateBy { it.hashes.sha1 }
-        val hashVersions = getVersionsFromHashes(fileEntries.keys.toList())
+        val supportedEntries = index.files.map { entry ->
+            entry to normalizeManifestPath(entry.path)
+        }.filter { (_, path) -> manifestContentType(path) != null }
+            .filter { (entry, path) ->
+                manifestContentType(path) == ContentType.Mod ||
+                    entry.env?.client != ModrinthModpackIndex.EnvSide.unsupported
+            }
+        val hashes = supportedEntries.map { it.first.hashes.sha1.trim().lowercase() }.distinct()
+        val hashVersions = if (hashes.isEmpty()) emptyMap() else getVersionsFromHashes(hashes)
         val projectIds = hashVersions.values.map { it.projectId }.distinct()
-        val projects = getMultipleProjects(projectIds)
-        val projectMap = projects.associateBy { it.id }
+        val projects = if (projectIds.isEmpty()) emptyMap() else getMultipleProjects(projectIds).associateBy { it.id }
 
-        val matchedMrMods = fileEntries.mapNotNull { (sha1, entry) ->
-            val version = hashVersions[sha1] ?: return@mapNotNull null
-            val project = projectMap[version.projectId]
-            val slug = project?.slug?.takeIf { it.isNotBlank() }
-                ?: entry.path.substringAfterLast('/').substringBeforeLast('.')
-                    .ifBlank { version.projectId }
-            val side = project?.toModSide() ?: Mod.Side.UNKNOWN
-            Mod(
-                platform = "mr",
-                projectId = version.projectId,
-                slug = slug,
-                fileId = version.id,
-                hash = entry.hashes.sha1,
-                side = side,
-                downloadUrls = entry.downloads
-            )
+        val unresolved = supportedEntries.filter { (entry, _) ->
+            !versionContainsSha1(hashVersions[entry.hashes.sha1.trim().lowercase()], entry.hashes.sha1)
         }
-        //有些mod mr没有 但是下载url里有cf file id 可以取出来去CF拿
-        val unmatchedEntries = fileEntries.filterKeys { it !in hashVersions.keys }
-        val cfFileIdByHash = unmatchedEntries.mapNotNull { (sha1, entry) ->
-            val fileId = entry.downloads.firstNotNullOfOrNull { parseCurseForgeFileId(it) }
-            if (fileId == null) null else sha1 to fileId
-        }.toMap()
-        val cfFiles = CurseForgeService.getModFilesInfo(cfFileIdByHash.values.distinct())
-        val cfFileMap = cfFiles.associateBy { it.id }
-        val cfModIds = cfFiles.map { it.modId }.distinct()
-        val cfModInfos = CurseForgeService.getModsInfo(cfModIds)
-        val cfModInfoMap = cfModInfos.associateBy { it.id }
-
-        // Some CF files are also on Modrinth but with different binary/hash.
-        // Resolve side info by CF slug -> MR slug mapping, then batch query MR projects.
-        val cfSlugToMrSlug = resolveModrinthSlugs(cfModInfos.map { it.slug }.toSet())
-        val mrCandidates = buildSet {
-            cfModInfos.forEach { info ->
-                cfSlugToMrSlug[info.slug]?.takeIf { it.isNotBlank() }?.let { add(it) }
-                info.slug.takeIf { it.isNotBlank() }?.let { add(it) }
+        val cfFileIds = unresolved.mapNotNull { (entry, _) ->
+            entry.downloads.firstNotNullOfOrNull(::parseCurseForgeFileId)
+        }.distinct()
+        val cfFiles = CurseForgeService.getModFilesInfo(cfFileIds).associateBy { it.id }
+        val cfProjects = CurseForgeService.getModsInfoIncludingNonMods(cfFiles.values.map { it.modId }.distinct())
+            .associateBy { it.id }
+        val cfFallback = supportedEntries.associate { (entry, path) ->
+            val sha1 = entry.hashes.sha1.trim().lowercase()
+            val value = if (versionContainsSha1(hashVersions[sha1], sha1)) null else {
+                val fileId = entry.downloads.firstNotNullOfOrNull(::parseCurseForgeFileId)
+                    ?: throw unresolvedManifestEntry(entry.path)
+                val file = cfFiles[fileId] ?: throw unresolvedManifestEntry(entry.path)
+                val actualSha1 = file.hashes.firstOrNull { it.algo == 1 }?.value?.trim()?.lowercase()
+                if (actualSha1 != sha1) throw ModpackError("客户端文件SHA-1不匹配: ${entry.path} (file ${file.id})")
+                val project = cfProjects[file.modId] ?: throw unresolvedManifestEntry(entry.path)
+                file to project
             }
-        }.toList()
-        val mrProjectBySlug = if (mrCandidates.isEmpty()) {
-            emptyMap()
-        } else {
+            (entry to path) to value
+        }
+        val cfSlugs = cfFallback.values.filterNotNull().map { it.second.slug }.toSet()
+        val cfSlugToMrSlug = resolveModrinthSlugs(cfSlugs)
+        val mrCandidates = cfFallback.values.filterNotNull().flatMap { (file, project) ->
+            listOfNotNull(cfSlugToMrSlug[project.slug], project.slug).filter { it.isNotBlank() }
+        }.distinct()
+        val mrProjectBySlug = if (mrCandidates.isEmpty()) emptyMap() else
             getMultipleProjects(mrCandidates).associateBy { it.slug.trim().lowercase() }
-        }
-
-        val matchedCfMods = cfFileIdByHash.mapNotNull { (sha1, fileId) ->
-            val entry = unmatchedEntries[sha1] ?: return@mapNotNull null
-            val cfFile = cfFileMap[fileId] ?: return@mapNotNull null
-            val modInfo = cfModInfoMap[cfFile.modId]
-            val slug = modInfo?.slug ?: let {
-                lgr.warn { "找不到cf mod信息：${cfFile.id} ${cfFile.displayName}" }
-                return@mapNotNull null
-            }
-            val mrProject = cfSlugToMrSlug[slug]
-                ?.takeIf { it.isNotBlank() }
-                ?.let { mrProjectBySlug[it.trim().lowercase()] }
-                ?: mrProjectBySlug[slug.trim().lowercase()]
-            val side = cfFile.gameVersions.toCurseForgeModSide()
-                ?: mrProject?.toModSide()
-                ?: Mod.Side.UNKNOWN
-            Mod(
-                platform = "cf",
-                projectId = modInfo.id.toString(),
-                slug = slug,
-                fileId = cfFile.id.toString(),
-                hash = cfFile.fileFingerprint.toString(),
-                side = side,
-                downloadUrls = entry.downloads
-            )
-        }
-
-        val mods = matchedMrMods + matchedCfMods
+        val resolution = resolveManifestEntries(index, hashVersions, projects, cfFallback, cfSlugToMrSlug, mrProjectBySlug)
 
         LoadedModpack(
             index = index,
             file = modpackFile,
-            mods = mods,
+            mods = resolution.mods,
+            clientExtras = resolution.clientExtras,
             mcVersion = parsedMcVersion,
             modloader = parsedModloader
         )
+    }
+
+    internal fun resolveManifestEntries(
+        index: ModrinthModpackIndex,
+        hashVersions: Map<String, ModrinthVersionInfo>,
+        projects: Map<String, ModrinthProject>,
+        cfFallback: Map<Pair<ModrinthModpackIndex.FileEntry, String>, Pair<CurseForgeFile, CurseForgeModInfo>?> = emptyMap(),
+        cfSlugToMrSlug: Map<String, String> = emptyMap(),
+        mrProjectsBySlug: Map<String, ModrinthProject> = emptyMap(),
+    ): ManifestResolution {
+        val mods = mutableListOf<Mod>()
+        val extrasByPath = linkedMapOf<String, Content>()
+        index.files.forEach { entry ->
+            val path = normalizeManifestPath(entry.path)
+            val type = manifestContentType(path) ?: return@forEach
+            if (type != ContentType.Mod && entry.env?.client == ModrinthModpackIndex.EnvSide.unsupported) return@forEach
+            val sha1 = entry.hashes.sha1.trim().lowercase()
+            val version = hashVersions[sha1]
+            val mrVersion = version?.takeIf { versionContainsSha1(it, sha1) }
+            if (mrVersion != null) {
+                val project = projects[mrVersion.projectId] ?: throw unresolvedManifestEntry(entry.path)
+                val slug = project.slug.takeIf { it.isNotBlank() } ?: throw unresolvedManifestEntry(entry.path)
+                if (type == ContentType.Mod) {
+                    mods += Mod("mr", mrVersion.projectId, slug, mrVersion.id, sha1, project.toModSide(), entry.downloads)
+                } else {
+                    appendExtra(extrasByPath, Content(ContentPlatform.Modrinth, type, mrVersion.projectId, mrVersion.id,
+                        slug, sha1, path, ContentSide.Client,
+                        entry.env?.client != ModrinthModpackIndex.EnvSide.optional, entry.downloads).validateClientExtra())
+                }
+                return@forEach
+            }
+            val fallback = cfFallback[entry to path] ?: throw unresolvedManifestEntry(entry.path)
+            val (file, project) = fallback ?: throw unresolvedManifestEntry(entry.path)
+            val fileSha1 = file.hashes.firstOrNull { it.algo == 1 }?.value?.trim()?.lowercase()
+            if (fileSha1 != sha1) throw ModpackError("客户端文件SHA-1不匹配: ${entry.path} (file ${file.id})")
+            if (type == ContentType.Mod && project.classId != 6L) throw unresolvedManifestEntry(entry.path)
+            val slug = project.slug.takeIf { it.isNotBlank() } ?: throw unresolvedManifestEntry(entry.path)
+            val side = file.gameVersions.toCurseForgeModSide()
+                ?: cfSlugToMrSlug[slug]?.let { mrProjectsBySlug[it.trim().lowercase()]?.toModSide() }
+                ?: mrProjectsBySlug[slug.trim().lowercase()]?.toModSide()
+                ?: Mod.Side.UNKNOWN
+            if (type == ContentType.Mod) {
+                mods += Mod("cf", project.id.toString(), slug, file.id.toString(), file.fileFingerprint.toString(), side, entry.downloads)
+            } else {
+                appendExtra(extrasByPath, Content(ContentPlatform.CurseForge, type, project.id.toString(), file.id.toString(), slug,
+                    file.fileFingerprint.toString(), path, ContentSide.Client,
+                    entry.env?.client != ModrinthModpackIndex.EnvSide.optional, entry.downloads).validateClientExtra())
+            }
+        }
+        return ManifestResolution(mods, extrasByPath.values.toList().validateAndMergeClientExtras())
+    }
+
+    private fun appendExtra(target: MutableMap<String, Content>, content: Content) {
+        val path = content.path ?: content.targetRelativePath
+        val key = path.lowercase()
+        val previous = target[key]
+        if (previous == null) {
+            target[key] = content
+            return
+        }
+        val sameIdentity = previous.platform == content.platform &&
+            previous.type == content.type && previous.projectId == content.projectId &&
+            previous.fileId == content.fileId && previous.hash.equals(content.hash, ignoreCase = true)
+        if (!sameIdentity) throw ModpackError("客户端资源安装路径冲突: $path")
+        target[key] = previous.copy(
+            required = previous.required || content.required,
+            downloadUrls = (previous.downloadUrls + content.downloadUrls).distinct(),
+        )
+    }
+
+    private fun unresolvedManifestEntry(path: String): ModpackError =
+        ModpackError("无法解析整合包文件: $path")
+
+    private fun versionContainsSha1(version: ModrinthVersionInfo?, sha1: String): Boolean =
+        version?.files?.any { file ->
+            file.hashes.any { (algorithm, value) ->
+                algorithm.equals("sha1", ignoreCase = true) && value.equals(sha1, ignoreCase = true)
+            }
+        } == true
+
+    internal fun normalizeManifestPath(rawPath: String): String {
+        val original = rawPath.replace('\\', '/')
+        if (original.isBlank() || original.startsWith('/') ||
+            Regex("^[A-Za-z]:").containsMatchIn(original) || ':' in original || '\u0000' in original) {
+            throw ModpackError("整合包路径必须是相对路径: $rawPath")
+        }
+        val segments = original.split('/')
+        if (segments.any { it == ".." }) throw ModpackError("整合包路径包含非法上级目录: $rawPath")
+        return segments.filter { it.isNotBlank() && it != "." }.joinToString("/")
+    }
+
+    internal fun manifestContentType(path: String): ContentType? = when {
+        path.equals("resourcepacks", ignoreCase = true) || path.startsWith("resourcepacks/", ignoreCase = true) -> ContentType.ResPack
+        path.equals("shaderpacks", ignoreCase = true) || path.startsWith("shaderpacks/", ignoreCase = true) -> ContentType.ShaderPack
+        path.equals("mods", ignoreCase = true) || path.startsWith("mods/", ignoreCase = true) -> ContentType.Mod
+        else -> null
     }
 
     private fun hasOverridesDir(rootDir: File): Boolean {

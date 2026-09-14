@@ -1,6 +1,6 @@
 [versions]
 annotations = "26.1.0"
-app = "6.2.3"
+app = "6.3.0"
 commons-compress = "1.28.0"
 knbt = "0.11.9"
 okhttp = "5.4.0"

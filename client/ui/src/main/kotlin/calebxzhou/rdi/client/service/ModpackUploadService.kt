@@ -12,6 +12,7 @@ import calebxzhou.rdi.client.service.content.toClientContentRequest
 import calebxzhou.rdi.client.service.content.toClientContentRequests
 import calebxzhou.rdi.common.exception.ModpackError
 import calebxzhou.rdi.common.model.*
+import calebxzau.rdi.common.model.Content
 import calebxzhou.rdi.common.serdesJson
 import calebxzhou.rdi.common.service.runInline
 import kotlinx.coroutines.*
@@ -62,6 +63,7 @@ suspend fun uploadModpack(
                 modpackId = updateModpackId,
                 versionName = versionName,
                 mods = mods,
+                clientExtras = payload.clientExtras,
                 uploadZip = uploadZip,
                 totalBytes = totalBytes,
                 onProgress = { progress -> onProgress(progress.message) },
@@ -76,6 +78,7 @@ suspend fun uploadModpack(
                 mcVersion = payload.mcVersion,
                 modloader = payload.modloader,
                 mods = mods,
+                clientExtras = payload.clientExtras,
                 categories = categories,
                 iconUrl = iconUrl,
                 sourceUrl = sourceUrl,
@@ -133,6 +136,7 @@ fun createUploadModpackTask2(
                     modpackId = updateModpackId,
                     versionName = versionName,
                     mods = processedMods,
+                    clientExtras = payload.clientExtras,
                     uploadZip = uploadZip,
                     totalBytes = totalBytes,
                     onProgress = ctx::emit,
@@ -151,6 +155,7 @@ fun createUploadModpackTask2(
                     mcVersion = payload.mcVersion,
                     modloader = payload.modloader,
                     mods = processedMods,
+                    clientExtras = payload.clientExtras,
                     categories = categories,
                     iconUrl = iconUrl,
                     sourceUrl = sourceUrl,
@@ -219,7 +224,8 @@ fun createUploadModpackTask2(
                 mods = processedMods,
                 clientPackFile = uploadZip,
                 modpackName = modpackName,
-                embeddedModOriginalFileNames = payload.embeddedModOriginalFileNames
+                embeddedModOriginalFileNames = payload.embeddedModOriginalFileNames,
+                clientExtras = payload.clientExtras,
             ).runInline(ctx)
         } finally {
             runCatching { uploadZip.delete() }
@@ -295,6 +301,7 @@ private suspend fun uploadNewModpack(
     mcVersion: McVersion,
     modloader: ModLoader,
     mods: List<Mod>,
+    clientExtras: List<Content> = emptyList(),
     categories: List<Modpack.Category>,
     iconUrl: String?,
     sourceUrl: String?,
@@ -318,6 +325,7 @@ private suspend fun uploadNewModpack(
         info = info?.trim()?.ifBlank { null },
         categories = Modpack.normalizeCategories(categories),
         mods = mods.toMutableList(),
+        clientExtras = clientExtras.toMutableList(),
     )
     val startTime = System.nanoTime()
     ModpackChunkedUploader(api).upload(
@@ -334,6 +342,7 @@ private suspend fun uploadNewVersion(
     modpackId: ObjectId,
     versionName: String,
     mods: List<Mod>,
+    clientExtras: List<Content> = emptyList(),
     uploadZip: File,
     totalBytes: Long,
     onProgress: (Task2Progress) -> Unit,
@@ -350,7 +359,11 @@ private suspend fun uploadNewVersion(
             api.publishVersion(
                 modpackId = modpackId,
                 versionName = versionName,
-                request = ModpackVersionCreateFromUploadDto(uploadId, mods.toMutableList()),
+                request = ModpackVersionCreateFromUploadDto(
+                    uploadId = uploadId,
+                    mods = mods.toMutableList(),
+                    clientExtras = clientExtras.toMutableList(),
+                ),
             )
         },
         ensureActive = ensureActive,

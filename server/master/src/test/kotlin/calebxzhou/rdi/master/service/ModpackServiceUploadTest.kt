@@ -6,6 +6,10 @@ import calebxzhou.rdi.common.model.ModLoader
 import calebxzhou.rdi.common.model.Modpack
 import calebxzhou.rdi.common.model.ModpackUploadPreflightDto
 import calebxzhou.rdi.common.model.ModpackUploadSessionCreateDto
+import calebxzau.rdi.common.model.Content
+import calebxzau.rdi.common.model.ContentPlatform
+import calebxzau.rdi.common.model.ContentSide
+import calebxzau.rdi.common.model.ContentType
 import calebxzhou.rdi.common.exception.RequestError
 import calebxzhou.rdi.common.util.sha1
 import calebxzhou.rdi.common.util.deleteRecursivelyNoSymlink
@@ -66,20 +70,74 @@ class ModpackServiceUploadTest {
         stubPack(pack)
         val root = ModpackServiceTestFixtures.tempRoot()
         val upload = ModpackServiceTestFixtures.writeTarZst(root, "overrides/config/test.txt" to "ok".encodeToByteArray())
+        val extra = Content(
+            platform = ContentPlatform.Modrinth,
+            type = ContentType.ResPack,
+            projectId = "resource-project",
+            fileId = "resource-version",
+            slug = "resource-pack",
+            hash = "a".repeat(40),
+            path = "resourcepacks/resource-pack.zip",
+            side = ContentSide.Client,
+            downloadUrls = listOf("https://example.com/resource-pack.zip"),
+        )
         val update = mockk<UpdateResult>()
         every { update.modifiedCount } returns 1L
-        coEvery { collection.updateOne(any<Bson>(), any<Bson>(), any()) } returns update
+        val updatePayload = slot<Bson>()
+        coEvery { collection.updateOne(any<Bson>(), capture(updatePayload), any()) } returns update
         var submitted = false
         ServerTaskManager.testSubmitter = { _, _, _ -> submitted = true; "test" }
         try {
             ModpackContext(player, pack, null).createVersion(
                 "1.0.0",
                 upload,
-                mutableListOf(ModpackServiceTestFixtures.mod("example"))
+                mutableListOf(ModpackServiceTestFixtures.mod("example")),
+                mutableListOf(extra),
             )
             assertTrue(pack.dir.resolve("1.0.0.tar.zst").exists())
             assertFalse(upload.exists())
             assertTrue(submitted)
+            assertTrue(updatePayload.captured.toString().contains("clientExtras"))
+        } finally {
+            pack.dir.deleteRecursivelyNoSymlink()
+            root.deleteRecursivelyNoSymlink()
+        }
+    }
+
+    @Test
+    fun `create version rejects server-only client extra before publication and cleans upload temp`() = runTest {
+        val player = ModpackServiceTestFixtures.account()
+        val pack = ModpackServiceTestFixtures.modpack(player._id)
+        stubPack(pack)
+        val root = ModpackServiceTestFixtures.tempRoot("server-only-extra")
+        val upload = ModpackServiceTestFixtures.writeTarZst(root, "overrides/config/test.txt" to byteArrayOf(1, 2, 3))
+        val serverOnly = Content(
+            platform = ContentPlatform.Modrinth,
+            type = ContentType.ShaderPack,
+            projectId = "shader-project",
+            fileId = "shader-version",
+            slug = "shader-pack",
+            hash = "b".repeat(40),
+            path = "shaderpacks/shader-pack.zip",
+            side = ContentSide.Server,
+            downloadUrls = listOf("https://example.com/shader-pack.zip"),
+        )
+        var submitted = false
+        ServerTaskManager.testSubmitter = { _, _, _ -> submitted = true; "test" }
+        try {
+            assertFailsWith<RequestError> {
+                ModpackContext(player, pack, null).createVersion(
+                    "1.0.0",
+                    upload,
+                    mutableListOf(),
+                    mutableListOf(serverOnly),
+                )
+            }
+            assertFalse(upload.exists())
+            assertFalse(pack.dir.resolve("1.0.0.tar.zst").exists())
+            assertTrue(pack.versions.isEmpty())
+            assertFalse(submitted)
+            coVerify(exactly = 0) { collection.updateOne(any<Bson>(), any<Bson>(), any()) }
         } finally {
             pack.dir.deleteRecursivelyNoSymlink()
             root.deleteRecursivelyNoSymlink()

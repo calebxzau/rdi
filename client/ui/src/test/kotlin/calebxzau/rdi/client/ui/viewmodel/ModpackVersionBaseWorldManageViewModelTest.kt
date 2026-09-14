@@ -104,13 +104,13 @@ class ModpackVersionBaseWorldManageViewModelTest {
         viewModel.uiState.filter { !it.loading && it.dataLoaded }.first()
 
         firstLoad.complete(Result.success(Modpack.DetailVo(
-            ObjectId(MODPACK_ID),
-            "旧整合包",
-            ObjectId(AUTHOR_ID),
-            0,
-            ModLoader.neoforge,
-            McVersion.V211,
-            listOf(version(binding = null)),
+            _id = ObjectId(MODPACK_ID),
+            name = "旧整合包",
+            authorId = ObjectId(AUTHOR_ID),
+            modCount = 0,
+            modloader = ModLoader.neoforge,
+            mcVer = McVersion.V211,
+            versions = listOf(version(binding = null)),
         )))
 
         assertEquals(secondVersion, viewModel.uiState.value.version)
@@ -146,7 +146,15 @@ class ModpackVersionBaseWorldManageViewModelTest {
         val mutations = mutableListOf<ModpackInfoMutation>()
 
         override suspend fun loadDetail(modpackId: String): Result<Modpack.DetailVo?> =
-            Result.success(Modpack.DetailVo(ObjectId(MODPACK_ID), "测试整合包", ObjectId(AUTHOR_ID), 0, ModLoader.neoforge, McVersion.V211, listOf(version)))
+            Result.success(Modpack.DetailVo(
+                _id = ObjectId(MODPACK_ID),
+                name = "测试整合包",
+                authorId = ObjectId(AUTHOR_ID),
+                modCount = 0,
+                modloader = ModLoader.neoforge,
+                mcVer = McVersion.V211,
+                versions = listOf(version),
+            ))
 
         override suspend fun loadReadyBaseWorlds(): Result<List<BaseWorld>> = Result.success(worlds)
 
@@ -157,7 +165,11 @@ class ModpackVersionBaseWorldManageViewModelTest {
 
         override suspend fun isVersionInstalled(pack: Modpack.DetailVo, version: Modpack.Version): Result<Boolean> = Result.success(false)
 
-        override fun queueInstall(pack: Modpack.DetailVo, version: Modpack.Version): Result<String> = Result.success("run")
+        override fun queueInstall(
+            pack: Modpack.DetailVo,
+            version: Modpack.Version,
+            includeClientExtras: Boolean,
+        ): Result<String> = Result.success("run")
     }
 
     private class DeferredLoadGateway(
@@ -176,13 +188,13 @@ class ModpackVersionBaseWorldManageViewModelTest {
             } else {
                 secondLoadStarted.complete(Unit)
                 Result.success(Modpack.DetailVo(
-                    ObjectId(MODPACK_ID),
-                    "测试整合包",
-                    ObjectId(AUTHOR_ID),
-                    0,
-                    ModLoader.neoforge,
-                    McVersion.V211,
-                    listOf(secondVersion),
+                    _id = ObjectId(MODPACK_ID),
+                    name = "测试整合包",
+                    authorId = ObjectId(AUTHOR_ID),
+                    modCount = 0,
+                    modloader = ModLoader.neoforge,
+                    mcVer = McVersion.V211,
+                    versions = listOf(secondVersion),
                 ))
             }
         }
@@ -193,7 +205,11 @@ class ModpackVersionBaseWorldManageViewModelTest {
 
         override suspend fun isVersionInstalled(pack: Modpack.DetailVo, version: Modpack.Version): Result<Boolean> = Result.success(false)
 
-        override fun queueInstall(pack: Modpack.DetailVo, version: Modpack.Version): Result<String> = Result.success("run")
+        override fun queueInstall(
+            pack: Modpack.DetailVo,
+            version: Modpack.Version,
+            includeClientExtras: Boolean,
+        ): Result<String> = Result.success("run")
 
         fun completeSecondLoad() = Unit
     }

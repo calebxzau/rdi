@@ -12,6 +12,7 @@ import calebxzhou.rdi.client.service.content.ContentDigestAlgorithm
 import calebxzhou.rdi.client.service.content.ContentRequest
 import calebxzhou.rdi.client.service.content.ContentSource
 import calebxzhou.rdi.client.service.content.toClientContentRequests
+import calebxzhou.rdi.client.service.content.toClientContentRequest
 import calebxzhou.rdi.client.service.ModpackService.startInstallTask2
 import calebxzhou.rdi.client.ui.McPlayArgs
 import calebxzau.rdi.client.ui.moveToOsTrash
@@ -117,7 +118,8 @@ object ModpackService {
         modLoader: ModLoader,
         modpackId: ObjectId,
         verName: String,
-        mods: List<Mod>
+        mods: List<Mod>,
+        clientExtras: List<calebxzau.rdi.common.model.Content> = emptyList(),
     ): Task2 {
         var clientPackRequest: ContentRequest? = null
         val installableMods = mods.filter(::isClientInstallableMod)
@@ -134,6 +136,7 @@ object ModpackService {
             modpackId = modpackId,
             verName = verName,
             mods = installableMods,
+            clientExtras = clientExtras,
             clientPackProvider = null,
             clientPackRequestProvider = {
                 clientPackRequest ?: throw IllegalStateException("客户端包请求未准备好")
@@ -158,6 +161,7 @@ object ModpackService {
         clientPackFile: File,
         modpackName: String? = null,
         embeddedModOriginalFileNames: Map<String, String> = emptyMap(),
+        clientExtras: List<calebxzau.rdi.common.model.Content> = emptyList(),
     ): Task2 = Task2.Sequence(
         title = buildString {
             append("本地安装整合包")
@@ -170,6 +174,7 @@ object ModpackService {
             verName = verName,
             mods = mods,
             embeddedModOriginalFileNames = embeddedModOriginalFileNames,
+            clientExtras = clientExtras,
             clientPackProvider = { clientPackFile },
         )
     )
@@ -193,13 +198,10 @@ object ModpackService {
     fun Modpack.Version.startInstallTask2(
         mcVersion: McVersion,
         modLoader: ModLoader,
-        modpackName: String? = null
+        modpackName: String? = null,
+        includeClientExtras: Boolean = true,
     ): Task2 {
-        val title = buildString {
-            append("完整下载整合包")
-            if (!modpackName.isNullOrBlank()) append(" ").append(modpackName)
-            totalSize?.humanFileSize?.let { append(" ").append(it) }
-        }
+        val title = modpackInstallTaskTitle(modpackName)
         return Task2.Sequence(
             title = title,
             children = listOf(
@@ -212,7 +214,14 @@ object ModpackService {
                             ctx.emit(Task2Progress("节点刷新失败，继续使用当前节点", 1f))
                         }
                 },
-                installVersionTask2(mcVersion, modLoader, modpackId, this@startInstallTask2.name, mods)
+                installVersionTask2(
+                    mcVersion,
+                    modLoader,
+                    modpackId,
+                    this@startInstallTask2.name,
+                    mods,
+                    if (includeClientExtras) clientExtras else emptyList(),
+                )
             )
         )
     }
@@ -254,18 +263,20 @@ object ModpackService {
         if (failed.get()) fallbackPreserve else references
     }
 
-    private fun createInstallClientZipTasks2(
+    internal fun createInstallClientZipTasks2(
         mcVersion: McVersion,
         modLoader: ModLoader,
         modpackId: ObjectId,
         verName: String,
         mods: List<Mod>,
+        clientExtras: List<calebxzau.rdi.common.model.Content> = emptyList(),
         embeddedModOriginalFileNames: Map<String, String> = emptyMap(),
         clientPackProvider: (() -> File)?,
         clientPackRequestProvider: (() -> ContentRequest)? = null,
+        versionDir: File = getVersionDir(modpackId, verName),
+        contentStore: ClientContentStore = ClientContentStores.shared,
     ): List<Task2> {
         val installableMods = mods.filter(::isClientInstallableMod)
-        val versionDir = getVersionDir(modpackId, verName)
         val prepareVersionDirTask = Task2.Leaf("准备安装目录") { ctx ->
             if (versionDir.exists()) {
                 ctx.emit(Task2Progress("清理旧版本文件...", null))
@@ -299,7 +310,7 @@ object ModpackService {
             } else {
                 // A cache failure may return a temporary source. Keep archive
                 // detection and extraction inside use until the archive closes.
-                ClientContentStores.shared.use(
+                contentStore.use(
                     requests = listOf(request),
                     onProgress = ctx::emit,
                 ) { paths ->
@@ -328,7 +339,7 @@ object ModpackService {
                     }
                 },
             )
-            ClientContentStores.shared.materialize(
+            contentStore.materialize(
                 requests = requests,
                 targetRoot = modsDir.toPath(),
                 onProgress = ctx::emit
@@ -336,12 +347,25 @@ object ModpackService {
             ctx.emit(Task2Progress("完成", 1f))
         }
 
+        val copyClientExtrasTask = Task2.Leaf("补充资源包和光影包") { ctx ->
+            contentStore.materializeClientExtras(clientExtras, versionDir.toPath(), ctx::emit).getOrThrow()
+            ctx.emit(Task2Progress("完成", 1f))
+        }
+
         val writeOptionsTask = Task2.Leaf("补充配置") { ctx ->
             writeMinecraftOptions(versionDir, mcVersion).getOrThrow()
             ctx.emit(Task2Progress("写入完成", 1f))
         }
-        return listOf(prepareVersionDirTask, extractTask, patchFancyMenuTask, copyModsTask, writeOptionsTask)
+        return listOf(
+            prepareVersionDirTask,
+            extractTask,
+            patchFancyMenuTask,
+            copyModsTask,
+            copyClientExtrasTask,
+            writeOptionsTask,
+        )
     }
+
 
     private fun patchFancyMenuOptions(versionDir: File) {
         val optionsFile = versionDir.resolve("config/fancymenu/options.txt")
@@ -358,7 +382,11 @@ object ModpackService {
 sealed class StartPlayResult {
     data class Ready(val args: McPlayArgs) : StartPlayResult()
     data class NeedMod(val modSlugs: List<String>) : StartPlayResult()
-    data class NeedInstall(val task: Task2, val dedupeKey: String) : StartPlayResult()
+    data class NeedInstall(
+        val title: String,
+        val dedupeKey: String,
+        val createTask: (Boolean) -> Task2,
+    ) : StartPlayResult()
     data class Installing(val runId: String) : StartPlayResult()
 }
 
@@ -397,8 +425,16 @@ suspend fun Host.DetailVo.startPlay(): StartPlayResult {
         .filter(::isClientInstallableMod)
     if (!ModpackService.isVersionReadyToLaunch(version, activeBaseMods)) {
         return StartPlayResult.NeedInstall(
-            task = version.startInstallTask2(modpack.mcVer, modpack.modloader, modpack.name),
-            dedupeKey = installTaskKey
+            title = version.modpackInstallTaskTitle(modpack.name),
+            dedupeKey = installTaskKey,
+            createTask = { includeClientExtras ->
+                version.startInstallTask2(
+                    mcVersion = modpack.mcVer,
+                    modLoader = modpack.modloader,
+                    modpackName = modpack.name,
+                    includeClientExtras = includeClientExtras,
+                )
+            },
         )
     }
 
@@ -436,6 +472,12 @@ suspend fun Host.DetailVo.startPlay(): StartPlayResult {
             manageHostExtraMods = true
         )
     )
+}
+
+private fun Modpack.Version.modpackInstallTaskTitle(modpackName: String?): String = buildString {
+    append("完整下载整合包")
+    if (!modpackName.isNullOrBlank()) append(" ").append(modpackName)
+    totalSize?.humanFileSize?.let { append(" ").append(it) }
 }
 
 private fun isClientInstallableMod(mod: Mod): Boolean =

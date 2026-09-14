@@ -10,6 +10,7 @@ import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import org.bson.types.ObjectId
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -121,7 +122,7 @@ class ModpackInfoViewModelTest {
     }
 
     @Test
-    fun `install queues exact selected version`() = runBlocking {
+    fun `install queues exact selected version`(): Unit = runBlocking {
         val selected = testVersion("1.0")
         val other = testVersion("2.0")
         val gateway = FakeModpackInfoGateway(testPack(listOf(other, selected)), runId = "run-7")
@@ -130,8 +131,30 @@ class ModpackInfoViewModelTest {
 
         viewModel.installVersion(selected.name)
 
+        val event = withTimeout(5_000) {
+            assertIs<ModpackInfoEvent.InstallQueued>(viewModel.events.first())
+        }
         assertEquals("1.0", gateway.queuedVersion?.name)
-        assertEquals("run-7", assertIs<ModpackInfoEvent.InstallQueued>(viewModel.events.first()).runId)
+        assertEquals(false, gateway.queuedIncludeClientExtras)
+        assertEquals("run-7", event.runId)
+    }
+
+    @Test
+    fun `install forwards client extras selection`(): Unit = runBlocking {
+        val selected = testVersion("1.0")
+        val gateway = FakeModpackInfoGateway(testPack(listOf(selected)))
+        val viewModel = ModpackInfoViewModel(MODPACK_ID, gateway)
+        awaitLoaded(viewModel)
+
+        viewModel.installVersion(selected.name, includeClientExtras = false)
+        withTimeout(5_000) { assertIs<ModpackInfoEvent.InstallQueued>(viewModel.events.first()) }
+        assertEquals("1.0", gateway.queuedVersion?.name)
+        assertEquals(false, gateway.queuedIncludeClientExtras)
+
+        viewModel.installVersion(selected.name, includeClientExtras = true)
+        withTimeout(5_000) { assertIs<ModpackInfoEvent.InstallQueued>(viewModel.events.first()) }
+        assertEquals("1.0", gateway.queuedVersion?.name)
+        assertEquals(true, gateway.queuedIncludeClientExtras)
     }
 
     @Test
@@ -213,6 +236,7 @@ class ModpackInfoViewModelTest {
         var loadCount = 0
         var checkedVersion: Modpack.Version? = null
         var queuedVersion: Modpack.Version? = null
+        var queuedIncludeClientExtras: Boolean? = null
         val checkCalls = mutableListOf<String>()
         val checkStarted = Channel<String>(Channel.UNLIMITED)
 
@@ -243,8 +267,13 @@ class ModpackInfoViewModelTest {
             return Result.success(result)
         }
 
-        override fun queueInstall(pack: Modpack.DetailVo, version: Modpack.Version): Result<String> {
+        override fun queueInstall(
+            pack: Modpack.DetailVo,
+            version: Modpack.Version,
+            includeClientExtras: Boolean,
+        ): Result<String> {
             queuedVersion = version
+            queuedIncludeClientExtras = includeClientExtras
             return Result.success(runId)
         }
 

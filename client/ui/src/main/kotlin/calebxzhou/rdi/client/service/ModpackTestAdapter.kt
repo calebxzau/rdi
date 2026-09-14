@@ -5,6 +5,7 @@ import calebxzhou.rdi.common.model.ModLoader
 import calebxzau.rdi.modpacktest.ModpackTestEnvironment
 import calebxzau.rdi.modpacktest.ModpackTestLauncher
 import calebxzau.rdi.modpacktest.ModpackTestModSourceResolver
+import calebxzau.rdi.modpacktest.ModpackTestClientExtraResolver
 import calebxzau.rdi.modpacktest.ModpackTestPaths
 import calebxzau.rdi.modpacktest.ModpackTestProcess
 import calebxzhou.rdi.client.service.content.ClientContentStore
@@ -20,6 +21,10 @@ val modpackTestModSourceResolver = ModpackTestModSourceResolver { mods, testDir 
         requests = mods.toClientContentRequests(),
         targetRoot = modSourceDir.toPath(),
     ).map { modSourceDir }
+}
+
+val modpackTestClientExtraResolver = ModpackTestClientExtraResolver { extras, testDir ->
+    ClientContentStores.shared.materializeClientExtras(extras, testDir.toPath()).map { Unit }
 }
 
 val modpackTestEnvironment: ModpackTestEnvironment by lazy {

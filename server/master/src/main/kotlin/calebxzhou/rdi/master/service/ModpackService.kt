@@ -1,5 +1,6 @@
 package calebxzhou.rdi.master.service
 
+import calebxzau.rdi.common.model.Content
 import calebxzhou.rdi.common.model.*
 import calebxzhou.rdi.common.util.str
 import calebxzhou.rdi.master.GAME_LIBS_DIR
@@ -143,9 +144,10 @@ object ModpackService {
     suspend fun ModpackContext.createVersion(
         name: String,
         file: File,
-        mods: MutableList<Mod>
+        mods: MutableList<Mod>,
+        clientExtras: MutableList<Content> = arrayListOf(),
     ) = ModpackUploadService.run {
-        this@createVersion.createVersion(name, file, mods)
+        this@createVersion.createVersion(name, file, mods, clientExtras)
     }
 
     suspend fun recoverUnfinishedVersionBuildsOnStartup() =

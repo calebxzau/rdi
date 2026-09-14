@@ -1,5 +1,6 @@
 package calebxzhou.rdi.common.model
 
+import calebxzau.rdi.common.model.Content
 import kotlinx.serialization.Contextual
 import kotlinx.serialization.Serializable
 import org.bson.types.ObjectId
@@ -35,7 +36,8 @@ data class ModpackCreateFromUploadDto(
 @Serializable
 data class ModpackVersionCreateFromUploadDto(
     @Contextual val uploadId: UUID,
-    val mods: MutableList<Mod>
+    val mods: MutableList<Mod>,
+    val clientExtras: MutableList<Content> = arrayListOf(),
 )
 
 /** Metadata-only validation request sent before creating an upload task. */

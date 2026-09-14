@@ -244,7 +244,7 @@ fun Route.modpackRoutes() {
                     val verName = ctx.validateVersionUpload(param("verName"))
                     val dto = call.receive<ModpackVersionCreateFromUploadDto>()
                     parallelUploadService.withReadyUpload(call.uid, dto.uploadId) { uploadFile ->
-                        ctx.createVersion(verName, uploadFile, dto.mods)
+                        ctx.createVersion(verName, uploadFile, dto.mods, dto.clientExtras)
                     }.getOrThrow()
                     ok()
                 }

@@ -21,6 +21,8 @@ import java.util.concurrent.CopyOnWriteArrayList
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNull
+import kotlin.test.assertSame
 import kotlin.test.assertTrue
 
 class HostListViewModelTest {
@@ -309,19 +311,31 @@ class HostListViewModelTest {
     }
 
     @Test
-    fun `start install and installing emit their expected outcomes`() = runBlocking {
+    fun `start install and installing emit their expected outcomes`(): Unit = runBlocking {
         val installTask = Task2.Leaf("安装") { }
+        var selectedExtras: Boolean? = null
+        val pendingInstall = StartPlayResult.NeedInstall(
+            title = "安装",
+            dedupeKey = "install-key",
+            createTask = { includeClientExtras ->
+                selectedExtras = includeClientExtras
+                installTask
+            },
+        )
         val installGateway = FakeHostListGateway(
             mine = listOf(brief("00000000000000000000000b", "安装房间")),
-            startResult = Result.success(StartPlayResult.NeedInstall(installTask, "install-key")),
+            startResult = Result.success(pendingInstall),
         )
         val installViewModel = HostListViewModel(installGateway, useMockData = false)
         awaitLoaded(installViewModel)
         installViewModel.startHost(installViewModel.uiState.value.hosts.single())
         assertEquals(
-            HostListEvent.NeedInstall(StartPlayResult.NeedInstall(installTask, "install-key")),
+            HostListEvent.NeedInstall(pendingInstall),
             withTimeout(5_000) { installViewModel.events.first() },
         )
+        assertNull(selectedExtras)
+        assertSame(installTask, pendingInstall.createTask(true))
+        assertEquals(true, selectedExtras)
 
         val installingGateway = FakeHostListGateway(
             mine = listOf(brief("00000000000000000000000c", "下载房间")),

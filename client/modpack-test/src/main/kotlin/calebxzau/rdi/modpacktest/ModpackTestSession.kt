@@ -2,6 +2,7 @@ package calebxzau.rdi.modpacktest
 
 import calebxzhou.rdi.common.model.McVersion
 import calebxzhou.rdi.common.model.Mod
+import calebxzau.rdi.common.model.ContentSide
 import calebxzhou.rdi.common.util.deleteRecursivelyNoSymlink
 import calebxzhou.rdi.common.util.hardLinkDirectory
 import calebxzhou.rdi.common.util.hardLinkFile
@@ -39,6 +40,7 @@ class ModpackTestSession(
     val target: ModpackTestTarget,
     private val environment: ModpackTestEnvironment,
     private val modSourceResolver: ModpackTestModSourceResolver,
+    private val clientExtraResolver: ModpackTestClientExtraResolver? = null,
 ) : AutoCloseable {
     private val logger = KotlinLogging.logger {}
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -136,6 +138,7 @@ class ModpackTestSession(
             workDir = environment.paths.workDir,
             existingDir = testDir,
             modSourceResolver = modSourceResolver,
+            clientExtraResolver = clientExtraResolver,
         )
         testDir = versionDir
         environment.launcher.prepareClientLibraries(
@@ -365,6 +368,7 @@ private suspend fun createClientTestVersionDir(
     workDir: File,
     existingDir: File?,
     modSourceResolver: ModpackTestModSourceResolver,
+    clientExtraResolver: ModpackTestClientExtraResolver?,
 ) = withContext(Dispatchers.IO) {
     val versionDir = existingDir
         ?.takeIf { it.exists() && it.isDirectory }
@@ -377,6 +381,13 @@ private suspend fun createClientTestVersionDir(
         loadedModpack.mcVersion,
         modSourceDir,
     )
+    val clientExtras = loadedModpack.clientExtras.filter { it.side != ContentSide.Server }
+    if (clientExtras.isNotEmpty()) {
+        requireNotNull(clientExtraResolver) { "客户端测试缺少资源包和光影包解析器" }
+            .resolve(clientExtras, versionDir)
+            .getOrThrow()
+    }
+    writeMinecraftOptions(versionDir, loadedModpack.mcVersion).getOrThrow()
     versionDir
 }
 
@@ -387,6 +398,7 @@ private fun createClientTestBaseDir(loadedModpack: LoadedLocalModpack, workDir: 
         if (exists()) deleteRecursivelyNoSymlink()
         mkdirs()
     }
+    copyDirectClientExtraRoots(loadedModpack.sourceDir, versionDir)
     copyTestPackBaseContent(
         sourceDir = loadedModpack.sourceDir,
         targetDir = versionDir,
@@ -394,6 +406,13 @@ private fun createClientTestBaseDir(loadedModpack: LoadedLocalModpack, workDir: 
     )
     writeMinecraftOptions(versionDir, loadedModpack.mcVersion).getOrThrow()
     return versionDir
+}
+
+private fun copyDirectClientExtraRoots(sourceDir: File, targetDir: File) {
+    listOf("resourcepacks", "shaderpacks").forEach { rootName ->
+        val source = sourceDir.resolve(rootName)
+        if (source.exists()) copyFileOrDirectory(source, targetDir.resolve(rootName))
+    }
 }
 
 private fun prepareClientTestRunContent(

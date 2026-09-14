@@ -187,10 +187,10 @@ fun ModpackInfoScreen(
             packName = pack.name,
             packVer = selectedDownloadVersion.name,
             onDismiss = { activeDownloadDialog = null },
-            onDirectDownload = {
+            onDirectDownload = { includeClientExtras ->
                 val versionName = selectedDownloadVersion.name
                 activeDownloadDialog = null
-                viewModel.installVersion(versionName)
+                viewModel.installVersion(versionName, includeClientExtras)
             },
             onOpenTaskList = onOpenTaskList,
             onImportMessage = { dialogMessage = it },

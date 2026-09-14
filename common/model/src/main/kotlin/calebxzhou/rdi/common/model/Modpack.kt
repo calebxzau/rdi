@@ -1,5 +1,6 @@
 package calebxzhou.rdi.common.model
 
+import calebxzau.rdi.common.model.Content
 import kotlinx.serialization.Contextual
 import kotlinx.serialization.Serializable
 import org.bson.types.ObjectId
@@ -69,6 +70,7 @@ class Modpack(
         val totalSize: Long? = 0L,
         val status: Status,
         val mods: MutableList<Mod> = arrayListOf(),
+        val clientExtras: MutableList<Content> = arrayListOf(),
         @Contextual
         val uploaderId: ObjectId? =null,
         val baseWorld: BaseWorldBinding? = null,
@@ -101,7 +103,8 @@ class Modpack(
         val sourceUrl: String? =null,
         val info: String? =null,
         val categories: List<Category> = emptyList(),
-        val mods: MutableList<Mod>
+        val mods: MutableList<Mod>,
+        val clientExtras: MutableList<Content> = arrayListOf(),
     ) {
 
     }
