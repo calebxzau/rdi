@@ -17,6 +17,7 @@
     "mPlayerTabOverlay",
     "mSoundBufferLibrary",
     "mEuphoriaPatcherWarning",
+    "mLoadingWarnings",
     "mKubeJsWindowIcon",
     "mTitleScreen",
     "mUser"
