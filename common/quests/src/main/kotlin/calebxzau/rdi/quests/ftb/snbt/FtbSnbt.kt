@@ -15,11 +15,15 @@ import net.benwoodworth.knbt.NbtString
 import net.benwoodworth.knbt.NbtTag
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.Serializable
-import kotlinx.serialization.descriptors.PrimitiveKind
-import kotlinx.serialization.descriptors.PrimitiveSerialDescriptor
+import kotlinx.serialization.SerializationException
 import kotlinx.serialization.descriptors.SerialDescriptor
+import kotlinx.serialization.descriptors.buildClassSerialDescriptor
 import kotlinx.serialization.encoding.Decoder
 import kotlinx.serialization.encoding.Encoder
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonEncoder
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import java.util.LinkedHashMap
 
 private const val MAX_INPUT_CHARS: Int = 32 * 1024 * 1024
@@ -386,64 +390,61 @@ public data class FtbSnbtData(
 )
 
 public object FtbSnbtDataSerializer : KSerializer<FtbSnbtData> {
-    override val descriptor: SerialDescriptor = PrimitiveSerialDescriptor(
+    private const val MAX_SAFE_JSON_INTEGER: Long = 9_007_199_254_740_991L
+
+    override val descriptor: SerialDescriptor = buildClassSerialDescriptor(
         "calebxzau.rdi.quests.ftb.snbt.FtbSnbtData",
-        PrimitiveKind.STRING,
     )
 
     override fun serialize(encoder: Encoder, value: FtbSnbtData) {
-        encoder.encodeString(CanonicalWriter.write(value.nbt))
+        val jsonEncoder = encoder as? JsonEncoder
+            ?: throw SerializationException("FtbSnbtData can only be encoded as JSON")
+        jsonEncoder.encodeJsonElement(JsonCodec.writeCompound(value.nbt))
     }
 
     override fun deserialize(decoder: Decoder): FtbSnbtData {
-        val result = FtbSnbt.parse(decoder.decodeString()).getOrThrow()
-        return FtbSnbtData(result)
+        throw SerializationException("FtbSnbtData preview JSON is serialization-only and cannot be decoded")
     }
 
-    private object CanonicalWriter {
-        fun write(value: NbtCompound): String = writeCompound(value)
+    private object JsonCodec {
+        fun writeCompound(compound: NbtCompound): JsonObject {
+            return JsonObject(compound.entries.associate { (key, value) -> key to writeTag(value) })
+        }
 
-        private fun writeTag(tag: NbtTag): String = when (tag) {
-            is NbtByte -> "${tag.value}b"
-            is NbtShort -> "${tag.value}s"
-            is NbtInt -> tag.value.toString()
-            is NbtLong -> "${tag.value}L"
-            is NbtFloat -> "${tag.value}f"
-            is NbtDouble -> "${tag.value}d"
-            is NbtString -> quote(tag.value)
-            is NbtByteArray -> tag.joinToString(",", prefix = "[B;", postfix = "]") { "${it}b" }
-            is NbtIntArray -> tag.joinToString(",", prefix = "[I;", postfix = "]")
-            is NbtLongArray -> tag.joinToString(",", prefix = "[L;", postfix = "]") { "${it}L" }
-            is NbtList<*> -> tag.joinToString(",", prefix = "[", postfix = "]") { writeTag(it) }
+        private fun writeTag(tag: NbtTag): kotlinx.serialization.json.JsonElement = when (tag) {
+            is NbtByte -> JsonPrimitive(tag.value)
+            is NbtShort -> JsonPrimitive(tag.value)
+            is NbtInt -> JsonPrimitive(tag.value)
+            is NbtLong -> writeLong(tag.value)
+            is NbtFloat -> writeFloat(tag.value)
+            is NbtDouble -> writeDouble(tag.value)
+            is NbtString -> JsonPrimitive(tag.value)
+            is NbtByteArray -> JsonArray(tag.map { JsonPrimitive(it) })
+            is NbtIntArray -> JsonArray(tag.map { JsonPrimitive(it) })
+            is NbtLongArray -> JsonArray(tag.map(::writeLong))
+            is NbtList<*> -> JsonArray(tag.map { writeTag(it) })
             is NbtCompound -> writeCompound(tag)
         }
 
-        private fun writeCompound(compound: NbtCompound): String = buildString {
-            append('{')
-            compound.entries.forEachIndexed { index, (key, value) ->
-                if (index > 0) append(',')
-                append(quote(key))
-                append(':')
-                append(writeTag(value))
-            }
-            append('}')
+        private fun writeLong(value: Long): kotlinx.serialization.json.JsonPrimitive =
+            if (value in -MAX_SAFE_JSON_INTEGER..MAX_SAFE_JSON_INTEGER) JsonPrimitive(value) else JsonPrimitive(value.toString())
+
+        private fun writeFloat(value: Float): kotlinx.serialization.json.JsonPrimitive =
+            if (value.isFinite()) JsonPrimitive(value) else JsonPrimitive(specialFloatText(value))
+
+        private fun writeDouble(value: Double): kotlinx.serialization.json.JsonPrimitive =
+            if (value.isFinite()) JsonPrimitive(value) else JsonPrimitive(specialFloatText(value))
+
+        private fun specialFloatText(value: Float): String = when {
+            value.isNaN() -> "NaN"
+            value == Float.POSITIVE_INFINITY -> "Infinity"
+            else -> "-Infinity"
         }
 
-        private fun quote(value: String): String = buildString(value.length + 2) {
-            append('"')
-            value.forEach { character ->
-                when (character) {
-                    '"' -> append("\\\"")
-                    '\\' -> append("\\\\")
-                    '\t' -> append("\\t")
-                    '\b' -> append("\\b")
-                    '\n' -> append("\\n")
-                    '\r' -> append("\\r")
-                    '\u000C' -> append("\\f")
-                    else -> append(character)
-                }
-            }
-            append('"')
+        private fun specialFloatText(value: Double): String = when {
+            value.isNaN() -> "NaN"
+            value == Double.POSITIVE_INFINITY -> "Infinity"
+            else -> "-Infinity"
         }
     }
 }

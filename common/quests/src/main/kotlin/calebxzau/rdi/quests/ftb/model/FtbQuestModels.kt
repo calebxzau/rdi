@@ -12,8 +12,6 @@ data class FtbQuestSource(
 
 @Serializable
 data class FtbQuestBook(
-    /** Version of this module's serialized schema, independent of the FTB data version. */
-    val schemaVersion: Int = 1,
     val source: FtbQuestSource = FtbQuestSource(),
     val dataVersion: Int,
     val settings: FtbSnbtData = FtbSnbtData(),

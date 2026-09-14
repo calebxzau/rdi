@@ -25,10 +25,15 @@ dependencies {
     testRuntimeOnly("org.junit.jupiter:junit-jupiter-engine")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }
+val runDir = layout.projectDirectory.dir("run").asFile
 
 tasks.withType<Test>().configureEach {
     useJUnitPlatform()
     // Local pack fixtures are opt-in and live outside the repository.
+    workingDir = runDir
+    doFirst {
+        workingDir.mkdirs()
+    }
     val samples = providers.environmentVariable("RDI_FTB_QUESTS_SAMPLES").orElse("")
     inputs.property("questSamples", samples)
     inputs.files(samples.map { value -> value.split(File.pathSeparator).filter { it.isNotBlank() } })

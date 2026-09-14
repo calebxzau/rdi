@@ -1,6 +1,10 @@
 package calebxzau.rdi.quests.ftb.snbt
 
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.SerializationException
 import net.benwoodworth.knbt.NbtByte
 import net.benwoodworth.knbt.NbtByteArray
 import net.benwoodworth.knbt.NbtDouble
@@ -13,6 +17,8 @@ import net.benwoodworth.knbt.NbtShort
 import net.benwoodworth.knbt.NbtString
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
 
@@ -63,25 +69,53 @@ class FtbSnbtTest {
     }
 
     @Test
-    fun jsonWrapperUsesSingleCanonicalSnbtStringAndRoundTripsAllTypes(): Unit {
+    fun jsonUsesNavigableNaturalPreviewValues(): Unit {
         val source = FtbSnbt.parse(
-            "{b:1b,s:2s,i:3,l:9007199254740993L,f:1.5f,d:2.25d,txt:'hello, world', " +
+            "{b:1b,zero:false,s:2s,i:3,l:9007199254740993L,safeMin:-9007199254740991L, " +
+                "safeMax:9007199254740991L,longMin:-9223372036854775808L,longMax:9223372036854775807L, " +
+                "f:1.5f,d:2.25d,txt:'hello, world', textSpecial:'NaN', " +
                 "'key:with,\\\\slash':\"quote\\\" and path\", actual:\"line\\nnext\", " +
                 "literal:\"literal\\\\n\", path:\"C:\\\\Users\\\\test\\\\\", " +
                 "positive:Infinityf, nan:NaNf, doubleNan:NaNd, " +
-                "ba:[B;1b,2b],ia:[I;3,4],la:[L;5L,6L],list:[{k:'v'}], nested:{x:false}}"
+                "negative:-Infinityd, ba:[B;1b,0b,2b],ia:[I;3,4],la:[L;5L,6L], " +
+                "emptyBytes:[B;],emptyInts:[I;],emptyLongs:[L;],empty:[],list:[{k:'v'}], " +
+                "nested:{x:false}}"
         ).getOrThrow()
         val json = Json.encodeToString(FtbSnbtDataSerializer, FtbSnbtData(source))
-        assertTrue(json.startsWith("\"{") && json.endsWith("}\""))
-        val decoded = Json.decodeFromString(FtbSnbtDataSerializer, json)
-        assertEquals(source, decoded.nbt)
-        assertEquals("line\nnext", (decoded.nbt["actual"] as NbtString).value)
-        assertEquals("literal\\n", (decoded.nbt["literal"] as NbtString).value)
-        assertEquals("C:\\Users\\test\\", (decoded.nbt["path"] as NbtString).value)
-        assertEquals("quote\" and path", (decoded.nbt["key:with,\\slash"] as NbtString).value)
-        assertEquals(Float.POSITIVE_INFINITY, (decoded.nbt["positive"] as NbtFloat).value)
-        assertTrue((decoded.nbt["nan"] as NbtFloat).value.isNaN())
-        assertTrue((decoded.nbt["doubleNan"] as NbtDouble).value.isNaN())
+        val jsonObject = Json.parseToJsonElement(json).jsonObject
+        assertFalse(jsonObject.getValue("b").jsonPrimitive.isString)
+        assertEquals("1", jsonObject.getValue("b").jsonPrimitive.content)
+        assertEquals("0", jsonObject.getValue("zero").jsonPrimitive.content)
+        assertEquals("2", jsonObject.getValue("s").jsonPrimitive.content)
+        assertEquals("3", jsonObject.getValue("i").jsonPrimitive.content)
+        assertFalse(jsonObject.getValue("safeMin").jsonPrimitive.isString)
+        assertFalse(jsonObject.getValue("safeMax").jsonPrimitive.isString)
+        assertTrue(jsonObject.getValue("l").jsonPrimitive.isString)
+        assertTrue(jsonObject.getValue("longMin").jsonPrimitive.isString)
+        assertTrue(jsonObject.getValue("longMax").jsonPrimitive.isString)
+        assertEquals("9007199254740993", jsonObject.getValue("l").jsonPrimitive.content)
+        assertEquals("hello, world", jsonObject.getValue("txt").jsonPrimitive.content)
+        assertEquals("NaN", jsonObject.getValue("textSpecial").jsonPrimitive.content)
+        assertFalse(jsonObject.getValue("f").jsonPrimitive.isString)
+        assertFalse(jsonObject.getValue("d").jsonPrimitive.isString)
+        assertEquals("Infinity", jsonObject.getValue("positive").jsonPrimitive.content)
+        assertEquals("NaN", jsonObject.getValue("nan").jsonPrimitive.content)
+        assertEquals("-Infinity", jsonObject.getValue("negative").jsonPrimitive.content)
+        assertEquals(listOf("1", "0", "2"), jsonObject.getValue("ba").jsonArray.map { it.jsonPrimitive.content })
+        assertEquals(listOf("3", "4"), jsonObject.getValue("ia").jsonArray.map { it.jsonPrimitive.content })
+        assertEquals(listOf("5", "6"), jsonObject.getValue("la").jsonArray.map { it.jsonPrimitive.content })
+        assertTrue(jsonObject.getValue("emptyBytes").jsonArray.isEmpty())
+        assertTrue(jsonObject.getValue("emptyInts").jsonArray.isEmpty())
+        assertTrue(jsonObject.getValue("emptyLongs").jsonArray.isEmpty())
+        assertTrue(jsonObject.getValue("empty").jsonArray.isEmpty())
+        assertEquals("v", jsonObject.getValue("list").jsonArray.single().jsonObject.getValue("k").jsonPrimitive.content)
+    }
+
+    @Test
+    fun rejectsPreviewJsonDeserializationExplicitly(): Unit {
+        assertFailsWith<SerializationException> {
+            Json.decodeFromString<FtbSnbtData>("{}")
+        }
     }
 
     @Test
