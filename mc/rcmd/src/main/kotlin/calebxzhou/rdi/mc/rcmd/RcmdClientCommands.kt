@@ -15,7 +15,7 @@ object RcmdClientCommands {
         )
         DISPATCHER.register(
             builder("firmsection", "display", "now")
-                .description("切换当前子区块边框")
+                .description("切换当前同步区域边框")
                 .command(RcmdCommand { context: RcmdContext? -> toggleNowFirmSection(context!!.source as RcmdClientBridge) })
                 .build()
         )
@@ -51,6 +51,6 @@ object RcmdClientCommands {
 
     private fun toggleNowFirmSection(bridge: RcmdClientBridge): RcmdResult {
         val visible = bridge.toggleNowFirmSectionVisible()
-        return ok("当前子区块边框：" + (if (visible) "显示" else "隐藏"))
+        return ok("当前区域边框：" + (if (visible) "显示" else "隐藏"))
     }
 }

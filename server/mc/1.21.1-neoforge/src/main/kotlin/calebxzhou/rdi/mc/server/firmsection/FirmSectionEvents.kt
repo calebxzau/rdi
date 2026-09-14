@@ -23,7 +23,7 @@ object FirmSectionEvents {
         }
         val result = FirmSectionService.set(player, level, event.pos)
         if (result.status == FirmSectionSetStatus.ADDED) {
-            player.sendMessage("放置容器的位置已设为持久子区块")
+            player.sendMessage("放置容器的位置，已设为同步区域")
         }
     }
 }

@@ -115,19 +115,19 @@ object RcmdServerCommands : RcmdServerCommandHandler {
         val label = firmSectionLabel(result.key)
         return when (result.status) {
             FirmSectionSetStatus.ADDED ->
-                RcmdResult.ok("已持久当前子区块：$label ${firmSectionCountLabel(result.playerCount, result.total)}")
+                RcmdResult.ok("已设为同步区域：$label ${firmSectionCountLabel(result.playerCount, result.total)}")
 
             FirmSectionSetStatus.ALREADY_PRESENT ->
-                RcmdResult.ok("当前子区块已经持久了")
+                RcmdResult.ok("这已经是同步区域了")
 
             FirmSectionSetStatus.OCCUPIED_BY_OTHER ->
-                RcmdResult.error("当前子区块已被其他玩家持久了")
+                RcmdResult.error("这早就是其他玩家的同步区域了")
 
             FirmSectionSetStatus.PLAYER_LIMIT_REACHED ->
-                RcmdResult.error("你持久的子区块已达到个人上限${FirmSectionLimits.maxPerson}个")
+                RcmdResult.error("你设的同步区域数量 已经达到了上限${FirmSectionLimits.maxPerson}个")
 
             FirmSectionSetStatus.TOTAL_LIMIT_REACHED ->
-                RcmdResult.error("持久子区块已达到全世界上限${FirmSectionLimits.maxTotal}个")
+                RcmdResult.error("同步区域数量 已达到全房间上限${FirmSectionLimits.maxTotal}个")
         }
     }
 
@@ -136,9 +136,9 @@ object RcmdServerCommands : RcmdServerCommandHandler {
         val result = FirmSectionService.unset(player)
         val label = firmSectionLabel(result.key)
         return if (result.removed) {
-            RcmdResult.ok("已取消持久当前子区块：$label ${firmSectionCountLabel(result.playerCount, result.total)}")
+            RcmdResult.ok("已取消同步区域：$label ${firmSectionCountLabel(result.playerCount, result.total)}")
         } else {
-            RcmdResult.ok("当前子区块尚未持久")
+            RcmdResult.ok("这不是同步区域")
         }
     }
 
@@ -146,10 +146,10 @@ object RcmdServerCommands : RcmdServerCommandHandler {
         val player = playerOrNull(context.source) ?: return RcmdResult.error("此rcmd命令只能由玩家执行")
         val result = FirmSectionService.list(player)
         if (result.sections.isEmpty()) {
-            return RcmdResult.ok("你还没有持久子区块。${firmSectionCountLabel(result.playerCount, result.total)}")
+            return RcmdResult.ok("你还没有同步区域。${firmSectionCountLabel(result.playerCount, result.total)}")
         }
         val lines = buildList {
-            add("持久子区块数量：${firmSectionCountLabel(result.playerCount, result.total)}")
+            add("同步区域数量：${firmSectionCountLabel(result.playerCount, result.total)}")
             result.sections.groupBy { it.dimensionId }.forEach { (dimensionId, sections) ->
                 add("$dimensionId : ${sections.map { firmSectionPositionLabel(it) }}")
             }
@@ -161,7 +161,7 @@ object RcmdServerCommands : RcmdServerCommandHandler {
         val player = playerOrNull(context.source) ?: return RcmdResult.error("此rcmd命令只能由玩家执行")
         val enabled = context.getBool("enabled")
         FirmSectionService.setAutoSetEnabled(player, enabled)
-        return RcmdResult.ok("放置方块实体时自动设置持久子区块已${if (enabled) "开启" else "关闭"}")
+        return RcmdResult.ok("放置容器时 自动设置同步区域 已${if (enabled) "开启" else "关闭"}")
     }
 
     override fun requestTpa(context: RcmdContext): RcmdResult {
