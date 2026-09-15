@@ -20,6 +20,7 @@ data class FtbQuestBook(
     val rewardTables: List<FtbRewardTable> = emptyList(),
     val languages: Map<String, FtbSnbtData> = emptyMap(),
     val chapterGroupsData: FtbSnbtData = FtbSnbtData(),
+    val title: String? = null,
 )
 
 @Serializable
@@ -149,6 +150,7 @@ data class FtbChapterImage(
     val clickAction: String? = null,
     val dependency: String? = null,
     val data: FtbSnbtData = FtbSnbtData(),
+    val title: String? = null,
 )
 
 @Serializable

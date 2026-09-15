@@ -88,6 +88,7 @@ object FtbQuestBookReader {
                 rewardTables = tables,
                 languages = languages,
                 chapterGroupsData = groupData,
+                title = data.string("title"),
             )
             validateReferences(book)
             return FtbQuestReadResult(book, diagnostics.toList())
@@ -232,17 +233,22 @@ object FtbQuestBookReader {
 
         private fun readTables(): List<FtbRewardTable> {
             val dir = optionalDirectory("reward_tables") ?: return emptyList()
-            return snbtFiles(dir).map { file ->
+            val tables = snbtFiles(dir).map { file ->
                 val path = relative(file)
                 withPath(path) {
                     val c = parse(readRegular(file), path)
                     val id = c.requiredId(path)
                     register(id, path, ObjectKind.RewardTable)
-                    val table = parseTable(c, path, id, true)
-                    table.entries.forEachIndexed { index, entry -> registerRewardTree(entry.reward, "$path/rewards[$index]") }
-                    table
+                    parseTable(c, path, id, true)
                 }
             }.sortedWith(compareBy({ it.orderIndex ?: 0 }, { it.sourcePath ?: "" }))
+            // Match FTB Quests refreshRewardTableRewardIDs: sorted table rewards replace earlier IDs.
+            tables.forEach { table ->
+                table.entries.forEachIndexed { index, entry ->
+                    registerTableRewardTree(entry.reward, "${table.sourcePath}/rewards[$index]")
+                }
+            }
+            return tables
         }
 
         private fun readLanguages(): Map<String, FtbSnbtData> {
@@ -267,41 +273,46 @@ object FtbQuestBookReader {
             data = FtbSnbtData(c),
         )
 
-        private fun parseImage(c: NbtCompound, path: String): FtbChapterImage = FtbChapterImage(
-            id = c.optionalId(path),
-            image = c.string("image"),
-            x = c.double("x", path) ?: 0.0,
-            y = c.double("y", path) ?: 0.0,
-            width = c.double("width", path),
-            height = c.double("height", path),
-            rotation = c.double("rotation", path),
-            hover = c.stringList("hover", path),
-            click = c.string("click"),
-            clickAction = c.string("click_action"),
-            dependency = c.ref("dependency", path),
-            data = FtbSnbtData(c),
-        )
+        private fun parseImage(c: NbtCompound, path: String): FtbChapterImage {
+            val hover = c.stringList("hover", path)
+            return FtbChapterImage(
+                id = c.optionalId(path),
+                image = c.string("image"),
+                title = c.string("title") ?: if ("hover" in c) hover.joinToString("\\n") else null,
+                x = c.double("x", path) ?: 0.0,
+                y = c.double("y", path) ?: 0.0,
+                width = c.double("width", path),
+                height = c.double("height", path),
+                rotation = c.double("rotation", path),
+                hover = hover,
+                click = c.string("click"),
+                clickAction = c.string("click_action"),
+                dependency = c.ref("dependency", path),
+                data = FtbSnbtData(c),
+            )
+        }
 
         private fun validateReferences(book: FtbQuestBook) {
-            val taggedObjects = mutableListOf<Pair<String, FtbSnbtData>>()
+            val taggedObjects = linkedMapOf<String, FtbSnbtData>()
             fun collectReward(reward: FtbReward) {
-                reward.id?.let { taggedObjects += it to reward.data }
-                reward.inlineTable?.entries?.forEach { collectReward(it.reward) }
+                reward.id?.let { taggedObjects[it] = reward.data }
             }
-            taggedObjects += ONE_ID to book.settings
-            book.chapterGroups.forEach { taggedObjects += it.id to it.data }
+            taggedObjects[ONE_ID] = book.settings
+            book.chapterGroups.forEach { taggedObjects[it.id] = it.data }
             book.chapters.forEach { chapter ->
-                taggedObjects += chapter.id to chapter.data
+                taggedObjects[chapter.id] = chapter.data
                 chapter.quests.forEach { quest ->
-                    taggedObjects += quest.id to quest.data
-                    quest.tasks.forEach { taggedObjects += it.id to it.data }
+                    taggedObjects[quest.id] = quest.data
+                    quest.tasks.forEach { taggedObjects[it.id] = it.data }
                     quest.rewards.forEach(::collectReward)
                 }
-                chapter.links.forEach { taggedObjects += it.id to it.data }
-                chapter.images.forEach { image -> image.id?.let { taggedObjects += it to image.data } }
+                chapter.links.forEach { taggedObjects[it.id] = it.data }
+                chapter.images.forEach { image -> image.id?.let { taggedObjects[it] = image.data } }
             }
             book.rewardTables.forEach { table ->
-                table.id?.let { taggedObjects += it to table.data }
+                table.id?.let { taggedObjects[it] = table.data }
+            }
+            book.rewardTables.forEach { table ->
                 table.entries.forEach { collectReward(it.reward) }
             }
             val tags = taggedObjects.flatMap { (id, data) -> data.nbt.stringListOrEmpty("tags").map { it to id } }
@@ -351,13 +362,21 @@ object FtbQuestBookReader {
 
         private fun registerRewardTree(reward: FtbReward, path: String) {
             reward.id?.let { register(it, "$path/$it", ObjectKind.Reward) }
-            reward.inlineTable?.entries?.forEach { registerRewardTree(it.reward, "$path/table_data/rewards") }
+        }
+
+        private fun registerTableRewardTree(reward: FtbReward, path: String) {
+            reward.id?.let { registerLastWins(it, "$path/$it", ObjectKind.Reward) }
         }
 
         private fun register(id: String, path: String, kind: ObjectKind) {
             require(id !in setOf(ZERO_ID, ONE_ID)) { "$path: reserved object id $id" }
             val firstPath = persistentIds.putIfAbsent(id, path)
             require(firstPath == null) { "$path: duplicate object id $id (first at $firstPath)" }
+            objectKinds[id] = kind
+        }
+
+        private fun registerLastWins(id: String, path: String, kind: ObjectKind) {
+            require(id !in setOf(ZERO_ID, ONE_ID)) { "$path: reserved object id $id" }
             objectKinds[id] = kind
         }
         private fun optionalDirectory(name: String): Path? { val p = root.resolve(name); if (!Files.exists(p, java.nio.file.LinkOption.NOFOLLOW_LINKS)) return null; require(Files.isDirectory(p, java.nio.file.LinkOption.NOFOLLOW_LINKS) && !Files.isSymbolicLink(p)) { "$name is not a directory" }; return p }

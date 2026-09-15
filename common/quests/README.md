@@ -9,7 +9,16 @@ Quests SNBT方言，包括无逗号换行、注释、数值后缀、NBT数组、
 val result = FtbQuestBookReader.read(questsDirectory).getOrThrow()
 val book = result.book
 result.diagnostics.forEach { println("${it.code}: ${it.message}") }
+val chineseBook = FtbQuestLocalizer.localize(book, "zh_cn")
 ```
+
+`FtbQuestLocalizer`把语言文件中的类型化标题、副标题和描述合并到副本中，
+请求语言优先，缺少键时固定回退到`en_us`；空字符串、空列表和选中语言中的
+错误类型都不会触发继续回退；错误类型保留原字段。原始`book`、`data`和`languages`保持不变，
+因此可以从同一个读取结果生成多个语言副本。它只覆盖章节组、章节、任务、目标、
+奖励、奖励表、任务书和图片的已建模文本，不渲染颜色码、JSON文本或占位符。
+`FtbQuestBook.title`对应`file.0000000000000001.title`，`FtbChapterImage.title`
+对应`image.<ID>.title`；旧版图片仅有`hover`时，用字面量`\n`连接为标题，原列表保留。
 
 模型是不可变的整合包定义快照，不含玩家完成进度，也不会下载图片、解析
 Minecraft注册表或执行奖励和图片点击动作。已知的预览字段使用类型化属性，
@@ -18,7 +27,8 @@ Minecraft注册表或执行奖励和图片点击动作。已知的预览字段�
 由调用方按章节或全局默认值处理；`data`中的原始标量仍是权威来源，类型化
 字段只是预览便利值。章节和奖励表文件按`order_index`、文件名稳定排序，默认
 章节组用`groupId=null`表示。旧版奖励表条目没有ID时保持`null`，不会仿造游戏
-运行时生成ID；较新格式中明确给出的条目ID会参与重复检查。`source`中的版本
+运行时生成ID；奖励表条目的重复ID按FTB运行时排序后的last-wins索引处理，原始
+列表中的重复条目仍全部保留，其他对象的重复ID仍会失败。`source`中的版本
 字段只是来源元数据，读取行为由文件字段决定。
 原始NBT通过`FtbSnbtData`以面向玩家预览的自然JSON进行序列化，复合标签和列表可以
 直接导航。Byte、Short、Int和安全范围内的Long输出为JSON数字；超出JavaScript安全
@@ -26,8 +36,8 @@ Minecraft注册表或执行奖励和图片点击动作。已知的预览字段�
 无穷分别输出为`NaN`、`Infinity`、`-Infinity`字符串。三种NBT数组输出为普通JSON
 数组，空数组不保留其NBT数组类型。该格式是单向预览输出，不保证数值类型或数组类型
 往返；原本就是字符串的值仍保持字符串。任务标题、描述和语言值保留原始
-翻译键；语言文件的字符串、字符串列表及空白行不会自动渲染或合并。图片资源
-和外部语言文件仍由后续预览层按需提供。
+翻译键；语言文件的字符串、字符串列表及空白行不会自动渲染。图片资源和外部
+语言文件仍由后续预览层按需提供。
 
 读取失败（目录、文件、SNBT或必要字段错误）返回失败的`Result`；完整读取后
 发现的悬空依赖、奖励表引用及不明确的标签引用保留在模型中，并作为诊断返回。

@@ -32,7 +32,7 @@ class FtbQuestBookReaderTest {
         root.resolve("chapters").createDirectories()
         root.resolve("reward_tables").createDirectories()
         root.resolve("lang").createDirectories()
-        root.resolve("data.snbt").writeText("{version:13, tags:[\"standard\"], unknown_root:{keep:1L}}")
+        root.resolve("data.snbt").writeText("{version:13, title:\"Book title\", tags:[\"standard\"], unknown_root:{keep:1L}}")
         root.resolve("chapter_groups.snbt").writeText("""
             { chapter_groups: [{id:"0000000000000010", title:"Group"}] }
         """.trimIndent())
@@ -48,7 +48,7 @@ class FtbQuestBookReaderTest {
                   table_data:{loot_size:2, rewards:[{item:{id:"minecraft:diamond"}}]}}]
               }]
               quest_links:[]
-              images:[{image:"pack:chapter/banner", x:1d, y:2d, hover:["One",""], click:"old-action"}]
+              images:[{image:"pack:chapter/banner", title:"Image title", x:1d, y:2d, hover:["One",""], click:"old-action"}]
             }
         """.trimIndent())
         root.resolve("chapters/z.snbt").writeText("""
@@ -66,6 +66,7 @@ class FtbQuestBookReaderTest {
         val result = FtbQuestBookReader.read(root).getOrThrow()
         val book = result.book
         assertEquals(13, book.dataVersion)
+        assertEquals("Book title", book.title)
         assertEquals(listOf("0000000000000040", "0000000000000020"), book.chapters.map { it.id })
         assertNull(book.chapters.first().groupId)
         assertEquals("0000000000000010", book.chapters.last().groupId)
@@ -83,6 +84,7 @@ class FtbQuestBookReaderTest {
         assertNull(reward.inlineTable?.entries?.single()?.reward?.id)
         assertEquals(2, reward.inlineTable?.lootSize)
         assertEquals("thirdparty:custom", book.chapters.first().quests.single().tasks.single().type)
+        assertEquals("Image title", book.chapters.last().images.single().title)
         assertEquals(listOf("line", "", "{missing.key}"), (book.languages.getValue("en_us").nbt["quest.0000000000000030.quest_desc"] as net.benwoodworth.knbt.NbtList<*>).map { (it as NbtString).value })
         assertTrue(result.diagnostics.isEmpty(), "cross-chapter, task, tag and large numeric table references should resolve")
         assertEquals(NbtLong(1), (book.settings.nbt["unknown_root"] as NbtCompound)["keep"])
@@ -97,7 +99,7 @@ class FtbQuestBookReaderTest {
             {id:"0000000000000010", group:"0000000000000011", quests:[{
               id:"0000000000000011", optional:true,
               tasks:[{id:"0000000000000012", type:"item", item:{id:"minecraft:paper", count:2, components:{"minecraft:custom_name":'{"text":"Paper"}'}}}]
-            }], images:[{id:"0000000000000013", image:"resource:test", click_action:"open_url", dependency:"0000000000000011"}]}
+            }], images:[{id:"0000000000000013", image:"resource:test", hover:["Legacy hover","line"], click_action:"open_url", dependency:"0000000000000011"}]}
         """.trimIndent())
 
         val result = FtbQuestBookReader.read(root).getOrThrow()
@@ -105,6 +107,7 @@ class FtbQuestBookReaderTest {
         assertEquals(2L, taskItem.count)
         assertTrue("components" in taskItem.data!!.nbt)
         assertEquals("open_url", result.book.chapters.single().images.single().clickAction)
+        assertEquals("Legacy hover\\nline", result.book.chapters.single().images.single().title)
         val json = Json.encodeToString(result)
         val taskData = Json.parseToJsonElement(json).jsonObject
             .getValue("book").jsonObject
@@ -179,6 +182,120 @@ class FtbQuestBookReaderTest {
         assertNull(table.lootSize)
         assertEquals(0f, table.entries.single().weight)
         assertNull(table.entries.single().reward.id)
+    }
+
+    @Test
+    fun preservesDuplicateRewardIdsAcrossTablesUsingSortedLastWriteWins(): Unit {
+        val root = tempDir.resolve("duplicate-table-rewards").createDirectories()
+        root.resolve("data.snbt").writeText("{version:13}")
+        val tables = root.resolve("reward_tables").createDirectories()
+        tables.resolve("a.snbt").writeText("""
+            {id:"0000000000000031", order_index:10, rewards:[{id:"0000000000000020", count:1L}]}
+        """.trimIndent())
+        tables.resolve("z.snbt").writeText("""
+            {id:"0000000000000030", order_index:0, rewards:[{id:"0000000000000020", count:2L}]}
+        """.trimIndent())
+
+        val book = FtbQuestBookReader.read(root).getOrThrow().book
+        assertEquals(listOf("reward_tables/z.snbt", "reward_tables/a.snbt"), book.rewardTables.map { it.sourcePath })
+        assertEquals(listOf(2L, 1L), book.rewardTables.map { it.entries.single().reward.count })
+    }
+
+    @Test
+    fun preservesDuplicateRewardIdsWithinOneTable(): Unit {
+        val root = tempDir.resolve("duplicate-table-entries").createDirectories()
+        root.resolve("data.snbt").writeText("{version:13}")
+        root.resolve("reward_tables").createDirectories().resolve("table.snbt").writeText("""
+            {id:"0000000000000030", rewards:[
+                {id:"0000000000000020", count:1L},
+                {id:"0000000000000020", count:2L}
+            ]}
+        """.trimIndent())
+
+        val table = FtbQuestBookReader.read(root).getOrThrow().book.rewardTables.single()
+        assertEquals(listOf(1L, 2L), table.entries.map { it.reward.count })
+    }
+
+    @Test
+    fun registersSortedTableRewardsAfterTableIdsAndUsesWinningKind(): Unit {
+        val root = tempDir.resolve("table-reward-collision").createDirectories()
+        root.resolve("data.snbt").writeText("{version:13}")
+        root.resolve("chapters").createDirectories().resolve("chapter.snbt").writeText("""
+            {id:"0000000000000010", quests:[{id:"0000000000000011",
+              rewards:[
+                {id:"0000000000000012", type:"random", table_id:"0000000000000020"},
+                {id:"0000000000000013", type:"random", table_id:"#table-tag"},
+                {id:"0000000000000014", type:"random", table_id:"#reward-tag"}
+              ]
+            }]}
+        """.trimIndent())
+        val tables = root.resolve("reward_tables").createDirectories()
+        tables.resolve("a.snbt").writeText("""
+            {id:"0000000000000030", order_index:0, rewards:[{id:"0000000000000020", tags:["reward-tag"]}]}
+        """.trimIndent())
+        tables.resolve("z.snbt").writeText("""
+            {id:"0000000000000020", order_index:10, tags:["table-tag"], rewards:[{id:"0000000000000021"}]}
+        """.trimIndent())
+
+        val result = FtbQuestBookReader.read(root).getOrThrow()
+        val diagnostic = result.diagnostics.single { it.reference == "0000000000000020" }
+        assertEquals("reference_type_mismatch", diagnostic.code)
+        assertEquals("dangling_reference", result.diagnostics.single { it.reference == "#table-tag" }.code)
+        assertEquals("reference_type_mismatch", result.diagnostics.single { it.reference == "#reward-tag" }.code)
+    }
+
+    @Test
+    fun keepsInlineTableRewardsOutsideTheGlobalIdIndex(): Unit {
+        val root = tempDir.resolve("inline-table-ids").createDirectories()
+        root.resolve("data.snbt").writeText("{version:13}")
+        root.resolve("chapters").createDirectories().resolve("chapter.snbt").writeText("""
+            {id:"0000000000000010", quests:[{id:"0000000000000011", rewards:[
+                {id:"0000000000000012", type:"random", table_id:"#target", table_data:{rewards:[
+                    {id:"0000000000000020", tags:["nested"], count:4L}
+                ]}}
+            ]}]}
+        """.trimIndent())
+        val tables = root.resolve("reward_tables").createDirectories()
+        tables.resolve("a.snbt").writeText("""
+            {id:"0000000000000030", rewards:[{id:"0000000000000031", type:"random",
+                table_id:"0000000000000020", table_data:{rewards:[
+                    {id:"0000000000000020", tags:["nested"], count:8L}
+                ]}
+            }]}
+        """.trimIndent())
+        tables.resolve("z.snbt").writeText("""
+            {id:"0000000000000020", tags:["target"]}
+        """.trimIndent())
+
+        val result = FtbQuestBookReader.read(root).getOrThrow()
+        assertTrue(result.diagnostics.isEmpty())
+        assertEquals(4L, result.book.chapters.single().quests.single().rewards.single().inlineTable?.entries?.single()?.reward?.count)
+        assertEquals(8L, result.book.rewardTables.first().entries.single().reward.inlineTable?.entries?.single()?.reward?.count)
+    }
+
+    @Test
+    fun excludesTagsFromOverwrittenTableRewards(): Unit {
+        val root = tempDir.resolve("duplicate-table-tags").createDirectories()
+        root.resolve("data.snbt").writeText("{version:13}")
+        root.resolve("chapters").createDirectories().resolve("chapter.snbt").writeText("""
+            {id:"0000000000000010", quests:[{id:"0000000000000011", rewards:[
+                {id:"0000000000000012", type:"random", table_id:"#old-tag"},
+                {id:"0000000000000013", type:"random", table_id:"#new-tag"}
+            ]}]}
+        """.trimIndent())
+        val tables = root.resolve("reward_tables").createDirectories()
+        tables.resolve("a.snbt").writeText("""
+            {id:"0000000000000031", order_index:1, rewards:[{id:"0000000000000020", tags:["new-tag"]}]}
+        """.trimIndent())
+        tables.resolve("z.snbt").writeText("""
+            {id:"0000000000000030", order_index:0, rewards:[{id:"0000000000000020", tags:["old-tag"]}]}
+        """.trimIndent())
+
+        val result = FtbQuestBookReader.read(root).getOrThrow()
+        val oldTag = result.diagnostics.single { it.reference == "#old-tag" }
+        val newTag = result.diagnostics.single { it.reference == "#new-tag" }
+        assertEquals("dangling_reference", oldTag.code)
+        assertEquals("reference_type_mismatch", newTag.code)
     }
 
     @Test
@@ -290,13 +407,16 @@ class FtbQuestBookReaderTest {
         }
     }
 
+    private val json = Json { prettyPrint = true }
+
     @Test
     fun readRealQuest() {
         val message =
-            FtbQuestBookReader.read("C:\\Users\\calebxzhou\\Documents\\rdi5ship\\mc\\versions\\6a9e67f81d0c4a8230366e10_1.1.1b\\config\\ftbquests\\quests".let {
+            FtbQuestBookReader.read("C:\\Users\\calebxzhou\\Documents\\rdi5ship\\mc\\versions\\69561b4d4475469e015e88c9_1.22.0\\config\\ftbquests\\quests".let {
                 Path.of(it)
-            }).getOrNull()
+            }).getOrElse { throw it }
 
-        Json.encodeToString(message).let { File("quest_read_test.json").writeText(it) }
+        val localized = message.copy(book = FtbQuestLocalizer.localize(message.book, "zh_cn"))
+        json.encodeToString(localized).let { File("quest_read_test.json").writeText(it) }
     }
 }
