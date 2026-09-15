@@ -31,6 +31,9 @@ object GameNodeService {
     fun isProxyIpAllowed(ip: String): Boolean =
         ProxyAccessPolicy.isAllowed(ip, CONF.gameNode.nodes.map { it.gameAddr })
 
+    fun selectBackendHost(clientIp: String): String =
+        BackendHostPolicy.select(clientIp, CONF.server.gameHost, CONF.server.remoteGameHost)
+
     fun resolveServerEntry(ipv4: String, gameBackup: Boolean = false, forceMain: Boolean = false): ServerEntry {
         requireIpv4(ipv4)
         val region = CarrierDetectService.detectResult(ipv4)
@@ -100,6 +103,15 @@ object GameNodeService {
 object ProxyAccessPolicy {
     fun isAllowed(ip: String, gameAddresses: Iterable<String>): Boolean =
         ip == "127.0.0.1" || gameAddresses.any { it.substringBeforeLast(':') == ip }
+}
+
+object BackendHostPolicy {
+    fun select(clientIp: String, gameHost: String, remoteGameHost: String?): String =
+        if (clientIp == "127.0.0.1") {
+            gameHost
+        } else {
+            remoteGameHost?.trim()?.takeIf { it.isNotEmpty() } ?: gameHost
+        }
 }
 
 private const val FALLBACK_GAME_NODE_ID = 0
