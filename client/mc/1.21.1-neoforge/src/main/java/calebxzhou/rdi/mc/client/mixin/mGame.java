@@ -1,6 +1,7 @@
 package calebxzhou.rdi.mc.client.mixin;
 
 import calebxzhou.rdi.mc.client.RMcSessionService;
+import calebxzau.rdi.mc.client.preview.ItemPreviewExporter;
 import com.mojang.authlib.minecraft.MinecraftSessionService;
 import com.mojang.authlib.minecraft.UserApiService;
 import com.mojang.authlib.yggdrasil.YggdrasilAuthenticationService;
@@ -22,6 +23,7 @@ import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.Redirect;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
+import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
 /**
  * calebxzhou @ 2026-01-01 13:13
@@ -79,5 +81,23 @@ public class mGame {
                 ResourceLocation.fromNamespaceAndPath("rdi", "mc_start")
         );
         minecraft.getSoundManager().play(SimpleSoundInstance.forUI(sound, 1.0F, 1.0F));
+    }
+
+    @Inject(method = "onResourceLoadFinished", at = @At("TAIL"))
+    private void RDI$previewResourcesReady(CallbackInfo ci) {
+        ItemPreviewExporter.INSTANCE.onResourceLoadFinished();
+    }
+
+    @Inject(
+            method = "reloadResourcePacks(ZLnet/minecraft/client/Minecraft$GameLoadCookie;)Ljava/util/concurrent/CompletableFuture;",
+            at = @At("HEAD")
+    )
+    private void RDI$previewReloadStarted(CallbackInfoReturnable<?> cir) {
+        ItemPreviewExporter.INSTANCE.onResourceReloadStarted();
+    }
+
+    @Inject(method = "close", at = @At("HEAD"))
+    private void RDI$shutdownPreview(CallbackInfo ci) {
+        ItemPreviewExporter.INSTANCE.shutdown();
     }
 }

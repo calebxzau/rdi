@@ -5,6 +5,7 @@ import calebxzhou.rdi.mc.client.mcp.standard.StandardMcpServer
 import calebxzhou.rdi.mc.client.mcpimpl211.McpGameImpl
 import calebxzhou.rdi.mc.client.mcpimpl211.Search
 import calebxzhou.rdi.mc.client.rcmd.RcmdClientBridge211
+import calebxzau.rdi.mc.client.preview.ItemPreviewExporter
 import calebxzhou.rdi.mc.common.RDI
 import calebxzhou.rdi.mc.rcmd.RcmdClientCommands
 import com.google.common.net.HostAndPort
@@ -35,6 +36,7 @@ import net.neoforged.neoforge.client.event.ClientChatEvent
 import net.neoforged.neoforge.client.event.ClientPlayerNetworkEvent
 import net.neoforged.neoforge.client.event.RegisterClientReloadListenersEvent
 import net.neoforged.neoforge.client.event.RenderLevelStageEvent
+import net.neoforged.neoforge.client.event.RenderFrameEvent
 import java.util.*
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
@@ -105,6 +107,12 @@ class RDIMain {
         @SubscribeEvent @JvmStatic
         fun onClientChat(event: ClientChatEvent) {
             val message = event.message
+            if (message.trim() == "\\preview export") {
+                event.isCanceled = true
+                ItemPreviewExporter.forceExport()
+                Minecraft.getInstance().gui.chat.addMessage(Component.literal("预览图集导出已排队"))
+                return
+            }
             if (!RcmdClientCommands.isRcmd(message)) {
                 return
             }
@@ -119,7 +127,14 @@ class RDIMain {
 
         @SubscribeEvent
         @JvmStatic
+        fun onRenderFrame(event: RenderFrameEvent.Post) {
+            ItemPreviewExporter.advance()
+        }
+
+        @SubscribeEvent
+        @JvmStatic
         fun onClientJoinServer(event: ClientPlayerNetworkEvent.LoggingIn) {
+            ItemPreviewExporter.onWorldEntered()
             StandardMcpServer.start(McpGameImpl, null)
                 .onSuccess { port -> sendMcpUrlMessage(event.player, port) }
                 .onFailure { it.printStackTrace() }
@@ -145,6 +160,7 @@ class RDIMain {
         @SubscribeEvent
         @JvmStatic
         fun onClientLeaveServer(event: ClientPlayerNetworkEvent.LoggingOut) {
+            ItemPreviewExporter.onWorldLeft()
             StandardMcpServer.stop()
             RDI.FIRM_CHUNKS.clear()
         }
