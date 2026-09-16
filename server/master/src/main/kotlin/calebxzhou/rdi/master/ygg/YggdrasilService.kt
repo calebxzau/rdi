@@ -61,7 +61,7 @@ object YggdrasilService {
         }
     private suspend fun ApplicationCall.getProfile(uuid: String){
         val uid = uuid.fromUndashedUuid
-        val account = PlayerService.getById(uid.objectId)
+        val account = runCatching {  PlayerService.getById(uid.objectId) }.getOrNull()
         respond(account?.gameProfile?: GameProfile.getDefault(uuid))
     }
     private suspend fun ApplicationCall.getClothes(uuid: String, authlibVer: String?){

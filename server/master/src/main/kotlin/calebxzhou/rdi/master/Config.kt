@@ -19,7 +19,8 @@ data class ServerConfig(
     val httpsPort: Int = 65331,
     val bgpUrl: String = "bkrdi.calebxzhou.cn",
     val gameHost: String = "127.0.0.1",
-    val remoteGameHost: String? = null
+    val remoteGameHost: String? = null,
+    val gameStatusPort: Int = 65238
 )
 
 @Serializable

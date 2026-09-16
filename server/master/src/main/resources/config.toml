@@ -39,4 +39,3 @@ timeoutMillis = 10000
 pollIntervalSeconds = 30
 operationSubject = "rdi-opr"
 markAsSeenAfterHandle = true
-

@@ -24,6 +24,10 @@ import calebxzhou.rdi.master.service.modpack.ModpackBuildService
 import calebxzau.rdi.server.infra.configurePostgresServices
 import calebxzau.rdi.server.infra.productionMongoCodecRegistry
 import calebxzau.rdi.server.service.baseworld.baseWorldRoutes
+import calebxzhou.rdi.common.service.McServerPlayers
+import calebxzhou.rdi.common.service.McServerPlayerSample
+import calebxzhou.rdi.common.util.toUUID
+import calebxzau.rdi.master.service.GameStatusService
 // Archived Modpack2 and friend routes are intentionally disabled.
 import calebxzhou.rdi.master.ygg.YggdrasilService.yggdrasilRoutes
 import com.mongodb.MongoClientSettings
@@ -149,16 +153,35 @@ fun main(): Unit = runBlocking {
         UnusedModPurgeService.purgeOnStartup()
     }
     HostPresenceService.startIdleMonitor()
+    require(CONF.server.gameStatusPort in 1..65535) {
+        "server.gameStatusPort must be between 1 and 65535"
+    }
+    val gameStatusService = GameStatusService(port = CONF.server.gameStatusPort, playersProvider = {
+        val ids = HostPresenceService.getAllHostsOnlinePlayerIds().distinct()
+        val accounts = if (ids.isEmpty()) emptyMap() else PlayerService.getByIds(ids).associateBy { it._id }
+        McServerPlayers(
+            max = maxOf(ids.size, 88888),
+            online = ids.size,
+            sample = ids.mapNotNull { id ->
+                accounts[id]?.let { account ->
+                    McServerPlayerSample(name = account.name, id = account._id.toUUID().toString())
+                }
+            }
+        )
+    })
     Runtime.getRuntime().addShutdownHook(Thread {
         lgr.info { "Application shutdown initiated..." }
+        gameStatusService.close()
         EmailService.shutdown()
         HostService.shutdown()
         lgr.info { "Application shutdown complete" }
     })
     // Start server with HTTP and optionally HTTPS on the same port
     try {
+        gameStatusService.start().getOrThrow()
         startServer()
     } finally {
+        gameStatusService.close()
         uploadSessionCleanupJob.cancelAndJoin()
     }
 

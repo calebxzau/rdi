@@ -145,6 +145,16 @@ tasks.register<Test>("baseWorldTest") {
     systemProperty("net.bytebuddy.experimental", "true")
     useJUnitPlatform()
 }
+
+tasks.register<Test>("gameStatusTest") {
+    group = "verification"
+    description = "Runs focused Minecraft server status listener tests."
+    dependsOn(tasks.named("testClasses"))
+    testClassesDirs = sourceSets["test"].output.classesDirs
+    classpath = sourceSets["test"].runtimeClasspath
+    include("**/calebxzau/rdi/master/service/GameStatusServiceTest.class")
+    useJUnitPlatform()
+}
 //
 //tasks.register<Test>("accountMirrorTest") {
 //    group = "verification"
