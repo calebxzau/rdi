@@ -291,10 +291,12 @@ pub struct ActiveConnections {
 impl ActiveConnections {
     fn enter(self: &Arc<Self>, peer: SocketAddr) -> ActiveGuard {
         let id = self.next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        self.inner
-            .lock()
-            .expect("active map poisoned")
-            .insert(id, peer);
+        let count = {
+            let mut peers = self.inner.lock().expect("active map poisoned");
+            peers.insert(id, peer);
+            peers.len()
+        };
+        info!(client_ip = %peer.ip(), active_connections = count, "client connected");
         ActiveGuard {
             owner: Arc::clone(self),
             id,
@@ -316,11 +318,13 @@ pub struct ActiveGuard {
 }
 impl Drop for ActiveGuard {
     fn drop(&mut self) {
-        self.owner
-            .inner
-            .lock()
-            .expect("active map poisoned")
-            .remove(&self.id);
+        let removed = {
+            let mut peers = self.owner.inner.lock().expect("active map poisoned");
+            peers.remove(&self.id).map(|peer| (peer, peers.len()))
+        };
+        if let Some((peer, count)) = removed {
+            info!(client_ip = %peer.ip(), active_connections = count, "client disconnected");
+        }
     }
 }
 
@@ -677,6 +681,7 @@ async fn handle_connection(
     .await
     .context("handshake timed out")??;
     let handshake = parse_handshake(frame).context("invalid handshake")?;
+    info!(client_ip = %peer.ip(), requested_port = handshake.port, "client handshake received");
     if handshake.next_state == 1 {
         loop {
             let request = read_frame(&mut client, STATUS_LIMIT, PHASE_TIMEOUT).await?;
