@@ -1,6 +1,5 @@
 package calebxzhou.rdi.mc.server.firmsection
 
-import calebxzhou.rdi.mc.firmsection.FirmSectionSetStatus
 import net.minecraft.network.chat.Component
 import net.minecraft.server.level.ServerLevel
 import net.minecraft.server.level.ServerPlayer
@@ -18,11 +17,12 @@ object FirmSectionEvents {
         }
         val player = event.entity as? ServerPlayer ?: return
         val level = event.level as? ServerLevel ?: return
-        if (!event.placedBlock.hasBlockEntity() || !FirmSectionService.isAutoSetEnabled(player)) {
-            return
-        }
-        if (FirmSectionService.set(player, level, event.pos).status == FirmSectionSetStatus.ADDED) {
-            player.sendSystemMessage(Component.literal("放置方块实体的位置已设为持久子区块"))
-        }
+        FirmSectionEventHandler(FirmSectionService.flow).handle(
+            player = player,
+            level = level,
+            pos = event.pos,
+            hasBlockEntity = event.placedBlock.hasBlockEntity(),
+            notify = { it.sendSystemMessage(Component.literal("放置方块实体的位置已设为持久子区块")) },
+        )
     }
 }

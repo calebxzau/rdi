@@ -23,6 +23,7 @@ sourceSets.main {
     ext["refMap"] = "rdi.mixins.refmap.json"
     // java.srcDir '../../../mc/chunkcache/1.20.1/src/main/java'
     java.srcDir '../../../mc/common/2021/src/main/java'
+    kotlin.srcDir '../../../mc/common/2021/src/main/kotlin'
     kotlin.srcDir '../../../mc/common/codec/src/main/kotlin'
     kotlin.srcDir '../../../mc/firmsection/src/main/kotlin'
     kotlin.srcDir '../../../mc/rcmd/src/main/kotlin'

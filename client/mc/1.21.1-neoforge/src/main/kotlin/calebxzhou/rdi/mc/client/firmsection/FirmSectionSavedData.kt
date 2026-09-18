@@ -1,12 +1,14 @@
-package calebxzhou.rdi.mc.server.firmsection
+package calebxzhou.rdi.mc.client.firmsection
 
 import calebxzhou.rdi.mc.firmsection.FirmSectionKey
+import net.minecraft.core.HolderLookup
 import net.minecraft.nbt.CompoundTag
 import net.minecraft.world.level.saveddata.SavedData
 import java.util.UUID
 
-class FirmSectionSavedData : SavedData() {
-    private val core = FirmSectionSavedDataCore(onDirty = ::setDirty)
+class FirmSectionSavedData : net.minecraft.world.level.saveddata.SavedData() {
+    private val core =
+        _root_ide_package_.calebxzhou.rdi.mc.server.firmsection.FirmSectionSavedDataCore(onDirty = ::setDirty)
 
     fun allSections(): List<FirmSectionKey> = core.allSections()
 
@@ -26,13 +28,14 @@ class FirmSectionSavedData : SavedData() {
 
     fun list(playerId: UUID) = core.list(playerId)
 
-    override fun save(tag: CompoundTag): CompoundTag = core.write(tag)
+    override fun save(tag: CompoundTag, registries: HolderLookup.Provider): CompoundTag = core.write(tag)
 
     companion object {
         const val FILE_ID = "rdi_firm_sections"
 
-        @JvmStatic
-        fun load(tag: CompoundTag): FirmSectionSavedData {
+        fun factory(): Factory<FirmSectionSavedData> = Factory(::FirmSectionSavedData, ::load)
+
+        private fun load(tag: CompoundTag, registries: HolderLookup.Provider): FirmSectionSavedData {
             val data = FirmSectionSavedData()
             data.core.read(tag)
             return data

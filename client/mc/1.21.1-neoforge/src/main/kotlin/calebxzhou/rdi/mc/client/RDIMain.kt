@@ -5,6 +5,7 @@ import calebxzhou.rdi.mc.client.mcp.standard.StandardMcpServer
 import calebxzhou.rdi.mc.client.mcpimpl211.McpGameImpl
 import calebxzhou.rdi.mc.client.mcpimpl211.Search
 import calebxzhou.rdi.mc.client.rcmd.RcmdClientBridge211
+import calebxzhou.rdi.mc.client.firmsection.FirmSectionIntegratedCommands
 import calebxzau.rdi.mc.client.preview.ItemPreviewExporter
 import calebxzhou.rdi.mc.common.RDI
 import calebxzhou.rdi.mc.rcmd.RcmdClientCommands
@@ -111,6 +112,10 @@ class RDIMain {
                 event.isCanceled = true
                 ItemPreviewExporter.forceExport()
                 Minecraft.getInstance().gui.chat.addMessage(Component.literal("预览图集导出已排队"))
+                return
+            }
+            if (FirmSectionIntegratedCommands.dispatch(Minecraft.getInstance(), message)) {
+                event.isCanceled = true
                 return
             }
             if (!RcmdClientCommands.isRcmd(message)) {

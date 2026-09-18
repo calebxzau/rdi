@@ -63,6 +63,7 @@ base {
 }
 
 def sharedBuildProjects = [':c-mc-common', ':rmcp-common', ':rmcp-client', ':mediaproc']
+evaluationDependsOn(":firmsection")
 evaluationDependsOn(':early-display')
 project(':mediaproc').tasks.withType(org.gradle.api.tasks.testing.Test).configureEach {
     enabled = false
@@ -96,15 +97,18 @@ jar {
     evaluationDependsOn(':rmcp-common')
     evaluationDependsOn(':rmcp-client')
     evaluationDependsOn(':mediaproc')
+    evaluationDependsOn(':firmsection')
     // Bundle compiled classes from :c-mc-common into this jar.
     // Common resources are already added via sourceSets.main.resources above.
     dependsOn project(":c-mc-common").tasks.named("classes")
     dependsOn project(":rmcp-common").tasks.named("classes")
     dependsOn project(":rmcp-client").tasks.named("classes")
+    dependsOn project(":firmsection").tasks.named("classes")
 
     from(project(":c-mc-common").sourceSets.main.output.classesDirs)
     from(project(":rmcp-common").sourceSets.main.output)
     from(project(":rmcp-client").sourceSets.main.output)
+    from(project(":firmsection").sourceSets.main.output)
     from({
         configurations.shaded.collect { it.isDirectory() ? it : zipTree(it) }
     }) {
@@ -139,6 +143,7 @@ neoForge {
     runs {
         client {
             client()
+            gameDirectory = project.file('run')
             programArgument '--width'
             programArgument '2560'
             programArgument '--height'
@@ -156,6 +161,7 @@ neoForge {
         }
         client2 {
             client()
+            gameDirectory = project.file('run2')
             programArgument '--width'
             programArgument '2560'
             programArgument '--height'
@@ -262,6 +268,8 @@ dependencies {
     }
     implementation project(':c-mc-common')
     additionalRuntimeClasspath project(':c-mc-common')
+    implementation project(':firmsection')
+    additionalRuntimeClasspath project(':firmsection')
     //RMCP runtime dependencies
     implementation project(':rmcp-common')
     additionalRuntimeClasspath project(':rmcp-common')
@@ -431,6 +439,7 @@ idea {
         downloadSources = true
         downloadJavadoc = true
         excludeDirs += file('run')
+        excludeDirs += file('run2')
     }
 }
 evaluationDependsOn(':c-mc-common')
