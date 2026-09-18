@@ -19,14 +19,23 @@ import java.util.concurrent.atomic.AtomicReference
 
 class DmHostTunnel(
     private val endpoint: DmEndpoint,
-    private val room: String,
+    private val hostId: UUID,
     private val targetPort: Int,
     private val listener: Listener,
 ) {
     interface Listener {
         fun onReady(session: UUID, gamePort: Int)
         fun onRetry(attempt: Int, reason: String)
+        fun onTerminal(failure: TerminalFailure)
     }
+
+    enum class TerminalFailure(val message: String) {
+        HostNotFound("DM房间不存在"),
+        Busy("DM房间正在使用"),
+        NoPort("DM网关没有可用游戏端口"),
+    }
+
+    private class TerminalException(val failure: TerminalFailure) : IOException(failure.message)
 
     private val logger = LoggerFactory.getLogger(DmHostTunnel::class.java)
     private val closed = AtomicBoolean(false)
@@ -69,11 +78,15 @@ class DmHostTunnel(
                 retry = 0
             } catch (error: Throwable) {
                 if (!closed.get()) {
+                    if (error is TerminalException) {
+                        listener.onTerminal(error.failure)
+                        break
+                    }
                     retry++
-                    logger.warn("DM host connection failed for room {} (attempt {})", room, retry, error)
+                    logger.warn("DM host connection failed for host {} (attempt {})", hostId, retry, error)
                     listener.onRetry(retry, error.message ?: error.javaClass.simpleName)
                 } else {
-                    logger.debug("DM host connection closed for room {}", room, error)
+                    logger.debug("DM host connection closed for host {}", hostId, error)
                 }
             } finally {
                 currentAttempt.compareAndSet(attempt, null)
@@ -101,7 +114,7 @@ class DmHostTunnel(
         control.soTimeout = 5000
         val output = control.getOutputStream()
         val input = DataInputStream(control.getInputStream())
-        attempt.withSetupDeadline(control) { DmProtocol.writeRegister(output, room) }
+        attempt.withSetupDeadline(control) { DmProtocol.writeRegister(output, hostId) }
         val reply = attempt.withSetupDeadline(control) { DmProtocol.readRegistrationReply(input) }
         when (reply) {
             is DmProtocol.RegistrationReply.Ready -> {
@@ -110,8 +123,10 @@ class DmHostTunnel(
                 attempt.lastControlActivity.set(System.nanoTime())
                 listener.onReady(reply.session, reply.gamePort)
             }
-            DmProtocol.RegistrationReply.Busy -> error("网关房间正在使用")
-            DmProtocol.RegistrationReply.NoPort -> error("网关没有可用游戏端口")
+            DmProtocol.RegistrationReply.Busy -> throw TerminalException(TerminalFailure.Busy)
+            DmProtocol.RegistrationReply.NoPort -> throw TerminalException(TerminalFailure.NoPort)
+            DmProtocol.RegistrationReply.HostNotFound -> throw TerminalException(TerminalFailure.HostNotFound)
+            DmProtocol.RegistrationReply.MasterUnavailable -> throw IOException("DM主服务暂时不可用")
         }
         attempt.startWriter(control, output)
         while (!closed.get() && attempt.isOpen()) {
@@ -140,7 +155,7 @@ class DmHostTunnel(
         } catch (error: RuntimeException) {
             attempt.slots.release()
             attempt.enqueueFailed(connection)
-            logger.debug("DM visitor {} could not be scheduled for room {}", connection, room, error)
+            logger.debug("DM visitor {} could not be scheduled for host {}", connection, hostId, error)
         }
     }
 
@@ -169,15 +184,15 @@ class DmHostTunnel(
             data.soTimeout = 0
             val bytes = relay(attempt, local, data)
             logger.debug(
-                "DM visitor {} ended for room {}: to gateway={} bytes, to IGS={} bytes, elapsed={}ms",
-                connection, room, bytes.first, bytes.second,
+                "DM visitor {} ended for host {}: to gateway={} bytes, to IGS={} bytes, elapsed={}ms",
+                connection, hostId, bytes.first, bytes.second,
                 TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started),
             )
         } catch (error: Throwable) {
             if (!attempt.isOpen()) {
-                logger.debug("DM visitor {} cancelled for room {}", connection, room)
+                logger.debug("DM visitor {} cancelled for host {}", connection, hostId)
             } else {
-                logger.debug("DM visitor {} failed for room {}", connection, room, error)
+                logger.debug("DM visitor {} failed for host {}", connection, hostId, error)
                 if (!attached) attempt.enqueueFailed(connection)
             }
         } finally {
@@ -290,7 +305,7 @@ class DmHostTunnel(
                     }
                 } catch (error: Throwable) {
                     if (isOpen()) {
-                        logger.warn("DM control writer failed for room {}", room, error)
+                        logger.warn("DM control writer failed for host {}", hostId, error)
                         close()
                     }
                 }
@@ -313,7 +328,7 @@ class DmHostTunnel(
                             closeQuietly(it)
                         }
                         if (controlExpired || now - lastControlActivity.get() > TimeUnit.SECONDS.toNanos(45)) {
-                            logger.warn("DM control deadline expired for room {}", room)
+                            logger.warn("DM control deadline expired for host {}", hostId)
                             close()
                             return@submit
                         }
@@ -327,7 +342,7 @@ class DmHostTunnel(
         fun enqueue(message: Control) {
             if (!isOpen()) return
             if (!queue.offer(message)) {
-                logger.warn("DM control queue full for room {}", room)
+                logger.warn("DM control queue full for host {}", hostId)
                 close()
             }
         }

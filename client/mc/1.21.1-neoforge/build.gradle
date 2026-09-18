@@ -148,6 +148,7 @@ neoForge {
             systemProperty 'neoforge.enabledGameTestNamespaces', mod_id
             systemProperty 'mixin.hotSwap', 'true'
             systemProperty 'rdi.debug', 'true'
+            systemProperty 'rdi.dm.server', 'http://127.0.0.1:15566'
             systemProperty 'rdi.play', Base64.encoder.encodeToString(playArg.getBytes(Charset.forName("UTF-8")))
             systemProperty 'rdi.earlyDisplay.ffmpeg', layout.buildDirectory.file('early-display/ffmpeg/ffmpeg.exe').get().asFile.absolutePath
             systemProperty 'rdi.earlyDisplay.video', file('startup.mp4').absolutePath
@@ -162,6 +163,7 @@ neoForge {
             systemProperty 'neoforge.enabledGameTestNamespaces', mod_id
             systemProperty 'mixin.hotSwap', 'true'
             systemProperty 'rdi.debug', 'true'
+            systemProperty 'rdi.dm.server', 'http://127.0.0.1:15566'
             systemProperty 'rdi.play', Base64.encoder.encodeToString(playArg2.getBytes(Charset.forName("UTF-8")))
             systemProperty 'rdi.earlyDisplay.ffmpeg', layout.buildDirectory.file('early-display/ffmpeg/ffmpeg.exe').get().asFile.absolutePath
             systemProperty 'rdi.earlyDisplay.video', file('startup.mp4').absolutePath

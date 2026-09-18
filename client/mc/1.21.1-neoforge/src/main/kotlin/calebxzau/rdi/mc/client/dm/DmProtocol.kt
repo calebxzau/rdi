@@ -4,7 +4,6 @@ import java.io.DataInputStream
 import java.io.DataOutputStream
 import java.io.InputStream
 import java.io.OutputStream
-import java.nio.charset.StandardCharsets
 import java.util.UUID
 
 object DmProtocol {
@@ -18,16 +17,15 @@ object DmProtocol {
     const val FAILED: Int = 5
     const val PING: Int = 6
     const val PONG: Int = 7
-    const val MAX_ROOM_BYTES: Int = 128
+    const val HOST_NOT_FOUND: Int = 8
+    const val MASTER_UNAVAILABLE: Int = 9
 
-    fun writeRegister(output: OutputStream, room: String) {
-        val bytes = room.toByteArray(StandardCharsets.UTF_8)
-        require(bytes.isNotEmpty() && bytes.size <= MAX_ROOM_BYTES)
+    fun writeRegister(output: OutputStream, hostId: UUID) {
         val data = DataOutputStream(output)
         data.write(PREFACE)
         data.writeByte(ROLE_CONTROL)
-        data.writeShort(bytes.size)
-        data.write(bytes)
+        data.writeLong(hostId.mostSignificantBits)
+        data.writeLong(hostId.leastSignificantBits)
         data.flush()
     }
 
@@ -42,6 +40,8 @@ object DmProtocol {
             }
             BUSY -> RegistrationReply.Busy
             NO_PORT -> RegistrationReply.NoPort
+            HOST_NOT_FOUND -> RegistrationReply.HostNotFound
+            MASTER_UNAVAILABLE -> RegistrationReply.MasterUnavailable
             else -> error("未知DM网关注册响应")
         }
     }
@@ -81,6 +81,8 @@ object DmProtocol {
         data class Ready(val session: UUID, val gamePort: Int) : RegistrationReply
         data object Busy : RegistrationReply
         data object NoPort : RegistrationReply
+        data object HostNotFound : RegistrationReply
+        data object MasterUnavailable : RegistrationReply
     }
 
     sealed interface ControlMessage {
