@@ -45,6 +45,7 @@ import calebxzhou.rdi.client.database.MinecraftInstallationDatabase
 import calebxzhou.rdi.client.net.loggedAccount
 import calebxzhou.rdi.client.service.ClientDirs
 import calebxzhou.rdi.client.service.ClientTaskManager
+import calebxzhou.rdi.client.service.PackProcStartupCleanup
 import calebxzau.rdi.mcinstall.LocalMcDiscovery
 import calebxzau.rdi.mcinstall.McInstallationReuse
 // import calebxzhou.rdi.client.service.LocalMinecraftReuseService
@@ -99,6 +100,7 @@ fun main() {
     initializePlayerInfoCache(databaseHandle.playerInfoStore)
     ModpackLaunchOptionsService.initialize(databaseHandle.modpackLaunchOptionsStore)
     clearClientContentTempDirOnStartup()
+    clearPackProcDirOnStartup()
     // LocalMinecraftReuseService.start()
     GlobalScope.launch(Dispatchers.IO) {
         warmUpHwSpecCache()
@@ -328,5 +330,14 @@ private fun clearClientContentTempDirOnStartup() {
         ClientDirs.dlcDir.resolve(".tmp").deleteRecursivelyNoSymlink()
     }.onFailure {
         lgr.warn(it) { "清理客户端内容临时目录失败" }
+    }
+}
+
+private fun clearPackProcDirOnStartup() {
+    GlobalScope.launch(Dispatchers.IO) {
+        PackProcStartupCleanup.clear(ClientDirs.packProcDir.toPath())
+            .onFailure { cause ->
+                lgr.warn(cause) { "清理pack-proc目录失败" }
+            }
     }
 }

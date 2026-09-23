@@ -389,8 +389,7 @@ fun ModpackPlazaScreen(
                     loading = loading,
                 )
                 onOpenBaseWorlds?.let { onOpen ->
-                    //todo not ready
-                    if(loggedAccount.isDav){
+                    if(loggedAccount.hasMsid){
                         CircleIconButton(
                             icon = "\uF279",
                             label = "地图模板",

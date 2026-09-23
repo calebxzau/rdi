@@ -1763,7 +1763,7 @@ class ModpackProcessor(
     )
     private val allowedQuestLangFiles = setOf("en_us.snbt", "zh_cn.snbt")
     private  val QUEST_LANG_PREFIX = "config/ftbquests/quests/lang/"
-    private val RESOURCEPACK_MAX_SIZE_BYTES = 5L * 1024L * 1024L
+    private val RESOURCEPACK_MAX_SIZE_BYTES = 50L * 1024L * 1024L
     private fun isQuestLangEntryDisallowed(relativeLower: String, isDirectory: Boolean): Boolean {
         if (!relativeLower.startsWith(QUEST_LANG_PREFIX)) return false
         val remainder = relativeLower.removePrefix(QUEST_LANG_PREFIX)

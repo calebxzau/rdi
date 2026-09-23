@@ -19,6 +19,12 @@ object ModpackModProcessor {
         "lazyyyyy",
         //rdi already have
         "zstd-net",
+        "zstdnet",
+        "mcwifipnp",
+        //have video mod, no need
+        "what-can-i-see",
+        //rely on spark for tps
+        "tab-list"
     )
 
     private val clientSideSlugs = setOf(
