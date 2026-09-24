@@ -42,6 +42,10 @@ impl HostStore {
             fs::rename(upload, stage.join("world-init.zip"))?;
             let record = HostRecord { id, name };
             fs::write(stage.join("host.json"), serde_json::to_vec_pretty(&record)?)?;
+            fs::write(
+                stage.join("sync-chunks.json"),
+                b"{\n  \"revision\": 0,\n  \"chunks\": [],\n  \"membershipRevisions\": []\n}\n",
+            )?;
             let target = self.hosts.join(id.to_string());
             fs::rename(&stage, target)?;
             Ok(record)
@@ -62,6 +66,10 @@ impl HostStore {
 
     pub fn world_init(&self, id: Uuid) -> PathBuf {
         self.hosts.join(id.to_string()).join("world-init.zip")
+    }
+
+    pub fn host_root(&self, id: Uuid) -> PathBuf {
+        self.hosts.join(id.to_string())
     }
 
     pub fn root(&self) -> &Path {

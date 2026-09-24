@@ -100,8 +100,30 @@ impl Presence {
     }
 
     pub async fn is_healthy(&self) -> bool {
-        let state = self.state.lock().await;
+        let mut state = self.state.lock().await;
+        expire(&mut state);
         state.gateway_healthy
+    }
+
+    pub async fn has_active_session(&self, host_id: Uuid, session_id: Uuid) -> bool {
+        let mut state = self.state.lock().await;
+        expire(&mut state);
+        state.gateway_healthy
+            && !state.sync_required
+            && state
+                .sessions
+                .get(&host_id)
+                .is_some_and(|session| session.session_id == session_id)
+    }
+}
+
+fn expire(state: &mut State) {
+    if state
+        .last_heartbeat
+        .is_some_and(|last| last.elapsed() > HEARTBEAT_EXPIRY)
+    {
+        state.gateway_healthy = false;
+        state.sync_required = true;
     }
 }
 
