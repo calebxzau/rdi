@@ -34,16 +34,16 @@ import io.mockk.unmockkObject
 
 class ModpackServicePureTest {
     @Test
-    fun `version names trim and remove leading v`() {
-        assertEquals("1.21.1", "  v 1.21.1  ".validate())
-        assertEquals("测试版-1", "测试版-1".validate())
+    fun `version names accept two to four segments and trim surrounding whitespace`() {
+        assertEquals("1.21", "  1.21  ".validate())
+        assertEquals("release_1.2-beta.3", "release_1.2-beta.3".validate())
+        assertEquals("v1.2.3.4", "v1.2.3.4".validate())
     }
 
     @Test
-    fun `version names reject blank and unsafe characters`() {
-        assertFailsWith<RequestError> { "v".validate() }
-        assertFailsWith<RequestError> { "1.0/../../x".validate() }
-        assertFailsWith<RequestError> { "release/1".validate() }
+    fun `version names reject invalid segment counts and characters`() {
+        listOf("", "   ", "1", "1.2.3.4.5", ".1", "1.", "1..2", "1. 2", "1/2", "测试.1", "1.2+beta")
+            .forEach { name -> assertFailsWith<RequestError> { name.validate() } }
     }
 
     @Test

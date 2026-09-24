@@ -45,6 +45,15 @@ import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class ModpackServiceUploadTest {
+    @Test
+    fun `pending version names accept canonical legacy and new formats`() {
+        assertTrue(ModpackUploadService.isCanonicalPendingVersionName("Release"))
+        assertTrue(ModpackUploadService.isCanonicalPendingVersionName("测试版-1"))
+        assertTrue(ModpackUploadService.isCanonicalPendingVersionName("v1.0.0"))
+        assertFalse(ModpackUploadService.isCanonicalPendingVersionName("vRelease"))
+        assertFalse(ModpackUploadService.isCanonicalPendingVersionName("../x"))
+    }
+
     private lateinit var collection: MongoCollection<Modpack>
 
     @BeforeTest
@@ -313,20 +322,20 @@ class ModpackServiceUploadTest {
     fun `update preflight rejects duplicate version`() = runTest {
         val player = ModpackServiceTestFixtures.account()
         val pack = ModpackServiceTestFixtures.modpack(player._id)
-        pack.versions += ModpackServiceTestFixtures.version(pack, name = "Release")
+        pack.versions += ModpackServiceTestFixtures.version(pack, name = "Release.1")
         stubPack(pack)
 
         val error = assertFailsWith<RequestError> {
             ModpackUploadPreflightDto(
                 modpackId = pack._id,
                 name = pack.name,
-                verName = "release",
+                verName = "release.1",
                 mcVer = pack.mcVer,
                 modLoader = pack.modloader,
             ).preflight(player)
         }
 
-        assertEquals("版本 release 已存在", error.message)
+        assertEquals("版本 release.1 已存在", error.message)
     }
 
     @Test
@@ -374,8 +383,8 @@ class ModpackServiceUploadTest {
         val player = ModpackServiceTestFixtures.account()
         val pack = ModpackServiceTestFixtures.modpack(player._id)
         stubPack(pack)
-        val marker = ModpackUploadService.writePendingVersionPublicationForTest(pack._id, "1.0.0")
-        val canonical = pack.dir.resolve("1.0.0.tar.zst")
+        val marker = ModpackUploadService.writePendingVersionPublicationForTest(pack._id, "v1.0.0")
+        val canonical = pack.dir.resolve("v1.0.0.tar.zst")
         canonical.writeBytes(byteArrayOf(8, 8, 8))
         val root = ModpackServiceTestFixtures.tempRoot()
         val archive = ModpackServiceTestFixtures.writeTarZst(root, "overrides/config/test.txt" to byteArrayOf(1))
@@ -384,7 +393,7 @@ class ModpackServiceUploadTest {
         coEvery { collection.updateOne(any<Bson>(), any<Bson>(), any()) } returns update
         ServerTaskManager.testSubmitter = { _, _, _ -> "test" }
         try {
-            ModpackContext(player, pack, null).createVersion("1.0.0", archive, mutableListOf())
+            ModpackContext(player, pack, null).createVersion("v1.0.0", archive, mutableListOf())
             assertTrue(canonical.exists())
             assertFalse(marker.exists())
         } finally {
@@ -397,17 +406,17 @@ class ModpackServiceUploadTest {
     fun `pending marker with database version preserves archive and rejects retry`() = runTest {
         val player = ModpackServiceTestFixtures.account()
         val pack = ModpackServiceTestFixtures.modpack(player._id)
-        pack.versions += ModpackServiceTestFixtures.version(pack, name = "Release")
+        pack.versions += ModpackServiceTestFixtures.version(pack, name = "Release.1")
         stubPack(pack)
-        val marker = ModpackUploadService.writePendingVersionPublicationForTest(pack._id, "Release")
-        val canonical = pack.dir.resolve("Release.tar.zst")
+        val marker = ModpackUploadService.writePendingVersionPublicationForTest(pack._id, "Release.1")
+        val canonical = pack.dir.resolve("Release.1.tar.zst")
         val existingBytes = byteArrayOf(7, 7, 7)
         canonical.writeBytes(existingBytes)
         val root = ModpackServiceTestFixtures.tempRoot()
         val archive = ModpackServiceTestFixtures.writeTarZst(root, "overrides/config/test.txt" to byteArrayOf(1))
         try {
             assertFailsWith<RequestError> {
-                ModpackContext(player, pack, null).createVersion("release", archive, mutableListOf())
+                ModpackContext(player, pack, null).createVersion("release.1", archive, mutableListOf())
             }
             assertEquals(existingBytes.toList(), canonical.readBytes().toList())
             assertFalse(marker.exists())
@@ -551,7 +560,7 @@ class ModpackServiceUploadTest {
         stubPack(pack)
         val root = ModpackServiceTestFixtures.tempRoot()
         val archive = ModpackServiceTestFixtures.writeTarZst(root, "overrides/config/test.txt" to byteArrayOf(1))
-        val existingArchive = pack.dir.resolve("Release.tar.zst")
+        val existingArchive = pack.dir.resolve("Release.1.tar.zst")
         val existingBytes = byteArrayOf(9, 8, 7)
         existingArchive.parentFile.mkdirs()
         existingArchive.writeBytes(existingBytes)
@@ -560,7 +569,7 @@ class ModpackServiceUploadTest {
         coEvery { collection.updateOne(any<Bson>(), any<Bson>(), any()) } returns update
         try {
             assertFailsWith<Exception> {
-                ModpackContext(player, pack, null).createVersion("release", archive, mutableListOf())
+                ModpackContext(player, pack, null).createVersion("release.1", archive, mutableListOf())
             }
             assertEquals(existingBytes.toList(), existingArchive.readBytes().toList())
             assertTrue(pack.dir.listFiles().orEmpty().none { it.name.startsWith(".upload-") && it.name.endsWith(".tar.zst") })

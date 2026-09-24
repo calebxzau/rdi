@@ -1,6 +1,5 @@
 package calebxzhou.rdi.master.service.modpack
 
-import calebxzhou.rdi.common.VALID_NAME_REGEX
 import calebxzhou.rdi.common.exception.RequestError
 import calebxzhou.rdi.common.model.*
 import calebxzhou.rdi.common.util.ok
@@ -233,20 +232,14 @@ object ModpackQueryService {
 
     fun String.validateVerName(): Result<String> {
         val trimmed = this.trim()
-        val normalized = if (trimmed.startsWith("v", ignoreCase = true)) {
-            trimmed.drop(1).trimStart()
-        } else {
-            trimmed
-        }
-
-        if (normalized.isBlank()) {
+        if (trimmed.isBlank()) {
             throw RequestError("版本名不能为空")
         }
 
-        if (!normalized.matches(VALID_NAME_REGEX)) {
-            throw RequestError("版本名只能包含字母 数字 汉字")
+        if (!trimmed.matches(Regex("[A-Za-z0-9_-]+(\\.[A-Za-z0-9_-]+){1,3}"))) {
+            throw RequestError("版本名格式必须为a.b、a.b.c或a.b.c.d，每段只能包含英文字母、数字、下划线或短横线")
         }
-        return ok(normalized)
+        return ok(trimmed)
     }
 
     suspend fun toModpackVoList(modpacks: List<Modpack>): List<Modpack.BriefVo> {

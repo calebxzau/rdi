@@ -4,6 +4,7 @@ import calebxzau.rdi.common.model.Content
 import calebxzau.rdi.common.model.ContentSide
 import calebxzau.rdi.common.model.validateAndMergeClientExtras
 import calebxzhou.rdi.common.DEBUG
+import calebxzhou.rdi.common.VALID_NAME_REGEX
 import calebxzhou.rdi.common.archive.PackArchiveFormat
 import calebxzhou.rdi.common.archive.detectArchiveFormat
 import calebxzhou.rdi.common.exception.RequestError
@@ -390,6 +391,18 @@ object ModpackUploadService {
             !value.contains('\\') &&
             value.endsWith(expectedSuffix)
 
+    internal fun isCanonicalPendingVersionName(versionName: String): Boolean {
+        val isCanonicalNewVersionName = runCatching {
+            ModpackQueryService.run { versionName.validateVerName().getOrNull() == versionName }
+        }.getOrDefault(false)
+        val isCanonicalLegacyVersionName =
+            versionName.isNotBlank() &&
+                versionName == versionName.trim() &&
+                !versionName.startsWith("v", ignoreCase = true) &&
+                versionName.matches(VALID_NAME_REGEX)
+        return isCanonicalNewVersionName || isCanonicalLegacyVersionName
+    }
+
     private fun readPendingVersionPublication(
         paths: VersionPublicationPaths,
         expectedVersionName: String,
@@ -409,7 +422,7 @@ object ModpackUploadService {
         if (versionName.isBlank() || publicationKey(versionName) != publicationKey(expectedVersionName)) {
             markerFailure()
         }
-        if (ModpackQueryService.run { versionName.validateVerName() }.getOrNull() != versionName) {
+        if (!isCanonicalPendingVersionName(versionName)) {
             markerFailure()
         }
         if (targetName != "$versionName.tar.zst" || !safeMarkerFileName(targetName, ".tar.zst")) {
