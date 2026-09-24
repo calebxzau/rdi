@@ -155,6 +155,16 @@ tasks.register<Test>("gameStatusTest") {
     include("**/calebxzau/rdi/master/service/GameStatusServiceTest.class")
     useJUnitPlatform()
 }
+
+tasks.register<Test>("mongoConfigTest") {
+    group = "verification"
+    description = "Runs focused MongoDB client configuration tests."
+    dependsOn(tasks.named("testClasses"))
+    testClassesDirs = sourceSets["test"].output.classesDirs
+    classpath = sourceSets["test"].runtimeClasspath
+    include("**/calebxzau/rdi/server/infra/MongoClientConfigTest.class")
+    useJUnitPlatform()
+}
 //
 //tasks.register<Test>("accountMirrorTest") {
 //    group = "verification"

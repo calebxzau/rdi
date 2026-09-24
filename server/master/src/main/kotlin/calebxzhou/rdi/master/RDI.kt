@@ -22,7 +22,7 @@ import calebxzhou.rdi.master.service.host.hostRoutes
 import calebxzhou.rdi.master.service.modpack.ModpackUploadService
 import calebxzhou.rdi.master.service.modpack.ModpackBuildService
 import calebxzau.rdi.server.infra.configurePostgresServices
-import calebxzau.rdi.server.infra.productionMongoCodecRegistry
+import calebxzau.rdi.server.infra.mongoClientSettings
 import calebxzau.rdi.server.service.baseworld.baseWorldRoutes
 import calebxzhou.rdi.common.service.McServerPlayers
 import calebxzhou.rdi.common.service.McServerPlayerSample
@@ -30,8 +30,6 @@ import calebxzhou.rdi.common.util.toUUID
 import calebxzau.rdi.master.service.GameStatusService
 // Archived Modpack2 and friend routes are intentionally disabled.
 import calebxzhou.rdi.master.ygg.YggdrasilService.yggdrasilRoutes
-import com.mongodb.MongoClientSettings
-import com.mongodb.ServerAddress
 import com.mongodb.client.model.IndexOptions
 import com.mongodb.client.model.Indexes
 import com.mongodb.kotlin.client.coroutine.MongoClient
@@ -63,7 +61,6 @@ import org.bouncycastle.jce.provider.BouncyCastleProvider
 import org.bouncycastle.openssl.PEMKeyPair
 import org.bouncycastle.openssl.PEMParser
 import org.bouncycastle.openssl.jcajce.JcaPEMKeyConverter
-import org.bson.UuidRepresentation
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileReader
@@ -77,14 +74,7 @@ import kotlin.time.Duration.Companion.seconds
 
 val CONF = AppConfig.load().getOrThrow()
 val lgr = KotlinLogging.logger { }
-val DB = MongoClient.create(
-    MongoClientSettings.builder()
-        .applyToClusterSettings { builder ->
-            builder.hosts(listOf(ServerAddress(CONF.database.host, CONF.database.port)))
-        }
-        .uuidRepresentation(UuidRepresentation.STANDARD)
-        .codecRegistry(productionMongoCodecRegistry())
-        .build()).getDatabase(CONF.database.name)
+val DB = MongoClient.create(mongoClientSettings(CONF.database)).getDatabase(CONF.database.name)
 
 private fun storageDir(path: String?, defaultName: String): File {
     val trimmed = path?.trim().orEmpty()
