@@ -87,7 +87,11 @@ object DmWorldInitArchive {
     private fun excluded(relative: Path, entryName: String): Boolean {
         val fileName = relative.fileName.toString()
         val extension = fileName.substringAfterLast('.', "").lowercase()
-        return extension in excludedExtensions || fileName.equals("session.lock", ignoreCase = true) || entryName.equals("rdi/host.json", ignoreCase = true)
+        return extension in excludedExtensions ||
+            fileName.equals("session.lock", ignoreCase = true) ||
+            entryName.equals("rdi/host.json", ignoreCase = true) ||
+            entryName.equals("data/rdi_firm_sections.dat", ignoreCase = true) ||
+            entryName.equals("data/rdi_firm_sections.dat_old", ignoreCase = true)
     }
 
     private fun sanitizedLevelData(file: Path): java.io.InputStream {

@@ -12,6 +12,7 @@ import net.neoforged.neoforge.client.event.ClientPlayerNetworkEvent
 import net.neoforged.neoforge.client.event.ClientTickEvent
 import net.neoforged.neoforge.client.event.RegisterClientCommandsEvent
 import net.neoforged.neoforge.event.GameShuttingDownEvent
+import net.neoforged.neoforge.event.tick.ServerTickEvent
 import org.slf4j.LoggerFactory
 
 @EventBusSubscriber(modid = "rdi", value = [Dist.CLIENT])
@@ -24,10 +25,42 @@ class DmClientEvents {
         fun registerCommands(event: RegisterClientCommandsEvent) {
             val config = DmConfig.fromSystemProperty().getOrElse { error ->
                 logger.error("Invalid rdi.dm.server; DM commands disabled", error)
-                return
-            } ?: return
-            event.dispatcher.register(
-                Commands.literal("dm")
+                null
+            }
+            val snapshotCommand = Commands.literal("snapshot-test").executes { context ->
+                    val result = DmSnapshotTestService.start(DmSnapshotMode.Disk)
+                    result.onFailure { context.source.sendFailure(Component.literal(it.message ?: "无法开始同步区块快照测试")) }
+                    result.onSuccess { context.source.sendSuccess({ Component.literal("同步区块快照测试（disk）已开始，结果将保存在本地") }, false) }
+                    if (result.isSuccess) 1 else 0
+                }
+                .then(Commands.literal("disk").executes { context ->
+                        val result = DmSnapshotTestService.start(DmSnapshotMode.Disk)
+                        result.onFailure { context.source.sendFailure(Component.literal(it.message ?: "无法开始同步区块快照测试")) }
+                        result.onSuccess { context.source.sendSuccess({ Component.literal("同步区块快照测试（disk）已开始，结果将保存在本地") }, false) }
+                        if (result.isSuccess) 1 else 0
+                    })
+                    .then(Commands.literal("memory").executes { context ->
+                        val result = DmSnapshotTestService.start(DmSnapshotMode.Memory)
+                        result.onFailure { context.source.sendFailure(Component.literal(it.message ?: "无法开始同步区块快照测试")) }
+                        result.onSuccess { context.source.sendSuccess({ Component.literal("同步区块快照测试（memory）已开始，结果将保存在本地") }, false) }
+                        if (result.isSuccess) 1 else 0
+                    })
+            val command = Commands.literal("dm").then(snapshotCommand)
+                .then(
+                    Commands.literal("chunk")
+                        .then(Commands.literal("shownow").executes { context ->
+                            val enabled = toggleShowNow()
+                            context.source.sendSuccess({ Component.literal("当前区块边界显示已${if (enabled) "开启" else "关闭"}") }, false)
+                            1
+                        })
+                        .then(Commands.literal("showset").executes { context ->
+                            val enabled = toggleShowSet()
+                            context.source.sendSuccess({ Component.literal("同步区块边界显示已${if (enabled) "开启" else "关闭"}") }, false)
+                            1
+                        })
+                )
+            if (config != null) {
+                command
                     .then(
                         Commands.literal("create")
                             .then(
@@ -45,8 +78,9 @@ class DmClientEvents {
                             1
                         }
                     )
-            )
-            logger.debug("DM commands enabled for {}", config.baseUri)
+            }
+            event.dispatcher.register(command)
+            if (config != null) logger.debug("DM commands enabled for {}", config.baseUri)
         }
 
         private fun create(source: CommandSourceStack, name: String): Int {
@@ -54,6 +88,16 @@ class DmClientEvents {
             result.onFailure { source.sendFailure(Component.literal(it.message ?: "无法创建DM房间")) }
             result.onSuccess { source.sendSuccess({ Component.literal("DM房间创建中") }, false) }
             return if (result.isSuccess) 1 else 0
+        }
+
+        private fun toggleShowNow(): Boolean {
+            calebxzhou.rdi.mc.common.RDI.SHOW_NOW_SYNC_CHUNK = !calebxzhou.rdi.mc.common.RDI.SHOW_NOW_SYNC_CHUNK
+            return calebxzhou.rdi.mc.common.RDI.SHOW_NOW_SYNC_CHUNK
+        }
+
+        private fun toggleShowSet(): Boolean {
+            calebxzhou.rdi.mc.common.RDI.SHOW_SET_SYNC_CHUNKS = !calebxzhou.rdi.mc.common.RDI.SHOW_SET_SYNC_CHUNKS
+            return calebxzhou.rdi.mc.common.RDI.SHOW_SET_SYNC_CHUNKS
         }
 
         @SubscribeEvent
@@ -66,6 +110,8 @@ class DmClientEvents {
         @JvmStatic
         fun onLoggingOut(@Suppress("UNUSED_PARAMETER") event: ClientPlayerNetworkEvent.LoggingOut) {
             onClientThread {
+                DmSnapshotTestService.cancel()
+                DmWorldSyncService.stop()
                 DmHostCreationService.cancel()
                 DmHostService.stop()
             }
@@ -75,6 +121,8 @@ class DmClientEvents {
         @JvmStatic
         fun onGameShuttingDown(@Suppress("UNUSED_PARAMETER") event: GameShuttingDownEvent) {
             onClientThread {
+                DmSnapshotTestService.cancel()
+                DmWorldSyncService.stop()
                 DmHostCreationService.cancel()
                 DmHostService.stop()
             }
@@ -87,6 +135,19 @@ class DmClientEvents {
                 DmHostCreationService.onTick()
                 DmHostService.onTick()
             }
+        }
+
+        @SubscribeEvent
+        @JvmStatic
+        fun onServerTick(event: ServerTickEvent.Pre) {
+            DmSnapshotTestService.onServerTick(event)
+        }
+
+        @SubscribeEvent
+        @JvmStatic
+        fun onServerTickPost(event: ServerTickEvent.Post) {
+            DmSnapshotTestService.onServerTickPost(event)
+            DmWorldSyncService.onServerTickPost(event)
         }
 
         private fun onClientThread(action: () -> Unit) {

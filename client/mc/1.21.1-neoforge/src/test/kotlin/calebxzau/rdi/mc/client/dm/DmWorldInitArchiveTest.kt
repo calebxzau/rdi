@@ -23,6 +23,7 @@ class DmWorldInitArchiveTest {
             val world = temporary.resolve("world")
             Files.createDirectories(world.resolve("region"))
             Files.createDirectories(world.resolve("rdi"))
+            Files.createDirectories(world.resolve("data"))
             writeLevel(world.resolve("level.dat"))
             writeLevel(world.resolve("level.dat_old"))
             Files.writeString(world.resolve("config.txt"), "kept")
@@ -30,12 +31,17 @@ class DmWorldInitArchiveTest {
             Files.writeString(world.resolve("region/c.0.0.MCC"), "excluded")
             Files.writeString(world.resolve("session.lock"), "excluded")
             Files.writeString(world.resolve("rdi/host.json"), "excluded")
+            Files.writeString(world.resolve("data/rdi_firm_sections.dat"), "legacy markers")
+            Files.writeString(world.resolve("data/rdi_firm_sections.dat_old"), "legacy backup")
+            Files.writeString(world.resolve("data/other.dat"), "kept")
 
             val archive = temporary.resolve("world.zip")
             DmWorldInitArchive.create(world.resolve("."), archive).getOrThrow()
             val entries = readEntries(archive)
 
-            assertEquals(setOf("level.dat", "level.dat_old", "config.txt"), entries.keys)
+            assertEquals(setOf("level.dat", "level.dat_old", "config.txt", "data/other.dat"), entries.keys)
+            assertEquals("legacy markers", Files.readString(world.resolve("data/rdi_firm_sections.dat")))
+            assertEquals("legacy backup", Files.readString(world.resolve("data/rdi_firm_sections.dat_old")))
             for (levelName in listOf("level.dat", "level.dat_old")) {
                 val root = NbtIo.readCompressed(
                     ByteArrayInputStream(entries.getValue(levelName)),
