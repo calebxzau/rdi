@@ -119,6 +119,7 @@ object DockerService {
             .withExtraHosts("host.docker.internal:host-gateway")
             .withMounts(mounts)
             .withCapAdd(Capability.NET_ADMIN)
+            .withLogConfig(LogConfig(LogConfig.LoggingType.LOCAL, mapOf("max-size" to "10m", "max-file" to "3")))
        .withMemory(memory)
                 .withMemorySwap(memorySwap)
 
