@@ -23,6 +23,8 @@
     "mGuardServerLevelTick",
     "mLimitEntitiesInSection",
     "mLimitExecutor",
+    "mPacketMetricsDecoder",
+    "mPacketMetricsEncoder",
     "mRegionFileStorage",
     "mRegionFile",
     "mRegionFileVersion",

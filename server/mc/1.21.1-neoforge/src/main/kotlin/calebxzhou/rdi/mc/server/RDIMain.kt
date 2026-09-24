@@ -9,8 +9,8 @@ import calebxzau.mc.common2021.mcs
 import calebxzau.mc.common2021.sendMessage
 import calebxzhou.rdi.mc.rcmd.chat.PlayerChatRangeState
 import calebxzhou.rdi.mc.rcmd.tpa.TpaService
-import calebxzhou.rdi.mc.server.firmsection.FirmSectionService
 import calebxzhou.rdi.mc.server.network.RServerNetwork
+import calebxzhou.rdi.mc.server.network.PacketMetrics
 import calebxzhou.rdi.mc.server.rcmd.PlayerNbtChatRangeStore
 import net.minecraft.ChatFormatting
 import net.minecraft.network.chat.ClickEvent
@@ -57,6 +57,7 @@ class RDIMain {
 
         @SubscribeEvent @JvmStatic
         fun stopped(e: ServerStoppedEvent) {
+            PacketMetrics.stop()
             RegionZstdCodec.closeAll()
             PlayerChatRangeState.clear()
             TpaService.clear()
@@ -67,6 +68,7 @@ class RDIMain {
         fun starting(e: ServerStartingEvent) {
             val server = e.getServer() as DedicatedServer
             mcs = server
+            PacketMetrics.start(server.serverDirectory.resolve("rdi").resolve("packet-traffic.db"))
             GameRules.visitGameRuleTypes(object : GameRules.GameRuleTypeVisitor {
                 override fun <T : GameRules.Value<T>> visit(key: GameRules.Key<T>, type: GameRules.Type<T>) {
                     val gameRuleEnv = System.getenv("GAME_RULE_" + key.getId())
@@ -105,12 +107,10 @@ class RDIMain {
             }
             //------
             RServerNetwork.sendLastTo(player)
-            RServerNetwork.sendFirmSectionsTo(player)
         }
 
         private fun sendJoinMessages(player: ServerPlayer) {
             val range = PlayerChatRangeState.get(player.getUUID())
-            val result = FirmSectionService.list(player)
             player.sendMessage("当前聊天范围：" + range.displayName)
             player.sendSystemMessage(Component.literal("点此打开RDI说明书").withStyle(ChatFormatting.UNDERLINE).withStyle(
                 Style.EMPTY.withClickEvent(ClickEvent(ClickEvent.Action.OPEN_URL,"https://craftrdi.feishu.cn/wiki/U8LRwMpUliuxW5kZLvCcxonNnkd"))))

@@ -120,11 +120,35 @@ sourceSets.named('test') {
 def localRuntimeConfiguration = configurations.maybeCreate('localRuntime')
 def librariesConfiguration = configurations.maybeCreate('libraries')
 def shadedConfiguration = configurations.maybeCreate('shaded')
+def sqliteLinuxRuntimeConfiguration = configurations.create('sqliteLinuxRuntime') {
+    canBeConsumed = false
+    canBeResolved = true
+    transitive = false
+}
 configurations.named('runtimeClasspath') {
     extendsFrom localRuntimeConfiguration
 }
 configurations.named('implementation') {
     extendsFrom librariesConfiguration
+}
+
+def sqliteLinuxRuntimeJar = tasks.register('sqliteLinuxRuntimeJar', Jar) {
+    dependsOn(sqliteLinuxRuntimeConfiguration)
+    from {
+        sqliteLinuxRuntimeConfiguration.collect { dependency -> zipTree(dependency) }
+    }
+    exclude 'META-INF/MANIFEST.MF', 'META-INF/*.SF', 'META-INF/*.RSA', 'META-INF/*.DSA'
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+    manifest {
+        attributes(
+            'Automatic-Module-Name': 'org.xerial.sqlitejdbc',
+            'Multi-Release': 'true',
+        )
+    }
+    archiveFileName = 'sqlite-jdbc-3.53.4.0-linux-runtime.jar'
+    destinationDirectory = layout.buildDirectory.dir('generated/sqlite-runtime')
+    reproducibleFileOrder = true
+    preserveFileTimestamps = false
 }
 
 dependencies {
@@ -136,9 +160,19 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.11.0")
     implementation("org.jetbrains.kotlin:kotlin-stdlib:2.4.10")
     additionalRuntimeClasspath("org.jetbrains.kotlin:kotlin-stdlib:2.4.10")
+
     implementation("com.github.luben:zstd-jni:1.5.7-11:win_amd64")
     additionalRuntimeClasspath("com.github.luben:zstd-jni:1.5.7-11:win_amd64")
     jarJar("com.github.luben:zstd-jni:1.5.7-11:linux_amd64")
+
+    implementation("org.xerial:sqlite-jdbc:3.53.4.0")
+    additionalRuntimeClasspath("org.xerial:sqlite-jdbc:3.53.4.0")
+    additionalRuntimeClasspath("org.xerial:sqlite-jdbc:3.53.4.0:natives-windows")
+    sqliteLinuxRuntime("org.xerial:sqlite-jdbc:3.53.4.0:without-natives")
+    sqliteLinuxRuntime("org.xerial:sqlite-jdbc:3.53.4.0:natives-linux")
+    // Keep the driver and natives in one JarJar artifact so identity selection cannot drop one.
+    jarJar(files(sqliteLinuxRuntimeJar.flatMap { it.archiveFile }).builtBy(sqliteLinuxRuntimeJar))
+
     //>>>Modrinth Mods<<<
     [
             'architectury-api:13.0.8+neoforge',
