@@ -8,6 +8,7 @@ import calebxzhou.rdi.common.model.HOST_OPR_DIR
 import calebxzhou.rdi.common.model.Host
 import calebxzhou.rdi.master.exception.ParamError
 import calebxzhou.rdi.common.service.TaczGunpackValidator
+import calebxzhou.rdi.master.service.host.HostService.HOST_WORKDIR_LIMIT_BYTES
 import io.ktor.http.content.PartData
 import io.ktor.server.application.ApplicationCall
 import io.ktor.server.request.receiveMultipart
@@ -28,7 +29,6 @@ object HostFileService {
     private val lgr by Loggers
     private const val HOST_FILE_MAX_BYTES: Long = 64L * 1024 * 1024
     private const val zipMaxSize: Long = 100L * 1024 * 1024
-    private const val HOST_WORKDIR_LIMIT_BYTES: Long = 1L * 1024 * 1024 * 1024
     private const val HOST_FILE_SEARCH_MAX_RESULTS = 200
     private val allowFileOprDir = HOST_OPR_DIR.keys
 
