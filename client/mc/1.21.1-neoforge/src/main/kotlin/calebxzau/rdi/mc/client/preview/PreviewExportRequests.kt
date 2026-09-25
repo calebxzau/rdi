@@ -30,7 +30,6 @@ internal class PreviewExportRequests {
         if (worldJoined) return snapshot()
         worldJoined = true
         epoch++
-        if (pendingKind == null) pendingKind = StartKind.ReuseCheck
         return snapshot()
     }
 

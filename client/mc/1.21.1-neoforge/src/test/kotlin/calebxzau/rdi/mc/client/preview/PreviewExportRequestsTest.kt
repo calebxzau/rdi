@@ -9,22 +9,22 @@ import kotlin.test.assertTrue
 
 class PreviewExportRequestsTest {
     @Test
-    fun resourcesWithoutLoginNeverStart(): Unit {
+    fun resourcesAndLoginWithoutManualRequestNeverStart(): Unit {
         val requests = PreviewExportRequests()
         requests.initialResourcesReady()
         assertNull(requests.consumeStartIfReady(clientReady = true))
         requests.worldEntered()
-        assertEquals(PreviewExportRequests.StartKind.ReuseCheck, requests.consumeStartIfReady(true)?.kind)
+        assertNull(requests.consumeStartIfReady(true))
     }
 
     @Test
-    fun loginBeforeResourcesWaitsUntilBothAreReady(): Unit {
+    fun loginBeforeResourcesStaysIdleWhenResourcesBecomeReady(): Unit {
         val requests = PreviewExportRequests()
         requests.worldEntered()
         assertNull(requests.consumeStartIfReady(true))
         requests.initialResourcesReady()
         assertNull(requests.consumeStartIfReady(false))
-        assertEquals(PreviewExportRequests.StartKind.ReuseCheck, requests.consumeStartIfReady(true)?.kind)
+        assertNull(requests.consumeStartIfReady(true))
     }
 
     @Test
@@ -32,29 +32,24 @@ class PreviewExportRequestsTest {
         val requests = PreviewExportRequests()
         requests.initialResourcesReady()
         requests.worldEntered()
-        val first = assertNotNull(requests.consumeStartIfReady(true))
+        assertNull(requests.consumeStartIfReady(true))
         requests.worldEntered()
         requests.initialResourcesReady()
-        assertNull(requests.consumeStartIfReady(true))
-        requests.reusableCompleted(first.epoch, found = true)
         assertNull(requests.consumeStartIfReady(true))
     }
 
     @Test
-    fun reusableHitEndsWorkAndMissSchedulesOneFreshExport(): Unit {
+    fun reconnectAndIdleReloadNeverStartAnExport(): Unit {
         val requests = PreviewExportRequests()
         requests.initialResourcesReady()
         requests.worldEntered()
-        val reuse = assertNotNull(requests.consumeStartIfReady(true))
-        requests.reusableCompleted(reuse.epoch, found = true)
         assertNull(requests.consumeStartIfReady(true))
-
+        requests.reloadStarted()
+        requests.reloadFinished(success = true)
+        requests.initialResourcesReady()
+        assertNull(requests.consumeStartIfReady(true))
         requests.worldLeft()
         requests.worldEntered()
-        val secondReuse = assertNotNull(requests.consumeStartIfReady(true))
-        requests.reusableCompleted(secondReuse.epoch, found = false)
-        val fresh = assertNotNull(requests.consumeStartIfReady(true))
-        assertEquals(PreviewExportRequests.StartKind.FreshExport, fresh.kind)
         assertNull(requests.consumeStartIfReady(true))
     }
 
@@ -64,20 +59,22 @@ class PreviewExportRequestsTest {
         requests.forceRequested()
         requests.forceRequested()
         requests.initialResourcesReady()
+        assertNull(requests.consumeStartIfReady(clientReady = true))
         requests.worldEntered()
+        assertNull(requests.consumeStartIfReady(clientReady = false))
         val fresh = assertNotNull(requests.consumeStartIfReady(true))
         assertEquals(PreviewExportRequests.StartKind.FreshExport, fresh.kind)
         assertNull(requests.consumeStartIfReady(true))
     }
 
     @Test
-    fun forceReplacesReuseAndStaleReuseCannotMutateIt(): Unit {
+    fun staleReuseCompletionCannotMutatePendingManualExport(): Unit {
         val requests = PreviewExportRequests()
         requests.initialResourcesReady()
         requests.worldEntered()
-        val reuse = assertNotNull(requests.consumeStartIfReady(true))
+        val staleEpoch = requests.snapshot().epoch - 1
         requests.forceRequested()
-        requests.reusableCompleted(reuse.epoch, found = true)
+        requests.reusableCompleted(staleEpoch, found = true)
         val fresh = assertNotNull(requests.consumeStartIfReady(true))
         assertEquals(PreviewExportRequests.StartKind.FreshExport, fresh.kind)
     }
@@ -92,10 +89,11 @@ class PreviewExportRequestsTest {
 
         val requests = PreviewExportRequests()
         requests.worldEntered()
+        requests.forceRequested()
         requests.reloadStarted()
         requests.reloadFinished(success = true)
         requests.initialResourcesReady()
-        assertEquals(PreviewExportRequests.StartKind.ReuseCheck, requests.consumeStartIfReady(true)?.kind)
+        assertEquals(PreviewExportRequests.StartKind.FreshExport, requests.consumeStartIfReady(true)?.kind)
     }
 
     @Test
@@ -120,30 +118,28 @@ class PreviewExportRequestsTest {
     }
 
     @Test
-    fun logoutCancelsPendingAndStaleCompletionCannotAffectRelogin(): Unit {
+    fun logoutCancelsManualRequestAndStaleReuseCannotStartRelogin(): Unit {
         val requests = PreviewExportRequests()
         requests.initialResourcesReady()
         requests.worldEntered()
-        val oldReuse = assertNotNull(requests.consumeStartIfReady(true))
+        requests.forceRequested()
+        val oldEpoch = requests.snapshot().epoch
         requests.worldLeft()
         assertNull(requests.consumeStartIfReady(true))
         requests.worldEntered()
-        val newReuse = assertNotNull(requests.consumeStartIfReady(true))
-        requests.reusableCompleted(oldReuse.epoch, found = false)
-        assertEquals(PreviewExportRequests.StartKind.ReuseCheck, requests.snapshot().inFlight)
-        requests.reusableCompleted(newReuse.epoch, found = true)
+        requests.reusableCompleted(oldEpoch, found = false)
         assertNull(requests.consumeStartIfReady(true))
     }
 
     @Test
-    fun logoutCancelsForceAndReconnectsWithReuseCheck(): Unit {
+    fun logoutCancelsForceAndReconnectsIdle(): Unit {
         val requests = PreviewExportRequests()
         requests.initialResourcesReady()
         requests.worldEntered()
         requests.forceRequested()
         requests.worldLeft()
         requests.worldEntered()
-        assertEquals(PreviewExportRequests.StartKind.ReuseCheck, requests.consumeStartIfReady(true)?.kind)
+        assertNull(requests.consumeStartIfReady(true))
     }
 
     @Test
@@ -156,19 +152,21 @@ class PreviewExportRequestsTest {
     }
 
     @Test
-    fun idleReloadAfterReusableHitDoesNotRestart(): Unit {
+    fun idleReloadAfterManualExportDoesNotRestart(): Unit {
         val requests = PreviewExportRequests()
         requests.initialResourcesReady()
         requests.worldEntered()
-        val reuse = assertNotNull(requests.consumeStartIfReady(true))
-        requests.reusableCompleted(reuse.epoch, found = true)
+        requests.forceRequested()
+        assertNotNull(requests.consumeStartIfReady(true))
+        requests.freshExportSettled()
+
         requests.reloadStarted()
         requests.reloadFinished(success = true)
         assertNull(requests.consumeStartIfReady(true))
     }
 
     @Test
-    fun forceDuringReloadWinsOverPendingReuse(): Unit {
+    fun forceDuringReloadWaitsForResources(): Unit {
         val requests = PreviewExportRequests()
         requests.worldEntered()
         requests.reloadStarted()
@@ -179,17 +177,18 @@ class PreviewExportRequestsTest {
     }
 
     @Test
-    fun reloadInterruptingReusePreservesReuseCheck(): Unit {
+    fun reloadResumesPendingManualExport(): Unit {
         val requests = PreviewExportRequests()
         requests.initialResourcesReady()
         requests.worldEntered()
-        val reuse = assertNotNull(requests.consumeStartIfReady(true))
+        requests.forceRequested()
+        val requestedEpoch = requests.snapshot().epoch
         requests.reloadStarted()
         requests.reloadFinished(success = true)
         requests.initialResourcesReady()
         val resumed = assertNotNull(requests.consumeStartIfReady(true))
-        assertEquals(PreviewExportRequests.StartKind.ReuseCheck, resumed.kind)
-        assertTrue(resumed.epoch > reuse.epoch)
+        assertEquals(PreviewExportRequests.StartKind.FreshExport, resumed.kind)
+        assertTrue(resumed.epoch > requestedEpoch)
     }
 
     @Test

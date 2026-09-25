@@ -1,0 +1,17 @@
+{
+  "required": true,
+  "minVersion": "0.8",
+  "package": "calebxzau.rdi.mc.client.mixin",
+  "compatibilityLevel": "JAVA_21",
+  "mixins": [
+    "AccessorSectionStorage",
+    "AccessorServerLevel",
+    "AccessorPersistentEntitySectionManager",
+    "AccessorEntityStorage",
+    "AccessorChunkMap",
+    "AccessorIOUtilities"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}
