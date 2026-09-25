@@ -19,13 +19,5 @@ interface RcmdServerCommandHandler {
 
     fun togglePosLock(context: RcmdContext): RcmdResult
 
-    fun setFirmSection(context: RcmdContext): RcmdResult
-
-    fun unsetFirmSection(context: RcmdContext): RcmdResult
-
-    fun listFirmSections(context: RcmdContext): RcmdResult
-
-    fun setFirmSectionAutoSet(context: RcmdContext): RcmdResult
-
     fun testEntity(context: RcmdContext): RcmdResult
 }

@@ -5,7 +5,6 @@ import calebxzhou.rdi.mc.client.mcp.standard.StandardMcpServer
 import calebxzhou.rdi.mc.client.mcpimpl211.McpGameImpl
 import calebxzhou.rdi.mc.client.mcpimpl211.Search
 import calebxzhou.rdi.mc.client.rcmd.RcmdClientBridge211
-import calebxzhou.rdi.mc.client.firmsection.FirmSectionIntegratedCommands
 import calebxzau.rdi.mc.client.preview.ItemPreviewExporter
 import calebxzhou.rdi.mc.common.RDI
 import calebxzhou.rdi.mc.rcmd.RcmdClientCommands
@@ -54,6 +53,7 @@ class RDIMain {
     companion object {
         init {
             ZstdCompressionPipeline.verifyNativeLoaded()
+            RcmdClientCommands.setFirmSectionDisplayEnabled(false)
         }
 
         val SCREENSHOT_EXECUTOR: ExecutorService =
@@ -114,11 +114,12 @@ class RDIMain {
                 Minecraft.getInstance().gui.chat.addMessage(Component.literal("预览图集导出已排队"))
                 return
             }
-            if (FirmSectionIntegratedCommands.dispatch(Minecraft.getInstance(), message)) {
-                event.isCanceled = true
+            if (!RcmdClientCommands.isRcmd(message)) {
                 return
             }
-            if (!RcmdClientCommands.isRcmd(message)) {
+            if (message.trimStart().startsWith("\\firmsection", ignoreCase = true)) {
+                event.isCanceled = true
+                Minecraft.getInstance().gui.chat.addMessage(Component.literal("未知命令：\\firmsection"))
                 return
             }
             val minecraft = Minecraft.getInstance()
@@ -167,14 +168,14 @@ class RDIMain {
         fun onClientLeaveServer(event: ClientPlayerNetworkEvent.LoggingOut) {
             ItemPreviewExporter.onWorldLeft()
             StandardMcpServer.stop()
-            RDI.FIRM_CHUNKS.clear()
+            RDI.SYNC_CHUNKS.clear()
         }
 
         @SubscribeEvent @JvmStatic
         fun onRenderLevelStage(event: RenderLevelStageEvent) {
             if (
                 event.stage !== RenderLevelStageEvent.Stage.AFTER_WEATHER ||
-                (!RDI.SHOW_SET_FIRM_SECTIONS && !RDI.SHOW_NOW_FIRM_SECTION)
+                (!RDI.SHOW_SET_SYNC_CHUNKS && !RDI.SHOW_NOW_SYNC_CHUNK)
             ) {
                 return
             }
@@ -186,31 +187,32 @@ class RDIMain {
             val renderType = FIRM_SECTION_LINES
             val vertexConsumer = bufferSource.getBuffer(renderType)
             val poseStack = event.getPoseStack()
-            if (RDI.SHOW_SET_FIRM_SECTIONS) {
-                addFirmSectionOutlines(
+            if (RDI.SHOW_SET_SYNC_CHUNKS) {
+                addSyncChunkOutlines(
                     poseStack,
                     vertexConsumer,
                     cameraPos.x,
                     cameraPos.y,
                     cameraPos.z,
-                    RDI.FIRM_CHUNKS[dimensionId].orEmpty(),
+                    RDI.SYNC_CHUNKS[dimensionId].orEmpty(),
                     0.0f,
                     1.0f,
                     0.0f
                 )
             }
 
-            if (RDI.SHOW_NOW_FIRM_SECTION) {
-                val currentSection = SectionPos.of(cameraEntity)
-                addSectionBox(
+            if (RDI.SHOW_NOW_SYNC_CHUNK) {
+                val currentChunk = net.minecraft.world.level.ChunkPos(cameraEntity.blockPosition())
+                addChunkBox(
                     poseStack,
                     vertexConsumer,
                     cameraPos.x,
                     cameraPos.y,
                     cameraPos.z,
-                    currentSection.minBlockX(),
-                    currentSection.minBlockY(),
-                    currentSection.minBlockZ(),
+                    currentChunk.minBlockX,
+                    minecraft.level?.minBuildHeight ?: -64,
+                    currentChunk.minBlockZ,
+                    minecraft.level?.maxBuildHeight ?: 320,
                     1.0f,
                     1.0f,
                     0.0f
@@ -220,7 +222,7 @@ class RDIMain {
             bufferSource.endBatch(renderType)
         }
 
-        private fun addFirmSectionOutlines(
+        private fun addSyncChunkOutlines(
             poseStack: PoseStack,
             vertexConsumer: VertexConsumer,
             cameraX: Double,
@@ -231,16 +233,12 @@ class RDIMain {
             green: Float,
             blue: Float
         ) {
-            val sectionKeys = sections.mapTo(mutableSetOf()) { FirmSectionRenderKey(it.chunkX, it.index, it.chunkZ) }
-            val lines = linkedSetOf<FirmSectionLine>()
-            for (section in sectionKeys) {
-                addCandidateLines(section, lines)
+            val level = Minecraft.getInstance().level ?: return
+            sections.forEach { chunk ->
+                addChunkBox(poseStack, vertexConsumer, cameraX, cameraY, cameraZ,
+                    chunk.chunkX * 16, level.minBuildHeight, chunk.chunkZ * 16, level.maxBuildHeight,
+                    red, green, blue)
             }
-            lines.asSequence()
-                .filter { it.isOuterLine(sectionKeys) }
-                .forEach { line ->
-                    addSectionGridLine(poseStack, vertexConsumer, cameraX, cameraY, cameraZ, line, red, green, blue)
-                }
         }
 
         private fun addCandidateLines(section: FirmSectionRenderKey, lines: MutableSet<FirmSectionLine>) {
@@ -336,6 +334,30 @@ class RDIMain {
                 red,
                 green,
                 blue
+            )
+        }
+
+        private fun addChunkBox(
+            poseStack: PoseStack,
+            vertexConsumer: VertexConsumer,
+            cameraX: Double,
+            cameraY: Double,
+            cameraZ: Double,
+            minBlockX: Int,
+            minBlockY: Int,
+            minBlockZ: Int,
+            maxBlockY: Int,
+            red: Float,
+            green: Float,
+            blue: Float,
+        ) {
+            val minX = minBlockX - cameraX
+            val minY = minBlockY - cameraY
+            val minZ = minBlockZ - cameraZ
+            LevelRenderer.renderLineBox(
+                poseStack, vertexConsumer, minX, minY, minZ,
+                minX + 16.0, maxBlockY - cameraY, minZ + 16.0,
+                red, green, blue, 1.0f,
             )
         }
 

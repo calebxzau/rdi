@@ -1,10 +1,7 @@
 package calebxzhou.rdi.mc.server.rcmd
 
-import calebxzhou.rdi.mc.common.RDI
 import calebxzau.mc.common2021.mcs
-import calebxzhou.rdi.mc.firmsection.FirmSectionKey
-import calebxzhou.rdi.mc.firmsection.FirmSectionLimits
-import calebxzhou.rdi.mc.firmsection.FirmSectionSetStatus
+import calebxzhou.rdi.mc.common.RDI
 import calebxzhou.rdi.mc.rcmd.*
 import calebxzhou.rdi.mc.rcmd.chat.ChatRange
 import calebxzhou.rdi.mc.rcmd.chat.PlayerChatRangeState
@@ -12,7 +9,6 @@ import calebxzhou.rdi.mc.rcmd.home.HomeResult
 import calebxzhou.rdi.mc.rcmd.home.HomeService
 import calebxzhou.rdi.mc.rcmd.tpa.TpaResult
 import calebxzhou.rdi.mc.rcmd.tpa.TpaService
-import calebxzhou.rdi.mc.server.firmsection.FirmSectionService
 import net.minecraft.resources.ResourceKey
 import net.minecraft.server.level.ServerPlayer
 import net.minecraft.world.entity.item.ItemEntity
@@ -24,8 +20,7 @@ import net.neoforged.bus.api.SubscribeEvent
 import net.neoforged.fml.common.EventBusSubscriber
 import net.neoforged.neoforge.event.entity.player.PlayerEvent.PlayerLoggedOutEvent
 import net.neoforged.neoforge.event.tick.PlayerTickEvent
-import java.util.Locale
-import java.util.UUID
+import java.util.*
 
 @EventBusSubscriber(modid = "rdi")
 object RcmdServerCommands : RcmdServerCommandHandler {
@@ -36,7 +31,7 @@ object RcmdServerCommands : RcmdServerCommandHandler {
     private const val TEST_ENTITY_ITEM_COUNT = 32
 
     init {
-        RcmdCommonServerCommands.register(DISPATCHER, this, RDI.DEBUG)
+        RcmdCommonServerCommands.register(DISPATCHER, this, RDI.DEBUG, includeFirmSection = false)
     }
 
     @JvmStatic
@@ -108,6 +103,7 @@ object RcmdServerCommands : RcmdServerCommandHandler {
         stopPlayerMovement(player)
         return RcmdResult.ok("位置锁定已开启")
     }
+/*
 
     override fun setFirmSection(context: RcmdContext): RcmdResult {
         val player = playerOrNull(context.source) ?: return RcmdResult.error("此rcmd命令只能由玩家执行")
@@ -163,6 +159,7 @@ object RcmdServerCommands : RcmdServerCommandHandler {
         FirmSectionService.setAutoSetEnabled(player, enabled)
         return RcmdResult.ok("放置容器时 自动设置同步区域 已${if (enabled) "开启" else "关闭"}")
     }
+*/
 
     override fun requestTpa(context: RcmdContext): RcmdResult {
         val requester = playerOrNull(context.source) ?: return RcmdResult.error("此rcmd命令只能由玩家执行")
@@ -263,7 +260,7 @@ object RcmdServerCommands : RcmdServerCommandHandler {
             else -> null
         }
 
-    private fun firmSectionLabel(key: FirmSectionKey): String =
+    /*private fun firmSectionLabel(key: FirmSectionKey): String =
         "${key.dimensionId},${key.chunkX},${key.sectionY},${key.chunkZ}"
 
     private fun firmSectionPositionLabel(key: FirmSectionKey): String =
@@ -274,7 +271,7 @@ object RcmdServerCommands : RcmdServerCommandHandler {
             "你：${playerCount}/${FirmSectionLimits.maxPerson}，全世界：${total}/${FirmSectionLimits.maxTotal}"
         } else {
             "你：${playerCount}个，全世界：${total}/${FirmSectionLimits.maxTotal}"
-        }
+        }*/
 
     @JvmRecord
     data class PosLockState(

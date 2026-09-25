@@ -5,6 +5,8 @@ import calebxzhou.rdi.mc.rcmd.RcmdResult.Companion.ok
 
 object RcmdClientCommands {
     private val DISPATCHER = RcmdDispatcher()
+    @Volatile
+    private var firmSectionDisplayEnabled = true
 
     init {
         DISPATCHER.register(
@@ -25,7 +27,15 @@ object RcmdClientCommands {
         message != null && message.startsWith("\\")
     @JvmStatic
     fun dispatch(bridge: RcmdClientBridge, message: String): RcmdDispatchResult {
+        if (!firmSectionDisplayEnabled && message.trimStart().startsWith("\\firmsection", ignoreCase = true)) {
+            return RcmdDispatchResult.notFound()
+        }
         return DISPATCHER.dispatch(bridge, message)
+    }
+
+    @JvmStatic
+    fun setFirmSectionDisplayEnabled(enabled: Boolean) {
+        firmSectionDisplayEnabled = enabled
     }
     @JvmStatic
     fun reply(bridge: RcmdClientBridge, result: RcmdResult?) {

@@ -2,7 +2,12 @@ package calebxzhou.rdi.mc.rcmd
 
 object RcmdCommonServerCommands {
     @JvmStatic
-    fun register(dispatcher: RcmdDispatcher, handler: RcmdServerCommandHandler, debug: Boolean = false) {
+    fun register(
+        dispatcher: RcmdDispatcher,
+        handler: RcmdServerCommandHandler,
+        debug: Boolean = false,
+        includeFirmSection: Boolean = true,
+    ) {
         dispatcher.register(
             RcmdCommandSpec.builder("ping")
                 .description("Test rcmd availability")
@@ -60,31 +65,6 @@ object RcmdCommonServerCommands {
             RcmdCommandSpec.builder("poslock")
                 .description("Toggle current player position lock")
                 .command { context -> handler.togglePosLock(context) }
-                .build()
-        )
-        dispatcher.register(
-            RcmdCommandSpec.builder("firmsection", "set")
-                .description("Save current player section")
-                .command { context -> handler.setFirmSection(context) }
-                .build()
-        )
-        dispatcher.register(
-            RcmdCommandSpec.builder("firmsection", "unset")
-                .description("Forget current player section")
-                .command { context -> handler.unsetFirmSection(context) }
-                .build()
-        )
-        dispatcher.register(
-            RcmdCommandSpec.builder("firmsection", "list")
-                .description("List saved firm sections")
-                .command { context -> handler.listFirmSections(context) }
-                .build()
-        )
-        dispatcher.register(
-            RcmdCommandSpec.builder("firmsection", "autoset")
-                .description("Toggle automatic firm section creation when placing block entities")
-                .argument("enabled", RcmdArgumentTypes.BOOL)
-                .command { context -> handler.setFirmSectionAutoSet(context) }
                 .build()
         )
         if (debug) {

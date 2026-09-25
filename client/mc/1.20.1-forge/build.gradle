@@ -18,7 +18,7 @@ plugins {
 
 // Ensure the common project is configured before we read its outputs
 evaluationDependsOn(":c-mc-common")
-evaluationDependsOn(":firmsection")
+//evaluationDependsOn(":firmsection")
 evaluationDependsOn(":rmcp-common")
 evaluationDependsOn(":rmcp-client")
 evaluationDependsOn(":mediaproc")
@@ -84,6 +84,8 @@ sourceSets.main {
     // java.srcDir '../../../mc/chunkcache/1.20.1/src/main/java'
     kotlin.srcDir '../../../mc/common/codec/src/main/kotlin'
     kotlin.srcDir '../../../mc/common/2021/src/main/kotlin'
+    // The client receives and renders FirmSections without the server persistence adapters.
+    kotlin.exclude 'calebxzhou/rdi/mc/server/firmsection/**'
     kotlin.srcDir '../../../mc/rcmd/src/main/kotlin'
     ext["refMap"] = "rdi.mixins.refmap.json"
     // Make shared assets available in IDE/dev runs (runClient).
@@ -270,12 +272,14 @@ dependencies {
     runtimeOnly("org.lwjgl:lwjgl:3.3.2")
     runtimeOnly("org.lwjgl:lwjgl-opengl:3.3.2")
     annotationProcessor "org.spongepowered:mixin:0.8.5:processor"
+    compileOnly(annotationProcessor("io.github.llamalad7:mixinextras-common:0.5.3"))
+    implementation(jarJar("io.github.llamalad7:mixinextras-forge:0.5.3"))
     // https://mvnrepository.com/artifact/org.jetbrains.kotlin/kotlin-stdlib
     additionalRuntimeClasspath("org.jetbrains.kotlin:kotlin-stdlib:2.4.10")
     implementation(project(":c-mc-common"))
     additionalRuntimeClasspath(project(":c-mc-common"))
-    implementation(project(":firmsection"))
-    additionalRuntimeClasspath(project(":firmsection"))
+//    implementation(project(":firmsection"))
+  //  additionalRuntimeClasspath(project(":firmsection"))
     implementation(project(":rmcp-common"))
     additionalRuntimeClasspath(project(":rmcp-common"))
     implementation(project(":rmcp-client"))
@@ -494,9 +498,9 @@ jar {
     // Bundle compiled classes from :c-mc-common into this jar.
     // Common resources are already added via sourceSets.main.resources above.
     dependsOn project(":c-mc-common").tasks.named("classes")
-    dependsOn project(":firmsection").tasks.named("classes")
+//    dependsOn project(":firmsection").tasks.named("classes")
     from(project(":c-mc-common").sourceSets.main.output.classesDirs)
-    from(project(":firmsection").sourceSets.main.output)
+  //  from(project(":firmsection").sourceSets.main.output)
     from({
         shadedConfiguration.collect { it.isDirectory() ? it : zipTree(it) }
     }) {

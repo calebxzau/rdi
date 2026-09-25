@@ -138,7 +138,7 @@ neoForge {
     }
 
     validateAccessTransformers = true
-    def playArg = "http://127.0.0.1:65231\n127.0.0.1:56370\n测试测试12123大世界\n56370\n68b314bb-adaf-52dd-ab96-b5ed00000000\ndev1"
+    def playArg = "http://127.0.0.1:65231\n127.0.0.1:56370\n测试测试12123大世界\n56370\n68b314bb-adaf-52dd-ab96-b5ed00000000\ndavickk"
     def playArg2 = "http://127.0.0.1:65231\n127.0.0.1:56370\n测试测试12123大世界\n56370\n68b314bb-adaf-52dd-ab96-e5ed00000000\ndev2"
     runs {
         client {
@@ -224,8 +224,11 @@ tasks.register('generateModMetadata', ProcessResources) {
 }
 
 sourceSets.named('main') {
+    kotlin.srcDir '../../../mc/syncchunk/src/main/kotlin'
+    kotlin.srcDir '../../../mc/syncchunk/src/21/kotlin'
     kotlin.srcDir '../../../mc/common/codec/src/main/kotlin'
     kotlin.srcDir '../../../mc/common/2021/src/main/kotlin'
+    kotlin.exclude 'calebxzhou/rdi/mc/server/firmsection/**'
     kotlin.srcDir '../../../mc/rcmd/src/main/kotlin'
     resources.srcDir 'src/generated/resources'
     resources.srcDir metadataOutput
@@ -235,10 +238,17 @@ sourceSets.named('main') {
 }
 
 sourceSets.named('test') {
+    kotlin.srcDir '../../../mc/syncchunk/src/test/kotlin'
     kotlin.srcDir '../../../mc/common/codec/src/test/kotlin'
 }
 
+neoForge.addModdingDependenciesTo(sourceSets.test)
+
 neoForge.ideSyncTask(tasks.named('generateModMetadata'))
+
+tasks.named('processResources') {
+    dependsOn tasks.named('generateModMetadata')
+}
 //java cv configs
 [configurations.clientLegacyClasspath, configurations.client2LegacyClasspath].each {
     it.attributes.attribute(

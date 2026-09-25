@@ -38,13 +38,13 @@ class RcmdClientBridge211(private val minecraft: Minecraft) : RcmdClientBridge {
     }
 
     override fun toggleSetFirmSectionsVisible(): Boolean {
-        RDI.SHOW_SET_FIRM_SECTIONS = !RDI.SHOW_SET_FIRM_SECTIONS
-        return RDI.SHOW_SET_FIRM_SECTIONS
+        RDI.SHOW_SET_SYNC_CHUNKS = !RDI.SHOW_SET_SYNC_CHUNKS
+        return RDI.SHOW_SET_SYNC_CHUNKS
     }
 
     override fun toggleNowFirmSectionVisible(): Boolean {
-        RDI.SHOW_NOW_FIRM_SECTION = !RDI.SHOW_NOW_FIRM_SECTION
-        return RDI.SHOW_NOW_FIRM_SECTION
+        RDI.SHOW_NOW_SYNC_CHUNK = !RDI.SHOW_NOW_SYNC_CHUNK
+        return RDI.SHOW_NOW_SYNC_CHUNK
     }
 
 

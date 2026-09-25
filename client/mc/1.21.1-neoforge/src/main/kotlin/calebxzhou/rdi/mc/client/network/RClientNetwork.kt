@@ -3,6 +3,7 @@ package calebxzhou.rdi.mc.client.network
 import calebxzhou.rdi.mc.common.RDI
 import calebxzhou.rdi.mc.common.SectionPos
 import calebxzhou.rdi.mc.common.RGlobalPlayerList
+import calebxzau.rdi.mc.syncchunk.network.RSyncChunksPayload
 import com.google.gson.Gson
 import net.neoforged.api.distmarker.Dist
 import net.neoforged.bus.api.SubscribeEvent
@@ -28,17 +29,14 @@ object RClientNetwork {
                     GlobalPlayerListState.update(playerList)
                 })
             .playToClient(
-                RFirmSectionsPayload.TYPE,
-                RFirmSectionsPayload.STREAM_CODEC
-            ) { payload: RFirmSectionsPayload, _: IPayloadContext ->
-                updateFirmSections(payload)
+                RSyncChunksPayload.TYPE,
+                RSyncChunksPayload.STREAM_CODEC
+            ) { payload: RSyncChunksPayload, _: IPayloadContext ->
+                RDI.SYNC_CHUNKS = payload.entries.groupBy(
+                    keySelector = { it.dimensionId },
+                    valueTransform = { SectionPos(it.chunkX, 0, it.chunkZ) }
+                )
             }
     }
 
-    private fun updateFirmSections(payload: RFirmSectionsPayload) {
-        RDI.FIRM_CHUNKS = payload.entries.groupBy(
-            keySelector = { it.dimensionId },
-            valueTransform = { SectionPos(it.chunkX, it.sectionY, it.chunkZ) }
-        )
-    }
 }
