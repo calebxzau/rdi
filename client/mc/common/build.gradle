@@ -48,5 +48,5 @@ static void registerClientCopyTask(String taskName, Project project, List<String
 }
 ext.registerClientCopyTask = { Project targetProject ->
     registerClientCopyTask("出core-local", targetProject,[])
-    registerClientCopyTask("出core-release", targetProject,["\\\\rdi\\rdi55\\ihq\\client-libs\\"])
+    registerClientCopyTask("出core-release", targetProject,["\\\\rdi6\\rdi\\master\\client-libs\\"])
 }

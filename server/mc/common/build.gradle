@@ -29,7 +29,7 @@ static void registerServerCopyTask(String taskName, Project project, Boolean rel
                 project.layout.projectDirectory.dir("..\\..\\master\\run\\game-libs\\${mcVersionSlug}\\mods")
         ]
         if (release) {
-            baseDestinations += project.layout.projectDirectory.dir("\\\\rdi\\rdi55\\ihq\\game-libs\\${mcVersionSlug}\\mods")
+            baseDestinations += project.layout.projectDirectory.dir("\\\\rdi6\\rdi\\master\\game-libs\\${mcVersionSlug}\\mods")
         }
         def destinationDirs = baseDestinations
 

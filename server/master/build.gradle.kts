@@ -225,7 +225,7 @@ tasks.register("出core") {
         if (!jarFile.exists()) {
             throw GradleException("未找到构建产物: $jarFile")
         }
-        val targetDir = file("\\\\rdi\\rdi55\\ihq")
+        val targetDir = file("\\\\rdi6\\rdi\\master")
         targetDir.mkdirs()
         val destFile = targetDir.resolve(jarFile.name)
         Files.copy(

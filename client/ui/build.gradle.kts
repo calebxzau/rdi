@@ -523,7 +523,7 @@ fun registerCopyTask(name: String, extraDestinationRoots: List<String> = emptyLi
 }
 
 registerCopyTask("出core2-local")
-registerCopyTask("出core2-release", listOf("\\\\rdi\\rdi55\\ihq\\client-libs"))
+registerCopyTask("出core2-release", listOf("\\\\rdi6\\rdi\\master\\client-libs"))
 val cargoReleaseCmd = listOf(
     "cargo",
     "build",
@@ -611,7 +611,7 @@ registerUpdaterTask(
     "出updater-release",
     listOf(
         localUpdaterDestination,
-        file("\\\\rdi\\rdi55\\ihq\\client-libs\\updaters"),
+        file("\\\\rdi6\\rdi\\master\\client-libs\\updaters"),
     )
 )
 /*
