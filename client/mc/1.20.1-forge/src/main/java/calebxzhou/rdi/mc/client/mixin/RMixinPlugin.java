@@ -21,6 +21,10 @@ public final class RMixinPlugin implements IMixinConfigPlugin {
             "calebxzhou.rdi.mc.client.mixin.mFarmingTalesServerLinks";
     private static final String FARMING_TALES_SERVER_LINKS_TARGET =
             "com.farmingtales.serverlinks.client.ClientScreenEvents";
+    private static final String DC_SHARP_LOCATOR_MIXIN =
+            "calebxzhou.rdi.mc.client.mixin.mDcSharpLocator";
+    private static final String DC_SHARP_LOCATOR_TARGET =
+            "dcsharp.transformer.DCSharpLocator";
 
     @Override
     public void onLoad(String mixinPackage) {
@@ -41,6 +45,9 @@ public final class RMixinPlugin implements IMixinConfigPlugin {
         }
         if (FARMING_TALES_SERVER_LINKS_MIXIN.equals(mixinClassName)) {
             return classExists(FARMING_TALES_SERVER_LINKS_TARGET);
+        }
+        if (DC_SHARP_LOCATOR_MIXIN.equals(mixinClassName)) {
+            return classExists(DC_SHARP_LOCATOR_TARGET);
         }
         return true;
     }

@@ -14,6 +14,8 @@
     "mZstdCompression"
   ],
   "client": [
+    "mItemDecorationGuard",
+    "mItemTooltipGuard",
     "mClientLightCalculation",
     // "ASectionBlocksUpdatePacket",
     // "AClientPacketListener",
@@ -37,6 +39,7 @@
     "mEuphoriaPatcherWarning",
     "mTcrCoreFancyMenuLogo",
     "mFarmingTalesServerLinks",
+    "mDcSharpLocator",
     "mScreenBan",
     "mTitleScreen",
     "mUser"
