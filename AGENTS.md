@@ -722,18 +722,10 @@ Do not inspect the WSL `~/.gradle` cache as the authoritative project cache.
 
 ### Running Gradle
 
-Run Gradle tasks through Windows PowerShell using `pwsh.exe` and a Windows path.
+Run Gradle tasks through intellij mcp which is on windows host.
 
-Do not run project Gradle tasks directly using the WSL Gradle environment.
-
-Example conceptually:
-
-```text
-WSL
-  -> pwsh.exe
-  -> Windows project path
-  -> module gradlew
-```
+do not run project Gradle tasks directly using the WSL Gradle environment.
+ 
 
 Remember that there is no repository-wide root `gradlew`.
 

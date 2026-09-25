@@ -319,6 +319,106 @@ class ModpackServiceUploadTest {
     }
 
     @Test
+    fun `create preflight rejects Fabric before querying or mutating upload state`(): Unit = runTest {
+        val player = ModpackServiceTestFixtures.account()
+        var submitted = false
+        ServerTaskManager.testSubmitter = { _, _, _ -> submitted = true; "unexpected" }
+        val dto = ModpackUploadPreflightDto(
+            name = "Fabric Pack",
+            verName = "1.0.0",
+            mcVer = McVersion.V201,
+            modLoader = ModLoader.Fabric,
+            iconUrl = "https://modrinth.com/icon.png",
+            info = "valid description with enough characters",
+            categories = listOf(Modpack.Category.OTHER),
+        )
+
+        try {
+            val error = assertFailsWith<RequestError> { dto.preflight(player) }
+
+            assertEquals("当前版本暂不支持上传Minecraft1.20.1／Fabric整合包", error.message)
+            coVerify(exactly = 0) { collection.countDocuments(any<Bson>()) }
+            coVerify(exactly = 0) { collection.insertOne(any<Modpack>(), any()) }
+            assertFalse(submitted)
+        } finally {
+            ServerTaskManager.testSubmitter = null
+        }
+    }
+
+    @Test
+    fun `direct create rejects Fabric before creating storage or enqueuing build`(): Unit = runTest {
+        val player = ModpackServiceTestFixtures.account()
+        var submitted = false
+        ServerTaskManager.testSubmitter = { _, _, _ -> submitted = true; "unexpected" }
+        val dto = Modpack.CreateWithVersionDto(
+            name = "Fabric_Direct_Pack",
+            mcVer = McVersion.V201,
+            modLoader = ModLoader.Fabric,
+            verName = "1.0.0",
+            info = "valid description with enough characters",
+            iconUrl = "https://modrinth.com/icon.png",
+            categories = listOf(Modpack.Category.OTHER),
+            mods = mutableListOf(),
+        )
+        val root = ModpackServiceTestFixtures.tempRoot("fabric-create-rejected")
+        val archive = ModpackServiceTestFixtures.writeTarZst(root, "overrides/config/test.txt" to byteArrayOf(1))
+        try {
+            val error = assertFailsWith<RequestError> { dto.createWithVersion(player, archive) }
+
+            assertEquals("当前版本暂不支持上传Minecraft1.20.1／Fabric整合包", error.message)
+            assertTrue(archive.exists())
+            coVerify(exactly = 0) { collection.countDocuments(any<Bson>()) }
+            coVerify(exactly = 0) { collection.insertOne(any<Modpack>(), any()) }
+            assertFalse(submitted)
+        } finally {
+            ServerTaskManager.testSubmitter = null
+            root.deleteRecursivelyNoSymlink()
+        }
+    }
+
+    @Test
+    fun `existing Fabric pack upload paths reject unsupported stored pair`(): Unit = runTest {
+        val owner = ModpackServiceTestFixtures.account()
+        var submitted = false
+        ServerTaskManager.testSubmitter = { _, _, _ -> submitted = true; "unexpected" }
+        val pack = Modpack(
+            name = "Legacy_Fabric_Pack",
+            authorId = owner._id,
+            mcVer = McVersion.V201,
+            modloader = ModLoader.Fabric,
+        )
+        stubPack(pack)
+
+        val preflightError = assertFailsWith<RequestError> {
+            ModpackUploadPreflightDto(
+                modpackId = pack._id,
+                name = pack.name,
+                verName = "2.0.0",
+                mcVer = pack.mcVer,
+                modLoader = pack.modloader,
+            ).preflight(owner)
+        }
+        assertEquals("当前版本暂不支持上传Minecraft1.20.1／Fabric整合包", preflightError.message)
+
+        val root = ModpackServiceTestFixtures.tempRoot("fabric-version-rejected")
+        val archive = ModpackServiceTestFixtures.writeTarZst(root, "overrides/config/test.txt" to byteArrayOf(1))
+        try {
+            val uploadError = assertFailsWith<RequestError> {
+                ModpackContext(owner, pack, null).createVersion("2.0.0", archive, mutableListOf())
+            }
+
+            assertEquals("当前版本暂不支持上传Minecraft1.20.1／Fabric整合包", uploadError.message)
+            assertTrue(archive.exists())
+            assertFalse(pack.dir.exists())
+            coVerify(exactly = 0) { collection.updateOne(any<Bson>(), any<Bson>(), any()) }
+            assertFalse(submitted)
+        } finally {
+            ServerTaskManager.testSubmitter = null
+            root.deleteRecursivelyNoSymlink()
+        }
+    }
+
+    @Test
     fun `update preflight rejects duplicate version`() = runTest {
         val player = ModpackServiceTestFixtures.account()
         val pack = ModpackServiceTestFixtures.modpack(player._id)

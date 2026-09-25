@@ -44,6 +44,52 @@ class ModpackArchiveReaderTest {
     }
 
     @Test
+    fun `recognizes Fabric metadata and preserves declared loader version`() = runBlocking {
+        val archive = zip(
+            "modrinth.index.json" to
+                """
+                {"formatVersion":1,"game":"minecraft","name":"Fabric包","dependencies":{"minecraft":"1.20.1","fabric-loader":"0.16.10","fabric-api":"0.92.2+1.20.1"},"files":[]}
+                """.trimIndent(),
+        )
+
+        val metadata = ModpackArchiveReader(EmptyArchiveCatalog).readMetadata(archive).getOrThrow()
+
+        assertEquals(McVersion.V201, metadata.mcVersion)
+        assertEquals(ModLoader.Fabric, metadata.modLoader)
+        assertEquals("0.16.10", metadata.declaredLoaderVersion)
+    }
+
+    @Test
+    fun `CurseForge metadata selects its primary loader declaration`() = runBlocking {
+        val archive = zip(
+            "manifest.json" to
+                """
+                {"name":"Fabric包","minecraft":{"version":"1.20.1","modLoaders":[{"id":"forge-47.2.0"},{"id":"fabric-0.16.10","primary":true}]}}
+                """.trimIndent(),
+        )
+
+        val metadata = ModpackArchiveReader(EmptyArchiveCatalog).readMetadata(archive).getOrThrow()
+
+        assertEquals(ModLoader.Fabric, metadata.modLoader)
+        assertEquals("0.16.10", metadata.declaredLoaderVersion)
+    }
+
+    @Test
+    fun `full archive inspection rejects recognized Fabric before catalog resolution`() = runBlocking {
+        val archive = zip(
+            "modrinth.index.json" to
+                """
+                {"formatVersion":1,"game":"minecraft","name":"Fabric包","dependencies":{"minecraft":"1.20.1","fabric-loader":"0.16.10"},"files":[{"path":"mods/example.jar","hashes":{"sha1":"1111111111111111111111111111111111111111"},"downloads":["https://cdn.modrinth.com/data/a/versions/b/example.jar"],"fileSize":10}]}
+                """.trimIndent(),
+        )
+
+        val result = ModpackArchiveReader(EmptyArchiveCatalog).inspect(archive)
+
+        assertTrue(result.isFailure)
+        assertTrue(result.exceptionOrNull()?.message.orEmpty().contains("Minecraft1.20.1／Fabric"))
+    }
+
+    @Test
     fun `reads GBK archive entry names`() = runBlocking {
         val archive = Files.createTempFile("rdi-modpack-gbk", ".zip")
         ZipOutputStream(Files.newOutputStream(archive), Charset.forName("GBK")).use { output ->

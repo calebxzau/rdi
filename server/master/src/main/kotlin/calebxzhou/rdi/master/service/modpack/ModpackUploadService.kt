@@ -80,6 +80,12 @@ object ModpackUploadService {
         if (!mcVersion.supportsModpackUpload()) throw RequestError(MODPACK_UPLOAD_VERSION_ERROR)
     }
 
+    private fun requireModpackUploadLoader(mcVersion: McVersion, modLoader: ModLoader) {
+        if (!mcVersion.supportLoader(modLoader)) {
+            throw RequestError("当前版本暂不支持上传Minecraft${mcVersion.mcVer}／${modLoader.name}整合包")
+        }
+    }
+
     private data class ValidatedCreateMetadata(
         val normalizedVerName: String,
         val normalizedCategories: List<Modpack.Category>,
@@ -89,6 +95,7 @@ object ModpackUploadService {
         player: RAccount,
         name: String,
         mcVer: McVersion,
+        modLoader: ModLoader,
         verName: String,
         iconUrl: String?,
         sourceUrl: String?,
@@ -96,6 +103,7 @@ object ModpackUploadService {
         categories: List<Modpack.Category>,
     ): ValidatedCreateMetadata {
         requireModpackUploadVersion(mcVer)
+        requireModpackUploadLoader(mcVer, modLoader)
         val normalizedVerName = ModpackQueryService.run { verName.validateVerName() }.getOrThrow()
         val normalizedCategories = Modpack.normalizeCategories(categories)
         if (!player.hasMsid && !DEBUG) throw RequestError("必须有微软账号才能传包")
@@ -122,6 +130,7 @@ object ModpackUploadService {
     ): String {
         ModpackVersionService.run { this@validateVersionUpload.requireCanUploadVersion() }
         requireModpackUploadVersion(modpack.mcVer)
+        requireModpackUploadLoader(modpack.mcVer, modpack.modloader)
         expectedMcVer?.let {
             if (it != modpack.mcVer) throw RequestError("MC版本与已有整合包不一致")
         }
@@ -141,6 +150,7 @@ object ModpackUploadService {
                 player = player,
                 name = name,
                 mcVer = mcVer,
+                modLoader = modLoader,
                 verName = verName,
                 iconUrl = iconUrl,
                 sourceUrl = sourceUrl,
@@ -165,6 +175,7 @@ object ModpackUploadService {
             player = player,
             name = name,
             mcVer = mcVer,
+            modLoader = modLoader,
             verName = verName,
             iconUrl = iconUrl,
             sourceUrl = sourceUrl,
@@ -222,6 +233,7 @@ object ModpackUploadService {
     ) {
         val normalizedVerName = ModpackQueryService.run { verName.validateVerName() }.getOrThrow()
         requireModpackUploadVersion(modpack.mcVer)
+        requireModpackUploadLoader(modpack.mcVer, modpack.modloader)
         try {
             withVersionPublicationLock(modpack._id, normalizedVerName) {
                 var prepared: PreparedVersionUpload? = null

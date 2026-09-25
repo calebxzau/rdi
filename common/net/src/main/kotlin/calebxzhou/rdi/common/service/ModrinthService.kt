@@ -1,6 +1,7 @@
 package calebxzhou.rdi.common.service
 
 import calebxzau.rdi.common.logging.Loggers
+import calebxzau.rdi.common.model.LoaderRecognition
 import calebxzau.rdi.common.model.Content
 import calebxzau.rdi.common.model.ContentPlatform
 import calebxzau.rdi.common.model.ContentSide
@@ -97,8 +98,16 @@ object ModrinthService {
         if (parsedMcVersion == null || !parsedMcVersion.enabled) {
             throw ModpackError("不支持的MC版本: $mcVersion")
         }
-        val loaderKey = index.dependencies.keys.firstOrNull { ModLoader.from(it) != null } ?: throw ModpackError("不支持的Mod加载器: 未知")
-        val parsedModloader = ModLoader.from(loaderKey) ?: throw ModpackError("不支持的Mod加载器: $loaderKey")
+        val loaderIdentity = LoaderRecognition.modrinth(index.dependencies).getOrElse { error ->
+            throw ModpackError(error.message ?: "不支持的Mod加载器", error)
+        }
+        val parsedModloader = loaderIdentity.loader
+        if (!parsedMcVersion.recognizesLoader(parsedModloader)) {
+            throw ModpackError("不支持${parsedMcVersion.mcVer}的${parsedModloader.name}加载器")
+        }
+        if (!parsedMcVersion.supportLoader(parsedModloader)) {
+            throw ModpackError("已识别为Minecraft${parsedMcVersion.mcVer}／${parsedModloader.name}，当前版本暂不支持导入")
+        }
         val supportedEntries = index.files.map { entry ->
             entry to normalizeManifestPath(entry.path)
         }.filter { (_, path) -> manifestContentType(path) != null }

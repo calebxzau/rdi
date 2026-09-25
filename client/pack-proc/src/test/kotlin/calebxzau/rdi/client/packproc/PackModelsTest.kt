@@ -38,6 +38,66 @@ import kotlin.test.assertTrue
 
 class PackModelsTest {
     @Test
+    fun `Fabric upload recognition stops before catalog resolution`() = runBlocking {
+        val root = Files.createTempDirectory("pack-proc-fabric-gate").toFile()
+        try {
+            val archive = root.resolve("fabric.zip")
+            writeZip(
+                archive,
+                mapOf(
+                    "modrinth.index.json" to """
+                        {"formatVersion":1,"game":"minecraft","versionId":"fabric-test","name":"Fabric pack","files":[],"dependencies":{"minecraft":"1.20.1","fabric-loader":"0.16.10","fabric-api":"0.92.2+1.20.1"}}
+                    """.trimIndent().toByteArray(),
+                    "overrides/" to byteArrayOf(),
+                ),
+            )
+
+            val result = ModpackProcessor(PackProcessingPaths(root.resolve("work")))
+                .loadLocalModpack(noCallModCatalog(), archive, onProgress = {})
+
+            assertTrue(result.isFailure)
+            assertTrue(result.exceptionOrNull()?.message.orEmpty().contains("Minecraft1.20.1／Fabric"))
+            assertTrue(root.resolve("work").listFiles().orEmpty().none { it.name.startsWith("pack-") })
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `CurseForge Fabric primary declaration is recognized before the upload gate`() = runBlocking {
+        val root = Files.createTempDirectory("pack-proc-fabric-curseforge-gate").toFile()
+        try {
+            val archive = root.resolve("fabric.zip")
+            writeZip(
+                archive,
+                mapOf(
+                    "manifest.json" to """
+                        {"name":"Fabric pack","version":"1.0","minecraft":{"version":"1.20.1","modLoaders":[{"id":"forge-47.2.0"},{"id":"fabric-0.16.10","primary":true}]},"files":[],"overrides":"overrides"}
+                    """.trimIndent().toByteArray(),
+                    "overrides/" to byteArrayOf(),
+                ),
+            )
+
+            val result = ModpackProcessor(PackProcessingPaths(root.resolve("work")))
+                .loadLocalModpack(noCallModCatalog(), archive, onProgress = {})
+
+            assertTrue(result.isFailure)
+            assertTrue(result.exceptionOrNull()?.message.orEmpty().contains("Minecraft1.20.1／Fabric"))
+            assertTrue(root.resolve("work").listFiles().orEmpty().none { it.name.startsWith("pack-") })
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `upload runtime guard rejects unsupported loader even when upload tests are skipped`() {
+        val error = assertFailsWith<Exception> {
+            requireModpackUploadRuntime(McVersion.V201, ModLoader.Fabric)
+        }
+        assertTrue(error.message.orEmpty().contains("Minecraft1.20.1／Fabric"))
+    }
+
+    @Test
     fun `failed local archive preparation removes temporary pack directory`() = runBlocking {
         val root = Files.createTempDirectory("pack-proc-extract-failure").toFile()
         try {

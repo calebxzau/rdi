@@ -2,6 +2,9 @@ package calebxzhou.rdi.client.service
 
 import calebxzhou.rdi.common.model.McVersion
 import calebxzhou.rdi.common.model.ModLoader
+import calebxzhou.rdi.common.model.recognizesLoader
+import calebxzau.rdi.common.model.LoaderDeclaration
+import calebxzau.rdi.common.model.LoaderRecognition
 import calebxzau.rdi.common.model.ContentPlatform
 import calebxzau.rdi.common.model.ContentSide
 import calebxzau.rdi.common.model.ContentType
@@ -96,6 +99,7 @@ data class ModpackArchiveMetadata(
     val summary: String?,
     val mcVersion: McVersion,
     val modLoader: ModLoader,
+    val declaredLoaderVersion: String? = null,
 )
 
 data class ModpackArchiveFile(
@@ -285,17 +289,20 @@ open class ModpackArchiveReader(
                     manifests.curse?.let { entry ->
                         val manifest = serdesJson.decodeFromString<CurseManifestMetadata>(readText(zip, entry))
                         val mcVersion = supportedVersion(manifest.minecraft.version)
+                        val identity = LoaderRecognition.curseForge(
+                            manifest.minecraft.modLoaders.map { LoaderDeclaration(it.id, it.primary) },
+                        ).getOrThrow()
+                        require(mcVersion.recognizesLoader(identity.loader)) {
+                            "暂不支持Mod加载器${identity.loader.name}"
+                        }
                         ModpackArchiveMetadata(
                             archive = archive,
                             format = ModpackArchiveFormat.CURSEFORGE,
                             name = normalizedName(manifest.name, archive),
                             summary = null,
                             mcVersion = mcVersion,
-                            modLoader = supportedLoader(
-                                manifest.minecraft.modLoaders.firstOrNull(CurseLoader::primary)?.id
-                                    ?: manifest.minecraft.modLoaders.firstOrNull()?.id,
-                                mcVersion,
-                            ),
+                            modLoader = identity.loader,
+                            declaredLoaderVersion = identity.declaredVersion,
                         )
                     } ?: run {
                         val entry = requireNotNull(manifests.modrinth)
@@ -305,16 +312,18 @@ open class ModpackArchiveReader(
                             "不支持的游戏类型：${index.game}"
                         }
                         val mcVersion = supportedVersion(index.dependencies["minecraft"].orEmpty())
+                        val identity = LoaderRecognition.modrinth(index.dependencies).getOrThrow()
+                        require(mcVersion.recognizesLoader(identity.loader)) {
+                            "暂不支持Mod加载器${identity.loader.name}"
+                        }
                         ModpackArchiveMetadata(
                             archive = archive,
                             format = ModpackArchiveFormat.MODRINTH,
                             name = normalizedName(index.name, archive),
                             summary = index.summary?.trim()?.ifEmpty { null },
                             mcVersion = mcVersion,
-                            modLoader = supportedLoader(
-                                index.dependencies.keys.firstOrNull { ModLoader.from(it) != null },
-                                mcVersion,
-                            ),
+                            modLoader = identity.loader,
+                            declaredLoaderVersion = identity.declaredVersion,
                         )
                     }
                 }
@@ -369,11 +378,10 @@ open class ModpackArchiveReader(
             "CurseForge整合包只支持根目录overrides"
         }
         val mcVersion = supportedVersion(manifest.minecraft.version)
-        val modLoader = supportedLoader(
-            manifest.minecraft.modLoaders.firstOrNull(CurseLoader::primary)?.id
-                ?: manifest.minecraft.modLoaders.firstOrNull()?.id,
-            mcVersion,
-        )
+        val identity = LoaderRecognition.curseForge(
+            manifest.minecraft.modLoaders.map { LoaderDeclaration(it.id, it.primary) },
+        ).getOrThrow()
+        val modLoader = supportedRuntimeLoader(identity.loader, mcVersion)
         val refs = manifest.files.map { CurseForgeArchiveRef(it.projectId, it.fileId) }
         onProgress(ModpackArchiveReadProgress(ModpackArchiveReadStage.PARSING_CONTENT))
         val resolved = catalog.resolveCurseForgeFiles(refs).getOrThrow()
@@ -460,8 +468,8 @@ open class ModpackArchiveReader(
         require(index.formatVersion > 0) { "不支持的Modrinth整合包格式版本：${index.formatVersion}" }
         require(index.game.equals("minecraft", ignoreCase = true)) { "不支持的游戏类型：${index.game}" }
         val mcVersion = supportedVersion(index.dependencies["minecraft"].orEmpty())
-        val loaderEntry = index.dependencies.keys.firstOrNull { ModLoader.from(it) != null }
-        val modLoader = supportedLoader(loaderEntry, mcVersion)
+        val identity = LoaderRecognition.modrinth(index.dependencies).getOrThrow()
+        val modLoader = supportedRuntimeLoader(identity.loader, mcVersion)
         onProgress(
             ModpackArchiveReadProgress(
                 ModpackArchiveReadStage.PARSING_CONTENT,
@@ -685,10 +693,9 @@ open class ModpackArchiveReader(
         ?.takeIf(McVersion::enabled)
         ?: throw IllegalArgumentException("暂不支持MC版本${value.trim()}")
 
-    private fun supportedLoader(value: String?, mcVersion: McVersion): ModLoader {
-        val loader = value?.let(ModLoader::from)
-        require(loader != null && loader in mcVersion.loaderVersions) {
-            "暂不支持Mod加载器${value.orEmpty().ifBlank { "未知" }}"
+    private fun supportedRuntimeLoader(loader: ModLoader, mcVersion: McVersion): ModLoader {
+        require(loader in mcVersion.loaderVersions) {
+            "已识别为Minecraft${mcVersion.mcVer}／${loader.name}，当前版本暂不支持导入"
         }
         return loader
     }

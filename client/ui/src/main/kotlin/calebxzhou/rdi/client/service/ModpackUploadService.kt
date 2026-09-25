@@ -37,8 +37,8 @@ suspend fun uploadModpack(
     onError: (String) -> Unit,
     onDone: (String) -> Unit
 ) {
+    requireModpackUploadRuntime(payload.mcVersion, payload.modloader)
     val uploadApi = currentModpackUploadApi()
-    requireModpackUploadVersion(payload.mcVersion)
     onProgress("正在打包整合包...请等一两分钟")
     val uploadZip = try {
         processor.buildUploadArchive(
@@ -117,7 +117,7 @@ fun createUploadModpackTask2(
     updateModpackId: ObjectId?,
     api: ModpackUploadApi = currentModpackUploadApi(),
 ): Task2 {
-    requireModpackUploadVersion(payload.mcVersion)
+    requireModpackUploadRuntime(payload.mcVersion, payload.modloader)
     var uploadedModpackId: ObjectId? = updateModpackId
     var builtClientZip: File? = null
     val processedMods = processor.processUploadMods(mods)

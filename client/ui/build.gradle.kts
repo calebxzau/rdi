@@ -216,10 +216,15 @@ val localModpackTest by sourceSets.creating {
     kotlin.srcDir("src/test/kotlin")
     kotlin.include(
         "calebxzhou/rdi/client/service/ModpackArchiveReaderTest.kt",
+        "calebxzau/rdi/client/service/LocalModpackScannerTest.kt",
+        "calebxzau/rdi/client/service/ModpackUploadRuntimeGuardTest.kt",
     )
     compileClasspath += sourceSets.main.get().output + configurations.testRuntimeClasspath.get()
     runtimeClasspath += output + compileClasspath
 }
+
+kotlin.target.compilations.getByName("localModpackTest")
+    .associateWith(kotlin.target.compilations.getByName("main"))
 
 configurations[localModpackTest.implementationConfigurationName]
     .extendsFrom(configurations.testImplementation.get())

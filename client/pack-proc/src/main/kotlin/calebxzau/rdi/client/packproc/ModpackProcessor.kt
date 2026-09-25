@@ -22,6 +22,8 @@ import calebxzau.rdi.common.model.Content
 import calebxzau.rdi.common.model.ContentPlatform
 import calebxzau.rdi.common.model.ContentSide
 import calebxzau.rdi.common.model.ContentType
+import calebxzau.rdi.common.model.LoaderDeclaration
+import calebxzau.rdi.common.model.LoaderRecognition
 import calebxzhou.rdi.common.serdesJson
 import calebxzhou.rdi.common.service.CurseForgeService
 import calebxzhou.rdi.common.service.CurseForgeService.loadInfoCurseForge
@@ -117,6 +119,13 @@ fun requireModpackUploadVersion(mcVersion: McVersion) {
     }
 }
 
+fun requireModpackUploadRuntime(mcVersion: McVersion, modLoader: ModLoader) {
+    requireModpackUploadVersion(mcVersion)
+    if (!mcVersion.supportLoader(modLoader)) {
+        throw ModpackError("已识别为Minecraft${mcVersion.mcVer}／${modLoader.name}，当前版本暂不支持导入")
+    }
+}
+
 // ==================== Upload-only code ====================
 
 class ModpackProcessor(
@@ -150,6 +159,7 @@ class ModpackProcessor(
             onProgress.phase("开始读取整合包")
             payload = parseUploadPayload(file, onProgress).getOrThrow()
             val parsedPayload = payload
+            requireModpackUploadRuntime(parsedPayload.mcVersion, parsedPayload.modloader)
             onProgress.phase(
                 buildString {
                     append("整合包概要读取完成 ")
@@ -901,10 +911,10 @@ class ModpackProcessor(
         val mcVersion = index.dependencies["minecraft"]?.trim().orEmpty().let {
             resolveSupportedMcVersion(it)
         }
-        val modloader = (index.dependencies.keys
-            .firstOrNull { ModLoader.from(it) != null }
-            ?.let { resolveSupportedModLoader(it) }
-            ?: throw ModpackError("不支持的Mod加载器: 未知"))
+        val identity = LoaderRecognition.modrinth(index.dependencies).getOrElse { cause ->
+            throw ModpackError(cause.message ?: "不支持的Mod加载器: 未知", cause)
+        }
+        val modloader = identity.loader
         return UploadPayload(
             sourceType = LocalModpackSourceType.MODRINTH,
             sourceDir = rootDir,
@@ -919,7 +929,12 @@ class ModpackProcessor(
     private fun inspectCurseForgeUploadPayload(rootDir: File): UploadPayload {
         val modpackData = loadCurseForgeFromDir(rootDir)
         val mcVersion = resolveSupportedMcVersion(modpackData.manifest.minecraft.version)
-        val modloader = resolveSupportedModLoader(modpackData.manifest.minecraft.modLoaders.firstOrNull()?.id.orEmpty())
+        val identity = LoaderRecognition.curseForge(
+            modpackData.manifest.minecraft.modLoaders.map { LoaderDeclaration(it.id, it.primary) }
+        ).getOrElse { cause ->
+            throw ModpackError(cause.message ?: "不支持的Mod加载器: 未知", cause)
+        }
+        val modloader = identity.loader
 
         return UploadPayload(
             sourceType = LocalModpackSourceType.CURSEFORGE,
@@ -941,12 +956,6 @@ class ModpackProcessor(
         }
         requireModpackUploadVersion(mcVersion)
         return mcVersion
-    }
-
-    private fun resolveSupportedModLoader(loaderText: String): ModLoader {
-        val normalized = loaderText.trim()
-        return ModLoader.from(normalized).takeIf { it != null }
-            ?: throw ModpackError("暂不支持Mod加载器${normalized.ifBlank { "未知" }}")
     }
 
     private data class ModFileSelection(

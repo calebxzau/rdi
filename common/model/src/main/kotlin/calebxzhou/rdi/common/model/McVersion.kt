@@ -89,6 +89,9 @@ enum class McVersion(
 }
 fun McVersion.supportLoader(loader: ModLoader): Boolean = this.loaderVersions.containsKey(loader)
 
+fun McVersion.recognizesLoader(loader: ModLoader): Boolean =
+    supportLoader(loader) || (this == McVersion.V201 && loader == ModLoader.Fabric)
+
 fun McVersion.supportsModpackUpload(): Boolean =
     this == McVersion.V201 || this == McVersion.V211
 

@@ -265,6 +265,7 @@ internal class ModrinthAdapter(
 private fun ModLoader.modrinthName(): String = when (this) {
     ModLoader.forge -> "forge"
     ModLoader.neoforge -> "neoforge"
+    ModLoader.Fabric -> "fabric"
 }
 
 private fun CatalogSort.modrinthName(): String = when (this) {
@@ -276,6 +277,7 @@ private fun CatalogSort.modrinthName(): String = when (this) {
 private fun String.toModLoader(): ModLoader? = when (lowercase()) {
     "forge" -> ModLoader.forge
     "neoforge" -> ModLoader.neoforge
+    "fabric" -> ModLoader.Fabric
     else -> null
 }
 

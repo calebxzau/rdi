@@ -298,6 +298,7 @@ internal class CurseForgeAdapter(
 private fun ModLoader.curseForgeType(): Int = when (this) {
     ModLoader.forge -> 1
     ModLoader.neoforge -> 6
+    ModLoader.Fabric -> 4
 }
 
 private fun CatalogSort.curseForgeField(): Int? = when (this) {
@@ -309,6 +310,7 @@ private fun CatalogSort.curseForgeField(): Int? = when (this) {
 private fun String.toModLoader(): ModLoader? = when (lowercase()) {
     "forge" -> ModLoader.forge
     "neoforge" -> ModLoader.neoforge
+    "fabric" -> ModLoader.Fabric
     else -> null
 }
 

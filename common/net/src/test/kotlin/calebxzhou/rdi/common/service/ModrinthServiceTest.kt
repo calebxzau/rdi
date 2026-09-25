@@ -8,8 +8,39 @@ import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 import kotlin.test.assertContains
 import calebxzhou.rdi.common.model.*
+import calebxzhou.rdi.common.serdesJson
+import kotlinx.serialization.encodeToString
+import java.nio.file.Files
 
 class ModrinthServiceTest {
+    @Test
+    fun `fabric manifest is recognized and rejected before resolving catalog content`() = runBlocking {
+        val directory = Files.createTempDirectory("fabric-modrinth-manifest").toFile()
+        try {
+            directory.resolve("overrides").mkdirs()
+            val index = ModrinthModpackIndex(
+                formatVersion = 1,
+                game = "minecraft",
+                versionId = "fixture",
+                name = "Fabric fixture",
+                dependencies = mapOf("minecraft" to "1.20.1", "fabric-loader" to "0.16.10"),
+            )
+            directory.resolve("modrinth.index.json").writeText(serdesJson.encodeToString(index))
+            var catalogResolutions = 0
+
+            val result = ModrinthService.loadModpack(directory) {
+                catalogResolutions += 1
+                emptyMap()
+            }
+
+            assertTrue(result.isFailure)
+            assertContains(result.exceptionOrNull()?.message.orEmpty(), "已识别为Minecraft1.20.1／Fabric")
+            assertEquals(0, catalogResolutions)
+        } finally {
+            directory.deleteRecursively()
+        }
+    }
+
     @Test
     fun `empty project request does not invoke fetcher`() = runBlocking {
         var calls = 0

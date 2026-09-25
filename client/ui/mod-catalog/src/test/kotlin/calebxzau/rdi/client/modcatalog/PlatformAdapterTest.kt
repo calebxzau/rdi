@@ -30,6 +30,43 @@ class PlatformAdapterTest {
     private val json = Json { ignoreUnknownKeys = true }
 
     @Test
+    fun `modrinth returned fabric loader maps to the shared loader`() = runBlocking {
+        val engine = MockEngine {
+            respond(
+                content = """[{"id":"version-1","name":"Fabric mod","version_number":"1.0","project_id":"project-1","version_type":"release","game_versions":["1.20.1"],"loaders":["fabric"],"date_published":"2026-01-01T00:00:00Z","files":[{"filename":"mod.jar","url":"https://cdn.modrinth.com/data/mod.jar","primary":true,"hashes":{"sha1":"${"a".repeat(40)}"}}]}]""",
+                headers = headersOf(HttpHeaders.ContentType, ContentType.Application.Json.toString())
+            )
+        }
+        val adapter = ModrinthAdapter(
+            HttpClient(engine), ModrinthConfig(), CatalogNetworkPolicy(preferMirror = false), json
+        )
+
+        val file = adapter.getFiles(setOf("version-1")).found.getValue("version-1")
+
+        assertEquals(setOf(ModLoader.Fabric), file.loaders)
+    }
+
+    @Test
+    fun `curseforge returned fabric label maps to the shared loader`() = runBlocking {
+        val engine = MockEngine { request ->
+            assertEquals(HttpMethod.Post, request.method)
+            respond(
+                content = """{"data":[{"id":10001,"modId":7,"displayName":"Fabric mod","fileName":"mod.jar","releaseType":1,"hashes":[{"value":"${"b".repeat(40)}","algo":1}],"fileDate":"2026-01-01T00:00:00Z","downloadUrl":"https://edge.forgecdn.net/files/mod.jar","gameVersions":["1.20.1","Fabric"]}]}""",
+                headers = headersOf(HttpHeaders.ContentType, ContentType.Application.Json.toString())
+            )
+        }
+        val adapter = CurseForgeAdapter(
+            HttpClient(engine), CurseForgeConfig(apiKey = "secret"),
+            CatalogNetworkPolicy(preferMirror = false), json
+        )
+
+        val file = adapter.getFiles(setOf("10001")).found.getValue("10001")
+
+        assertEquals(setOf(ModLoader.Fabric), file.loaders)
+        assertEquals(setOf("1.20.1"), file.minecraftVersions)
+    }
+
+    @Test
     fun `modrinth search maps raw values`() = runBlocking {
         val engine = MockEngine { request ->
             assertEquals("1.21.1", request.url.parameters.getAll("facets")?.single()?.substringAfter("versions:")?.substringBefore('"'))

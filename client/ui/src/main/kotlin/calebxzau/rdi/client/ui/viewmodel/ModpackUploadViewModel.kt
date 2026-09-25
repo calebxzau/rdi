@@ -10,6 +10,7 @@ import calebxzau.rdi.client.packproc.LoadedLocalModpack
 import calebxzau.rdi.client.packproc.LoadedServerPackResult
 import calebxzau.rdi.client.packproc.ModpackProcessor
 import calebxzau.rdi.client.packproc.PackProcessingPaths
+import calebxzau.rdi.client.packproc.requireModpackUploadRuntime
 import calebxzau.rdi.client.packproc.fileMatchesModContent
 import calebxzau.rdi.client.packproc.sameModContent
 import calebxzau.rdi.client.packproc.toUploadPayload
@@ -471,10 +472,12 @@ class RdiModpackUploadGateway(
     }
 
     override fun queueTestServer(pack: LoadedLocalModpack): Result<String> = runCatching {
+        requireModpackUploadRuntime(pack.mcVersion, pack.modloader)
         ClientTaskManager.submit(mcInstall.downloadTestServerTask2(pack.mcVersion, pack.modloader))
     }
 
     override fun queueUpload(submission: ModpackUploadSubmission): Result<String> = runCatching {
+        requireModpackUploadRuntime(submission.pack.mcVersion, submission.pack.modloader)
         val draft = submission.draft
         val processedUiMods = processUiMods(submission.uiMods).getOrThrow()
         val payload = submission.pack.copy(

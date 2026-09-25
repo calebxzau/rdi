@@ -1,12 +1,27 @@
 package calebxzhou.rdi.common.model
 
+import kotlinx.serialization.SerialName
+import kotlinx.serialization.Serializable
+
+@Serializable
 enum class ModLoader {
-    forge,neoforge;
+    forge,
+    neoforge,
+    @SerialName("fabric") Fabric;
     companion object{
         fun from(name:String):ModLoader?{
-            val normalized = name.trim().substringBefore('-')
-            return entries.find { it.name.equals(normalized, true) }
+            val normalized = name.trim()
+            if (normalized.equals("fabric", true) || normalized.equals("fabric-loader", true)) {
+                return Fabric
+            }
+            if (FABRIC_VERSION_NAME.matches(normalized)) return Fabric
+            val legacyName = normalized.substringBefore('-')
+            return entries.firstOrNull {
+                it != Fabric && it.name.equals(legacyName, true)
+            }
         }
+
+        private val FABRIC_VERSION_NAME = Regex("fabric(?:-loader)?-\\d+(?:\\.\\d+)+(?:[-+][0-9A-Za-z][0-9A-Za-z.+-]*)?", RegexOption.IGNORE_CASE)
     }
     class Version(
         val loader: ModLoader,
@@ -26,7 +41,7 @@ enum class ModLoader {
              when (loader) {
                 neoforge -> "@libraries/net/neoforged/neoforge/"
                 forge -> "@libraries/net/minecraftforge/forge/"
-                 else -> ""
+                Fabric -> throw UnsupportedOperationException("Fabric server arguments are not supported yet")
             } + "${id}/${if(unix) "unix" else "win"}_args.txt"
         }
     }
