@@ -15,421 +15,75 @@ you can use intellij MCP to check code errors if available
 ---
 ## Git access
 
-  Only read-only Git operations are allowed.
+Only read-only Git operations are allowed.
 
-  * Allowed examples: inspecting status, diffs, logs, commits, and tracked files.
-  * Do not modify the working tree, index, repository history, refs,
-    configuration, or remotes.
-  * Do not stage, commit, amend, stash, restore, checkout, switch, reset,
-    clean, merge, rebase, cherry-pick, fetch, pull, push, or create/delete
-    branches or tags.
-  * Judge commands by their actual effects and arguments. A command that
-    can inspect state must not be used with options that modify state.
-  * If an operation requires Git writes, report it to the parent agent
-    or user instead of executing it.
-    
+* Inspecting status, diffs, logs, commits, and tracked files is allowed.
+* Do not use Git to modify the working tree, index, history, refs, configuration,
+  or remotes. This restriction does not prohibit authorized source-file edits.
+* Do not stage, commit, amend, stash, restore, checkout, switch, reset, clean,
+  merge, rebase, cherry-pick, fetch, pull, push, or create/delete branches or tags.
+* Judge commands by their actual effects and arguments. Report any required Git
+  write operation to the parent agent or user instead of executing it.
+
 ## Subagents
 
-Use subagents according to the following responsibilities:
-use English for subagents regardless main agent use which language.
-
-* Use `code_explorer` for targeted repository exploration when the relevant implementation, execution path, or repository structure is not sufficiently understood.
-* Use `code_worker` for implementing an established implementation specification and running relevant validation.
-* Use `reviewer` as an independent quality gate for high-risk changes that justify the additional review cost.
-
-The main agent acts as the senior engineer and owns implementation design, task classification, escalation decisions, and final decisions.
-
-`code_worker` acts as the implementation engineer and should primarily execute the implementation specification produced by the main agent rather than independently designing the solution.
-
-### Token-efficient tiered workflow
-
-Use the lowest tier that is sufficient for the task. Do not invoke a subagent merely because it is available. Escalate only when uncertainty, implementation difficulty, or risk justifies the additional context and token cost.
-
-#### Tier 0 — Main only
-
-Use for trivial or mechanical work where delegation would cost more than it saves, for example:
-
-* documentation, comments, or formatting;
-* obvious renames or localized mechanical edits;
-* very small low-risk code changes whose implementation and validation path are already clear.
-
-The main agent may inspect, implement, and validate directly.
-
-#### Tier 1 — Main -> code_worker
-
-This is the default implementation tier when:
-
-* the implementation path is already understood;
-* the task follows an established repository pattern;
-* the change is localized or otherwise straightforward to specify;
-* there is no material security, authorization, concurrency, persistence, transaction, protocol, compatibility, lifecycle, rollback, or data-integrity risk.
-
-Workflow:
-
-1. Main agent inspects enough code to understand the change.
-2. Main agent makes the implementation decisions and writes a compact execution specification.
-3. `code_worker` implements the change and runs relevant validation.
-4. Main agent evaluates the worker result and validation.
-
-Do not invoke `reviewer` by default for Tier 1 work.
-
-#### Tier 2 — code_explorer -> Main -> code_worker
-
-Use when implementation uncertainty is the main problem, for example:
-
-* the responsible files or symbols are not known;
-* the relevant execution path or data flow must be traced;
-* a bug's root cause is not yet established;
-* the change crosses components and the current architecture is not sufficiently understood.
-
-Workflow:
-
-1. `code_explorer` performs targeted exploration and returns repository evidence.
-2. Main agent compresses those findings into the minimum implementation-relevant context, resolves the design, and writes the execution specification.
-3. `code_worker` implements the specification and runs relevant validation.
-4. Main agent evaluates the result.
-
-Do not repeat the explorer report verbatim in the worker delegation. Pass only facts, constraints, symbols, and decisions needed for implementation.
-
-#### Tier 3 — code_explorer -> Main -> code_worker -> reviewer
-
-Use for changes where independent review is worth the extra cost. Typical triggers include:
-
-* security, authentication, authorization, or trust-boundary changes;
-* concurrency, synchronization, race-condition, or ordering-sensitive behavior;
-* persistence, transactions, migrations, consistency, or data-integrity risk;
-* public API, ABI, protocol, schema, serialization, or compatibility changes;
-* lifecycle, cleanup, rollback, resource ownership, or failure-recovery complexity;
-* realistic risk of data loss, corruption, privilege escalation, or major production regression;
-* large or high-impact cross-module changes.
-
-Workflow:
-
-1. Use `code_explorer` when repository evidence is needed to understand the affected behavior. If the implementation is already fully understood, the main agent may skip redundant exploration.
-2. Main agent makes the implementation decisions and writes the implementation specification.
-3. `code_worker` implements the specification and runs validation.
-4. `reviewer` independently reviews the completed change against the specification and repository behavior.
-5. Main agent evaluates findings and decides whether a focused follow-up worker task is required.
-
-Do not use `reviewer` to implement changes.
-Do not use `code_explorer` to modify files.
-Do not delegate architectural decisions or an underspecified implementation problem to `code_worker` when the main agent can reasonably resolve those decisions first.
-
-### Escalation rules
-
-A task may start at a lower tier and be escalated when new information warrants it. Examples:
-
-* Tier 1 -> Tier 2 when the worker or main agent discovers that the actual implementation path is unclear or materially different from the assumed one.
-* Tier 1 or Tier 2 -> Tier 3 when the task reveals meaningful security, concurrency, persistence, compatibility, lifecycle, rollback, or data-integrity risk.
-
-Do not pre-emptively escalate solely for caution. Prefer evidence-based escalation.
-
-### Token-efficiency rules
-
-* Prefer targeted repository reads and searches over broad scans.
-* Reuse established findings instead of asking later agents to rediscover them.
-* Treat the implementation specification as a compression layer: include what the worker needs to execute correctly, not a transcript of the investigation.
-* Keep delegations concise when the task is simple; include detailed control flow, failure behavior, and invariants only when they materially affect correctness.
-* Avoid repeating generic subagent rules already present in the subagent's own configuration.
-* Use expensive independent review selectively, based on risk rather than task size alone.
-
----
-
-## Implementation specification requirements
-
-Before delegating an implementation task to `code_worker`, the main agent must
-provide a concrete, right-sized implementation specification rather than only a
-high-level goal.
-
-The specification should be detailed enough that `code_worker` does not need to
-independently design the solution, but concise enough to avoid repeating repository
-evidence or generic rules that the worker already has. Scale detail with task risk
-and complexity.
-
-Include the following whenever applicable:
-
-### 1. Goal
-
-State precisely what behavior must be added, changed, fixed, or preserved.
-
-### 2. Current implementation
-
-Summarize the relevant existing behavior discovered from the repository,
-including the important execution path, data flow, and responsibilities of
-existing components.
-
-Do not make `code_worker` rediscover information that `code_explorer` or the
-main agent has already established.
-
-### 3. Files and symbols
-
-Identify the relevant:
-
-* files,
-* classes,
-* functions,
-* methods,
-* interfaces,
-* data structures,
-* configuration entries,
-* tests,
-
-that should be modified or inspected.
-
-When exact symbols are known, provide them.
-
-### 4. Concrete implementation logic
-
-Describe the intended implementation logic explicitly.
-
-Specify, whenever relevant:
-
-* control flow,
-* data flow,
-* algorithm,
-* ordering of operations,
-* state transitions,
-* conditions and branches,
-* ownership of state,
-* validation rules,
-* caching behavior,
-* lifecycle behavior,
-* concurrency expectations,
-* cleanup behavior,
-* persistence behavior,
-* error propagation,
-* failure recovery,
-* invariants that must remain true.
-
-Do not stop at statements such as:
-
-"Add caching."
-
-Instead specify the intended behavior, for example:
-
-* Check the cache before invoking the resolver.
-* Use `(projectId, version)` as the cache key.
-* Cache only successful resolution results.
-* Do not cache exceptions or missing results.
-* Invalidate the corresponding entry when the project configuration changes.
-* Preserve the existing public API.
-
-### 5. Integration with existing code
-
-Explain how the new logic should fit into the existing architecture.
-
-Specify:
-
-* which existing abstraction should be reused,
-* which component should own the new behavior,
-* which existing methods should call the new logic,
-* which APIs should remain unchanged,
-* which existing conventions or patterns should be followed.
-
-Prefer extending the existing design over introducing parallel abstractions.
-
-### 6. Edge cases and failure behavior
-
-Identify important edge cases that must be handled.
-
-For example:
-
-* null or absent values,
-* duplicate requests,
-* partially completed operations,
-* exceptions between multiple state-changing operations,
-* invalid input,
-* stale state,
-* concurrent execution,
-* resource cleanup,
-* retries,
-* backward compatibility.
-
-Specify the expected behavior rather than leaving important edge-case decisions
-to `code_worker`.
-
-### 7. Scope boundaries
-
-Explicitly state what should NOT be changed when useful.
-
-For example:
-
-* Do not change the public API.
-* Do not migrate unrelated callers.
-* Do not refactor the surrounding subsystem.
-* Do not introduce a new abstraction for this task.
-* Do not modify persistence schema.
-* Do not change behavior outside this execution path.
-
-### 8. Tests and validation
-
-Specify the behaviors that validation should prove.
-
-When possible, identify:
-
-* existing tests to update,
-* new tests to add,
-* important test cases,
-* expected outcomes,
-* relevant build commands,
-* relevant test commands,
-* linters or type checks.
-
-Tests should validate behavior, including relevant failure paths and edge cases,
-rather than merely increasing coverage.
-
----
-
-## Delegation quality
-
-The main agent should think through the implementation before invoking
-`code_worker`.
-
-For non-trivial logic, provide pseudocode or ordered implementation steps when
-they make the intended behavior clearer. For straightforward Tier 1 work, prefer
-a compact execution packet over filling every optional section.
-
-The main agent should decide:
-
-* what the implementation should do,
-* where the logic should live,
-* how components should interact,
-* what invariants must hold,
-* how failures should behave,
-* what tests should prove.
-
-`code_worker` should normally decide only lower-level implementation details such
-as:
-
-* exact local variable names,
-* minor syntax choices,
-* equivalent project-style expressions,
-* small mechanical adjustments required by the compiler or existing APIs.
-
-Do not prescribe line-by-line code when repository conventions already make the
-implementation obvious.
-
-The goal is not to turn `code_worker` into a blind patch applicator. It may make
-small implementation-level judgments, but it should not need to rediscover the
-architecture or invent the solution.
-
----
-
-## Delegation format
-
-Every delegation to `code_worker` must include an `Applicable instructions`
-section listing the exact paths of all `AGENTS.md` files checked by the main
-agent and summarizing the constraints relevant to the task. The structured
-packet below is recommended but may be adapted.
-
-When delegating to `code_worker`, prefer a structured execution packet like:
-
-### Task
-
-<precise implementation goal>
-
-### Current behavior
-
-<relevant existing implementation and execution path>
-
-### Applicable instructions
-
-<exact paths to the `AGENTS.md` files already checked by the main agent>
-
-<constraints from those instructions that affect this task; the main agent has
-already performed this check, so do not rediscover applicable rules from
-scratch>
-
-### Files / symbols
-
-* `path/to/File.kt` — `Class.method()`
-* `path/to/Other.kt` — `OtherClass`
-* `path/to/Test.kt` — relevant tests
-
-### Implementation logic
-
-1. <specific change>
-2. <specific control-flow/data-flow behavior>
-3. <specific integration behavior>
-4. <failure/cleanup behavior>
-5. <behavior that must remain unchanged>
-
-### Edge cases
-
-* <case and required behavior>
-* <case and required behavior>
-
-### Constraints
-
-* <scope restriction>
-* <architecture/API restriction>
-
-### Validation
-
-* <test to add/update>
-* <command or validation to run>
-* <expected behavior>
-
-### Completion report
-
-Report:
-
-1. What changed.
-2. Files changed.
-3. Validation performed and results.
-4. Any deviation from the specification.
-5. Any unresolved issue or assumption.
-
----
-
-## Handling uncertainty
-
-If the main agent still has unresolved architectural or behavioral questions,
-do not pass those questions to `code_worker` as an open-ended implementation
-task.
-
-Instead:
-
-1. investigate them with `code_explorer` when repository evidence can answer
-   them;
-2. resolve the design at the main-agent level;
-3. then delegate the resulting concrete specification.
-
-If repository evidence is genuinely insufficient, make the safest reasonable
-implementation decision at the main-agent level and clearly include that
-assumption in the implementation specification.
-
----
-
-## Handling worker deviations
-
-`code_worker` must follow the implementation specification closely.
-
-If `code_worker` discovers that the specification is impossible, unsafe,
-incompatible with the repository, or clearly incorrect, it should not silently
-redesign the solution.
-
-It should:
-
-* make only clearly safe progress within the established scope;
-* report the conflict;
-* explain the minimum required adjustment;
-* leave architectural redesign decisions to the main agent.
-
-The main agent then decides whether to revise the implementation specification
-and delegate another focused implementation task.
-
-## Subagent reliability
-
-Before delegating repository work to a subagent:
-
-1. Verify that the current session still has workspace and shell tools.
-2. Ask every newly spawned repository subagent (`code_explorer`, `code_worker`,
-   and `reviewer`) to verify workspace, shell, and filesystem access before
-   beginning substantial work.
-3. If any spawned repository subagent reports missing workspace, shell, or
-   filesystem access, do not repeatedly retry delegation from the same session.
-4. Report the runtime/tool provisioning failure to the user instead.
+Use English for subagent tasks and reports.
+
+The main agent owns implementation design, scope, and final decisions. Handle
+ordinary localized work directly; delegate when independent context, substantial
+investigation, or parallel execution justifies the handoff. There is no mandatory
+exploration/implementation/review pipeline.
+
+* Use `code_explorer` for substantial investigation or unclear execution paths.
+  Skip it when the relevant repository behavior is already understood.
+* Use `code_worker` for a bounded implementation task that can be executed
+  independently from a concrete specification.
+* Use `reviewer` for independent review when the change introduces material
+  security, concurrency, data-integrity, compatibility, or lifecycle/recovery
+  risk. Do not require review solely because several files changed.
+* Explorers and reviewers do not edit files or implement fixes.
+
+### Delegation
+
+Give workers a compact specification covering:
+
+1. Goal: the required behavior and relevant current behavior.
+2. Scope: owned files/symbols, integration points, and changes to avoid.
+3. Constraints: behavior contracts, key implementation decisions, and invariants.
+4. Validation: acceptance criteria and relevant checks.
+
+Include an `Applicable instructions` section with the exact paths of checked
+`AGENTS.md` files and the constraints relevant to the task. Add state transitions,
+ordering, failure recovery, or pseudocode only when the task needs them. Reuse
+established findings instead of repeating broad exploration or generic rules.
+
+Workers may decide local function decomposition, helper reuse, syntax, and test
+organization within the specification. Changes to behavior contracts, scope,
+architecture, or risk require the parent agent's decision. If the specification
+conflicts with repository evidence, report the conflict and minimum adjustment;
+continue only work that is clearly safe within the approved scope.
+
+### Shared workspace and validation
+
+* Preserve edits made by the user and other agents.
+* Assign non-overlapping file ownership to parallel workers; coordinate before
+  editing a shared file.
+* Serialize Gradle runs for the same module and across modules that share build
+  outputs. Do not terminate another agent's build.
+* Report changes, validation results, deviations, and unresolved issues concisely.
+  Distinguish implementation failures, pre-existing failures, and checks not run.
+
+### Tool failures
+
+Verify that the parent has workspace access before delegation. Each new subagent
+should verify the tools needed for its task through its first normal read or
+command; a separate repetitive preflight is unnecessary.
+
+If a subagent lacks required tools, do not repeatedly respawn it in the same
+session. The main agent may take over already authorized work using available
+tools. Report remaining tool or validation limitations. If independent review
+cannot run, report that gap explicitly; the main agent's self-review does not
+count as independent approval.
 
 ## 1. Agent Workflow
 
@@ -440,10 +94,13 @@ Do not modify code immediately.
 Before making code changes:
 
 1. Inspect the relevant code and project instructions.
-2. Explain the proposed changes to the user.
-3. Provide a concrete implementation plan.
-4. Ask for the user's approval.
-5. Only execute the plan after approval.
+2. Explain the proposed changes and provide a concrete implementation plan.
+3. Obtain the user's approval before implementing the plan.
+
+Approval covers delegated implementation, necessary validation, and fixes within
+the approved scope. Do not ask again merely because work moves to a subagent or
+validation finds an implementation error. Ask again only when the plan materially
+expands scope or changes behavior the user has already confirmed.
 
 
 ### Project-Specific Instructions
@@ -460,8 +117,11 @@ Never permanently delete project files or directories.
 
 If a file or directory should be removed:
 
-- Move it into `/DEL` instead.
-- Preserve its contents and relative purpose where practical.
+- Move it into `DEL/<unique-archive-directory>/<original-relative-path>` under
+  the repository root, not the filesystem root.
+- Preserve its contents and original relative path.
+- Choose a new archive directory for each removal operation; never overwrite an
+  existing archived file.
 
 Do not use destructive deletion commands for project files.
 
@@ -602,13 +262,15 @@ Compose naming:
 
 ## 6. Kotlin Package Names
 
-New classes should use packages under:
+Only newly created packages should use the prefix:
 
 ```text
 calebxzau.*
 ```
 
-Follow the existing module/package hierarchy when selecting the complete package name.
+When adding or modifying a class in an existing package, preserve that package's
+name, including existing `calebxzhou.*` packages. Do not migrate existing packages
+as part of this rule.
 
 ---
 
@@ -722,12 +384,16 @@ Do not inspect the WSL `~/.gradle` cache as the authoritative project cache.
 
 ### Running Gradle
 
-Run Gradle tasks through intellij mcp which is on windows host.
+1. First run Gradle through IntelliJ MCP on the Windows host.
+2. If MCP is unavailable, the tool call fails, or it cannot start the command,
+   fall back to Windows `pwsh.exe` and the module-local `gradlew.bat`.
+3. In either case, run from the corresponding Windows module/project directory.
+   There is no repository-wide root `gradlew`.
 
-do not run project Gradle tasks directly using the WSL Gradle environment.
- 
+A Gradle compile/test failure after the command starts is a validation result,
+not an MCP failure. Diagnose it instead of rerunning through another entry point.
 
-Remember that there is no repository-wide root `gradlew`.
+Do not run project Gradle tasks using the WSL Gradle environment.
 
 ---
 
@@ -809,13 +475,16 @@ When adding or maintaining tests there, verify whether the relevant test task ne
 
 ### Modpack Changes
 
-  Whenever an agent changes Modpack-server-side-logic related code in this repository, it must run the focused
-  `modpackServiceTest` task from `server/master`.
+Whenever an agent changes Modpack server-side logic, run the focused
+`modpackServiceTest` task from `server/master`. Use IntelliJ MCP first and Windows
+`pwsh.exe` only as the fallback described above, with the module-local wrapper:
 
-  When running from WSL, use Windows pwsh.exe and the module-local Gradle wrapper:  
-.\gradlew.bat modpackServiceTest --no-daemon -x :net:compileTestKotlin"
+```powershell
+.\gradlew.bat modpackServiceTest --no-daemon -x :net:compileTestKotlin
+```
 
-  If the task cannot run, report the exact blocker and do not claim that ModpackService validation passed.
+If the task cannot run, report the exact blocker and do not claim that
+ModpackService validation passed.
 
 
 ## 15. Change Priorities
@@ -830,16 +499,5 @@ When implementing a feature that touches multiple modules, generally use this or
 
 Adjust the order when dependencies make another sequence more appropriate.
 
-Before implementation, still follow the approval requirement, then use the
-lowest sufficient execution tier:
-
-```text
-Inspect
--> Classify Tier
--> Plan
--> Ask for approval
--> Execute with the selected tier
--> Validate
--> Escalate only if new uncertainty or risk requires it
-```
-
+Follow the approval and delegation rules above. Execute and validate within the
+approved scope; revisit the plan only when new evidence requires a material change.
