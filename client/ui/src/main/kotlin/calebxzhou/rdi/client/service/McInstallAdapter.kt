@@ -22,10 +22,11 @@ val mcInstall: McInstall by lazy {
             preferMirror = { CONF.preferMcMirror },
             javaPath = { javaExePath },
             resourceLoader = { name -> runCatching { RDIClient.jarResource(name) } },
-            launchPreparer = McLaunchPreparer { mcVersion, versionId, versionDir, onProgress ->
-                createMinecraftLauncher().prepare(
+            launchPreparer = McLaunchPreparer { mcVersion, loader, versionId, versionDir, onProgress ->
+                    createMinecraftLauncher().prepare(
                     request = minecraftLaunchRequest(
                         mcVersion = mcVersion,
+                        loader = loader,
                         versionId = versionId,
                         versionDir = versionDir,
                     ),

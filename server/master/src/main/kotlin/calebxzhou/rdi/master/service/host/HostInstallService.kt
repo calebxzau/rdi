@@ -195,6 +195,9 @@ object HostInstallService {
             if (freshVersion.status != Modpack.Status.OK) {
                 throw RequestError("此整合包版本未准备好，请等待构建完成后再创建房间")
             }
+            if (!freshPack.mcVer.supportsRuntime(freshPack.modloader)) {
+                throw RequestError("此整合包使用的Minecraft版本与Mod加载器组合暂不支持")
+            }
             val binding = freshVersion.baseWorld
             val selectedBaseWorldId = resolveBaseWorldId(binding, host.baseWorldId)
             var snapshotLease: BaseWorldService.SnapshotLease? = selectedBaseWorldId?.let { worldId ->
@@ -299,6 +302,13 @@ object HostInstallService {
                 try {
                     try {
                         requireModernLog4j2Config(modpack.mcVer)
+                        if (modpack.modloader == ModLoader.Fabric) {
+                            FabricServerRuntimeFiles.requireAvailable(
+                                modpack.libsDir.absoluteFile,
+                                modpack.mcVer,
+                                modpack.modloader,
+                            )
+                        }
                         if (newHost && installHost.baseWorldId != null && pendingSnapshotLease?.generated != true) {
                         val baseWorldId = installHost.baseWorldId ?: throw RequestError("地图模板ID不存在")
                         val service = baseWorldService ?: throw RequestError("地图模板服务不可用")

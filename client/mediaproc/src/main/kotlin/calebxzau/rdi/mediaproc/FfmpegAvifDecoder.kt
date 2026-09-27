@@ -38,7 +38,7 @@ import org.bytedeco.ffmpeg.swscale.SwsContext
 import org.bytedeco.javacpp.BytePointer
 import org.bytedeco.javacpp.DoublePointer
 import org.bytedeco.javacpp.PointerPointer
-import java.nio.file.Files
+import java.lang.ref.Reference
 
 object FfmpegAvifDecoder {
     private const val MAX_INPUT_BYTES = 64L * 1024L * 1024L
@@ -47,6 +47,7 @@ object FfmpegAvifDecoder {
     private const val MAX_STREAMS = 2
     private const val THREAD_LIMIT = 4
     private const val RGBA_CHANNELS = 4
+    private const val AVFMT_FLAG_CUSTOM_IO = 0x0080
     private val decodePermits = java.util.concurrent.Semaphore(2)
 
     fun isAvif(input: ByteArray): Boolean = AvifCodec.isAvif(input)
@@ -66,33 +67,33 @@ object FfmpegAvifDecoder {
     }
 
     private fun decodeNative(input: ByteArray): DecodedRgbaImage {
-        val inputFile = Files.createTempFile("rdi-avif-", ".avif")
-        return try {
-            Files.write(inputFile, input)
-            decodeFile(inputFile)
-        } finally {
-            runCatching { Files.deleteIfExists(inputFile) }
-        }
-    }
-
-    private fun decodeFile(inputFile: java.nio.file.Path): DecodedRgbaImage {
-        val formatContext = avformat_alloc_context()
-            ?: error("Unable to allocate FFmpeg input context")
-        val inputPath = BytePointer(inputFile.toAbsolutePath().toString())
-        var opened = false
         val decoders = mutableListOf<AVCodecContext>()
         val storedFrames = arrayOfNulls<AVFrame>(MAX_STREAMS)
+        val formatContext = avformat_alloc_context()
+            ?: error("Unable to allocate FFmpeg input context")
+        val memoryInput = try {
+            MemoryAvioInput(input)
+        } catch (failure: Throwable) {
+            runCatching { avformat_free_context(formatContext) }
+            formatContext.close()
+            throw failure
+        }
+        var opened = false
         try {
+            formatContext.pb(memoryInput.context())
+            // AVFMT_FLAG_CUSTOM_IO: avformat_close_input must leave our AVIO context alive.
+            formatContext.flags(formatContext.flags() or AVFMT_FLAG_CUSTOM_IO)
             FfmpegAvifNative.check(
                 avformat_open_input(
                     formatContext,
-                    inputPath,
+                    null as BytePointer?,
                     null,
                     null as org.bytedeco.ffmpeg.avutil.AVDictionary?,
                 ),
                 "open AVIF input",
             )
             opened = true
+            memoryInput.throwCallbackFailureIfAny()
             FfmpegAvifNative.check(
                 avformat_find_stream_info(
                     formatContext,
@@ -100,6 +101,7 @@ object FfmpegAvifDecoder {
                 ),
                 "read AVIF stream information",
             )
+            memoryInput.throwCallbackFailureIfAny()
 
             val streams = (0 until formatContext.nb_streams())
                 .map { formatContext.streams(it) }
@@ -125,6 +127,7 @@ object FfmpegAvifDecoder {
                 alphaStream?.codecpar(),
                 storedFrames,
             )
+            memoryInput.throwCallbackFailureIfAny()
 
             val colorFrame = storedFrames[0]
                 ?: error("AVIF contains no color frame")
@@ -145,8 +148,15 @@ object FfmpegAvifDecoder {
             } else if (!formatContext.isNull) {
                 runCatching { avformat_free_context(formatContext) }
             }
-            formatContext.close()
-            inputPath.close()
+            try {
+                formatContext.close()
+            } finally {
+                try {
+                    memoryInput.close()
+                } finally {
+                    Reference.reachabilityFence(memoryInput)
+                }
+            }
         }
     }
 
@@ -348,8 +358,7 @@ object FfmpegAvifDecoder {
         width: Int,
         height: Int,
     ): DecodedRgbaImage {
-        val pixels = ByteArray(width * height * RGBA_CHANNELS)
-        color.copyInto(pixels)
+        val pixels = color
         if (alpha == null) {
             for (index in 3 until pixels.size step RGBA_CHANNELS) pixels[index] = 0xFF.toByte()
         } else {
@@ -358,4 +367,5 @@ object FfmpegAvifDecoder {
         }
         return DecodedRgbaImage(width, height, pixels)
     }
+
 }

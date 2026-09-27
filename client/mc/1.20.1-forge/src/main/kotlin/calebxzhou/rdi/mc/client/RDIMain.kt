@@ -1,21 +1,17 @@
 package calebxzhou.rdi.mc.client
 
 import calebxzau.rdi.mc.zstdcodec.ZstdCompressionPipeline
+import calebxzau.rdi.mc.v20.client.RoomJoinUi20
 // import calebxzhou.rdi.mc.client.chunkcache.RdiChunkCacheClient
 // import calebxzhou.rdi.mc.client.chunkcache.RdiChunkCacheClientHandler
 import calebxzhou.rdi.mc.client.network.RClientNetwork
+import calebxzau.rdi.mc.v20.client.GlobalPlayerListState
 import calebxzhou.rdi.mc.client.mcp.standard.StandardMcpServer
 import calebxzhou.rdi.mc.client.mcpimpl.McpGameImpl
 import calebxzhou.rdi.mc.client.mcpimpl.McpNetwork
 import calebxzhou.rdi.mc.common.RDI
-import com.google.common.net.HostAndPort
 import net.minecraft.ChatFormatting
-import net.minecraft.client.Minecraft
 import net.minecraft.client.gui.components.Button
-import net.minecraft.client.gui.screens.ConnectScreen
-import net.minecraft.client.gui.screens.TitleScreen
-import net.minecraft.client.multiplayer.ServerData
-import net.minecraft.client.multiplayer.resolver.ServerAddress
 import net.minecraft.client.player.LocalPlayer
 import net.minecraft.network.chat.ClickEvent
 import net.minecraft.network.chat.Component
@@ -43,29 +39,17 @@ class RDIMain {
         }
 
         @JvmField
-        var JOIN_BUTTON: Button =
-            Button.builder(Component.literal("进入房间 · ${RDI.HOST_NAME}")) {
-                val hp = HostAndPort.fromString(RDI.GAME_IP)
-                ConnectScreen.startConnecting(
-                    TitleScreen(),
-                    Minecraft.getInstance(),
-                    ServerAddress(hp.host, hp.port),
-                    ServerData("rdi", RDI.GAME_IP, false),
-                    false
-                )
-            }.build()
+        var JOIN_BUTTON: Button = RoomJoinUi20.JOIN_BUTTON
 
         @JvmStatic
         fun layoutJoinButton(screenWidth: Int) {
-            JOIN_BUTTON.x = screenWidth / 2 - 250
-            JOIN_BUTTON.y = 0
-            JOIN_BUTTON.width = 500
-            JOIN_BUTTON.height = 50
+            RoomJoinUi20.layoutJoinButton(screenWidth)
         }
 
         @SubscribeEvent
         @JvmStatic
         fun onClientJoinServer(event: ClientPlayerNetworkEvent.LoggingIn) {
+            GlobalPlayerListState.beginSession(event.connection)
             /* RdiChunkCacheClientHandler.clearDeferredPackets()
             RdiChunkCacheClient.open(
                 Minecraft.getInstance().gameDirectory.toPath(),
@@ -80,6 +64,7 @@ class RDIMain {
         @SubscribeEvent
         @JvmStatic
         fun onClientLeaveServer(event: ClientPlayerNetworkEvent.LoggingOut) {
+            GlobalPlayerListState.endSession(event.connection)
             StandardMcpServer.stop()
             /* RdiChunkCacheClientHandler.clearDeferredPackets()
             RdiChunkCacheClient.close() */

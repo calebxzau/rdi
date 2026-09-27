@@ -1,6 +1,7 @@
 package calebxzau.rdi.mclaunch
 
 import calebxzhou.rdi.common.util.humanFileSize
+import calebxzhou.rdi.common.util.humanSpeed
 import calebxzhou.rdi.common.util.sha1
 import calebxzhou.rdi.common.model.LibraryOsArch
 import calebxzau.rdi.mclaunch.model.MojangDownloadArtifact
@@ -8,6 +9,15 @@ import calebxzau.rdi.mclaunch.model.MojangLibrary
 import java.io.File
 import java.util.Locale
 import java.util.zip.ZipFile
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+
+private val libraryRepairLocks = Array(64) { Mutex() }
+
+private fun libraryRepairLock(file: File): Mutex {
+    val key = file.canonicalPath.lowercase(Locale.ROOT)
+    return libraryRepairLocks[(key.hashCode() and Int.MAX_VALUE) % libraryRepairLocks.size]
+}
 
 private val hostOs = LibraryOsArch.detectHostOs()
 val hostNativeArch = System.getProperty("os.arch")?.lowercase(Locale.ROOT).orEmpty().let { raw ->
@@ -78,7 +88,8 @@ fun MojangLibrary.mainArtifact(): MojangDownloadArtifact? {
         }
     }
     return MojangDownloadArtifact(
-        sha1 = checksums.firstOrNull().orEmpty(),
+        sha1 = sha1 ?: checksums.firstOrNull().orEmpty(),
+        size = size ?: 0L,
         url = "${baseUrl.trimEnd('/')}/${path.trimStart('/')}",
         path = path,
     )
@@ -192,15 +203,16 @@ class MinecraftLaunchLibraryPreparer(
             return@runCatching
         }
         broken.forEachIndexed { index, item ->
-            validate(item)?.let { issue ->
+            libraryRepairLock(item.file).withLock {
+                val issue = validate(item) ?: return@withLock
                 onProgress("${issue.summary}，开始修复")
+                onProgress("修复${index + 1}/${broken.size}: ${item.file.name}")
+                downloader.download(item.library.name, item.artifact, item.file) { progress ->
+                    val total = progress.totalBytes.takeIf { it > 0 }?.humanFileSize ?: "未知"
+                    onProgress("修复${item.file.name} ${progress.bytesDownloaded.humanFileSize}/$total ${progress.speedBytesPerSecond.humanSpeed}")
+                }.getOrThrow()
+                check(validate(item) == null) { "运行库修复后校验失败: ${item.library.name}" }
             }
-            if (item.file.exists()) item.file.delete()
-            onProgress("修复${index + 1}/${broken.size}: ${item.file.name}")
-            downloader.download(item.library.name, item.artifact, item.file) { progress ->
-                val total = progress.totalBytes.takeIf { it > 0 }?.humanFileSize ?: "未知"
-                onProgress("修复${item.file.name} ${progress.bytesDownloaded.humanFileSize}/$total")
-            }.getOrThrow()
         }
         val remaining = validate(baseLibraries, overrideLibraries)
         check(remaining.isEmpty()) { "运行库修复失败: ${remaining.first().summary}" }

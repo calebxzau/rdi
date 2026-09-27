@@ -294,7 +294,7 @@ object ModpackVersionService {
             val oldMods = freshVersion.mods.copyVersionMods()
             val updatedMods = oldMods.copyVersionMods()
             mutator(updatedMods)
-            val processedMods = ModpackModProcessor.processMods(updatedMods).map {
+            val processedMods = ModpackModProcessor.processMods(updatedMods, modpack.modloader).map {
                 it.copy(
                     platform = it.platform.trim().lowercase(),
                     projectId = it.projectId.trim(),

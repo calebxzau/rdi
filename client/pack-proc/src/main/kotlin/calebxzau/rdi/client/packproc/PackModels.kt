@@ -1,6 +1,7 @@
 package calebxzau.rdi.client.packproc
 
 import calebxzau.rdi.common.model.Content
+import calebxzhou.rdi.common.service.ModrinthService
 import calebxzhou.rdi.common.model.McVersion
 import calebxzhou.rdi.common.model.Mod
 import calebxzhou.rdi.common.model.ModLoader
@@ -64,7 +65,12 @@ data class UploadPayload(
     var embeddedModSources: List<EmbeddedModSource> = emptyList(),
     var clientExtras: MutableList<Content> = mutableListOf(),
     var embeddedClientExtraSources: List<EmbeddedClientExtraSource> = emptyList(),
-    val serverExtraFiles: List<ServerExtraFile> = emptyList()
+    val serverExtraFiles: List<ServerExtraFile> = emptyList(),
+    /**
+     * The manifest already read and validated by the upload inspector, so the loader step does
+     * not parse and re-recognize the same Modrinth index.
+     */
+    val modrinthIndex: ModrinthService.ParsedIndex? = null
 )
 
 data class LoadedServerPackResult(

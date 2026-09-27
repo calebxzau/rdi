@@ -8,11 +8,16 @@ import calebxzau.rdi.common.model.ContentPlatform
 import calebxzau.rdi.common.model.ContentSide
 import calebxzau.rdi.common.model.ContentType
 import calebxzhou.rdi.common.util.sha1
+import calebxzhou.rdi.common.util.deleteRecursivelyNoSymlink
 import calebxzau.rdi.client.packproc.LoadedLocalModpack
 import calebxzau.rdi.client.packproc.LocalModpackSourceType
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import java.io.File
 import java.nio.file.Files
@@ -23,6 +28,41 @@ import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class ModpackTestSessionTest {
+    @Test
+    fun `cancelled client preparation cannot launch and a new run can prepare again`() = runBlocking {
+        val fixture = TestFixture(clientLine = CLIENT_TEST_SUCCESS_MARKER)
+        val entered = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        fixture.launcher.beforeClientPreparation = {
+            entered.complete(Unit)
+            // Model native preparation finishing after the user has requested cancellation.
+            withContext(NonCancellable) { release.await() }
+        }
+        val session = fixture.session(ModpackTestTarget.CLIENT)
+        try {
+            session.start(emptyList()).getOrThrow()
+            withTimeout(5_000) { entered.await() }
+            assertEquals(0, fixture.launcher.clientLaunchCount)
+            session.stop().getOrThrow()
+            release.complete(Unit)
+            withTimeout(5_000) {
+                while (session.isRunning()) delay(10)
+            }
+            assertEquals(0, fixture.launcher.clientLaunchCount)
+            assertEquals(ModpackTestStatus.STOPPED, session.state.value.status)
+
+            fixture.launcher.beforeClientPreparation = {}
+            session.start(emptyList()).getOrThrow()
+            awaitStatus(session, ModpackTestStatus.PASSED)
+            assertEquals(1, fixture.launcher.clientLaunchCount)
+            Unit
+        } finally {
+            release.complete(Unit)
+            session.close()
+            fixture.close()
+        }
+    }
+
     @Test
     fun `client session resolves extras to instance root after preparing client content`() = runBlocking {
         val fixture = TestFixture(clientLine = CLIENT_TEST_SUCCESS_MARKER)
@@ -324,7 +364,7 @@ private class TestFixture(
     fun resolvedDownloadedPath(name: String): File = checkNotNull(resolvedDownloadedPaths[name])
 
     override fun close() {
-        root.deleteRecursively()
+        root.deleteRecursivelyNoSymlink()
     }
 }
 
@@ -332,6 +372,7 @@ private class FakeModpackTestLauncher(
     private val clientLine: String?,
     private val serverLine: String?,
 ) : ModpackTestLauncher {
+    var beforeClientPreparation: suspend () -> Unit = {}
     var serverWorkDir: File? = null
         private set
     var clientVersionDir: File? = null
@@ -347,28 +388,24 @@ private class FakeModpackTestLauncher(
         onProgress: (String) -> Unit,
     ): Result<Unit> = Result.success(Unit)
 
-    override suspend fun prepareClientLibraries(
+    override suspend fun prepareClientLaunch(
         mcVersion: McVersion,
+        loader: ModLoader,
         versionId: String,
         versionDir: File,
         onProgress: (String) -> Unit,
-    ): Result<Unit> = Result.success(Unit)
-
-    override fun launchClient(
-        mcVersion: McVersion,
-        versionId: String,
-        versionDir: File,
-        onLine: (String) -> Unit,
-    ): Result<ModpackTestProcess> {
-        clientLaunchCount++
-        clientVersionDir = versionDir
-        clientLine?.let(onLine)
-        return Result.success(FakeModpackTestProcess())
+    ): Result<ModpackTestPreparedClient> {
+        beforeClientPreparation()
+        return Result.success(ModpackTestPreparedClient { onLine ->
+            clientLaunchCount++
+            clientVersionDir = versionDir
+            clientLine?.let(onLine)
+            Result.success(FakeModpackTestProcess())
+        })
     }
 
     override fun launchServer(
-        mcVersion: McVersion,
-        loaderVersion: ModLoader.Version,
+        runtime: calebxzhou.rdi.common.model.ServerLoaderRuntime,
         workDir: File,
         onLine: (String) -> Unit,
     ): Result<ModpackTestProcess> {

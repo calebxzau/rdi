@@ -6,11 +6,20 @@ import calebxzhou.rdi.common.exception.RequestError
 import calebxzhou.rdi.common.model.LibraryOsArch
 import calebxzhou.rdi.common.model.McVersion
 import calebxzhou.rdi.common.model.ModLoader
+import calebxzhou.rdi.common.model.ServerLoaderRuntime
+import calebxzhou.rdi.common.model.FABRIC_1_20_1_LOADER_VERSION
+import calebxzhou.rdi.common.model.FABRIC_SERVER_JAR
+import calebxzhou.rdi.common.model.FABRIC_SERVER_LAUNCHER_JAR
 import calebxzau.rdi.mclaunch.model.MojangDownloadArtifact
 import calebxzau.rdi.mclaunch.model.MojangLibrary
 import calebxzau.rdi.mclaunch.model.MojangVersionManifest
 import calebxzau.rdi.common.logging.Loggers
 import com.sun.management.OperatingSystemMXBean
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.withContext
 import java.io.File
 import java.lang.management.ManagementFactory
 import java.nio.charset.StandardCharsets
@@ -121,9 +130,37 @@ class MinecraftLauncher(
         }.getOrDefault(false)
     }
 
+    /** Prepares media on IO before entering the caller's synchronous process ownership section. */
+    suspend fun prepareLaunch(request: MinecraftLaunchRequest): Result<PreparedMinecraftLaunch> = try {
+        val mediaRuntime = withContext(Dispatchers.IO) { resolveMediaRuntime(request.mcVersion) }
+        currentCoroutineContext().ensureActive()
+        Result.success(PreparedMinecraftLaunch { onLine ->
+            launchInternal(request, onLine) { mediaRuntime }
+        })
+    } catch (error: CancellationException) {
+        throw error
+    } catch (error: Exception) {
+        Result.failure(error)
+    }
+
     fun launch(
         request: MinecraftLaunchRequest,
         onLine: (String) -> Unit,
+    ): Result<Process> = launchInternal(request, onLine) { resolveMediaRuntime(request.mcVersion) }
+
+    private fun resolveMediaRuntime(mcVersion: McVersion): MediaProcGameRuntime? {
+        if (mcVersion != McVersion.V201 && mcVersion != McVersion.V211) return null
+        return environment.mediaRuntimeResolver(directories.toolsDir.resolve("mediaproc-natives"))
+            .getOrElse { error ->
+                lgr.error(error) { "Minecraft媒体模块不可用" }
+                throw RequestError("媒体模块缺失或损坏，请先修复", error)
+            }
+    }
+
+    private fun launchInternal(
+        request: MinecraftLaunchRequest,
+        onLine: (String) -> Unit,
+        mediaRuntimeProvider: () -> MediaProcGameRuntime?,
     ): Result<Process> = runCatching {
         val sourceManifests = loadManifests(request)
         val launchManifests = resolveLaunchManifests(request, sourceManifests)
@@ -169,7 +206,9 @@ class MinecraftLauncher(
             }
 
         val resolvedJvmArgs = manifest.resolveJvmArgumentList() + loaderManifest.resolveJvmArgumentList()
-        val kotlinClasspath = if (request.mcVersion == McVersion.V201 || request.mcVersion == McVersion.V211) {
+        val needsForgeRuntime = request.loader != ModLoader.Fabric
+        val hasRdiManagedRuntime = request.mcVersion == McVersion.V201 || request.mcVersion == McVersion.V211
+        val kotlinClasspath = if (needsForgeRuntime && hasRdiManagedRuntime) {
             GameKotlinRuntime.prepare(
                 mcVersion = request.mcVersion,
                 modsDir = request.versionDir.resolve("mods"),
@@ -181,16 +220,15 @@ class MinecraftLauncher(
         } else {
             emptyList()
         }
-        val mediaRuntime = if (request.mcVersion == McVersion.V201 || request.mcVersion == McVersion.V211) {
-            MediaProcGameClasspath.resolve(
-                nativeRoot = directories.toolsDir.resolve("mediaproc-natives")
-            ).getOrElse { error ->
-                lgr.error(error) { "Minecraft媒体模块不可用" }
-                throw RequestError("媒体模块缺失或损坏，请先修复", error)
+        val zstdClasspath = if (hasRdiManagedRuntime) {
+            RdiZstdRuntime.resolve().getOrElse { error ->
+                lgr.error(error) { "Minecraft Zstd运行库不可用" }
+                throw RequestError("Zstd运行库缺失或损坏，请先修复", error)
             }
         } else {
-            null
+            emptyList()
         }
+        val mediaRuntime = mediaRuntimeProvider()
         val launchClasspath = buildLaunchClasspath(
             manifest = manifest,
             loaderManifest = loaderManifest,
@@ -198,7 +236,7 @@ class MinecraftLauncher(
             versionId = request.versionId,
             baseLibraries = launchManifests.baseLibraries,
             gtnhExtensionRoot = launchManifests.gtnhExtensionRoot,
-            additionalClasspath = kotlinClasspath + mediaRuntime?.classpath.orEmpty(),
+            additionalClasspath = kotlinClasspath + zstdClasspath + mediaRuntime?.classpath.orEmpty(),
         )
         val classpath = launchClasspath.joinToString(File.pathSeparator)
         val legacyLaunch = resolvedJvmArgs.isEmpty() &&
@@ -283,27 +321,48 @@ class MinecraftLauncher(
     }
 
     fun launchServer(
-        mcVersion: McVersion,
-        loaderVersion: ModLoader.Version,
+        runtime: ServerLoaderRuntime,
         workDir: File,
         onLine: (String) -> Unit,
     ): Result<Process> = runCatching {
-        if (mcVersion == McVersion.V071) throw RequestError("不支持GTNH本地测试服务器")
+        if (runtime.mcVersion !in setOf(McVersion.V201.mcVer, McVersion.V211.mcVer)) {
+            throw RequestError("不支持${runtime.mcVersion}本地测试服务器")
+        }
         val hostOs = LibraryOsArch.detectHostOs()
         val command = buildList {
             add(resolveJava25Path())
             add("-Xmx6G")
             add("-Xms6G")
             addAll(utf8LoggingJvmArgs)
-            when (mcVersion) {
-                McVersion.V201, McVersion.V211 -> {
-                    add(loaderVersion.serverArgsPath(hostOs.isUnixLike))
-                    add("%*")
+            when (runtime.loader) {
+                ModLoader.Fabric -> {
+                    check(runtime.mcVersion == McVersion.V201.mcVer &&
+                        runtime.loaderVersion == FABRIC_1_20_1_LOADER_VERSION && runtime.javaMajor == 25 &&
+                        runtime.launcherJarName == FABRIC_SERVER_LAUNCHER_JAR &&
+                        runtime.serverJarName == FABRIC_SERVER_JAR
+                    ) { "不支持的Fabric测试服务端运行时配置" }
+                    check(workDir.resolve(FABRIC_SERVER_LAUNCHER_JAR).isFile && workDir.resolve(FABRIC_SERVER_JAR).isFile) {
+                        "Fabric测试服务端运行文件不完整，请先下载测试服务端"
+                    }
+                    add("--enable-native-access=ALL-UNNAMED")
+                    addAll(runtime.launchArgs)
+                    add("nogui")
                 }
 
-                else -> throw RequestError("不支持的MC版本启动测试服务器")
+                ModLoader.forge, ModLoader.neoforge -> {
+                    check(runtime.mcVersion == McVersion.V201.mcVer || runtime.mcVersion == McVersion.V211.mcVer) {
+                        "不支持的${runtime.loader}测试服务端版本"
+                    }
+                    val loaderPath = when (runtime.loader) {
+                        ModLoader.forge -> "@libraries/net/minecraftforge/forge/"
+                        ModLoader.neoforge -> "@libraries/net/neoforged/neoforge/"
+                        ModLoader.Fabric -> error("unreachable")
+                    }
+                    add("$loaderPath${runtime.loaderVersion}/${if (hostOs.isUnixLike) "unix" else "win"}_args.txt")
+                    add("%*")
+                    add("--nogui")
+                }
             }
-            add("--nogui")
         }
         workDir.resolve("eula.txt").writeText("eula=true")
         val process = environment.processStarter.start(command, workDir).getOrThrow()
@@ -312,7 +371,7 @@ class MinecraftLauncher(
     }
 
     private fun loadManifests(request: MinecraftLaunchRequest): MinecraftManifestPair =
-        environment.manifestProvider.load(request.mcVersion, request.versionId, request.versionDir).getOrThrow()
+        environment.manifestProvider.load(request.mcVersion, request.loader, request.versionId, request.versionDir).getOrThrow()
 
     private fun resolveLaunchManifests(
         request: MinecraftLaunchRequest,

@@ -82,7 +82,12 @@ class ModrinthServiceTest {
             entry("global_packs/data.zip", sha1),
         )
 
-        val result = ModrinthService.resolveManifestEntries(index, mapOf(sha1 to version), mapOf("p1" to project))
+        val result = ModrinthService.resolveManifestEntries(
+            index,
+            mapOf(sha1 to version),
+            mapOf("p1" to project),
+            loader = ModLoader.neoforge,
+        )
 
         assertEquals(2, result.mods.size)
         assertEquals(listOf("resourcepacks/a.zip", "resourcepacks/copy/a.zip"), result.clientExtras.map { it.path })
@@ -119,6 +124,7 @@ class ModrinthServiceTest {
             emptyMap(),
             emptyMap(),
             mapOf((entry to "resourcepacks/explicit.zip") to (file to cfProject)),
+            loader = ModLoader.neoforge,
         )
         assertEquals("resourcepacks/explicit.zip", result.clientExtras.single().path)
         assertEquals(listOf("https://cdn.example/files/1/002/file.zip"), result.clientExtras.single().downloadUrls)
@@ -128,6 +134,7 @@ class ModrinthServiceTest {
             ModrinthService.resolveManifestEntries(
                 index(entry), emptyMap(), emptyMap(),
                 mapOf((entry to "resourcepacks/explicit.zip") to (mismatch to cfProject)),
+                loader = ModLoader.neoforge,
             )
         }
     }
@@ -137,7 +144,9 @@ class ModrinthServiceTest {
         val sha1 = "e".repeat(40)
         val unresolved = entry("shaderpacks/Missing.zip", sha1)
         val error = assertFailsWith<ModpackError> {
-            ModrinthService.resolveManifestEntries(index(unresolved), emptyMap(), emptyMap())
+            ModrinthService.resolveManifestEntries(
+                index(unresolved), emptyMap(), emptyMap(), loader = ModLoader.neoforge,
+            )
         }
         assertContains(error.message.orEmpty(), unresolved.path)
 
@@ -149,6 +158,7 @@ class ModrinthServiceTest {
                 index(a, b),
                 mapOf(sha1 to version("v1", "p1", sha1), otherSha1 to version("v2", "p2", otherSha1)),
                 mapOf("p1" to project("p1", "first"), "p2" to project("p2", "second")),
+                loader = ModLoader.neoforge,
             )
         }
     }

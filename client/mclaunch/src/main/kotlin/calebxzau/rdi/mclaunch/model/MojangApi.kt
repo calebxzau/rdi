@@ -98,6 +98,8 @@ data class MojangLibrary(
     val natives: Map<String, String>? = null,
     val url: String? = null,
     val checksums: List<String> = emptyList(),
+    val sha1: String? = null,
+    val size: Long? = null,
 )
 
 @Serializable

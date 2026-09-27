@@ -2,7 +2,7 @@ package calebxzhou.rdi.client.service
 
 import calebxzhou.rdi.common.model.McVersion
 import calebxzhou.rdi.common.model.ModLoader
-import calebxzhou.rdi.common.model.recognizesLoader
+import calebxzhou.rdi.common.model.supportsRuntime
 import calebxzau.rdi.common.model.LoaderDeclaration
 import calebxzau.rdi.common.model.LoaderRecognition
 import calebxzau.rdi.common.model.ContentPlatform
@@ -292,7 +292,7 @@ open class ModpackArchiveReader(
                         val identity = LoaderRecognition.curseForge(
                             manifest.minecraft.modLoaders.map { LoaderDeclaration(it.id, it.primary) },
                         ).getOrThrow()
-                        require(mcVersion.recognizesLoader(identity.loader)) {
+                        require(mcVersion.supportsRuntime(identity.loader)) {
                             "暂不支持Mod加载器${identity.loader.name}"
                         }
                         ModpackArchiveMetadata(
@@ -313,7 +313,7 @@ open class ModpackArchiveReader(
                         }
                         val mcVersion = supportedVersion(index.dependencies["minecraft"].orEmpty())
                         val identity = LoaderRecognition.modrinth(index.dependencies).getOrThrow()
-                        require(mcVersion.recognizesLoader(identity.loader)) {
+                        require(mcVersion.supportsRuntime(identity.loader)) {
                             "暂不支持Mod加载器${identity.loader.name}"
                         }
                         ModpackArchiveMetadata(
@@ -694,7 +694,7 @@ open class ModpackArchiveReader(
         ?: throw IllegalArgumentException("暂不支持MC版本${value.trim()}")
 
     private fun supportedRuntimeLoader(loader: ModLoader, mcVersion: McVersion): ModLoader {
-        require(loader in mcVersion.loaderVersions) {
+        require(mcVersion.supportsRuntime(loader)) {
             "已识别为Minecraft${mcVersion.mcVer}／${loader.name}，当前版本暂不支持导入"
         }
         return loader

@@ -1,0 +1,96 @@
+plugins {
+    id 'fabric-loom' version '1.18.2'
+    id 'org.jetbrains.kotlin.jvm' version '2.4.10'
+}
+
+base {
+    archivesName = 'rdi'
+}
+
+group = 'calebxzhou.rdi'
+version = mod_version
+
+java {
+    toolchain.languageVersion = JavaLanguageVersion.of(25)
+    sourceCompatibility = JavaVersion.VERSION_25
+    targetCompatibility = JavaVersion.VERSION_25
+    withSourcesJar()
+}
+
+kotlin {
+    jvmToolchain(25)
+}
+
+loom {
+    mods {
+        rdi {
+            sourceSet sourceSets.main
+        }
+    }
+    runs {
+        server {
+            server()
+            name 'Fabric Dedicated Server'
+            runDir 'run'
+            vmArg '--enable-native-access=ALL-UNNAMED'
+            vmArg '-Drdi.host.id=695f9e5ad05510e77c09ea1a'
+            vmArg '-Drdi.ihq.url=127.0.0.1:65231'
+        }
+    }
+}
+
+sourceSets.main {
+    java.srcDir '../../../mc/20/src/server/java'
+    java.srcDir '../../../mc/20/src/main/java'
+    kotlin.srcDir '../../../mc/20/src/server/kotlin'
+    kotlin.srcDir '../../../mc/20/src/main/kotlin'
+    kotlin.srcDir '../../../mc/common/codec/src/main/kotlin'
+    kotlin.srcDir '../../../mc/rcmd/src/main/kotlin'
+}
+
+repositories {
+    mavenCentral()
+    maven { url = 'https://maven.fabricmc.net/' }
+}
+
+dependencies {
+    minecraft "com.mojang:minecraft:${minecraft_version}"
+    mappings loom.officialMojangMappings()
+    modImplementation "net.fabricmc:fabric-loader:${fabric_loader_version}"
+    compileOnly 'io.github.llamalad7:mixinextras-common:0.5.5'
+
+    modImplementation("net.fabricmc.fabric-api:fabric-api-base:${fabric_api_base_version}")
+    modImplementation("net.fabricmc.fabric-api:fabric-lifecycle-events-v1:${fabric_lifecycle_events_version}")
+    modImplementation("net.fabricmc.fabric-api:fabric-networking-api-v1:${fabric_networking_api_version}")
+    modImplementation('net.fabricmc:fabric-language-kotlin:1.13.13+kotlin.2.4.10')
+    modImplementation('com.github.luben:zstd-jni:1.5.7-11:win_amd64')
+    include('com.github.luben:zstd-jni:1.5.7-11:linux_amd64')
+    include(modImplementation('com.neovisionaries:nv-websocket-client:2.14'))
+
+    implementation project(':s-mc-common')
+}
+
+evaluationDependsOn(':s-mc-common')
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+}
+
+tasks.named('processResources').configure {
+    inputs.property 'version', project.version
+    filesMatching('fabric.mod.json') {
+        expand 'version': project.version
+    }
+}
+
+tasks.named('jar', Jar).configure {
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+    dependsOn project(':s-mc-common').tasks.named('classes')
+    from(project(':s-mc-common').sourceSets.main.output)
+}
+
+tasks.named('remapJar') {
+    archiveBaseName = 'rdi'
+    archiveVersion = '5-mc-server-1.20.1-fabric'
+}
+project(':s-mc-common').ext.registerServerCopyTask(project)

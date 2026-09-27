@@ -120,7 +120,7 @@ fun createUploadModpackTask2(
     requireModpackUploadRuntime(payload.mcVersion, payload.modloader)
     var uploadedModpackId: ObjectId? = updateModpackId
     var builtClientZip: File? = null
-    val processedMods = processor.processUploadMods(mods)
+    val processedMods = processor.processUploadMods(mods, payload.modloader)
     val uploadTask = Task2.Leaf("上传整合包") { ctx ->
         var doneSummary: String? = null
         ctx.emit(Task2Progress("开始上传整合包", 0f))

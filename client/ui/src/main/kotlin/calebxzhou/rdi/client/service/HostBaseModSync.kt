@@ -4,6 +4,7 @@ import calebxzhou.rdi.client.service.content.ClientContentStore
 import calebxzau.rdi.client.service.ClientContentStores
 import calebxzhou.rdi.client.service.content.toClientContentRequests
 import calebxzhou.rdi.common.model.Mod
+import calebxzhou.rdi.common.model.ModLoader
 import calebxzhou.rdi.common.model.normalizedSlug
 import calebxzhou.rdi.common.model.Task2
 import calebxzhou.rdi.common.model.Task2Context
@@ -19,9 +20,10 @@ import java.nio.file.Path
 fun buildHostBaseModSyncTask2(
     versionId: String,
     activeBaseMods: List<Mod>,
-    disabledBaseMods: List<Mod>
+    disabledBaseMods: List<Mod>,
+    loader: ModLoader = ModLoader.forge,
 ): Task2 {
-    val input = prepareHostBaseModSyncInputs(activeBaseMods, disabledBaseMods)
+    val input = prepareHostBaseModSyncInputs(activeBaseMods, disabledBaseMods, loader)
     val serverOnlyBaseMods = input.activeMods.filter { it.side == Mod.Side.SERVER }
     val unknownSideBaseMods = input.activeMods.filter { it.side == Mod.Side.UNKNOWN }
     val distinctDisabledMods = (input.disabledMods + serverOnlyBaseMods + unknownSideBaseMods).distinctBy { it.fileName }
@@ -46,9 +48,10 @@ suspend fun syncHostManagedBaseMods(
     versionId: String,
     activeBaseMods: List<Mod>,
     disabledBaseMods: List<Mod>,
-    onProgress: (Task2Progress) -> Unit = {}
+    onProgress: (Task2Progress) -> Unit = {},
+    loader: ModLoader = ModLoader.forge,
 ) = withContext(Dispatchers.IO) {
-    buildHostBaseModSyncTask2(versionId, activeBaseMods, disabledBaseMods).runInline(
+    buildHostBaseModSyncTask2(versionId, activeBaseMods, disabledBaseMods, loader).runInline(
         Task2Context(emitProgress = onProgress)
     )
 }
@@ -110,7 +113,8 @@ internal data class HostBaseModSyncInputs(
 internal fun prepareHostBaseModSyncInputs(
     activeMods: List<Mod>,
     disabledMods: List<Mod>,
+    loader: ModLoader = ModLoader.forge,
 ): HostBaseModSyncInputs = HostBaseModSyncInputs(
-    activeMods = activeMods.filterNot { it.normalizedSlug in ModpackModProcessor.removedSlugs },
-    disabledMods = disabledMods.filterNot { it.normalizedSlug in ModpackModProcessor.removedSlugs },
+    activeMods = activeMods.filterNot { it.normalizedSlug in ModpackModProcessor.removedSlugsFor(loader) },
+    disabledMods = disabledMods.filterNot { it.normalizedSlug in ModpackModProcessor.removedSlugsFor(loader) },
 )

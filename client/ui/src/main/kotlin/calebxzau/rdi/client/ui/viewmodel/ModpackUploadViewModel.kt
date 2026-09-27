@@ -48,6 +48,7 @@ import calebxzhou.rdi.common.model.MODPACK_INFO_MAX_CHARACTERS
 import calebxzhou.rdi.common.model.MODPACK_INFO_MIN_CHARACTERS
 import calebxzhou.rdi.common.model.McVersion
 import calebxzhou.rdi.common.model.Mod
+import calebxzhou.rdi.common.model.ModLoader
 import calebxzhou.rdi.common.model.Modpack
 import calebxzhou.rdi.common.model.ModpackUploadPreflightDto
 import calebxzhou.rdi.common.model.Task2Entry
@@ -69,6 +70,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.emitAll
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.update
@@ -258,11 +261,25 @@ interface ModpackUploadGateway {
 
     fun hydrateMods(mods: List<UiMod>): Flow<List<UiMod>>
 
+    fun hydrateMods(mods: List<UiMod>, loader: ModLoader): Flow<List<UiMod>> = hydrateMods(mods)
+
+    suspend fun resolveAvailableModSides(
+        mods: List<UiMod>,
+        loader: ModLoader,
+    ): Result<Map<String, Mod.Side>> = Result.success(emptyMap())
+
     suspend fun prepareServerPack(
         directory: File,
         clientUiMods: List<UiMod>,
         onProgress: (LoadProgress) -> Unit,
     ): Result<PreparedServerPack>
+
+    suspend fun prepareServerPack(
+        directory: File,
+        clientUiMods: List<UiMod>,
+        loader: ModLoader,
+        onProgress: (LoadProgress) -> Unit,
+    ): Result<PreparedServerPack> = prepareServerPack(directory, clientUiMods, onProgress)
 
     suspend fun validateRuntime(mcVersion: McVersion): Result<Unit>
 
@@ -354,7 +371,10 @@ class RdiModpackUploadGateway(
         commitEmbeddedModSources(pack.embeddedModSources).getOrThrow()
         commitEmbeddedClientExtraSources(pack.embeddedClientExtraSources).getOrThrow()
         val initialUiMods = defaultCurseForgeUnknownMods(pack.mods.toUiMods())
-        val processedUiMods = processUiMods(initialUiMods).getOrThrow()
+        val processedUiMods = processUiMods(
+            applyAvailableFabricSides(initialUiMods, pack.modloader),
+            pack.modloader,
+        ).getOrThrow()
         PreparedClientPack(
             pack = pack.copy(mods = processedUiMods.map(UiMod::toMod)),
             uiMods = processedUiMods,
@@ -362,11 +382,31 @@ class RdiModpackUploadGateway(
     }
 
     override fun hydrateMods(mods: List<UiMod>): Flow<List<UiMod>> =
-        mods.hydrateToUiModsInBatches(modCatalog)
+        hydrateMods(mods, ModLoader.forge)
+
+    override fun hydrateMods(mods: List<UiMod>, loader: ModLoader): Flow<List<UiMod>> = flow {
+        val withLocalSides = applyAvailableFabricSides(mods, loader)
+        val processed = preserveUiMods(withLocalSides, processor.processUploadMods(withLocalSides.map(UiMod::toMod), loader))
+        emitAll(processed.hydrateToUiModsInBatches(modCatalog))
+    }
+
+    override suspend fun resolveAvailableModSides(
+        mods: List<UiMod>,
+        loader: ModLoader,
+    ): Result<Map<String, Mod.Side>> = runCatching {
+        availableFabricSides(mods, loader)
+    }
 
     override suspend fun prepareServerPack(
         directory: File,
         clientUiMods: List<UiMod>,
+        onProgress: (LoadProgress) -> Unit,
+    ): Result<PreparedServerPack> = prepareServerPack(directory, clientUiMods, ModLoader.forge, onProgress)
+
+    override suspend fun prepareServerPack(
+        directory: File,
+        clientUiMods: List<UiMod>,
+        loader: ModLoader,
         onProgress: (LoadProgress) -> Unit,
     ): Result<PreparedServerPack> = resultOf {
         if (INVALID_SERVER_ROOT_MARKERS.any { directory.resolve(it).isFile }) {
@@ -379,13 +419,21 @@ class RdiModpackUploadGateway(
                 file = directory,
                 clientMods = clientMods,
                 clientModSources = clientModSources,
+                loader = loader,
                 onProgress = onProgress,
             ).getOrThrow()
         }
         commitEmbeddedModSources(serverPack.embeddedModSources).getOrThrow()
         val serverUiMods = serverPack.mods.hydrateToUiMods(modCatalog)
-        val mergedUiMods = mergeClientAndServerMods(clientUiMods, serverUiMods)
-        PreparedServerPack(serverPack, processUiMods(mergedUiMods).getOrThrow())
+        val clientExplicitSides = availableFabricSides(clientUiMods, loader)
+        val serverExplicitSides = availableFabricSides(serverUiMods, loader)
+        val mergedUiMods = mergeClientAndServerMods(
+            applyFabricSides(clientUiMods, clientExplicitSides),
+            applyFabricSides(serverUiMods, serverExplicitSides),
+            loader,
+        )
+        val resolvedMergedMods = applyAvailableFabricSides(mergedUiMods, loader)
+        PreparedServerPack(serverPack, processUiMods(resolvedMergedMods, loader).getOrThrow())
     }
 
     private companion object {
@@ -460,12 +508,69 @@ class RdiModpackUploadGateway(
         }
     }
 
-    private fun processUiMods(mods: List<UiMod>): Result<List<UiMod>> = runCatching {
+    private fun processUiMods(
+        mods: List<UiMod>,
+        loader: ModLoader = ModLoader.forge,
+    ): Result<List<UiMod>> = runCatching {
         preserveUiMods(
             source = mods,
-            updatedMods = processor.processUploadMods(mods.map(UiMod::toMod)),
+            updatedMods = processor.processUploadMods(mods.map(UiMod::toMod), loader),
         )
     }
+
+    private suspend fun applyAvailableFabricSides(
+        mods: List<UiMod>,
+        loader: ModLoader,
+    ): List<UiMod> = applyFabricSides(mods, availableFabricSides(mods, loader))
+
+    private suspend fun availableFabricSides(
+        mods: List<UiMod>,
+        loader: ModLoader,
+    ): Map<String, Mod.Side> {
+        if (loader != ModLoader.Fabric || mods.isEmpty()) return emptyMap()
+        val sideByKey = linkedMapOf<String, Mod.Side>()
+        mods.forEach { uiMod ->
+            val file = uiMod.file?.takeIf { it.exists() && it.isFile } ?: return@forEach
+            readLocalFabricSide(file)?.let { sideByKey[modStableKey(uiMod.mod)] = it }
+        }
+
+        val requestById = linkedMapOf<String, ContentRequest>()
+        val stableKeysByRequestId = linkedMapOf<String, MutableList<String>>()
+        mods.forEach { uiMod ->
+            if (modStableKey(uiMod.mod) in sideByKey) return@forEach
+            val request = trustedModContentRequest(uiMod.mod) ?: return@forEach
+            requestById.putIfAbsent(request.id, request)
+            stableKeysByRequestId.getOrPut(request.id) { mutableListOf() }.add(modStableKey(uiMod.mod))
+        }
+        if (requestById.isNotEmpty()) {
+            ClientContentStores.shared.useCached(requestById.values.toList()) { paths ->
+                requestById.values.forEach { request ->
+                    val file = paths[request.id]?.toFile()?.takeIf { it.exists() && it.isFile } ?: return@forEach
+                    val side = readLocalFabricSide(file) ?: return@forEach
+                    stableKeysByRequestId[request.id].orEmpty().forEach { key -> sideByKey[key] = side }
+                }
+            }.onFailure { cause ->
+                lgr.debug(cause) { "读取Fabric Mod缓存侧信息失败" }
+            }
+        }
+        return sideByKey
+    }
+
+    private fun applyFabricSides(
+        mods: List<UiMod>,
+        sideByKey: Map<String, Mod.Side>,
+    ): List<UiMod> = mods.map { uiMod ->
+            val side = sideByKey[modStableKey(uiMod.mod)] ?: return@map uiMod
+            uiMod.copy(
+                mod = uiMod.mod.copy(side = side),
+                card = uiMod.card?.copy(side = side),
+                fabricEnvironmentSide = side,
+            )
+        }
+
+    private fun readLocalFabricSide(file: File): Mod.Side? = runCatching {
+        ModService.run { JarFile(file).use { it.readModMeta()?.side } }
+    }.getOrNull()
 
     override fun queueMissingModDownload(mods: List<Mod>): Result<String> = runCatching {
         ClientTaskManager.submit(createUploadClientModDownloadTask2(mods))
@@ -479,7 +584,7 @@ class RdiModpackUploadGateway(
     override fun queueUpload(submission: ModpackUploadSubmission): Result<String> = runCatching {
         requireModpackUploadRuntime(submission.pack.mcVersion, submission.pack.modloader)
         val draft = submission.draft
-        val processedUiMods = processUiMods(submission.uiMods).getOrThrow()
+        val processedUiMods = processUiMods(submission.uiMods, submission.pack.modloader).getOrThrow()
         val payload = submission.pack.copy(
             packName = draft.name,
             packVersion = draft.versionName,
@@ -549,6 +654,7 @@ class ModpackUploadViewModel(
 
     private var clientTester: ModpackTestSession? = null
     private var serverTester: ModpackTestSession? = null
+    private var fabricSideRefreshRunId: String? = null
     private val testerObservationJobs = mutableListOf<Job>()
 
     init {
@@ -690,11 +796,11 @@ class ModpackUploadViewModel(
                 }
                 eventChannel.send(ModpackUploadEvent.ClientPackLoaded())
                 try {
-                    gateway.hydrateMods(prepared.uiMods)
+                    gateway.hydrateMods(prepared.uiMods, prepared.pack.modloader)
                         .flowOn(Dispatchers.IO)
                         .collect { batch ->
                             _uiState.update { state ->
-                                state.copy(uiMods = mergeHydratedUiMods(state.uiMods, batch))
+                                state.copy(uiMods = mergeHydratedUiMods(state.uiMods, batch, prepared.pack.modloader))
                             }
                         }
                 } catch (cancel: CancellationException) {
@@ -739,7 +845,12 @@ class ModpackUploadViewModel(
         viewModelScope.launch {
             try {
                 val prepared = withContext(Dispatchers.IO) {
-                    gateway.prepareServerPack(directory, state.uiMods, ::updateProgress).getOrThrow()
+                    gateway.prepareServerPack(
+                        directory,
+                        state.uiMods,
+                        state.loadedModpack.modloader,
+                        ::updateProgress,
+                    ).getOrThrow()
                 }
                 applyServerPack(prepared)
             } catch (cancel: CancellationException) {
@@ -797,7 +908,12 @@ class ModpackUploadViewModel(
     }
 
     fun stopServerTest() {
-        serverTester?.stop()?.onFailure { reportError("停止服务端测试失败", it) }
+        val tester = serverTester ?: return
+        viewModelScope.launch(Dispatchers.IO) {
+            tester.stop().onFailure { cause ->
+                withContext(Dispatchers.Main.immediate) { reportError("停止服务端测试失败", cause) }
+            }
+        }
     }
 
     fun dismissMissingModDownload() {
@@ -1159,7 +1275,50 @@ class ModpackUploadViewModel(
 
     private fun updateDownloadTaskEntry(entry: Task2Entry?) {
         when (entry?.status) {
-            Task2Status.DONE, Task2Status.CANCELLED -> {
+            Task2Status.DONE -> {
+                val state = _uiState.value
+                val pack = state.loadedModpack
+                if (pack?.modloader == ModLoader.Fabric) {
+                    val runId = entry.runId
+                    if (runId == fabricSideRefreshRunId) return
+                    fabricSideRefreshRunId = runId
+                    _uiState.update { it.copy(uiModsLoading = true) }
+                    viewModelScope.launch(Dispatchers.IO) {
+                        val explicitSides = gateway.resolveAvailableModSides(state.uiMods, pack.modloader).getOrElse { cause ->
+                            lgr.warn(cause) { "读取已下载Fabric Mod侧信息失败" }
+                            withContext(Dispatchers.Main.immediate) {
+                                fabricSideRefreshRunId = null
+                                _uiState.update {
+                                    it.copy(downloadTaskRunId = null, downloadTaskEntry = null, uiModsLoading = false)
+                                }
+                            }
+                            return@launch
+                        }
+                        withContext(Dispatchers.Main.immediate) {
+                            if (_uiState.value.loadedModpack === pack) {
+                                _uiState.update { current ->
+                                    val resolved = applyExplicitFabricSides(current.uiMods, explicitSides)
+                                    current.copy(
+                                        uiMods = resolved,
+                                        loadedModpack = current.loadedModpack?.copy(mods = resolved.map(UiMod::toMod)),
+                                        downloadTaskRunId = null,
+                                        downloadTaskEntry = null,
+                                        uiModsLoading = false,
+                                    )
+                                }
+                            }
+                            val resolvedMods = _uiState.value.uiMods.map(UiMod::toMod)
+                            clientTester?.onModsChanged(resolvedMods)
+                            serverTester?.onModsChanged(resolvedMods)
+                            fabricSideRefreshRunId = null
+                        }
+                    }
+                    return
+                }
+                _uiState.update { it.copy(downloadTaskRunId = null, downloadTaskEntry = null) }
+            }
+
+            Task2Status.CANCELLED -> {
                 _uiState.update { it.copy(downloadTaskRunId = null, downloadTaskEntry = null) }
             }
 
@@ -1232,6 +1391,7 @@ private fun updateModSide(
 ): List<UiMod> {
     val targetIndex = uiMods.indexOfFirst { modStableKey(it.mod) == modKey }
     if (targetIndex < 0) return uiMods
+    if (uiMods[targetIndex].fabricEnvironmentSide != null) return uiMods
     return uiMods.toMutableList().apply {
         this[targetIndex] = this[targetIndex].withSide(newSide)
     }
@@ -1249,13 +1409,30 @@ private fun preserveUiMods(source: List<UiMod>, updatedMods: List<Mod>): List<Ui
     }
 }
 
-private fun mergeHydratedUiMods(current: List<UiMod>, hydrated: List<UiMod>): List<UiMod> {
+private fun mergeHydratedUiMods(
+    current: List<UiMod>,
+    hydrated: List<UiMod>,
+    loader: ModLoader,
+): List<UiMod> {
     val currentByKey = current.associateBy { modStableKey(it.mod) }
     return hydrated.map { hydratedMod ->
         currentByKey[modStableKey(hydratedMod.mod)]?.let { currentMod ->
             hydratedMod.copy(
-                mod = hydratedMod.mod.copy(side = currentMod.side),
-                card = hydratedMod.card?.copy(side = currentMod.side),
+                mod = hydratedMod.mod.copy(
+                    side = if (loader == ModLoader.Fabric && hydratedMod.fabricEnvironmentSide != null) {
+                        hydratedMod.fabricEnvironmentSide
+                    } else {
+                        currentMod.side
+                    }
+                ),
+                card = hydratedMod.card?.copy(
+                    side = if (loader == ModLoader.Fabric && hydratedMod.fabricEnvironmentSide != null) {
+                        hydratedMod.fabricEnvironmentSide
+                    } else {
+                        currentMod.side
+                    }
+                ),
+                fabricEnvironmentSide = hydratedMod.fabricEnvironmentSide ?: currentMod.fabricEnvironmentSide,
                 file = currentMod.file ?: hydratedMod.file,
             )
         } ?: hydratedMod
@@ -1272,6 +1449,18 @@ private fun defaultCurseForgeUnknownMods(source: List<UiMod>): List<UiMod> = sou
 
 private fun modStableKey(mod: Mod): String =
     "${mod.platform}:${mod.projectId}:${mod.fileId}:${mod.hash}"
+
+private fun applyExplicitFabricSides(
+    mods: List<UiMod>,
+    explicitSides: Map<String, Mod.Side>,
+): List<UiMod> = mods.map { uiMod ->
+    val side = explicitSides[modStableKey(uiMod.mod)] ?: return@map uiMod
+    uiMod.copy(
+        mod = uiMod.mod.copy(side = side),
+        card = uiMod.card?.copy(side = side),
+        fabricEnvironmentSide = side,
+    )
+}
 
 private fun Modpack.toLocalBriefVo(): Modpack.BriefVo = Modpack.BriefVo(
     id = _id,
@@ -1406,6 +1595,7 @@ internal suspend fun readInstalledModIdsForTest(
 private suspend fun mergeClientAndServerMods(
     clientMods: List<UiMod>,
     serverMods: List<UiMod>,
+    loader: ModLoader = ModLoader.forge,
 ): List<UiMod> {
     val installedModIds = readInstalledModIds(clientMods + serverMods)
     val clientEntries = clientMods.map { it.asMergeEntry(installedModIds) }
@@ -1440,14 +1630,18 @@ private suspend fun mergeClientAndServerMods(
                 }
             }
             matchedServerEntries += serverMatch
-            merged += mergeAsBoth(clientEntry.uiMod, serverMatch.uiMod)
+            merged += mergeAsBoth(
+                clientEntry.uiMod,
+                serverMatch.uiMod,
+                loader,
+            )
         } else {
-            merged += clientEntry.uiMod.withSide(Mod.Side.CLIENT)
+            merged += if (loader == ModLoader.Fabric) clientEntry.uiMod else clientEntry.uiMod.withSide(Mod.Side.CLIENT)
         }
     }
     serverEntries.forEach { serverEntry ->
         if (serverEntry !in matchedServerEntries) {
-            merged += serverEntry.uiMod.withSide(Mod.Side.SERVER)
+            merged += if (loader == ModLoader.Fabric) serverEntry.uiMod else serverEntry.uiMod.withSide(Mod.Side.SERVER)
         }
     }
     val distinctMerged = buildList {
@@ -1460,7 +1654,12 @@ private suspend fun mergeClientAndServerMods(
     return distinctMerged.sortedBy { it.slug.lowercase() }
 }
 
-internal suspend fun mergeAsBoth(clientMod: UiMod, serverMod: UiMod): UiMod {
+internal suspend fun mergeAsBoth(
+    clientMod: UiMod,
+    serverMod: UiMod,
+    loader: ModLoader = ModLoader.forge,
+    explicitFabricSide: Mod.Side? = null,
+): UiMod {
     val sameContent = sameModContent(
         first = clientMod.mod,
         firstFile = clientMod.file,
@@ -1475,10 +1674,16 @@ internal suspend fun mergeAsBoth(clientMod: UiMod, serverMod: UiMod): UiMod {
     val mergedFile = clientMod.file ?: serverMod.file?.takeIf {
         fileMatchesModContent(it, clientMod.mod)
     }
+    val mergedSide = if (loader == ModLoader.Fabric) {
+        if (sameContent) explicitFabricSide ?: clientMod.side else clientMod.side
+    } else {
+        Mod.Side.BOTH
+    }
     return clientMod.copy(
-        mod = clientMod.mod.copy(side = Mod.Side.BOTH, downloadUrls = mergedDownloadUrls),
-        card = (clientMod.card ?: serverMod.card)?.copy(side = Mod.Side.BOTH),
+        mod = clientMod.mod.copy(side = mergedSide, downloadUrls = mergedDownloadUrls),
+        card = (clientMod.card ?: serverMod.card)?.copy(side = mergedSide),
         file = mergedFile,
+        fabricEnvironmentSide = if (sameContent) explicitFabricSide ?: clientMod.fabricEnvironmentSide else clientMod.fabricEnvironmentSide,
     )
 }
 

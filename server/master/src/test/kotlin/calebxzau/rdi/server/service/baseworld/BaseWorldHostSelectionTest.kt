@@ -4,7 +4,6 @@ import calebxzau.rdi.common.model.BaseWorld
 import calebxzau.rdi.common.util.uuid7j
 import calebxzhou.rdi.common.archive.TarZstArchiveWriter
 import calebxzhou.rdi.common.model.Task2CancelledException
-import calebxzhou.rdi.common.util.toUUID
 import calebxzau.rdi.server.account.PgAccountRepo
 import calebxzhou.rdi.master.infra.postgres.DatabaseProvider
 import io.mockk.coEvery
@@ -12,7 +11,6 @@ import io.mockk.every
 import io.mockk.mockk
 import io.mockk.verify
 import kotlinx.coroutines.test.runTest
-import org.bson.types.ObjectId
 import org.jetbrains.exposed.v1.jdbc.JdbcTransaction
 import java.io.File
 import java.io.IOException
@@ -55,7 +53,7 @@ class BaseWorldHostSelectionTest {
                 worldDestination = { root.resolve(it.id.toString()) },
             )
 
-            val template = service.create(owner, "Generated", "normal", null, 0, generated = true).getOrThrow()
+            val template = service.create(owner, "Generated", "normal", null, 0, generated = true,).getOrThrow()
             assertTrue(root.resolve(template.id.toString()).resolve(".generated").isFile)
             assertTrue(service.requireReadyForHost(template.id).isSuccess)
             assertTrue(service.acquireSnapshotLease(template.id).getOrThrow().generated)
@@ -70,7 +68,7 @@ class BaseWorldHostSelectionTest {
         val account = mockk<PgAccountRepo>()
         val database = mockk<DatabaseProvider>()
         val service = BaseWorldService(database, repository, accounts = account)
-        assertTrue(service.create(UUID.randomUUID(), "Generated", "normal", null, 1, generated = true).isFailure)
+        assertTrue(service.create(UUID.randomUUID(), "Generated", "normal", null, 1, generated = true,).isFailure)
     }
 
     @Test
@@ -120,7 +118,7 @@ class BaseWorldHostSelectionTest {
                 worldDestination = { root.resolve(it.id.toString()) },
             )
 
-            assertTrue(service.create(owner, "Generated", "normal", null, 0, generated = true).isFailure)
+            assertTrue(service.create(owner, "Generated", "normal", null, 0, generated = true,).isFailure)
             assertTrue(root.listFiles().orEmpty().isEmpty())
         } finally {
             root.deleteRecursively()
@@ -144,9 +142,9 @@ class BaseWorldHostSelectionTest {
             firstArg<JdbcTransaction.() -> Any?>().invoke(mockk(relaxed = true))
         }
         val service = BaseWorldService(database, repository, accounts = account)
-        repeat(3) { service.create(owner, "Template$it", "normal", null, 1).getOrThrow() }
-        assertTrue(service.create(owner, "Template4", "normal", null, 1).isFailure)
-        assertTrue(service.create(owner, "bad/name", "normal", null, 1).isFailure)
+        repeat(3) { service.create(owner, "Template$it", "normal", null, 1,).getOrThrow() }
+        assertTrue(service.create(owner, "Template4", "normal", null, 1,).isFailure)
+        assertTrue(service.create(owner, "bad/name", "normal", null, 1,).isFailure)
     }
 
     @Test

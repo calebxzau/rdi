@@ -5,6 +5,8 @@ import calebxzhou.rdi.common.util.*
 import calebxzau.rdi.mclaunch.hostNativeArch
 import calebxzau.rdi.mclaunch.MinecraftArtifactDownloader
 import calebxzau.rdi.mclaunch.MinecraftDownloadProgress
+import calebxzau.rdi.mclaunch.ClientLoaderRuntime
+import calebxzau.rdi.mclaunch.FabricClientProfile
 import calebxzau.rdi.mclaunch.model.*
 import calebxzau.rdi.mclaunch.rulesAllow
 import calebxzhou.rdi.common.json
@@ -18,16 +20,32 @@ import calebxzhou.rdi.common.net.downloadFileFrom
 import calebxzhou.rdi.common.serdesJson
 import calebxzhou.rdi.common.service.runInline
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.serialization.Serializable
 import java.io.File
 import java.io.IOException
 import java.nio.file.Files
+import java.nio.file.Path
+import java.nio.file.AtomicMoveNotSupportedException
 import java.nio.file.StandardCopyOption
 import java.util.*
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicReference
 import java.util.zip.ZipFile
+import kotlin.concurrent.thread
+
+private const val FABRIC_INSTALLER_VERSION = "1.1.2"
+private const val FABRIC_INSTALLER_URL =
+    "https://maven.fabricmc.net/net/fabricmc/fabric-installer/${FABRIC_INSTALLER_VERSION}/fabric-installer-${FABRIC_INSTALLER_VERSION}.jar"
+private const val FABRIC_INSTALLER_SHA1 = "74685b5a0178c4dabd4be741a276d35c59b5ec96"
+private const val FABRIC_INSTALLER_TIMEOUT_SECONDS = 20L * 60L
+private const val FABRIC_INSTALLER_TERMINATE_TIMEOUT_SECONDS = 5L
+private const val FABRIC_RUNTIME_FILES_MANIFEST = ".rdi-runtime-files"
 
 class McInstall(
     internal val environment: McInstallEnvironment,
@@ -48,6 +66,7 @@ class McInstall(
                     bytesDownloaded = progress.bytesDownloaded,
                     totalBytes = progress.totalBytes,
                     fraction = progress.fraction,
+                    speedBytesPerSecond = progress.speedBytesPerSecond,
                 )
             )
         }
@@ -180,24 +199,31 @@ class McInstall(
         onProgress: (String) -> Unit,
         isCancelled: () -> Boolean = { false },
     ): Result<Unit> = runCatching {
+        ensureNotCancelled(isCancelled)
         ensureDesktopLaunchLoader(
             mcVer = request.mcVersion,
             loader = request.loader,
             onProgress = onProgress,
             isCancelled = isCancelled,
         ).getOrThrow()
-        if (isCancelled()) return@runCatching
+        ensureNotCancelled(isCancelled)
 
         val versionDir = versionListDir.resolve(request.versionId)
         environment.launchPreparer.prepare(
             mcVersion = request.mcVersion,
             versionId = request.versionId,
             versionDir = versionDir,
+            loader = request.loader,
             onProgress = onProgress,
         ).getOrThrow()
-        if (isCancelled()) return@runCatching
+        ensureNotCancelled(isCancelled)
 
         ensureDesktopLaunchAssets(request.mcVersion, onProgress).getOrThrow()
+        ensureNotCancelled(isCancelled)
+    }
+
+    private fun ensureNotCancelled(isCancelled: () -> Boolean) {
+        if (isCancelled()) throw CancellationException("Minecraft安装已取消")
     }
 
     private fun extractNatives(manifest: MojangVersionManifest, onProgress: (String) -> Unit) {
@@ -305,7 +331,12 @@ class McInstall(
     }
 
     internal fun MojangLibrary.mainArtifact(): MojangDownloadArtifact? {
-        downloads.artifact?.let { return it }
+        downloads.artifact?.let { artifact ->
+            return artifact.copy(
+                sha1 = artifact.sha1.ifBlank { sha1 ?: checksums.firstOrNull().orEmpty() },
+                size = artifact.size.takeIf { it > 0L } ?: size ?: 0L,
+            )
+        }
         if (!downloads.classifiers.isNullOrEmpty() || !natives.isNullOrEmpty()) {
             return null
         }
@@ -320,8 +351,8 @@ class McInstall(
             }
         }
         return MojangDownloadArtifact(
-            sha1 = checksums.firstOrNull().orEmpty(),
-            size = 0L,
+            sha1 = sha1 ?: checksums.firstOrNull().orEmpty(),
+            size = size ?: 0L,
             url = "${baseUrl.trimEnd('/')}/${path.trimStart('/')}",
             path = path
         )
@@ -951,6 +982,18 @@ class McInstall(
     }
 
     fun downloadLoaderTask2(version: McVersion, loader: ModLoader): Task2 {
+        if (loader == ModLoader.Fabric) {
+            val runtime = ClientLoaderRuntime.resolve(version, loader)
+            return Task2.Sequence(
+                title = "安装 $loader",
+                children = listOf(
+                    Task2.Leaf("安装Fabric客户端") { ctx ->
+                        ensureFabricLaunchLoader(runtime, { message -> ctx.emit(Task2Progress(message)) }, ctx.isCancelled)
+                            .getOrThrow()
+                    },
+                ),
+            )
+        }
         val holder = LoaderInstallHolder(
             version = version,
             loader = loader,
@@ -984,6 +1027,12 @@ class McInstall(
         onProgress: (String) -> Unit,
         isCancelled: () -> Boolean = { false }
     ): Result<Unit> {
+        ensureNotCancelled(isCancelled)
+        if (loader == ModLoader.Fabric) {
+            val runtime = runCatching { ClientLoaderRuntime.resolve(mcVer, loader) }
+                .getOrElse { return Result.failure(it) }
+            return ensureFabricLaunchLoader(runtime, onProgress, isCancelled)
+        }
         val loaderVersion = mcVer.loaderVersions[loader]
             ?: return Result.failure(IllegalStateException("未配置${loader}安装信息"))
         val versionJson = versionListDir.resolve(loaderVersion.dirName).resolve("${loaderVersion.dirName}.json")
@@ -998,23 +1047,28 @@ class McInstall(
             loaderInstalls[key] ?: pending.also { loaderInstalls[key] = it }
         }
         if (active === pending) {
-            val result = runCatching {
-                onProgress("开始自动安装${loader}...")
-                withContext(Dispatchers.IO) {
-                    downloadLoaderTask2(mcVer, loader).runInline(
-                        Task2Context(
-                            isCancelled = isCancelled,
-                            emitProgress = { progress ->
-                                progress.message.takeIf(String::isNotBlank)?.let(onProgress)
-                            }
+            var result: Result<Unit> = Result.failure(IllegalStateException("${loader}安装未完成"))
+            try {
+                result = runCatching {
+                    onProgress("开始自动安装${loader}...")
+                    withContext(Dispatchers.IO) {
+                        downloadLoaderTask2(mcVer, loader).runInline(
+                            Task2Context(
+                                isCancelled = isCancelled,
+                                emitProgress = { progress ->
+                                    progress.message.takeIf(String::isNotBlank)?.let(onProgress)
+                                }
+                            )
                         )
-                    )
+                    }
+                }
+            } finally {
+                pending.complete(result)
+                synchronized(loaderInstalls) {
+                    if (loaderInstalls[key] === pending) loaderInstalls.remove(key)
                 }
             }
-            pending.complete(result)
-            synchronized(loaderInstalls) {
-                if (loaderInstalls[key] === pending) loaderInstalls.remove(key)
-            }
+            result.exceptionOrNull()?.let { if (it is CancellationException) throw it }
         } else {
             onProgress("等待相同${loader}安装完成...")
         }
@@ -1024,6 +1078,275 @@ class McInstall(
             check(loaderLibrariesReady(state.manifest.libraries) && loaderInstallProfileReady(state.installProfile)) {
                 "${loader}安装后运行库仍不完整"
             }
+        }
+    }
+
+    /**
+     * Ensures the desktop launch profile is available. A valid persisted Fabric profile takes the
+     * metadata-only warm path and deliberately skips library checks; callers must follow it with
+     * canonical library preparation and final launch validation.
+     */
+    suspend fun ensureDesktopLaunchProfile(
+        mcVer: McVersion,
+        loader: ModLoader,
+        onProgress: (String) -> Unit,
+        isCancelled: () -> Boolean = { false },
+    ): Result<Unit> {
+        ensureNotCancelled(isCancelled)
+        val context = currentCoroutineContext()
+        context.ensureActive()
+        if (loader != ModLoader.Fabric) {
+            return ensureDesktopLaunchLoader(mcVer, loader, onProgress, isCancelled)
+        }
+
+        val runtime = runCatching { ClientLoaderRuntime.resolve(mcVer, loader) }
+            .getOrElse { return Result.failure(it) }
+        val profile = readFabricProfile(runtime)
+        if (profile != null && FabricClientProfile.validate(profile, runtime, requireChecksums = true).isSuccess) {
+            ensureNotCancelled(isCancelled)
+            context.ensureActive()
+            return Result.success(Unit)
+        }
+        return ensureDesktopLaunchLoader(mcVer, loader, onProgress, isCancelled)
+    }
+
+    private suspend fun ensureFabricLaunchLoader(
+        runtime: ClientLoaderRuntime,
+        onProgress: (String) -> Unit,
+        isCancelled: () -> Boolean,
+    ): Result<Unit> {
+        val context = currentCoroutineContext()
+        val checkCancelled = {
+            ensureNotCancelled(isCancelled)
+            context.ensureActive()
+        }
+        checkCancelled()
+        val persistedProfile = readFabricProfile(runtime)
+        val reusableProfile = persistedProfile?.takeIf { manifest ->
+            FabricClientProfile.validate(manifest, runtime, requireChecksums = true)
+                .onFailure { lgr.warn(it) { "已有Fabric启动清单校验失败，将重新获取官方清单" } }
+                .isSuccess
+        }
+        if (reusableProfile != null && fabricLibrariesReady(reusableProfile)) {
+            checkCancelled()
+            return Result.success(Unit)
+        }
+
+        val key = "${runtime.mcVersion.mcVer}|${runtime.loader}|${runtime.profileId}|${runtime.loaderVersion}"
+        val pending = CompletableDeferred<Result<Unit>>()
+        val active = synchronized(loaderInstalls) {
+            loaderInstalls[key] ?: pending.also { loaderInstalls[key] = it }
+        }
+        if (active === pending) {
+            var result: Result<Unit> = Result.failure(IllegalStateException("Fabric客户端安装未完成"))
+            try {
+                result = runCatching {
+                    checkCancelled()
+                    // Another caller may have published a complete installation after our first check.
+                    val latest = readFabricProfile(runtime)?.takeIf { manifest ->
+                        FabricClientProfile.validate(manifest, runtime, requireChecksums = true).isSuccess
+                    }
+                    if (latest != null && fabricLibrariesReady(latest)) {
+                        checkCancelled()
+                        return@runCatching
+                    }
+                    onProgress("准备Fabric${runtime.loaderVersion}客户端...")
+                    installFabricProfile(runtime, latest ?: reusableProfile, onProgress, checkCancelled)
+                    checkCancelled()
+                    val installed = readFabricProfile(runtime)
+                        ?: error("Fabric安装后缺少启动清单")
+                    FabricClientProfile.validate(installed, runtime, requireChecksums = true).getOrThrow()
+                    check(fabricLibrariesReady(installed)) { "Fabric安装后运行库校验失败" }
+                }
+            } finally {
+                pending.complete(result)
+                synchronized(loaderInstalls) {
+                    if (loaderInstalls[key] === pending) loaderInstalls.remove(key)
+                }
+            }
+            result.exceptionOrNull()?.let { if (it is CancellationException) throw it }
+            // The owner already verified the profile it just published, so skip the waiter
+            // re-verification while keeping its cancellation check.
+            return runCatching {
+                checkCancelled()
+                result.getOrThrow()
+            }
+        } else {
+            onProgress("等待相同Fabric客户端安装完成...")
+        }
+        return active.await().mapCatching {
+            checkCancelled()
+            val installed = readFabricProfile(runtime) ?: error("Fabric安装后缺少启动清单")
+            FabricClientProfile.validate(installed, runtime, requireChecksums = true).getOrThrow()
+            check(fabricLibrariesReady(installed)) { "Fabric安装后运行库校验失败" }
+        }
+    }
+
+    private fun readFabricProfile(runtime: ClientLoaderRuntime): MojangVersionManifest? {
+        val manifestFile = runtime.manifestFile(versionListDir)
+        if (!manifestFile.isFile) return null
+        return runCatching {
+            serdesJson.decodeFromString<MojangVersionManifest>(manifestFile.readText())
+        }.onFailure { lgr.warn(it) { "读取Fabric启动清单失败: ${manifestFile.absolutePath}" } }
+            .getOrNull()
+    }
+
+    private fun fabricLibrariesReady(manifest: MojangVersionManifest): Boolean =
+        manifest.libraries.filter { it.shouldDownloadByArch() }.all { library ->
+            val artifact = library.mainArtifact() ?: return@all false
+            val relativePath = artifact.path?.takeIf(String::isNotBlank)
+                ?: runCatching { descriptorToLibraryPath(library.name) }.getOrNull()
+                ?: return@all false
+            val file = libsDir.resolve(relativePath)
+            isVerifiedFabricArtifact(file, artifact.sha1, artifact.size)
+        }
+
+    private fun isVerifiedFabricArtifact(file: File, sha1: String, size: Long): Boolean {
+        if (!file.isFile || file.length() <= 0L || sha1.isBlank()) return false
+        if (size > 0L && file.length() != size) return false
+        return runCatching { file.sha1.equals(sha1, ignoreCase = true) }
+            .onFailure { lgr.warn(it) { "计算Fabric运行库校验值失败: ${file.absolutePath}" } }
+            .getOrDefault(false)
+    }
+
+    private suspend fun installFabricProfile(
+        runtime: ClientLoaderRuntime,
+        reusableProfile: MojangVersionManifest?,
+        onProgress: (String) -> Unit,
+        checkCancelled: () -> Unit,
+    ) {
+        val profile = if (reusableProfile != null) {
+            reusableProfile
+        } else {
+            val profileUrl = requireNotNull(runtime.profileUrl) { "Fabric官方清单地址未配置" }
+            checkCancelled()
+            val profileText = environment.fabricMetadataFetcher(profileUrl).getOrThrow()
+            checkCancelled()
+            val fetched = serdesJson.decodeFromString<MojangVersionManifest>(profileText)
+            FabricClientProfile.validate(fetched, runtime, requireChecksums = false).getOrThrow()
+            resolveFabricChecksums(fetched, checkCancelled)
+        }
+        FabricClientProfile.validate(profile, runtime, requireChecksums = true).getOrThrow()
+
+        val libraries = profile.libraries.filter { it.shouldDownloadByArch() }
+        libraries.forEachIndexed { index, library ->
+            checkCancelled()
+            val artifact = requireNotNull(library.mainArtifact()) { "Fabric运行库缺少artifact: ${library.name}" }
+            val relativePath = artifact.path?.takeIf(String::isNotBlank) ?: descriptorToLibraryPath(library.name)
+            val target = libsDir.resolve(relativePath)
+            if (isVerifiedFabricArtifact(target, artifact.sha1, artifact.size)) {
+                checkCancelled()
+                return@forEachIndexed
+            }
+            onProgress("下载Fabric运行库${index + 1}/${libraries.size}: ${library.name}")
+            downloadFabricArtifact(library.name, artifact, target, onProgress, checkCancelled)
+            checkCancelled()
+            check(isVerifiedFabricArtifact(target, artifact.sha1, artifact.size)) {
+                "Fabric运行库下载后校验失败: ${library.name}"
+            }
+        }
+        checkCancelled()
+        check(fabricLibrariesReady(profile)) { "Fabric运行库未全部就绪" }
+        checkCancelled()
+        publishFabricProfile(runtime, profile, checkCancelled)
+    }
+
+    private suspend fun resolveFabricChecksums(
+        manifest: MojangVersionManifest,
+        checkCancelled: () -> Unit,
+    ): MojangVersionManifest = manifest.copy(
+        libraries = manifest.libraries.map { library ->
+            checkCancelled()
+            val artifact = requireNotNull(library.mainArtifact()) { "Fabric运行库缺少artifact: ${library.name}" }
+            val sha1 = artifact.sha1.takeIf(String::isNotBlank) ?: run {
+                val sidecarUrl = "${artifact.url}.sha1"
+                val sidecar = environment.fabricMetadataFetcher(sidecarUrl).getOrThrow().trim()
+                checkCancelled()
+                require(Regex("[0-9a-fA-F]{40}").matches(sidecar)) {
+                    "Fabric运行库SHA1 sidecar无效: ${library.name}"
+                }
+                sidecar
+            }
+            library.copy(
+                downloads = library.downloads.copy(artifact = artifact.copy(sha1 = sha1)),
+            )
+        },
+    )
+
+    private suspend fun downloadFabricArtifact(
+        label: String,
+        artifact: MojangDownloadArtifact,
+        target: File,
+        onProgress: (String) -> Unit,
+        checkCancelled: () -> Unit,
+    ) {
+        target.parentFile?.mkdirs()
+        val stagingPrefix = target.name.let { if (it.length >= 3) it else "fabric-${it}" }
+        val staging = Files.createTempFile(target.parentFile.toPath(), "${stagingPrefix}.", ".fabric-download").toFile()
+        try {
+            Files.deleteIfExists(staging.toPath())
+            checkCancelled()
+            val validator: suspend (Path) -> Result<Unit> = { path ->
+                runCatching {
+                    val file = path.toFile()
+                    check(file.isFile && file.length() > 0L) { "下载文件为空: $label" }
+                    if (artifact.size > 0L) check(file.length() == artifact.size) { "下载文件大小不符: $label" }
+                    check(file.sha1.equals(artifact.sha1, ignoreCase = true)) { "下载文件SHA1不符: $label" }
+                }
+            }
+            val downloaded = environment.fabricArtifactDownloader?.download(
+                label,
+                artifact,
+                staging,
+                { progress ->
+                    checkCancelled()
+                    val total = progress.totalBytes.takeIf { it > 0 }?.humanFileSize ?: "未知"
+                    onProgress("下载${label} ${progress.bytesDownloaded.humanFileSize}/$total ${progress.speedBytesPerSecond.humanSpeed}")
+                },
+            )?.getOrThrow()?.toPath() ?: staging.toPath().downloadFileFrom(
+                url = artifact.url,
+                knownSize = artifact.size,
+                validator = validator,
+                onProgress = { progress ->
+                    checkCancelled()
+                    val total = progress.totalBytes.takeIf { it > 0 }?.humanFileSize ?: "未知"
+                    onProgress("下载${label} ${progress.bytesDownloaded.humanFileSize}/$total ${progress.speedBytesPerSecond.humanSpeed}")
+                },
+            ).getOrThrow()
+            checkCancelled()
+            require(downloaded.toAbsolutePath().normalize() == staging.toPath().toAbsolutePath().normalize()) {
+                "Fabric下载器返回了非临时目标文件: $label"
+            }
+            validator(downloaded).getOrThrow()
+            moveAtomically(downloaded, target.toPath())
+        } finally {
+            Files.deleteIfExists(staging.toPath())
+        }
+    }
+
+    private fun publishFabricProfile(
+        runtime: ClientLoaderRuntime,
+        manifest: MojangVersionManifest,
+        checkCancelled: () -> Unit,
+    ) {
+        checkCancelled()
+        val profileFile = runtime.manifestFile(versionListDir)
+        profileFile.parentFile?.mkdirs()
+        val temp = Files.createTempFile(profileFile.parentFile.toPath(), "${profileFile.name}.", ".tmp")
+        try {
+            Files.writeString(temp, serdesJson.encodeToString(manifest))
+            checkCancelled()
+            moveAtomically(temp, profileFile.toPath())
+        } finally {
+            Files.deleteIfExists(temp)
+        }
+    }
+
+    private fun moveAtomically(source: Path, target: Path) {
+        try {
+            Files.move(source, target, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
+        } catch (_: AtomicMoveNotSupportedException) {
+            Files.move(source, target, StandardCopyOption.REPLACE_EXISTING)
         }
     }
 
@@ -1063,6 +1386,26 @@ class McInstall(
     }
 
     fun downloadTestServerTask2(version: McVersion, loader: ModLoader): Task2 {
+        if (loader == ModLoader.Fabric) {
+            val runtime = version.resolveServerRuntime(loader)
+                ?: return Task2.Leaf("下载测试服务端 ${version.mcVer} $loader") {
+                    error("不支持${version.mcVer} ${loader}测试服务端")
+                }
+            check(runtime.mcVersion == McVersion.V201.mcVer && runtime.loaderVersion == FABRIC_1_20_1_LOADER_VERSION) {
+                "当前仅支持Minecraft1.20.1 Fabric ${FABRIC_1_20_1_LOADER_VERSION}测试服务端"
+            }
+            return Task2.Sequence(
+                title = "下载测试服务端 ${version.mcVer} $loader",
+                children = listOf(
+                    Task2.Leaf("下载Fabric安装器") { ctx ->
+                        ensureFabricServerInstaller(ctx)
+                    },
+                    Task2.Leaf("安装Fabric测试服务端") { ctx ->
+                        installFabricTestServer(runtime, ctx)
+                    },
+                ),
+            )
+        }
         val holder = LoaderInstallHolder(
             version = version,
             loader = loader,
@@ -1088,6 +1431,334 @@ class McInstall(
                 }
             )
         )
+    }
+
+    internal fun findFabricServerRuntime(runtime: ServerLoaderRuntime): File? {
+        if (runtime.mcVersion != McVersion.V201.mcVer || runtime.loader != ModLoader.Fabric ||
+            runtime.loaderVersion != FABRIC_1_20_1_LOADER_VERSION
+        ) return null
+        val cacheRoot = fabricServerRuntimeCacheDir(runtime)
+        if (!hasSafeDirectoryChain(cacheRoot.toPath().toAbsolutePath().normalize())) return null
+        return cacheRoot.listFiles()
+            ?.asSequence()
+            ?.filter {
+                it.name.startsWith("runtime-") &&
+                    Files.isDirectory(it.toPath(), java.nio.file.LinkOption.NOFOLLOW_LINKS) &&
+                    !Files.isSymbolicLink(it.toPath()) &&
+                    hasSafeDirectoryChain(it.toPath().toAbsolutePath().normalize())
+            }
+            ?.sortedByDescending(File::lastModified)
+            ?.firstOrNull(::isCompleteFabricServerRuntime)
+    }
+
+    fun stageFabricServerRuntime(runtime: ServerLoaderRuntime, workDir: File) {
+        val runtimeDir = findFabricServerRuntime(runtime)
+            ?: error("Fabric测试服务端未安装或安装不完整，请先下载测试服务端")
+        ensureDirectoryWithoutSymlink(workDir.toPath().toAbsolutePath().normalize())
+        val sourceRoot = runtimeDir.toPath().toAbsolutePath().normalize()
+        val targetRoot = workDir.toPath().toAbsolutePath().normalize()
+        val managedFiles = readFabricRuntimeFilesManifest(sourceRoot)
+        for ((relative, expectedSha1) in managedFiles) {
+            val source = sourceRoot.resolve(relative).normalize()
+            check(source.startsWith(sourceRoot) && isManagedFabricRuntimePath(relative)) {
+                "Fabric服务端运行文件路径无效: $relative"
+            }
+            check(hasSafeDirectoryChain(sourceRoot) && hasNoSymlinkBelowRoot(sourceRoot, relative)) {
+                "Fabric服务端运行源路径包含符号链接: $relative"
+            }
+            check(!Files.isSymbolicLink(source) &&
+                Files.isRegularFile(source, java.nio.file.LinkOption.NOFOLLOW_LINKS)
+            ) { "Fabric服务端运行源文件不是普通文件: $relative" }
+            val sourceFile = source.toFile()
+            check(sourceFile.sha1.equals(expectedSha1, true)) { "Fabric服务端缓存文件校验失败: $relative" }
+            val target = targetRoot.resolve(relative).normalize()
+            check(target.startsWith(targetRoot)) { "Fabric服务端运行文件路径无效: $relative" }
+            ensureDirectoryWithoutSymlink(target.parent)
+            check(!Files.isSymbolicLink(target)) { "Fabric服务端运行文件目标不能是符号链接: $relative" }
+            if (Files.isRegularFile(target, java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
+                val targetFile = target.toFile()
+                if (sourceFile.length() == targetFile.length() &&
+                    targetFile.sha1.equals(expectedSha1, true)
+                ) continue
+            } else {
+                check(!Files.exists(target, java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
+                    "Fabric服务端运行文件目标不是普通文件: $relative"
+                }
+            }
+            val temporary = Files.createTempFile(target.parent, "${target.fileName}.rdi-", ".tmp")
+            try {
+                Files.copy(source, temporary, StandardCopyOption.REPLACE_EXISTING)
+                check(Files.size(temporary) == Files.size(source) &&
+                    temporary.toFile().sha1.equals(expectedSha1, true)
+                ) { "Fabric服务端运行文件暂存校验失败: $relative" }
+                check(hasSafeDirectoryChain(target.parent)) { "Fabric服务端运行目标路径包含符号链接: $relative" }
+                check(!Files.isSymbolicLink(target)) { "Fabric服务端运行文件目标不能是符号链接: $relative" }
+                moveAtomically(temporary, target)
+            } finally {
+                Files.deleteIfExists(temporary)
+            }
+        }
+    }
+
+    private fun ensureDirectoryWithoutSymlink(directory: Path) {
+        val normalized = directory.toAbsolutePath().normalize()
+        val parent = normalized.parent
+        if (parent != null) ensureDirectoryWithoutSymlink(parent)
+        if (Files.exists(normalized, java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
+            check(!Files.isSymbolicLink(normalized) &&
+                Files.isDirectory(normalized, java.nio.file.LinkOption.NOFOLLOW_LINKS)
+            ) { "Fabric服务端运行目录不能是符号链接或非目录: $normalized" }
+            return
+        }
+        Files.createDirectory(normalized)
+    }
+
+    private fun hasSafeDirectoryChain(directory: Path): Boolean = runCatching {
+        var current: Path? = directory.toAbsolutePath().normalize()
+        while (current != null) {
+            if (Files.isSymbolicLink(current) ||
+                !Files.isDirectory(current, java.nio.file.LinkOption.NOFOLLOW_LINKS)
+            ) return@runCatching false
+            current = current.parent
+        }
+        true
+    }.getOrDefault(false)
+
+    private fun isManagedFabricRuntimePath(relative: Path): Boolean {
+        if (relative.isAbsolute || relative.nameCount == 0 || relative.any { it.toString() == ".." }) return false
+        val normalized = relative.normalize()
+        if (normalized != relative) return false
+        val path = relative.toString().replace('\\', '/')
+        return path in setOf(FABRIC_SERVER_LAUNCHER_JAR, FABRIC_SERVER_JAR, "fabric-server-launcher.properties") ||
+            path.startsWith("libraries/") && path.substringAfterLast('/').endsWith(".jar", ignoreCase = true)
+    }
+
+    private fun readFabricRuntimeFilesManifest(root: Path): List<Pair<Path, String>> {
+        val manifest = root.resolve(FABRIC_RUNTIME_FILES_MANIFEST)
+        check(!Files.isSymbolicLink(manifest) && Files.isRegularFile(manifest, java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
+            "Fabric服务端运行文件清单缺失或无效"
+        }
+        val entries = Files.readAllLines(manifest, Charsets.UTF_8).map { line ->
+            val separator = line.indexOf('\t')
+            check(separator > 0) { "Fabric服务端运行文件清单格式无效" }
+            val relative = Path.of(line.substring(0, separator))
+            val sha1 = line.substring(separator + 1)
+            check(isManagedFabricRuntimePath(relative) && Regex("[0-9a-fA-F]{40}").matches(sha1)) {
+                "Fabric服务端运行文件清单条目无效"
+            }
+            check(hasNoSymlinkBelowRoot(root, relative)) { "Fabric服务端缓存路径包含符号链接: $relative" }
+            relative to sha1
+        }
+        check(entries.isNotEmpty() && entries.map { it.first }.distinct().size == entries.size) {
+            "Fabric服务端运行文件清单无效"
+        }
+        val required = setOf(
+            Path.of(FABRIC_SERVER_LAUNCHER_JAR),
+            Path.of(FABRIC_SERVER_JAR),
+            Path.of("libraries/net/fabricmc/fabric-loader/$FABRIC_1_20_1_LOADER_VERSION/fabric-loader-$FABRIC_1_20_1_LOADER_VERSION.jar"),
+        )
+        check(entries.map { it.first }.containsAll(required)) { "Fabric服务端运行文件清单缺少必要文件" }
+        return entries
+    }
+
+    private fun hasNoSymlinkBelowRoot(root: Path, relative: Path): Boolean {
+        val normalizedRoot = root.toAbsolutePath().normalize()
+        var current = normalizedRoot
+        for (index in 0 until relative.nameCount) {
+            current = current.resolve(relative.getName(index))
+            if (Files.isSymbolicLink(current)) return false
+            if (index < relative.nameCount - 1 &&
+                !Files.isDirectory(current, java.nio.file.LinkOption.NOFOLLOW_LINKS)
+            ) return false
+        }
+        return current.normalize().startsWith(normalizedRoot)
+    }
+
+    private fun hasSafeRuntimeFile(root: Path, relative: Path): Boolean {
+        val normalizedRoot = root.toAbsolutePath().normalize()
+        val file = normalizedRoot.resolve(relative).normalize()
+        return file.startsWith(normalizedRoot) &&
+            hasNoSymlinkBelowRoot(normalizedRoot, relative) &&
+            Files.isRegularFile(file, java.nio.file.LinkOption.NOFOLLOW_LINKS)
+    }
+
+    private fun fabricServerRuntimeCacheDir(runtime: ServerLoaderRuntime): File =
+        directories.mcDir.resolve("server-runtimes/${runtime.mcVersion}/${runtime.loader.directorySlug}-${runtime.loaderVersion}")
+
+    private fun isCompleteFabricServerRuntime(directory: File): Boolean {
+        val readyFile = directory.resolve(".rdi-runtime-ready")
+        if (Files.isSymbolicLink(readyFile.toPath()) ||
+            !Files.isRegularFile(readyFile.toPath(), java.nio.file.LinkOption.NOFOLLOW_LINKS)
+        ) return false
+        val launcher = directory.resolve(FABRIC_SERVER_LAUNCHER_JAR)
+        val server = directory.resolve(FABRIC_SERVER_JAR)
+        val fabricLoader = directory.resolve("libraries/net/fabricmc/fabric-loader/$FABRIC_1_20_1_LOADER_VERSION/fabric-loader-$FABRIC_1_20_1_LOADER_VERSION.jar")
+        if (!hasSafeDirectoryChain(directory.toPath().toAbsolutePath().normalize()) ||
+            !hasSafeRuntimeFile(directory.toPath(), Path.of(FABRIC_SERVER_LAUNCHER_JAR)) ||
+            !hasSafeRuntimeFile(directory.toPath(), Path.of(FABRIC_SERVER_JAR)) ||
+            !hasSafeRuntimeFile(
+                directory.toPath(),
+                Path.of("libraries/net/fabricmc/fabric-loader/$FABRIC_1_20_1_LOADER_VERSION/fabric-loader-$FABRIC_1_20_1_LOADER_VERSION.jar"),
+            ) ||
+            !launcher.isFile || !server.isFile || !fabricLoader.isFile
+        ) return false
+        val expected = listOf(
+            McVersion.V201.mcVer,
+            ModLoader.Fabric.toString(),
+            FABRIC_1_20_1_LOADER_VERSION,
+            launcher.sha1,
+            server.sha1,
+            fabricLoader.sha1,
+        ).joinToString("\n")
+        return runCatching {
+            if (readyFile.readText() != expected) return@runCatching false
+            val root = directory.toPath().toAbsolutePath().normalize()
+            val manifest = readFabricRuntimeFilesManifest(root)
+            manifest.all { (relative, sha1) ->
+                val file = root.resolve(relative).normalize()
+                file.startsWith(root) &&
+                    !Files.isSymbolicLink(file) &&
+                    Files.isRegularFile(file, java.nio.file.LinkOption.NOFOLLOW_LINKS) &&
+                    file.toFile().sha1.equals(sha1, true)
+            }
+        }.getOrDefault(false)
+    }
+
+    private suspend fun ensureFabricServerInstaller(ctx: Task2Context): File {
+        val installer = directories.mcDir.resolve("fabric-installer-$FABRIC_INSTALLER_VERSION.jar")
+        val expectedSha1 = FABRIC_INSTALLER_SHA1
+        if (installer.isFile && runCatching { installer.sha1.equals(expectedSha1, true) }.getOrDefault(false)) {
+            ctx.emit(Task2Progress("Fabric安装器已存在", 1f))
+            return installer
+        }
+        installer.parentFile?.mkdirs()
+        ctx.emit(Task2Progress("开始下载Fabric安装器", 0f))
+        val sourcePlan = buildDownloadSourcePlan(FABRIC_INSTALLER_URL)
+        installer.toPath().downloadFileFrom(
+            urls = sourcePlan.primaryUrls + sourcePlan.fallbackUrls,
+            validator = { path ->
+                if (path.sha1.equals(expectedSha1, true)) Result.success(Unit)
+                else Result.failure(IllegalStateException("Fabric安装器SHA1校验失败"))
+            },
+        ) { progress ->
+            val total = progress.totalBytes.takeIf { it > 0L }?.humanFileSize ?: "未知"
+            ctx.emit(Task2Progress("${progress.bytesDownloaded.humanFileSize}/$total", progress.fraction))
+        }.getOrThrow()
+        check(installer.isFile && installer.sha1.equals(expectedSha1, true)) { "Fabric安装器下载校验失败" }
+        ctx.emit(Task2Progress("Fabric安装器下载完成", 1f))
+        return installer
+    }
+
+    private suspend fun installFabricTestServer(runtime: ServerLoaderRuntime, ctx: Task2Context) {
+        findFabricServerRuntime(runtime)?.let {
+            ctx.emit(Task2Progress("Fabric测试服务端已存在", 1f))
+            return
+        }
+        val installer = directories.mcDir.resolve("fabric-installer-$FABRIC_INSTALLER_VERSION.jar")
+        check(installer.isFile && installer.sha1.equals(FABRIC_INSTALLER_SHA1, true)) {
+            "Fabric安装器缺失或校验失败，请重新下载"
+        }
+        val cacheRoot = fabricServerRuntimeCacheDir(runtime).also {
+            ensureDirectoryWithoutSymlink(it.toPath().toAbsolutePath().normalize())
+        }
+        val staging = Files.createTempDirectory(cacheRoot.toPath(), "runtime-").toFile()
+        val command = listOf(
+            environment.javaPath(),
+            "-jar",
+            installer.absolutePath,
+            "server",
+            "-dir",
+            staging.absolutePath,
+            "-mcversion",
+            runtime.mcVersion,
+            "-loader",
+            runtime.loaderVersion,
+            "-downloadMinecraft",
+        )
+        ctx.emit(Task2Progress("正在安装Fabric测试服务端", null))
+        val process = ProcessBuilder(command)
+            .directory(staging)
+            .redirectErrorStream(true)
+            .start()
+        val outputFailure = AtomicReference<Throwable?>(null)
+        val outputReader = thread(name = "fabric-server-installer-output", isDaemon = true) {
+            runCatching {
+                process.inputStream.bufferedReader(Charsets.UTF_8).useLines { lines ->
+                    lines.forEach { line ->
+                        if (line.isNotBlank()) ctx.emit(Task2Progress(line, null))
+                    }
+                }
+            }.onFailure(outputFailure::set)
+        }
+        val deadline = System.nanoTime() + FABRIC_INSTALLER_TIMEOUT_SECONDS * 1_000_000_000L
+        try {
+            while (true) {
+                ctx.ensureActive()
+                val remainingNanos = deadline - System.nanoTime()
+                check(remainingNanos > 0L) { "Fabric服务端安装超时" }
+                if (process.waitFor(minOf(500L, TimeUnit.NANOSECONDS.toMillis(remainingNanos).coerceAtLeast(1L)), TimeUnit.MILLISECONDS)) {
+                    break
+                }
+            }
+            outputReader.join()
+            ctx.ensureActive()
+            outputFailure.get()?.let { throw IllegalStateException("读取Fabric安装器输出失败", it) }
+        } catch (failure: Throwable) {
+            process.destroy()
+            if (!process.waitFor(FABRIC_INSTALLER_TERMINATE_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
+                process.destroyForcibly()
+                process.waitFor(FABRIC_INSTALLER_TERMINATE_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+            }
+            outputReader.join(FABRIC_INSTALLER_TERMINATE_TIMEOUT_SECONDS * 1_000L)
+            throw failure
+        }
+        val exitCode = process.exitValue()
+        check(exitCode == 0) { "Fabric服务端安装失败: $exitCode" }
+        check(staging.resolve(FABRIC_SERVER_LAUNCHER_JAR).isFile) { "Fabric服务端launcher缺失" }
+        check(staging.resolve(FABRIC_SERVER_JAR).isFile) { "Minecraft服务端JAR缺失" }
+        check(staging.resolve("libraries/net/fabricmc/fabric-loader/$FABRIC_1_20_1_LOADER_VERSION/fabric-loader-$FABRIC_1_20_1_LOADER_VERSION.jar").isFile) {
+            "Fabric Loader运行库缺失"
+        }
+        val fabricLoader = staging.resolve("libraries/net/fabricmc/fabric-loader/$FABRIC_1_20_1_LOADER_VERSION/fabric-loader-$FABRIC_1_20_1_LOADER_VERSION.jar")
+        writeFabricRuntimeFilesManifest(staging.toPath())
+        staging.resolve(".rdi-runtime-ready").writeText(
+            listOf(
+                runtime.mcVersion,
+                runtime.loader.toString(),
+                runtime.loaderVersion,
+                staging.resolve(FABRIC_SERVER_LAUNCHER_JAR).sha1,
+                staging.resolve(FABRIC_SERVER_JAR).sha1,
+                fabricLoader.sha1,
+            ).joinToString("\n"),
+            Charsets.UTF_8,
+        )
+        check(isCompleteFabricServerRuntime(staging)) { "Fabric服务端安装产物校验失败" }
+        ctx.emit(Task2Progress("Fabric测试服务端已就绪", 1f))
+    }
+
+    private fun writeFabricRuntimeFilesManifest(root: Path) {
+        val rootPath = root.toAbsolutePath().normalize()
+        val entries = Files.walk(rootPath).use { paths ->
+            paths.filter { it != rootPath }.map { path ->
+                check(!Files.isSymbolicLink(path)) { "Fabric安装器生成了不支持的符号链接: ${rootPath.relativize(path)}" }
+                path
+            }.filter { path ->
+                Files.isRegularFile(path, java.nio.file.LinkOption.NOFOLLOW_LINKS) &&
+                    isManagedFabricRuntimePath(rootPath.relativize(path))
+            }.map { path ->
+                val relative = rootPath.relativize(path).toString().replace('\\', '/')
+                "$relative\t${path.toFile().sha1}"
+            }.toList()
+        }
+        val required = setOf(
+            FABRIC_SERVER_LAUNCHER_JAR,
+            FABRIC_SERVER_JAR,
+            "libraries/net/fabricmc/fabric-loader/$FABRIC_1_20_1_LOADER_VERSION/fabric-loader-$FABRIC_1_20_1_LOADER_VERSION.jar",
+        )
+        check(entries.map { it.substringBefore('\t') }.containsAll(required)) {
+            "Fabric服务端运行文件清单缺少必要文件"
+        }
+        Files.writeString(rootPath.resolve(FABRIC_RUNTIME_FILES_MANIFEST), entries.sorted().joinToString("\n"))
     }
 
 

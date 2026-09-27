@@ -11,4 +11,6 @@ description = '''
 [[mixins]]
 config = "rdi.mixins.json"
 [[mixins]]
+config = "rdi.v20.server.mixins.json"
+[[mixins]]
 config = "rdi-ftbchunks.mixins.json"

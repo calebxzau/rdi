@@ -1,6 +1,7 @@
 package calebxzau.rdi.mc.zstdcodec
 
 import io.netty.buffer.ByteBuf
+import io.netty.buffer.CompositeByteBuf
 import io.netty.buffer.Unpooled
 import io.netty.channel.ChannelInboundHandlerAdapter
 import io.netty.channel.ChannelOutboundHandlerAdapter
@@ -63,6 +64,35 @@ class ZstdCompressionPipelineTest {
     fun `empty packet round trips`() {
         val empty = ByteArray(0)
         assertContentEquals(empty, decode(encode(empty, threshold = 128), threshold = 128))
+    }
+
+    @Test
+    fun `empty packet at zero threshold keeps the empty raw envelope`() {
+        val encoded = encode(ByteArray(0), threshold = 0)
+        assertContentEquals(byteArrayOf(0), encoded)
+        assertContentEquals(ByteArray(0), decode(encoded, threshold = 0))
+    }
+
+    @Test
+    fun `direct heap sliced and composite buffers round trip with offsets`() {
+        val payload = ByteArray(1024) { (it * 43).toByte() }
+        for (variant in BufferVariant.entries) {
+            val source = variantBuffer(variant, payload)
+            val encoded = encode(source, threshold = 128)
+
+            val encodedBuffer = variantBuffer(variant, encoded)
+            val decoder = EmbeddedChannel(ZstdCompressionDecoder(128, true, TEST_VAR_INT))
+            try {
+                assertTrue(decoder.writeInbound(encodedBuffer))
+                val decoded = assertNotNull(decoder.readInbound<ByteBuf>())
+                val actual = ByteArray(decoded.readableBytes())
+                decoded.readBytes(actual)
+                decoded.release()
+                assertContentEquals(payload, actual, "buffer variant $variant")
+            } finally {
+                decoder.finishAndReleaseAll()
+            }
+        }
     }
 
     @Test
@@ -166,9 +196,13 @@ class ZstdCompressionPipelineTest {
     }
 
     private fun encode(input: ByteArray, threshold: Int): ByteArray {
+        return encode(Unpooled.wrappedBuffer(input), threshold)
+    }
+
+    private fun encode(input: ByteBuf, threshold: Int): ByteArray {
         val channel = EmbeddedChannel(ZstdCompressionEncoder(threshold, TEST_VAR_INT))
         try {
-            assertTrue(channel.writeOutbound(Unpooled.wrappedBuffer(input)))
+            assertTrue(channel.writeOutbound(input))
             val output = assertNotNull(channel.readOutbound<ByteBuf>())
             val bytes = ByteArray(output.readableBytes())
             output.readBytes(bytes)
@@ -177,6 +211,46 @@ class ZstdCompressionPipelineTest {
         } finally {
             channel.finishAndReleaseAll()
         }
+    }
+
+    private fun variantBuffer(variant: BufferVariant, bytes: ByteArray): ByteBuf {
+        val padded = byteArrayOf(0x55) + bytes + byteArrayOf(0x66)
+        return when (variant) {
+            BufferVariant.DIRECT -> Unpooled.directBuffer(padded.size)
+                .writeBytes(padded)
+                .setIndex(1, bytes.size + 1)
+
+            BufferVariant.HEAP -> Unpooled.buffer(padded.size)
+                .writeBytes(padded)
+                .setIndex(1, bytes.size + 1)
+
+            BufferVariant.SLICED -> {
+                val parent = Unpooled.wrappedBuffer(padded)
+                try {
+                    parent.slice(1, bytes.size).retain()
+                } finally {
+                    parent.release()
+                }
+            }
+
+            BufferVariant.COMPOSITE -> {
+                val composite: CompositeByteBuf = Unpooled.compositeBuffer(3)
+                composite.addComponents(
+                    true,
+                    Unpooled.wrappedBuffer(byteArrayOf(padded[0])),
+                    Unpooled.wrappedBuffer(bytes.copyOfRange(0, bytes.size / 2)),
+                    Unpooled.wrappedBuffer(bytes.copyOfRange(bytes.size / 2, bytes.size) + byteArrayOf(padded.last())),
+                )
+                composite.setIndex(1, bytes.size + 1)
+            }
+        }
+    }
+
+    private enum class BufferVariant {
+        DIRECT,
+        HEAP,
+        SLICED,
+        COMPOSITE,
     }
 
     private fun decode(input: ByteArray, threshold: Int): ByteArray {

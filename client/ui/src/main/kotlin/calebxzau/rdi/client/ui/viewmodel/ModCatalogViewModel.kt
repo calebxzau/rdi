@@ -12,6 +12,7 @@ import calebxzau.rdi.client.modcatalog.ModCatalog
 import calebxzhou.rdi.client.ui.screen.ModCatalogRoute
 import calebxzhou.rdi.common.model.McVersion
 import calebxzhou.rdi.common.model.ModLoader
+import calebxzhou.rdi.common.model.supportsRuntime
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.currentCoroutineContext
@@ -41,7 +42,7 @@ internal fun ModCatalogRoute.toCatalogTarget(): CatalogTarget {
     val loader = requireNotNull(ModLoader.from(requiredLoader)) {
         "Unknown mod loader: ${requiredLoader}"
     }
-    require(loader in minecraftVersion.loaderVersions) {
+    require(minecraftVersion.supportsRuntime(loader)) {
         "${minecraftVersion.mcVer} does not support ${loader.name}"
     }
     return CatalogTarget(minecraftVersion, loader)

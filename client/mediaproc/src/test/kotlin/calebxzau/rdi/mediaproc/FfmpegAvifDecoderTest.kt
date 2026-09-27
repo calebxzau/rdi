@@ -1,7 +1,13 @@
 package calebxzau.rdi.mediaproc
 
 import org.junit.jupiter.api.Assumptions.assumeTrue
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.runBlocking
+import org.bytedeco.ffmpeg.global.avformat.AVSEEK_FORCE
+import org.bytedeco.ffmpeg.global.avformat.AVSEEK_SIZE
 import java.awt.image.BufferedImage
 import java.io.ByteArrayOutputStream
 import java.nio.ByteBuffer
@@ -60,8 +66,8 @@ class FfmpegAvifDecoderTest {
 
         val decoded = FfmpegAvifDecoder.decode(input).getOrThrow()
 
-        assertEquals(1280, decoded.width)
-        assertEquals(720, decoded.height)
+        assertEquals(1334, decoded.width)
+        assertEquals(800, decoded.height)
         assertEquals(decoded.width * decoded.height * 4, decoded.pixels.size)
         assertTrue((3 until decoded.pixels.size step 4).all { decoded.pixels[it] == 0xFF.toByte() })
     }
@@ -94,7 +100,7 @@ class FfmpegAvifDecoderTest {
     }
 
     @Test
-    fun preservesGradientAlphaInSecondAvifStream() {
+    fun preservesGradientAlphaInSecondAvifStream(): Unit {
         assumeWindowsX64()
         val input = png(
             width = 3,
@@ -114,7 +120,7 @@ class FfmpegAvifDecoderTest {
     }
 
     @Test
-    fun lowQualityPreservesGradientAlphaInSecondAvifStream() {
+    fun lowQualityPreservesGradientAlphaInSecondAvifStream(): Unit {
         assumeWindowsX64()
         val input = png(
             width = 3,
@@ -140,6 +146,54 @@ class FfmpegAvifDecoderTest {
         assumeWindowsX64()
         val result = runBlocking { AvifCodec.encodePng(byteArrayOf(1, 2, 3)) }
         assertTrue(result.isFailure)
+    }
+
+    @Test
+    fun rejectsTruncatedEncodedAvif(): Unit {
+        assumeWindowsX64()
+        val input = png(2, 2, intArrayOf(-1, -1, -1, -1))
+        val encoded = runBlocking { AvifCodec.encodePng(input).getOrThrow() }
+
+        assertTrue(FfmpegAvifDecoder.decode(encoded.copyOf(encoded.size / 2)).isFailure)
+    }
+
+    @Test
+    fun decodesRepeatedAndConcurrentInputs(): Unit {
+        assumeWindowsX64()
+        val inputs = (1..4).map { width ->
+            AvifCodec.encodePng(png(width, 2, IntArray(width * 2) { 0x80FF0000.toInt() })).getOrThrow()
+        }
+        repeat(3) {
+            val outputs = runBlocking {
+                coroutineScope {
+                    List(8) { index ->
+                        async(Dispatchers.Default) { FfmpegAvifDecoder.decode(inputs[index % inputs.size]).getOrThrow() }
+                    }.awaitAll()
+                }
+            }
+            outputs.forEachIndexed { index, decoded ->
+                assertEquals(index % inputs.size + 1, decoded.width)
+                assertEquals(2, decoded.height)
+                assertTrue((3 until decoded.pixels.size step 4).all { decoded.pixels[it] == 0x80.toByte() })
+            }
+        }
+    }
+
+    @Test
+    fun memoryAvioCursorSupportsSizeAndBoundedSeeks(): Unit {
+        val cursor = MemoryAvioInput.Cursor(10)
+
+        assertEquals(10L, cursor.seek(0, AVSEEK_SIZE))
+        assertEquals(3L, cursor.seek(3, SEEK_SET))
+        assertEquals(5L, cursor.seek(2, SEEK_CUR))
+        assertEquals(9L, cursor.seek(-1, SEEK_END))
+        assertEquals(1, cursor.read(4))
+        assertEquals(10L, cursor.position)
+        assertEquals(0, cursor.read(4))
+        assertEquals(10L, cursor.seek(0, AVSEEK_SIZE or AVSEEK_FORCE))
+        assertTrue(runCatching { cursor.seek(1, SEEK_SET) }.isSuccess)
+        assertTrue(runCatching { cursor.seek(-1, SEEK_SET) }.isFailure)
+        assertTrue(runCatching { cursor.seek(Long.MAX_VALUE, SEEK_CUR) }.isFailure)
     }
 
     private fun ftyp(majorBrand: String, vararg compatibleBrands: String): ByteArray {
@@ -172,5 +226,11 @@ class FfmpegAvifDecoderTest {
         val osArch = System.getProperty("os.arch").orEmpty().lowercase()
         assumeTrue(osName.contains("windows", ignoreCase = true))
         assumeTrue(osArch == "amd64" || osArch == "x86_64")
+    }
+
+    private companion object {
+        const val SEEK_SET = 0
+        const val SEEK_CUR = 1
+        const val SEEK_END = 2
     }
 }

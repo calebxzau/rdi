@@ -81,25 +81,32 @@ fun McPlayScreen(
                 val launchSnapshot = ModpackLaunchOptionsService.loadSnapshot(args.versionId).getOrThrow()
                 if (args.manageHostBaseMods) {
                     session.appendLog("[RDI] 检查房间基础Mod...")
-                    syncHostManagedBaseMods(args.versionId, args.activeBaseMods, args.disabledBaseMods) { progress ->
-                        appendSyncProgress(session, baseModProgress, progress)
-                    }
+                    syncHostManagedBaseMods(
+                        args.versionId,
+                        args.activeBaseMods,
+                        args.disabledBaseMods,
+                        onProgress = { progress -> appendSyncProgress(session, baseModProgress, progress) },
+                        loader = args.modLoader,
+                    )
                     session.appendLog("[RDI] 房间基础Mod已同步")
                 }
                 if (session.stopRequested) return@launchSessionTask
 
                 if (args.manageHostExtraMods) {
                     session.appendLog("[RDI] 检查房间附加Mod...")
-                    syncHostExtraMods(args.versionId, args.extraMods) { progress ->
-                        appendSyncProgress(session, extraModProgress, progress)
-                    }
+                    syncHostExtraMods(
+                        args.versionId,
+                        args.extraMods,
+                        onProgress = { progress -> appendSyncProgress(session, extraModProgress, progress) },
+                        loader = args.modLoader,
+                    )
                     session.appendLog("[RDI] 房间附加Mod已同步")
                 }
                 if (session.stopRequested) return@launchSessionTask
 
                 val versionDir = args.versionDir?.let(Paths::get)
                     ?: mcInstall.versionListDir.resolve(args.versionId).toPath()
-                RemovedModCleanupService.cleanup(versionDir).getOrThrow().forEach { fileName ->
+                RemovedModCleanupService.cleanup(versionDir, args.modLoader).getOrThrow().forEach { fileName ->
                     session.appendLog("[RDI] 已移除不兼容Mod $fileName")
                 }
 
@@ -165,22 +172,26 @@ fun McPlayScreen(
                 }
                 if (session.stopRequested) return@launchSessionTask
 
-                val started = mcInstall.startDesktop(
+                val preparedLaunch = mcInstall.prepareDesktopLaunch(
                     args.mcVer,
+                    args.modLoader,
                     args.versionId,
                     MinecraftLaunchOverrides(
                         javaPath = launchSnapshot.javaPath,
                         maxMemoryMb = launchSnapshot.maxMemoryMb,
                     ),
                     *launchJvmArgs.toTypedArray()
-                ) { line ->
+                ).getOrThrow()
+                if (session.stopRequested) return@launchSessionTask
+
+                val started = preparedLaunch.launch { line ->
                     McPlayStore.launchSessionTask {
                         session.consoleState.append(line)
                         if (line.startsWith("启动失败") || line.startsWith("已退出") || line.startsWith("MC已结束")) {
                             markSessionExited(session, line)
                         }
                     }
-                }
+                }.getOrThrow()
                 session.process = started
                 session.preparing = false
             } catch (e: Exception) {

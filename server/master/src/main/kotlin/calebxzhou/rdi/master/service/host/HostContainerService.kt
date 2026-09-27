@@ -9,6 +9,7 @@ import calebxzhou.rdi.common.model.ModLoader
 import calebxzhou.rdi.common.model.Modpack
 import calebxzhou.rdi.common.model.sameMod
 import calebxzhou.rdi.common.model.supportsForgeguard
+import calebxzhou.rdi.common.model.resolveServerRuntime
 import calebxzhou.rdi.common.util.str
 import calebxzhou.rdi.master.GAME_LIBS_DIR
 import calebxzhou.rdi.master.service.CLIENT_ONLY_MARK_PREFIX
@@ -65,25 +66,26 @@ object HostContainerService {
 
     internal fun Host.containerEnv(
         mcv: McVersion,
-        loaderVersion: ModLoader.Version,
+        loaderVersion: ModLoader.Version?,
         modpack: Modpack,
         lwjgl3ifyRuntime: Lwjgl3ifyServerSupport.PreparedRuntime?,
-        worldId: ObjectId?
+        fabricRuntime: calebxzhou.rdi.common.model.ServerLoaderRuntime? = null,
     ): MutableList<String> {
         val serverArgs = when (mcv) {
             McVersion.V201,
-            McVersion.V211 -> listOf(loaderVersion.serverArgsPath(true))
+            McVersion.V211 -> fabricRuntime?.launchArgs
+                ?: listOf((loaderVersion ?: throw RequestError("找不到对应版本的运行库")).serverArgsPath(true))
             McVersion.V071 -> buildList {
                 if (lwjgl3ifyRuntime != null) {
                     addAll(lwjgl3ifyRuntime.launchArgs)
                 } else {
                     addAll(McVersion.V071.plusJvmArgs)
                     add("-jar")
-                    add(loaderVersion.legacyForgeUniversalJarName)
+                    add((loaderVersion ?: throw RequestError("找不到对应版本的运行库")).legacyForgeUniversalJarName)
                 }
             }
         }
-        val noguiArg = if (mcv == McVersion.V071) "nogui" else "--nogui"
+        val noguiArg = if (mcv == McVersion.V071 || fabricRuntime != null) "nogui" else "--nogui"
         val totalArg = mutableListOf<String>().apply {
 
             this.add("-XX:+UseCompactObjectHeaders")
@@ -124,22 +126,44 @@ object HostContainerService {
         if (realVersion != 1 && realVersion != 2) {
             throw RequestError("无效房间版本")
         }
+        val resolvedRuntime = modpack.mcVer.resolveServerRuntime(modpack.modloader)
+            ?: throw RequestError("不支持的mod加载器")
+        val isFabricRuntime = modpack.modloader == ModLoader.Fabric
+        val sharedLibsDir = if (isFabricRuntime) {
+            modpack.libsDir.absoluteFile.toPath().normalize().toFile()
+        } else {
+            modpack.libsDir.canonicalFile.also { it.mkdirs() }
+        }
+        if (isFabricRuntime) {
+            FabricServerRuntimeFiles.requireAvailable(sharedLibsDir, modpack.mcVer, modpack.modloader)
+        }
         DockerService.deleteContainer(_id.str)
         ensureWorkdirQuota()
         cleanupModFilesBeforeContainerCreate(version)
 
-        val sharedLibsDir = modpack.libsDir.canonicalFile.also { it.mkdirs() }
-        val loaderVer = modpack.mcVer.loaderVersions[modpack.modloader] ?: throw RequestError("找不到对应版本的运行库")
+        val loaderVer = modpack.mcVer.loaderVersions[modpack.modloader]
+        if (modpack.modloader != ModLoader.Fabric && loaderVer == null) {
+            throw RequestError("找不到对应版本的运行库")
+        }
+        val fabricRuntime = if (isFabricRuntime) resolvedRuntime else null
         val lwjgl3ifyRuntime = if (Lwjgl3ifyServerSupport.shouldEnable(modpack)) {
             Lwjgl3ifyServerSupport.prepare(modpack, dir)
         } else {
             null
         }
-        val rdiCore = "rdi-5-mc-server-${modpack.mcVer.mcVer}-${modpack.modloader}.jar"
+        val rdiCore = if (modpack.modloader == ModLoader.Fabric) {
+            "rdi-5-mc-server-${modpack.mcVer.mcVer}-fabric.jar"
+        } else {
+            "rdi-5-mc-server-${modpack.mcVer.mcVer}-${modpack.modloader}.jar"
+        }
         val sharedRdiCore = sharedLibsDir.resolve("mods").resolve(rdiCore)
         val rdiCoreSource = sharedRdiCore.takeIf { it.exists() }
             ?: sharedRdiCore
-        val librariesSource = lwjgl3ifyRuntime?.librariesDir ?: sharedLibsDir.resolve("libraries")
+        val librariesSource = if (isFabricRuntime) {
+            sharedLibsDir.resolve("libraries")
+        } else {
+            lwjgl3ifyRuntime?.librariesDir ?: sharedLibsDir.resolve("libraries")
+        }
         val mounts = mutableListOf(
             Mount()
                 .withType(MountType.BIND)
@@ -154,6 +178,14 @@ object HostContainerService {
                 .withSource(rdiCoreSource.absolutePath)
                 .withTarget("/opt/server/mods/${rdiCore}"),
         ).apply {
+            if (isFabricRuntime) {
+                FabricServerRuntimeFiles.fileNames.forEach { fileName ->
+                    this += Mount()
+                        .withType(MountType.BIND)
+                        .withSource(sharedLibsDir.resolve(fileName).absolutePath)
+                        .withTarget("/opt/server/${fileName}")
+                }
+            }
             modernLog4j2Config?.let { this += modernLog4j2Mount(it) }
             if (modpack.supportsForgeguard(modpack.modloader)) {
                 this += forgeguardMount()
@@ -181,12 +213,13 @@ object HostContainerService {
                         .withTarget("/opt/server/mods/${mod.fileName}")
                 }
             if (modpack.mcVer == McVersion.V071) {
+                val legacyLoaderVersion = loaderVer ?: throw RequestError("找不到对应版本的运行库")
                 val loaderJar = lwjgl3ifyRuntime?.forgeUniversalJar
                     ?: sharedLibsDir.resolve(
                         if (modpack.mcVer == McVersion.V071 && modpack.modloader == ModLoader.forge) {
-                            loaderVer.legacyForgeUniversalJarName
+                            legacyLoaderVersion.legacyForgeUniversalJarName
                         } else {
-                            loaderVer.serverJarName
+                            legacyLoaderVersion.serverJarName
                         }
                     )
                 val serverJar = lwjgl3ifyRuntime?.minecraftServerJar
@@ -227,17 +260,15 @@ object HostContainerService {
         val memory = 8 * 1024 * 1024 * 1024L
         val memorySwap = 16 * 1024 * 1024 * 1024L
 
-        modpack.mcVer.loaderVersions[modpack.modloader]?.let { modLoaderVersion ->
-            DockerService.createContainer(
-                port,
-                this._id.str,
-                cpu,
-                memory,memorySwap,
-                mounts,
-                image,
-                containerEnv(modpack.mcVer, modLoaderVersion, modpack, lwjgl3ifyRuntime, worldId)
-            )
-        } ?: throw RequestError("不支持的mod加载器")
+        DockerService.createContainer(
+            port,
+            this._id.str,
+            cpu,
+            memory,memorySwap,
+            mounts,
+            image,
+            containerEnv(modpack.mcVer, loaderVer, modpack, lwjgl3ifyRuntime, fabricRuntime)
+        )
     }
 
     private fun prepareWorldCacheDir(worldId: ObjectId): File {

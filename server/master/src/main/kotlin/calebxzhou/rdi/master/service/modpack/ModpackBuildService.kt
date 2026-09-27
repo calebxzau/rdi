@@ -87,7 +87,9 @@ object ModpackBuildService {
         modpack: Modpack,
         version: Modpack.Version,
         reprocessMods: Boolean
-    ): Task2 = Task2.Sequence(
+    ): Task2 {
+        requireSupportedBuildRuntime(modpack)
+        return Task2.Sequence(
         title = "${if (reprocessMods) "重构" else "构建"}整合包版本 ${modpack.name} V${version.name}",
         children = buildList {
             var mailId: ObjectId? = null
@@ -141,7 +143,7 @@ object ModpackBuildService {
                     val msg = "重新处理版本Mod信息"
                     progress(msg)
                     ctx.emit(LoadProgress.Phase(msg))
-                    val processedMods = ModpackModProcessor.processMods(version.mods)
+                    val processedMods = ModpackModProcessor.processMods(version.mods, modpack.modloader)
                     version.mods.clear()
                     version.mods += processedMods
                     version.mods.sortBy { it.slug.lowercase() }
@@ -177,7 +179,7 @@ object ModpackBuildService {
             })
 
             val effective = if (reprocessMods) {
-                ModpackModProcessor.processMods(version.mods)
+                ModpackModProcessor.processMods(version.mods, modpack.modloader)
             } else {
                 version.mods
             }
@@ -245,7 +247,14 @@ object ModpackBuildService {
                 ctx.emit(LoadProgress.Percent(msg, 1f))
             })
         }
-    )
+        )
+    }
+
+    private fun requireSupportedBuildRuntime(modpack: Modpack) {
+        if (!modpack.mcVer.supportsRuntime(modpack.modloader)) {
+            throw RequestError("当前版本暂不支持构建Minecraft${modpack.mcVer.mcVer}／${modpack.modloader.name}整合包")
+        }
+    }
 
     private fun resolveServerRoot(
         paths: List<String>
@@ -356,6 +365,7 @@ object ModpackBuildService {
         version: Modpack.Version,
         onProgress: (String) -> Unit
     ) {
+        requireSupportedBuildRuntime(this)
         if (!version.fullPackFile.exists()) {
             throw RequestError("版本压缩文件不存在 请重新上传")
         }

@@ -5,6 +5,7 @@ import calebxzau.rdi.client.service.ClientContentStores
 import calebxzhou.rdi.client.service.content.toClientContentRequests
 import calebxzhou.rdi.common.model.EXTRA_MOD_PREFIX
 import calebxzhou.rdi.common.model.Mod
+import calebxzhou.rdi.common.model.ModLoader
 import calebxzhou.rdi.common.model.normalizedSlug
 import calebxzhou.rdi.common.model.Task2
 import calebxzhou.rdi.common.model.Task2Context
@@ -17,8 +18,12 @@ import java.nio.file.Files
 import java.nio.file.LinkOption
 import java.nio.file.Path
 
-fun buildHostExtraModSyncTask2(versionId: String, extraMods: List<Mod>): Task2 {
-    val distinctMods = prepareHostExtraModSyncMods(extraMods).distinctBy { it.fileName }
+fun buildHostExtraModSyncTask2(
+    versionId: String,
+    extraMods: List<Mod>,
+    loader: ModLoader = ModLoader.forge,
+): Task2 {
+    val distinctMods = prepareHostExtraModSyncMods(extraMods, loader).distinctBy { it.fileName }
     return Task2.Sequence(
         title = "同步房间附加Mod",
         children = listOf(
@@ -32,9 +37,10 @@ fun buildHostExtraModSyncTask2(versionId: String, extraMods: List<Mod>): Task2 {
 suspend fun syncHostExtraMods(
     versionId: String,
     extraMods: List<Mod>,
-    onProgress: (Task2Progress) -> Unit = {}
+    onProgress: (Task2Progress) -> Unit = {},
+    loader: ModLoader = ModLoader.forge,
 ) = withContext(Dispatchers.IO) {
-    buildHostExtraModSyncTask2(versionId, extraMods).runInline(
+    buildHostExtraModSyncTask2(versionId, extraMods, loader).runInline(
         Task2Context(emitProgress = onProgress)
     )
 }
@@ -82,5 +88,7 @@ internal fun missingHostExtraMods(modsDir: Path, mods: List<Mod>): List<Mod> =
 
 private fun extraModTargetFileName(mod: Mod): String = EXTRA_MOD_PREFIX + mod.fileName
 
-internal fun prepareHostExtraModSyncMods(mods: List<Mod>): List<Mod> =
-    mods.filterNot { it.normalizedSlug in ModpackModProcessor.removedSlugs }
+internal fun prepareHostExtraModSyncMods(
+    mods: List<Mod>,
+    loader: ModLoader = ModLoader.forge,
+): List<Mod> = mods.filterNot { it.normalizedSlug in ModpackModProcessor.removedSlugsFor(loader) }

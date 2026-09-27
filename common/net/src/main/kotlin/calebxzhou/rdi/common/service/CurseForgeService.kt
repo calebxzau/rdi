@@ -83,20 +83,23 @@ object CurseForgeService {
             intro = introText,
             iconData = localMeta?.iconBytes,
             iconUrls = icons,
-            side = side
+            side = localMeta?.side ?: side
         )
     }
 
     private data class LocalModCardMeta(
         val iconBytes: ByteArray? = null,
-        val description: String? = null
+        val description: String? = null,
+        val side: Mod.Side? = null
     )
 
     private fun File.readLocalModCardMeta(): LocalModCardMeta = runCatching {
         JarFile(this).use { jar ->
+            val metadata = jar.readModMeta()
             LocalModCardMeta(
                 iconBytes = jar.modLogo,
-                description = jar.readModMeta()?.description
+                description = metadata?.description,
+                side = metadata?.side
             )
         }
     }.getOrDefault(LocalModCardMeta())
@@ -170,6 +173,7 @@ object CurseForgeService {
 
         val matched = cfModMeta.flatMap { meta ->
             meta.files.map { record ->
+                val side = record.file.readLocalModCardMeta().side ?: record.side
                 ModCardMatch(
                     mod = Mod(
                         platform = "cf",
@@ -177,9 +181,9 @@ object CurseForgeService {
                         slug = meta.canonicalSlug,
                         fileId = record.fileId,
                         hash = record.fingerprint,
-                        side = record.side,
+                        side = side,
                     ),
-                    card = meta.mod.toCardVo(record.file, record.side),
+                    card = meta.mod.toCardVo(record.file, side),
                     file = record.file
                 )
             }
@@ -343,10 +347,9 @@ object CurseForgeService {
 
             val loaderId = manifest.minecraft.modLoaders.firstOrNull { it.primary }?.id
                 ?: manifest.minecraft.modLoaders.firstOrNull()?.id
-            val loaderSupported = loaderId?.startsWith("neoforge", ignoreCase = true) == true ||
-                loaderId?.startsWith("forge", ignoreCase = true) == true
-            if (!loaderSupported) {
-                throw ModpackError("不支持的 Mod 加载器: ${loaderId ?: "未知"}，当前只支持 Forge/NeoForge")
+            val loader = loaderId?.let(ModLoader::from)
+            if (loader == null || !supportedVersion.supportsRuntime(loader)) {
+                throw ModpackError("不支持的 Mod 加载器: ${loaderId ?: "未知"}")
             }
 
             val modpackName = manifest.name.trim()

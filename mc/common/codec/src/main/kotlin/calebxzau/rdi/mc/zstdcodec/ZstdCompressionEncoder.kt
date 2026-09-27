@@ -26,27 +26,58 @@ internal class ZstdCompressionEncoder(
             )
         }
 
-        if (size < threshold) {
+        if (size == 0 || size < threshold) {
             varIntCodec.write(output, 0)
             output.writeBytes(input)
             return
         }
 
-        val source = ByteArray(size)
-        input.readBytes(source)
         val compressedCapacity = Zstd.compressBound(size.toLong()).toInt()
-        val compressed = ByteArray(compressedCapacity)
-        val compressedSize = compressionContext.compressByteArray(
-            compressed,
-            0,
-            compressed.size,
-            source,
-            0,
-            source.size,
-        )
+        val sourceBuffer = if (input.isDirect && input.nioBufferCount() == 1) {
+            null
+        } else {
+            context.alloc().directBuffer(size, size)
+        }
 
-        varIntCodec.write(output, size)
-        output.writeBytes(compressed, 0, compressedSize)
+        try {
+            sourceBuffer?.writeBytes(input, input.readerIndex(), size)
+            val source = sourceBuffer?.nioBuffer(sourceBuffer.readerIndex(), size)
+                ?: input.nioBuffer(input.readerIndex(), size)
+            val compressedBuffer = if (output.isDirect && output.nioBufferCount() == 1) {
+                null
+            } else {
+                context.alloc().directBuffer(compressedCapacity, compressedCapacity)
+            }
+
+            try {
+                varIntCodec.write(output, size)
+                val destination = compressedBuffer?.nioBuffer(0, compressedCapacity)
+                    ?: run {
+                        output.ensureWritable(compressedCapacity)
+                        output.nioBuffer(output.writerIndex(), compressedCapacity)
+                    }
+                val compressedSize = compressionContext.compressDirectByteBuffer(
+                    destination,
+                    destination.position(),
+                    compressedCapacity,
+                    source,
+                    source.position(),
+                    size,
+                )
+
+                if (compressedBuffer != null) {
+                    compressedBuffer.writerIndex(compressedSize)
+                    output.writeBytes(compressedBuffer)
+                } else {
+                    output.writerIndex(output.writerIndex() + compressedSize)
+                }
+                input.skipBytes(size)
+            } finally {
+                compressedBuffer?.release()
+            }
+        } finally {
+            sourceBuffer?.release()
+        }
     }
 
     fun updateThreshold(threshold: Int) {

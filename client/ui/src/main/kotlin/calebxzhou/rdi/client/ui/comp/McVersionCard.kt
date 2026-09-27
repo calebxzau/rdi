@@ -30,6 +30,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.draw.shadow
 import calebxzau.rdi.client.ui.loadImageBitmap
 import calebxzhou.rdi.common.model.McVersion
+import calebxzhou.rdi.common.model.runtimeLoaders
 
 /**
  * calebxzhou @ 2026-01-29 18:44
@@ -101,7 +102,7 @@ fun McVersionCard(
                         color = MaterialTheme.colorScheme.onSurface
                     )
                     Text(
-                        text = mcver.loaderVersions.keys.joinToString(" / ") { it.name.lowercase() },
+                        text = mcver.runtimeLoaders.joinToString(" / ") { it.directorySlug },
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )

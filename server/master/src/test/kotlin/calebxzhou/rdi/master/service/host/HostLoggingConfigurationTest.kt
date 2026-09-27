@@ -82,7 +82,6 @@ class HostLoggingConfigurationTest {
                 McVersion.V201.loaderVersions.getValue(ModLoader.forge),
                 testModpack(McVersion.V201, ModLoader.forge),
                 null,
-                null,
             )
         }
         val startParams = env.single { it.startsWith("START_PARAMS=") }
@@ -98,7 +97,6 @@ class HostLoggingConfigurationTest {
                 McVersion.V071,
                 McVersion.V071.loaderVersions.getValue(ModLoader.forge),
                 testModpack(McVersion.V071, ModLoader.forge),
-                null,
                 null,
             )
         }

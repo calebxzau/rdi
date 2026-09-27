@@ -1,16 +1,17 @@
 package calebxzhou.rdi.mc.client.network
 
-import calebxzhou.rdi.mc.common.RGlobalPlayerList
-import com.google.gson.Gson
+import calebxzau.rdi.mc.v20.client.GlobalPlayerListParser
+import calebxzau.rdi.mc.v20.client.GlobalPlayerListState as SharedGlobalPlayerListState
 import net.minecraft.network.FriendlyByteBuf
 import net.minecraftforge.network.NetworkEvent
+import org.apache.logging.log4j.LogManager
 import java.util.function.Supplier
 
 @JvmRecord
 data class RGlobalPlayerListPacket(val json: String) {
     companion object {
         private const val MAX_JSON_LENGTH = 262144
-        private val GSON = Gson()
+        private val LOGGER = LogManager.getLogger("RDI Global Player List")
 
         fun encode(packet: RGlobalPlayerListPacket, buf: FriendlyByteBuf) {
             buf.writeUtf(packet.json, MAX_JSON_LENGTH)
@@ -20,11 +21,17 @@ data class RGlobalPlayerListPacket(val json: String) {
 
         fun handle(packet: RGlobalPlayerListPacket, contextSupplier: Supplier<NetworkEvent.Context>) {
             val context = contextSupplier.get()
-            context.enqueueWork {
-                GlobalPlayerListState.update(
-                    GSON.fromJson(packet.json, RGlobalPlayerList::class.java)
-                )
+            val connection = context.networkManager
+            val generation = SharedGlobalPlayerListState.generationFor(connection)
+            if (generation == null) {
+                context.packetHandled = true
+                return
             }
+            GlobalPlayerListParser.parse(packet.json)
+                .onSuccess { playerList ->
+                    context.enqueueWork { SharedGlobalPlayerListState.update(connection, generation, playerList) }
+                }
+                .onFailure { LOGGER.error("Rejected invalid RDI room player list", it) }
             context.packetHandled = true
         }
     }

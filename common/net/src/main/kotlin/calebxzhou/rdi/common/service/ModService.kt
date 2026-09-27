@@ -6,6 +6,7 @@ import calebxzhou.rdi.common.util.sha1
 import calebxzhou.rdi.common.util.sha256
 import calebxzhou.rdi.common.DL_MOD_DIR
 import calebxzhou.rdi.common.deser
+import calebxzhou.rdi.common.serdesJson
 import calebxzhou.rdi.common.model.*
 import calebxzhou.rdi.common.net.DownloadProgress
 import calebxzhou.rdi.common.net.LocalArtifactHashAlgorithm
@@ -17,6 +18,9 @@ import net.peanuuutz.tomlkt.Toml
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.contentOrNull
 import java.io.ByteArrayInputStream
 import java.io.File
 import java.io.IOException
@@ -45,6 +49,10 @@ object ModService {
     private val lgr by Loggers
     private val modsToml = Toml { ignoreUnknownKeys = true }
     private val supportedModsTomlPaths = listOf(NEOFORGE_CONFIG_PATH, FORGE_CONFIG_PATH)
+    private const val MAX_NESTED_JAR_DEPTH = 4
+    private const val MAX_NESTED_JAR_BYTES = 32 * 1024 * 1024
+    private const val MAX_NESTED_JAR_TOTAL_BYTES = 128 * 1024 * 1024
+    private const val MAX_NESTED_METADATA_BYTES = 1024 * 1024
 
     /**
      * GitHub host records before the SHA-256 migration contain a SHA-1 digest.
@@ -83,6 +91,12 @@ object ModService {
                     logoFile = primary?.logoFile?.toJarIconPath()
                 )
             }
+        }
+        getJarEntry(FABRIC_CONFIG_PATH)?.let { entry ->
+            val metadata = getInputStream(entry).use {
+                it.readBoundedBytes(MAX_NESTED_METADATA_BYTES).toString(Charsets.UTF_8)
+            }
+            parseFabricModMeta(metadata)?.let { return it }
         }
         return readLegacyForgeModMeta()
     }
@@ -125,11 +139,14 @@ object ModService {
             .trimStart('/')
             .ifBlank { null }
 
-    private val builtinDependencyIds = setOf("minecraft", "forge", "neoforge", "fabricloader")
+    private val builtinDependencyIds = setOf(
+        "minecraft", "forge", "neoforge", "fabricloader", "fabric-api", "fabric-language-kotlin"
+    )
 
     fun List<File>.filterServerOnlyMods() =
         filterNot { file ->
             JarFile(file).use { jar ->
+                jar.readModMeta()?.side?.let { return@use it == Mod.Side.CLIENT }
                 val config = jar.readNeoForgeConfig() ?: return@use false
                 config.mods.any { modConfig ->
                     val modId = modConfig.modId.trim().lowercase().ifEmpty { return@any false }
@@ -171,7 +188,7 @@ object ModService {
                         val modId = modConfig.modId.trim().lowercase().ifEmpty { return@forEach }
                         val missingDependencies = extractModsTomlDependencies(config, modId).mapNotNull { dependency ->
                             val dependencyModId = dependency.modId.trim().lowercase().ifEmpty { return@mapNotNull null }
-                            if (dependencyModId.isEmpty() || builtinDependencyIds.contains(dependencyModId)) return@mapNotNull null
+                            if (dependencyModId.isEmpty() || dependencyModId.isBuiltinDependencyId()) return@mapNotNull null
 
                             val side = dependency.side?.trim()?.uppercase()
                             if (side == "CLIENT") return@mapNotNull null
@@ -218,8 +235,22 @@ object ModService {
     }
 
     private fun collectModIdsFromJar(jar: JarFile, installedModIds: MutableSet<String>) {
-        jar.readModMeta()?.let { meta ->
+        val meta = jar.readModMeta()
+        meta?.let {
             installedModIds += meta.modIds
+        }
+
+        val visitedNestedJars = mutableSetOf<String>()
+        val nestedJarBudget = NestedJarInspectionBudget()
+        meta?.nestedJarPaths.orEmpty().forEach { path ->
+            runCatching {
+                val entry = jar.getJarEntry(path) ?: return@runCatching
+                if (entry.isDirectory) return@runCatching
+                val bytes = jar.getInputStream(entry).use { it.readBoundedBytes(MAX_NESTED_JAR_BYTES) }
+                collectModIdsFromNestedJar(bytes, installedModIds, visitedNestedJars, 1, nestedJarBudget)
+            }.onFailure { err ->
+                lgr.warn(err) { "Failed to inspect Fabric nested jar '$path' inside ${jar.name}" }
+            }
         }
 
         val entries = jar.entries()
@@ -256,15 +287,157 @@ object ModService {
                         }
 
                         entryName.startsWith("META-INF/jarjar/", ignoreCase = true) &&
-                                entryName.endsWith(".jar", ignoreCase = true) -> {
-                            val nestedBytes = nestedJar.readBytes()
-                            collectModIdsFromNestedJar(ByteArrayInputStream(nestedBytes), installedModIds)
+                            entryName.endsWith(".jar", ignoreCase = true) -> {
+                            collectModIdsFromNestedJar(ByteArrayInputStream(nestedJar.readBytes()), installedModIds)
                         }
                     }
                 }
                 nestedJar.closeEntry()
                 entry = nestedJar.nextJarEntry
             }
+        }
+    }
+
+    private fun collectModIdsFromNestedJar(
+        bytes: ByteArray,
+        installedModIds: MutableSet<String>,
+        visited: MutableSet<String>,
+        depth: Int,
+        budget: NestedJarInspectionBudget
+    ) {
+        if (depth > MAX_NESTED_JAR_DEPTH) return
+        budget.consume(bytes.size)
+        val fingerprint = bytes.sha1
+        if (!visited.add(fingerprint)) return
+        val nestedPaths = mutableListOf<String>()
+        JarInputStream(ByteArrayInputStream(bytes)).use { nestedJar ->
+            var entry = nestedJar.nextJarEntry
+            while (entry != null) {
+                if (!entry.isDirectory) {
+                    val entryName = entry.name
+                    when {
+                        entryName == FABRIC_CONFIG_PATH -> {
+                            val configText = nestedJar.readBoundedBytes(MAX_NESTED_METADATA_BYTES).toString(Charsets.UTF_8)
+                            parseFabricModMeta(configText)?.let { meta ->
+                                installedModIds += meta.modIds
+                                nestedPaths += meta.nestedJarPaths
+                            }
+                        }
+                        supportedModsTomlPaths.any { it.equals(entryName, ignoreCase = false) } -> {
+                            val configText = nestedJar.readBoundedBytes(MAX_NESTED_METADATA_BYTES).toString(Charsets.UTF_8)
+                            parseModsToml(configText)?.let { config ->
+                                installedModIds += extractModIds(config)
+                            }
+                        }
+
+                        entryName.startsWith("META-INF/jarjar/", ignoreCase = true) &&
+                                entryName.endsWith(".jar", ignoreCase = true) -> {
+                            val nestedBytes = nestedJar.readBoundedBytes(MAX_NESTED_JAR_BYTES)
+                            collectModIdsFromNestedJar(nestedBytes, installedModIds, visited, depth + 1, budget)
+                        }
+                    }
+                }
+                nestedJar.closeEntry()
+                entry = nestedJar.nextJarEntry
+            }
+        }
+        if (depth < MAX_NESTED_JAR_DEPTH) {
+            JarInputStream(ByteArrayInputStream(bytes)).use { nestedJar ->
+                var entry = nestedJar.nextJarEntry
+                while (entry != null) {
+                    if (!entry.isDirectory && entry.name in nestedPaths) {
+                        val nestedBytes = nestedJar.readBoundedBytes(MAX_NESTED_JAR_BYTES)
+                        collectModIdsFromNestedJar(nestedBytes, installedModIds, visited, depth + 1, budget)
+                    }
+                    nestedJar.closeEntry()
+                    entry = nestedJar.nextJarEntry
+                }
+            }
+        }
+    }
+
+    private fun parseFabricModMeta(raw: String): JarModMeta? = runCatching {
+        val root = serdesJson.parseToJsonElement(raw) as? JsonObject ?: return null
+        val id = (root["id"] as? JsonPrimitive)?.contentOrNull?.trim()?.lowercase()?.takeIf(String::isNotBlank)
+            ?: return null
+        val icon = when (val iconElement = root["icon"]) {
+            is JsonPrimitive -> iconElement.contentOrNull?.let(::normalizeFabricJarPath)
+            is JsonObject -> iconElement.entries
+                .mapNotNull { (size, value) ->
+                    val path = (value as? JsonPrimitive)?.contentOrNull?.let(::normalizeFabricJarPath)
+                        ?: return@mapNotNull null
+                    size.toIntOrNull()?.let { Triple(it, size, path) } ?: Triple(-1, size, path)
+                }
+                .sortedWith(compareByDescending<Triple<Int, String, String>> { it.first }
+                    .thenBy { it.second }.thenBy { it.third })
+                .firstOrNull()?.third
+            else -> null
+        }
+        val side = when ((root["environment"] as? JsonPrimitive)?.contentOrNull?.trim()?.lowercase()) {
+            "client" -> Mod.Side.CLIENT
+            "server" -> Mod.Side.SERVER
+            else -> null
+        }
+        val dependencies = (root["depends"] as? JsonObject).orEmpty().mapNotNull { (dependencyId, value) ->
+            val normalizedId = dependencyId.trim().lowercase().takeIf(String::isNotBlank) ?: return@mapNotNull null
+            val versionExpression = when (value) {
+                is JsonPrimitive -> value.contentOrNull?.trim()?.takeIf(String::isNotBlank)
+                is kotlinx.serialization.json.JsonArray -> value.mapNotNull {
+                    (it as? JsonPrimitive)?.contentOrNull?.trim()?.takeIf(String::isNotBlank)
+                }.joinToString(" || ").takeIf(String::isNotBlank)
+                else -> null
+            }
+            JarModDependency(normalizedId, versionExpression)
+        }
+        val nestedJars = (root["jars"] as? kotlinx.serialization.json.JsonArray).orEmpty()
+            .mapNotNull { entry ->
+                val path = ((entry as? JsonObject)?.get("file") as? JsonPrimitive)?.contentOrNull
+                    ?.let(::normalizeFabricJarPath)
+                path
+            }.distinct()
+        JarModMeta(
+            modIds = listOf(id),
+            version = (root["version"] as? JsonPrimitive)?.contentOrNull?.trim()?.takeIf(String::isNotBlank),
+            description = (root["description"] as? JsonPrimitive)?.contentOrNull?.trim()?.takeIf(String::isNotBlank),
+            logoFile = icon,
+            side = side,
+            requiredDependencies = dependencies,
+            nestedJarPaths = nestedJars
+        )
+    }.onFailure { err ->
+        lgr.debug(err) { "Failed to parse fabric.mod.json" }
+    }.getOrNull()
+
+    private fun normalizeFabricJarPath(raw: String): String? {
+        val normalized = raw.trim().replace('\\', '/')
+        if (normalized.isBlank() || normalized.startsWith('/') || normalized.startsWith("//") ||
+            Regex("^[A-Za-z]:").containsMatchIn(normalized) || ':' in normalized || '\u0000' in normalized
+        ) return null
+        val segments = normalized.split('/')
+        if (segments.any { it == ".." }) return null
+        return segments.filter { it.isNotBlank() && it != "." }.joinToString("/").ifBlank { null }
+    }
+
+    private fun InputStream.readBoundedBytes(maxBytes: Int): ByteArray {
+        val output = java.io.ByteArrayOutputStream()
+        val buffer = ByteArray(8192)
+        var total = 0
+        while (true) {
+            val count = read(buffer)
+            if (count < 0) break
+            total += count
+            require(total <= maxBytes) { "Archive entry exceeds $maxBytes bytes" }
+            output.write(buffer, 0, count)
+        }
+        return output.toByteArray()
+    }
+
+    private class NestedJarInspectionBudget(
+        private var remainingBytes: Int = MAX_NESTED_JAR_TOTAL_BYTES
+    ) {
+        fun consume(bytes: Int) {
+            require(bytes <= remainingBytes) { "Nested jar inspection exceeds $MAX_NESTED_JAR_TOTAL_BYTES bytes" }
+            remainingBytes -= bytes
         }
     }
 
@@ -335,6 +508,9 @@ object ModService {
             ?.value
             .orEmpty()
     }
+
+    private fun String.isBuiltinDependencyId(): Boolean =
+        this in builtinDependencyIds || startsWith("fabric-api-")
 
 
     val String.ofMirrorUrl

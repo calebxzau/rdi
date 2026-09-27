@@ -8,6 +8,11 @@ enum class ModLoader {
     forge,
     neoforge,
     @SerialName("fabric") Fabric;
+
+    /** Stable lowercase identifier for runtime directories and assets. */
+    val directorySlug: String
+        get() = name.lowercase()
+
     companion object{
         fun from(name:String):ModLoader?{
             val normalized = name.trim()

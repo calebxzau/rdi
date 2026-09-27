@@ -25,6 +25,7 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.Executors;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import javax.net.SocketFactory;
@@ -44,30 +45,42 @@ public class WebSocketClient {
     private static final int CONNECT_TIMEOUT_MS = 10_000;
     private static final SocketFactory DIRECT_SOCKET_FACTORY = new DirectSocketFactory();
     private static final ProxySelector DIRECT_PROXY_SELECTOR = new DirectProxySelector();
-    private static final ScheduledExecutorService reconnectExecutor = Executors.newSingleThreadScheduledExecutor(r -> {
-        Thread t = new Thread(r, "rdi-ws-reconnect");
-        t.setDaemon(true);
-        return t;
-    });
+    private static volatile Session currentSession;
 
-    private static volatile WebSocket currentWebSocket;
-    private static volatile boolean shuttingDown = false;
-    private static volatile boolean isConnecting = false;
-    private static volatile String wsUrl;
-    private static volatile WsMessageHandler handler;
+    private static final class Session {
+        private final String wsUrl;
+        private final WsMessageHandler handler;
+        private final ScheduledExecutorService reconnectExecutor = Executors.newSingleThreadScheduledExecutor(r -> {
+            Thread t = new Thread(r, "rdi-ws-reconnect");
+            t.setDaemon(true);
+            return t;
+        });
+        private volatile WebSocket webSocket;
+        private volatile boolean closed;
+        private volatile boolean paused;
+        private volatile boolean connecting;
+
+        private Session(String wsUrl, WsMessageHandler handler) {
+            this.wsUrl = wsUrl;
+            this.handler = handler;
+        }
+    }
 
     public static void start(WsMessageHandler handler) {
-        // Convert http/https to ws/wss and append the path
-        wsUrl = "ws://" + IHQ_URL + "/host/play/" + HOST_ID;
-        shuttingDown = false;
-        WebSocketClient.handler = handler;
+        stop();
+        Session session = new Session("ws://" + IHQ_URL + "/host/play/" + HOST_ID, handler);
+        currentSession = session;
         disableJvmProxy();
-        attemptConnect();
+        attemptConnect(session);
     }
     public static void stop() {
-        shuttingDown = true;
-
-        WebSocket ws = currentWebSocket;
+        Session session = currentSession;
+        currentSession = null;
+        if (session == null) {
+            return;
+        }
+        session.closed = true;
+        WebSocket ws = session.webSocket;
         if (ws != null) {
             try {
                 ws.disconnect(1000, "server stopping");
@@ -75,8 +88,13 @@ public class WebSocketClient {
                 lgr.warn("Failed to send WebSocket close frame", ex);
             }
         }
-
-        reconnectExecutor.shutdownNow();
+        session.reconnectExecutor.shutdownNow();
+    }
+    public static void pauseReconnect() {
+        Session session = currentSession;
+        if (session != null) {
+            session.paused = true;
+        }
     }
     public static <T> boolean sendMessage(WsMessage.Channel channel, T data) {
         if (sendMessage(reqId, channel, data)) {
@@ -86,7 +104,8 @@ public class WebSocketClient {
         return false;
     }
     public static <T> boolean sendMessage(int id, WsMessage.Channel channel, T data) {
-        WebSocket ws = currentWebSocket;
+        Session session = currentSession;
+        WebSocket ws = session == null ? null : session.webSocket;
         if (ws != null && ws.isOpen()) {
             String json = gson.toJson(new WsMessage<T>(id, channel, data));
             lgr.info("Sending message: {}", json);
@@ -104,71 +123,100 @@ public class WebSocketClient {
 
     }
 
-    private static void attemptConnect() {
-        if (wsUrl == null || shuttingDown) {
+    private static void attemptConnect(Session session) {
+        if (!isCurrent(session) || session.paused) {
             return;
         }
 
         // Check if there's already an active connection
-        WebSocket ws = currentWebSocket;
+        WebSocket ws = session.webSocket;
         if (ws != null && ws.isOpen()) {
             lgr.debug("WebSocket already connected, skipping connection attempt");
             return;
         }
 
         // Check if a connection attempt is already in progress
-        if (isConnecting) {
+        if (session.connecting) {
             lgr.debug("WebSocket connection already in progress, skipping");
             return;
         }
 
-        isConnecting = true;
+        session.connecting = true;
         lgr.info("ws try conn");
         try {
             disableJvmProxy();
             WebSocket newWs = new WebSocketFactory()
                     .setSocketFactory(DIRECT_SOCKET_FACTORY)
                     .setConnectionTimeout(CONNECT_TIMEOUT_MS)
-                    .createSocket(wsUrl)
-                    .addListener(new Listener());
-            currentWebSocket = newWs;
+                    .createSocket(session.wsUrl)
+                    .addListener(new Listener(session));
+            if (!isCurrent(session) || session.paused) {
+                newWs.disconnect(1000, "server stopping");
+                return;
+            }
+            session.webSocket = newWs;
             newWs.connectAsynchronously();
         } catch (IOException ex) {
-            isConnecting = false;
+            session.connecting = false;
             lgr.error("Failed to connect WebSocket ", ex);
-            scheduleReconnect();
+            scheduleReconnect(session);
         }
     }
 
-    private static void scheduleReconnect() {
-        if (shuttingDown) {
+    private static void scheduleReconnect(Session session) {
+        if (!isCurrent(session) || session.paused) {
             return;
         }
 
         // Don't schedule reconnect if already connected
-        WebSocket ws = currentWebSocket;
+        WebSocket ws = session.webSocket;
         if (ws != null && ws.isOpen()) {
             lgr.debug("WebSocket already connected, skipping reconnect scheduling");
             return;
         }
 
-        reconnectExecutor.schedule(WebSocketClient::attemptConnect, 5, TimeUnit.SECONDS);
+        try {
+            session.reconnectExecutor.schedule(() -> attemptConnect(session), 5, TimeUnit.SECONDS);
+        } catch (RejectedExecutionException ignored) {
+            // The session was stopped while a reconnect was being scheduled.
+        }
         lgr.info("ws reconn 5s");
     }
 
+    private static boolean isCurrent(Session session) {
+        return session != null && !session.closed && currentSession == session;
+    }
+
+    private static boolean isCurrentSocket(Session session, WebSocket webSocket) {
+        return isCurrent(session) && session.webSocket == webSocket;
+    }
+
     private static class Listener extends WebSocketAdapter {
+        private final Session session;
+
+        private Listener(Session session) {
+            this.session = session;
+        }
+
         @Override
         public void onConnected(WebSocket webSocket, Map<String, List<String>> headers) {
-            isConnecting = false;
+            if (!isCurrentSocket(session, webSocket) || session.paused) {
+                webSocket.disconnect(1000, "server stopping");
+                return;
+            }
+            session.connecting = false;
             lgr.info("ws-conn");
-            lgr.debug("WebSocket connection opened: {}", wsUrl);
+            lgr.debug("WebSocket connection opened: {}", session.wsUrl);
         }
 
         @Override
         public void onTextMessage(WebSocket webSocket, String text) {
+            if (!isCurrentSocket(session, webSocket)) {
+                return;
+            }
             lgr.debug("Received text message: {}", text);
             WsMessage<JsonElement> msg = gson.fromJson(text, WS_MESSAGE_JSON_TYPE);
-            handler.onMessage(msg);
+            session.handler.onMessage(msg);
         }
 
         @Override
@@ -188,28 +236,37 @@ public class WebSocketClient {
 
         @Override
         public void onDisconnected(WebSocket webSocket, WebSocketFrame serverCloseFrame, WebSocketFrame clientCloseFrame, boolean closedByServer) {
-            isConnecting = false;
+            if (!isCurrentSocket(session, webSocket)) {
+                return;
+            }
+            session.connecting = false;
             String reason = serverCloseFrame != null ? serverCloseFrame.getCloseReason() : "unknown";
             int code = serverCloseFrame != null ? serverCloseFrame.getCloseCode() : -1;
             lgr.info("ws closed: {} - {}", code, reason);
-            currentWebSocket = null;
-            scheduleReconnect();
+            session.webSocket = null;
+            scheduleReconnect(session);
         }
 
         @Override
         public void onConnectError(WebSocket webSocket, WebSocketException exception) {
-            isConnecting = false;
+            if (!isCurrentSocket(session, webSocket)) {
+                return;
+            }
+            session.connecting = false;
             lgr.error("ws conn error", exception);
-            currentWebSocket = null;
-            scheduleReconnect();
+            session.webSocket = null;
+            scheduleReconnect(session);
         }
 
         @Override
         public void onError(WebSocket webSocket, WebSocketException cause) {
-            isConnecting = false;
+            if (!isCurrentSocket(session, webSocket)) {
+                return;
+            }
+            session.connecting = false;
             lgr.error("ws error", cause);
-            currentWebSocket = null;
-            scheduleReconnect();
+            session.webSocket = null;
+            scheduleReconnect(session);
         }
     }
 

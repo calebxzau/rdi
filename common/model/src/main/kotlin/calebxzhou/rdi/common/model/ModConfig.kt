@@ -50,11 +50,19 @@ data class JarModMeta(
     val modIds: List<String> = emptyList(),
     val version: String? = null,
     val description: String? = null,
-    val logoFile: String? = null
+    val logoFile: String? = null,
+    val side: Mod.Side? = null,
+    val requiredDependencies: List<JarModDependency> = emptyList(),
+    val nestedJarPaths: List<String> = emptyList()
 ) {
     val primaryModId: String?
         get() = modIds.firstOrNull()
 }
+
+data class JarModDependency(
+    val modId: String,
+    val versionExpression: String? = null
+)
 
 @Serializable
 data class LegacyMcmodInfoEntry(

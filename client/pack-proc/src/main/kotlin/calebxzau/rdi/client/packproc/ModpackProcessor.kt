@@ -121,7 +121,7 @@ fun requireModpackUploadVersion(mcVersion: McVersion) {
 
 fun requireModpackUploadRuntime(mcVersion: McVersion, modLoader: ModLoader) {
     requireModpackUploadVersion(mcVersion)
-    if (!mcVersion.supportLoader(modLoader)) {
+    if (!mcVersion.supportsRuntime(modLoader)) {
         throw ModpackError("已识别为Minecraft${mcVersion.mcVer}／${modLoader.name}，当前版本暂不支持导入")
     }
 }
@@ -132,13 +132,24 @@ class ModpackProcessor(
     private val paths: PackProcessingPaths,
     private val embeddedClientExtraMatcher: (suspend (File, List<Content>) -> List<EmbeddedClientExtraSource>)? = null,
 ) {
-    fun processUploadMods(mods: List<Mod>): MutableList<Mod> =
-        ModpackModProcessor.processMods(mods)
+    fun processUploadMods(
+        mods: List<Mod>,
+        loader: ModLoader = ModLoader.forge,
+    ): MutableList<Mod> = ModpackModProcessor.processMods(mods, loader)
 
     private fun ModCardMatch.withSide(side: Mod.Side): ModCardMatch = copy(
         mod = mod.copy(side = side),
         card = card?.copy(side = side)
     )
+
+    private fun ModCardMatch.withLocalFabricSide(loader: ModLoader): ModCardMatch {
+        if (loader != ModLoader.Fabric) return this
+        val file = file?.takeIf { it.exists() && it.isFile } ?: return this
+        val side = runCatching {
+            ModService.run { JarFile(file).use { it.readModMeta()?.side } }
+        }.getOrNull() ?: return this
+        return withSide(side)
+    }
 
     private fun ModCardMatch.toMod(): Mod = mod.copy(
         downloadUrls = mod.downloadUrls.toList()
@@ -258,6 +269,7 @@ class ModpackProcessor(
             onProgress(LoadProgress.Phase("发现包内内置mods${embeddedMods.size}个"))
         }
         val embeddedMatches = matchLocalModFiles(embeddedMods, onProgress)
+        val resolvedEmbeddedMods = embeddedMatches.mods.map { it.withLocalFabricSide(payload.modloader) }
         if (embeddedMatches.mods.isNotEmpty()) {
             onProgress(LoadProgress.Phase("已识别内置mods${embeddedMatches.mods.size}个"))
         }
@@ -268,7 +280,9 @@ class ModpackProcessor(
         val resolvedMods = when (payload.sourceType) {
             LocalModpackSourceType.MODRINTH -> {
                 onProgress(LoadProgress.Phase("解析Modrinth整合包索引"))
-                val loaded = ModrinthService.loadModpack(sourceDir) { curseForgeSlugs ->
+                val parsedIndex = payload.modrinthIndex
+                    ?: error("Modrinth整合包缺少已解析的清单")
+                val loaded = ModrinthService.loadParsedModpack(parsedIndex, sourceDir) { curseForgeSlugs ->
                     val refs = curseForgeSlugs.map { CatalogSlugRef(ModPlatform.CURSEFORGE, it) }.toSet()
                     val metadata = modCatalog.getMetadataOrEmpty(refs)
                     curseForgeSlugs.mapNotNull { slug ->
@@ -277,7 +291,7 @@ class ModpackProcessor(
                     }.toMap()
                 }.getOrThrow()
                 payload.clientExtras = loaded.clientExtras.toMutableList()
-                (loaded.mods + embeddedMatches.mods.map { it.toMod() })
+                (loaded.mods + resolvedEmbeddedMods.map { it.toMod() })
                     .distinctBy { "${it.platform}:${it.projectId}:${it.fileId}:${it.hash}" }
                     .toMutableList()
             }
@@ -288,14 +302,16 @@ class ModpackProcessor(
                 val baseMods = CurseForgeService.mapManifestEntriesToMods(modpackData.manifest.files)
                 payload.clientExtras = CurseForgeService.mapManifestEntriesToContents(modpackData.manifest.files)
                     .toMutableList()
-                (baseMods + embeddedMatches.mods.map { it.toMod() })
+                (baseMods + resolvedEmbeddedMods.map { it.toMod() })
                     .distinctBy { "${it.platform}:${it.projectId}:${it.fileId}:${it.hash}" }
                     .toMutableList()
             }
         }
         onProgress(LoadProgress.Phase("整理Mod单双端属性"))
-        ModService.run { resolvedMods.postProcessModSides() }
-        payload.embeddedModSources = stageMatchedEmbeddedMods(embeddedMatches.mods)
+        if (payload.modloader != ModLoader.Fabric) {
+            ModService.run { resolvedMods.postProcessModSides() }
+        }
+        payload.embeddedModSources = stageMatchedEmbeddedMods(resolvedEmbeddedMods)
         payload.embeddedClientExtraSources = embeddedClientExtraMatcher?.invoke(sourceDir, payload.clientExtras)
             ?: matchEmbeddedClientExtras(sourceDir, payload.clientExtras)
         payload.clientExtras = mergeEmbeddedClientExtras(
@@ -388,7 +404,8 @@ class ModpackProcessor(
         file: File,
         clientMods: List<Mod>,
         clientModSources: Map<Mod, File>,
-        onProgress: LoadProgressConsumer
+        onProgress: LoadProgressConsumer,
+        loader: ModLoader = ModLoader.forge,
     ): Result<LoadedServerPackResult> = withContext(Dispatchers.IO) {
         paths.workDir.mkdirs()
         runCatching {
@@ -404,13 +421,19 @@ class ModpackProcessor(
             if (modFileSelection.selected.isEmpty()) {
                 throw ModpackError("请选择服务端根目录，目录下应有mods文件夹")
             }
-            val clientModsByModId = buildClientModsByModId(clientMods, clientModSources)
+            val clientModsByModId = buildClientModsByModId(clientMods, clientModSources, loader)
             val matchedByModId = matchServerModsByClientModId(
                 files = modFileSelection.selected,
                 clientModsByModId = clientModsByModId,
+                loader = loader,
                 onProgress = onProgress
             )
             val matched = matchLocalModFiles(matchedByModId.unmatchedFiles, onProgress)
+                .let { result ->
+                    if (loader == ModLoader.Fabric) result.copy(
+                        mods = result.mods.map { it.withLocalFabricSide(loader) }
+                    ) else result
+                }
             val finalMatchedMods = (matched.mods + matchedByModId.mods)
                 .distinctBy(::serverModMergeKey)
             val matchedFiles = matched.matchedFiles +
@@ -423,7 +446,7 @@ class ModpackProcessor(
                 onProgress.warn("服务端目录中有${finalUnmatchedFiles.size}个mod未识别，将作为额外服务端文件带上：$preview$suffix")
             }
             val resolvedMods = finalMatchedMods.map { it.toMod() }.toMutableList().also {
-                ModService.run { it.postProcessModSides() }
+                if (loader != ModLoader.Fabric) ModService.run { it.postProcessModSides() }
             }
             val serverExtraSelection = collectServerPackExtraFiles(
                 rootDir = file,
@@ -714,14 +737,16 @@ class ModpackProcessor(
 
     private fun buildClientModsByModId(
         clientMods: List<Mod>,
-        clientModSources: Map<Mod, File>
+        clientModSources: Map<Mod, File>,
+        loader: ModLoader,
     ): Map<String, Mod> {
         if (clientMods.isEmpty()) return emptyMap()
         val clientModsByModId = linkedMapOf<String, Mod>()
         clientMods.forEach { clientMod ->
             val clientFile = clientModSources[clientMod]?.takeIf { it.exists() && it.isFile } ?: return@forEach
+            val localMod = clientMod.withLocalFabricSide(clientFile, loader)
             val modId = readPrimaryModId(clientFile) ?: return@forEach
-            val previous = clientModsByModId.putIfAbsent(modId, clientMod)
+            val previous = clientModsByModId.putIfAbsent(modId, localMod)
             if (previous != null && previous != clientMod) {
                 lgr.warn { "多个客户端mod共用了同一个modId=$modId，将保留第一个${previous.slug}，忽略${clientMod.slug}" }
             }
@@ -732,6 +757,7 @@ class ModpackProcessor(
     private suspend fun matchServerModsByClientModId(
         files: List<File>,
         clientModsByModId: Map<String, Mod>,
+        loader: ModLoader,
         onProgress: LoadProgressConsumer
     ): EmbeddedMatchResult {
         if (files.isEmpty() || clientModsByModId.isEmpty()) {
@@ -755,11 +781,17 @@ class ModpackProcessor(
                 return@forEach
             }
             usedServerModIds += serverModId
-            matchedMods += ModCardMatch(
+            val matched = ModCardMatch(
                 mod = clientMod,
                 file = serverFile
             )
-                .withSide(Mod.Side.BOTH)
+            val explicitSide = if (loader == ModLoader.Fabric) {
+                readLocalFabricSide(serverFile)
+            } else {
+                null
+            }
+            val fallbackSide = if (loader == ModLoader.Fabric) clientMod.side else Mod.Side.BOTH
+            matchedMods += matched.withSide(explicitSide ?: fallbackSide)
             matchedFiles += serverFile
         }
         return EmbeddedMatchResult(
@@ -908,21 +940,17 @@ class ModpackProcessor(
         val index = indexFile.readText(Charsets.UTF_8).deser<ModrinthModpackIndex>().getOrElse { err ->
             throw ModpackError("modrinth概要文件解析失败", err)
         }
-        val mcVersion = index.dependencies["minecraft"]?.trim().orEmpty().let {
-            resolveSupportedMcVersion(it)
-        }
-        val identity = LoaderRecognition.modrinth(index.dependencies).getOrElse { cause ->
-            throw ModpackError(cause.message ?: "不支持的Mod加载器: 未知", cause)
-        }
-        val modloader = identity.loader
+        val parsed = ModrinthService.parseIndex(index).getOrThrow()
+        requireModpackUploadVersion(parsed.mcVersion)
         return UploadPayload(
             sourceType = LocalModpackSourceType.MODRINTH,
             sourceDir = rootDir,
             mods = mutableListOf(),
-            mcVersion = mcVersion,
-            modloader = modloader,
+            mcVersion = parsed.mcVersion,
+            modloader = parsed.loader,
             sourceName = index.name,
-            sourceVersion = index.versionId.ifBlank { "1.0" }
+            sourceVersion = index.versionId.ifBlank { "1.0" },
+            modrinthIndex = parsed,
         )
     }
 
@@ -1033,6 +1061,15 @@ class ModpackProcessor(
                 }
             }
         }
+    }.getOrNull()
+
+    private fun Mod.withLocalFabricSide(file: File, loader: ModLoader): Mod {
+        if (loader != ModLoader.Fabric) return this
+        return readLocalFabricSide(file)?.let { copy(side = it) } ?: this
+    }
+
+    private fun readLocalFabricSide(file: File): Mod.Side? = runCatching {
+        ModService.run { JarFile(file).use { it.readModMeta()?.side } }
     }.getOrNull()
 
     private fun collectServerPackExtraFiles(

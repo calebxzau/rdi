@@ -10,30 +10,17 @@
   "mixins": [
     "AChunkMap",
     "AServerEntity",
-    "mAllowChineseNameLogin",
-    "mBoundTickingBlockEntityGuard",
     "mCancelWorldGenAnimalSpawning",
-    "mChatMsg",
-    "mChinesePlayerName",
     // "mChunkCache",
     // "mDelayedChunkCache",
-    "mFullBrightLightPacket",
     "mHandshakeDiagnostics",
-    "mGuardChunkTick",
-    "mGuardLevelTick",
-    "mGuardServerLevelTick",
-    "mLimitEntitiesInSection",
-    "mLimitExecutor",
     "mNetworkRegistryDiagnostics",
     "mOnlySaveFirmSections",
     "mPackListener",
     "mPlusTimeout",
-    "mRcmdCommandInput",
     "mSaveBandwidth",
     "mServerLoginPacketListener",
-    "mServerPlayer",
-    "mTickingEntity",
-    "mZstdCompression"
+    "mServerPlayer"
   ],
   "client": [
   ]

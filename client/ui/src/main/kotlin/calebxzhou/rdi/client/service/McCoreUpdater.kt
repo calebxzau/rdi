@@ -27,7 +27,7 @@ data class McCoreUpdateResult(
 
 object McCoreUpdater {
     fun slug(mcVersion: McVersion, modLoader: ModLoader) =
-        "${mcVersion.mcVer}-${modLoader.name.lowercase()}"
+        "${mcVersion.mcVer}-${modLoader.directorySlug}"
 
     internal fun contentRequest(
         mcVersion: McVersion,

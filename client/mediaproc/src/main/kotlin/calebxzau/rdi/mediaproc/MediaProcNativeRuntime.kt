@@ -11,6 +11,8 @@ import java.util.jar.JarFile
 object MediaProcNativeRuntime {
     private const val NATIVE_PREFIX = "org/bytedeco/ffmpeg/windows-x86_64-gpl/"
     private const val READY_MARKER = ".complete"
+    // FileChannel locks coordinate processes, but overlapping locks in this JVM throw instead of waiting.
+    private val extractionLock = Any()
 
     fun prepare(nativeJar: File, rootDir: File): Result<File> = runCatching {
         require(nativeJar.isFile) { "FFmpeg native runtime does not exist: ${nativeJar.absolutePath}" }
@@ -18,12 +20,14 @@ object MediaProcNativeRuntime {
         val bundleDir = rootDir.resolve(nativeJar.sha256())
         val lockPath = rootDir.resolve("${bundleDir.name}.lock").toPath()
 
-        FileChannel.open(lockPath, StandardOpenOption.CREATE, StandardOpenOption.WRITE).use { channel ->
-            channel.lock().use {
-                val marker = bundleDir.resolve(READY_MARKER)
-                if (!marker.isFile) {
-                    extractNativeLibraries(nativeJar, bundleDir)
-                    marker.writeText(nativeJar.name)
+        synchronized(extractionLock) {
+            FileChannel.open(lockPath, StandardOpenOption.CREATE, StandardOpenOption.WRITE).use { channel ->
+                channel.lock().use {
+                    val marker = bundleDir.resolve(READY_MARKER)
+                    if (!marker.isFile) {
+                        extractNativeLibraries(nativeJar, bundleDir)
+                        marker.writeText(nativeJar.name)
+                    }
                 }
             }
         }

@@ -42,6 +42,7 @@ import calebxzhou.rdi.common.model.Host
 import calebxzhou.rdi.common.model.McVersion
 import calebxzhou.rdi.common.model.Mod
 import calebxzhou.rdi.common.model.ModLoader
+import calebxzhou.rdi.common.model.runtimeLoaders
 import calebxzhou.rdi.common.model.Task2Entry
 import calebxzhou.rdi.common.model.Task2Status
 import calebxzhou.rdi.common.serdesJson
@@ -76,7 +77,7 @@ data class ModCatalogInfoUiState(
     val targetLoader: ModLoader? = null,
     val errorMessage: String? = null,
     val selectedMcVersion: McVersion = McVersion.V211,
-    val selectedLoader: ModLoader = McVersion.V211.loaderVersions.keys.first(),
+    val selectedLoader: ModLoader = McVersion.V211.runtimeLoaders.first(),
     val includeAlpha: Boolean = false,
     val files: List<CatalogFile> = emptyList(),
     val fileCursor: CatalogFileCursor? = null,
@@ -433,7 +434,7 @@ class ModCatalogInfoViewModel(
             }.onSuccess { loaded ->
                 val selectedMcVersion = loaded.targetMcVersion ?: McVersion.V211
                 val selectedLoader = loaded.targetLoader
-                    ?: selectedMcVersion.loaderVersions.keys.first()
+                    ?: selectedMcVersion.runtimeLoaders.first()
                 _uiState.update {
                     it.copy(
                         loading = false,
@@ -746,7 +747,7 @@ class ModCatalogInfoViewModel(
     }
 
     private fun availableLoadersFor(state: ModCatalogInfoUiState, version: McVersion): List<ModLoader> =
-        state.targetLoader?.let(::listOf) ?: version.loaderVersions.keys.toList()
+        state.targetLoader?.let(::listOf) ?: version.runtimeLoaders
 
     private fun validateTargetVersion(mcVersion: McVersion?, file: CatalogFile) {
         if (mcVersion != null && file.minecraftVersions.isNotEmpty() && mcVersion.mcVer !in file.minecraftVersions) {

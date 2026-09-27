@@ -1,0 +1,16 @@
+{
+  "required": true,
+  "package": "calebxzau.rdi.mc.v20.client.mixin",
+  "compatibilityLevel": "JAVA_17",
+  "injectors": {
+    "defaultRequire": 1
+  },
+  "client": [
+    "AMinecraft",
+    "ASkinManager",
+    "mRdiUserApi",
+    "mSkinManager",
+    "mPlayerTabOverlay",
+    "mTabFontReload"
+  ]
+}

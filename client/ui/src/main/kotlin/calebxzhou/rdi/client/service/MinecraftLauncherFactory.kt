@@ -4,11 +4,12 @@ import calebxzhou.rdi.common.util.javaExePath
 import calebxzhou.rdi.client.Const
 import calebxzau.rdi.client.CONF
 import calebxzau.rdi.client.ScreenSize
-import calebxzhou.rdi.client.model.loaderManifest
 import calebxzhou.rdi.client.model.manifest
 import calebxzhou.rdi.client.net.loggedAccount
 import calebxzhou.rdi.common.DEBUG
 import calebxzhou.rdi.common.model.McVersion
+import calebxzhou.rdi.common.model.ModLoader
+import calebxzau.rdi.mclaunch.ClientLoaderRuntime
 import calebxzau.rdi.mclaunch.MinecraftAccount
 import calebxzau.rdi.mclaunch.MinecraftDirectories
 import calebxzau.rdi.mclaunch.MinecraftJava25Config
@@ -40,8 +41,12 @@ internal fun createMinecraftLauncher(): MinecraftLauncher {
             launcherBrand = "rdi",
             launcherVersion = Const.VERSION_NUMBER,
             debug = DEBUG,
-            manifestProvider = { mcVersion, _, _ ->
-                runCatching { MinecraftManifestPair(mcVersion.manifest, mcVersion.loaderManifest) }
+            manifestProvider = { mcVersion, loader, _, _ ->
+                runCatching {
+                    val runtime = ClientLoaderRuntime.resolve(mcVersion, loader)
+                    val loaderManifest = runtime.loadManifest(ClientDirs.versionsDir).getOrThrow()
+                    MinecraftManifestPair(mcVersion.manifest, loaderManifest)
+                }
             },
             artifactDownloader = mcInstall.artifactDownloader,
         )
@@ -50,12 +55,14 @@ internal fun createMinecraftLauncher(): MinecraftLauncher {
 
 internal fun minecraftLaunchRequest(
     mcVersion: McVersion,
+    loader: ModLoader,
     versionId: String,
     versionDir: File,
     launchOverrides: MinecraftLaunchOverrides = MinecraftLaunchOverrides(),
     extraJvmArgs: List<String> = emptyList(),
 ): MinecraftLaunchRequest = MinecraftLaunchRequest(
     mcVersion = mcVersion,
+    loader = loader,
     versionId = versionId,
     versionDir = versionDir,
     account = MinecraftAccount(

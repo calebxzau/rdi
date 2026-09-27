@@ -2,6 +2,7 @@
 package calebxzhou.rdi.common.service
 
 import calebxzhou.rdi.common.model.Mod
+import calebxzhou.rdi.common.model.ModLoader
 import calebxzhou.rdi.common.model.normalizedSlug
 
 object ModpackModProcessor {
@@ -27,6 +28,14 @@ object ModpackModProcessor {
         "tab-list"
     )
 
+    private val forgeOnlyRemovedSlugs = setOf(
+        "skybox-loader-forge",
+        "lazyyyyy",
+    )
+
+    fun removedSlugsFor(loader: ModLoader): Set<String> =
+        if (loader == ModLoader.Fabric) removedSlugs - forgeOnlyRemovedSlugs else removedSlugs
+
     private val clientSideSlugs = setOf(
         "status-effect-bars-reforged",
         "mafglib",
@@ -49,12 +58,12 @@ object ModpackModProcessor {
         "smartbrainlib"
     )
 
-    fun processMods(mods: List<Mod>): MutableList<Mod> = mods.mapNotNull { mod ->
+    fun processMods(mods: List<Mod>, loader: ModLoader = ModLoader.forge): MutableList<Mod> = mods.mapNotNull { mod ->
         val slug = mod.normalizedSlug
         when {
-            slug.contains("backup") || slug in removedSlugs -> null
-            slug in clientSideSlugs -> mod.copyWithSide(Mod.Side.CLIENT)
-            slug in bothSideSlugs -> mod.copyWithSide(Mod.Side.BOTH)
+            slug.contains("backup") || slug in removedSlugsFor(loader) -> null
+            loader != ModLoader.Fabric && slug in clientSideSlugs -> mod.copyWithSide(Mod.Side.CLIENT)
+            loader != ModLoader.Fabric && slug in bothSideSlugs -> mod.copyWithSide(Mod.Side.BOTH)
             else -> mod.copyWithSide(mod.side)
         }
     }.toMutableList()

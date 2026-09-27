@@ -75,7 +75,6 @@ object GameKotlinRuntime {
             "kotlinx-coroutines-core" to classSource(Job::class.java),
             "kotlinx-serialization-core" to classSource(KSerializer::class.java),
             "kotlinx-serialization-json" to classSource(Json::class.java),
-            "zstd-jni" to classSource("com.github.luben.zstd.Zstd"),
         /*
           in future
           "kotaml" to classSource("com.charleskorn.kaml.Yaml"),

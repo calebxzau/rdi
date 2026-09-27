@@ -27,6 +27,7 @@ dependencies {
     implementation(libs.kotlin.logging.jvm)
 
     testImplementation(kotlin("test"))
+    testRuntimeOnly(libs.zstd.jni)
     testRuntimeOnly(libs.logback.classic)
 }
 

@@ -1,6 +1,7 @@
 package calebxzau.rdi.mclaunch
 
 import calebxzhou.rdi.common.model.McVersion
+import calebxzhou.rdi.common.model.ModLoader
 import calebxzau.rdi.mclaunch.model.MojangDownloadArtifact
 import calebxzau.rdi.mclaunch.model.MojangVersionManifest
 import java.io.File
@@ -38,6 +39,7 @@ data class MinecraftManifestPair(
 fun interface MinecraftManifestProvider {
     fun load(
         mcVersion: McVersion,
+        loader: ModLoader,
         versionId: String,
         versionDir: File,
     ): Result<MinecraftManifestPair>
@@ -47,6 +49,7 @@ data class MinecraftDownloadProgress(
     val bytesDownloaded: Long,
     val totalBytes: Long,
     val fraction: Float,
+    val speedBytesPerSecond: Double = 0.0,
 )
 
 fun interface MinecraftArtifactDownloader {
@@ -78,10 +81,14 @@ data class MinecraftLaunchEnvironment(
                 .start()
         }
     },
+    val mediaRuntimeResolver: (File) -> Result<MediaProcGameRuntime> = { nativeRoot ->
+        MediaProcGameClasspath.resolve(nativeRoot = nativeRoot)
+    },
 )
 
 data class MinecraftLaunchRequest(
     val mcVersion: McVersion,
+    val loader: ModLoader,
     val versionId: String,
     val versionDir: File,
     val account: MinecraftAccount,

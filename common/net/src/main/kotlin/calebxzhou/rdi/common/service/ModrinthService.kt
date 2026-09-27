@@ -23,14 +23,25 @@ import io.ktor.client.call.*
 import io.ktor.client.request.*
 import io.ktor.client.statement.*
 import io.ktor.http.*
+import io.ktor.utils.io.cancel
+import io.ktor.utils.io.copyTo
+import io.ktor.utils.io.readRemaining
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import kotlinx.io.readByteArray
 import kotlinx.serialization.json.Json
 import java.io.File
+import java.nio.file.Files
+import java.nio.file.Path
+import java.nio.file.StandardOpenOption
 import java.util.jar.JarFile
 
 object ModrinthService {
     private val lgr by Loggers
     const val OFFICIAL_URL = "https://api.modrinth.com/v2"
     const val V3_OFFICIAL_URL = "https://api.modrinth.com/v3"
+    private const val MAX_ERROR_BODY_BYTES = 64 * 1024
     data class LoadedModpack(
         val index: ModrinthModpackIndex,
         val file: File,
@@ -45,6 +56,13 @@ object ModrinthService {
         val clientExtras: List<Content>,
     )
 
+    /** A manifest with its recognized Minecraft version and loader, shared by every import path. */
+    data class ParsedIndex(
+        val index: ModrinthModpackIndex,
+        val mcVersion: McVersion,
+        val loader: ModLoader,
+    )
+
     suspend fun loadModpack(
         modpackFile: File,
         resolveModrinthSlugs: suspend (Set<String>) -> Map<String, String> = { emptyMap() }
@@ -52,6 +70,12 @@ object ModrinthService {
         if (!modpackFile.exists()) {
             throw ModpackError("找不到整合包文件: ${modpackFile.path}")
         }
+        val parsed = parseIndex(readIndex(modpackFile)).getOrThrow()
+        loadParsedModpack(parsed, modpackFile, resolveModrinthSlugs).getOrThrow()
+    }
+
+    /** Reads the manifest file without validating its content. */
+    private fun readIndex(modpackFile: File): ModrinthModpackIndex {
         val index = if (modpackFile.isDirectory) {
             if (!hasOverridesDir(modpackFile)) {
                 throw ModpackError("整合包缺少目录：overrides")
@@ -83,7 +107,11 @@ object ModrinthService {
                 }
             }
         }
+        return index
+    }
 
+    /** Validates the manifest fields shared by every Modrinth import path. */
+    fun parseIndex(index: ModrinthModpackIndex): Result<ParsedIndex> = runCatching {
         if (!index.game.equals("minecraft", ignoreCase = true)) {
             throw ModpackError("不支持的游戏类型: ${index.game}")
         }
@@ -101,11 +129,19 @@ object ModrinthService {
         val loaderIdentity = LoaderRecognition.modrinth(index.dependencies).getOrElse { error ->
             throw ModpackError(error.message ?: "不支持的Mod加载器", error)
         }
-        val parsedModloader = loaderIdentity.loader
-        if (!parsedMcVersion.recognizesLoader(parsedModloader)) {
-            throw ModpackError("不支持${parsedMcVersion.mcVer}的${parsedModloader.name}加载器")
-        }
-        if (!parsedMcVersion.supportLoader(parsedModloader)) {
+        ParsedIndex(index, parsedMcVersion, loaderIdentity.loader)
+    }
+
+    /** Resolves catalog content for a manifest that [parseIndex] already validated. */
+    suspend fun loadParsedModpack(
+        parsed: ParsedIndex,
+        modpackFile: File,
+        resolveModrinthSlugs: suspend (Set<String>) -> Map<String, String> = { emptyMap() },
+    ): Result<LoadedModpack> = runCatching {
+        val index = parsed.index
+        val parsedMcVersion = parsed.mcVersion
+        val parsedModloader = parsed.loader
+        if (!parsedMcVersion.supportsRuntime(parsedModloader)) {
             throw ModpackError("已识别为Minecraft${parsedMcVersion.mcVer}／${parsedModloader.name}，当前版本暂不支持导入")
         }
         val supportedEntries = index.files.map { entry ->
@@ -149,7 +185,15 @@ object ModrinthService {
         }.distinct()
         val mrProjectBySlug = if (mrCandidates.isEmpty()) emptyMap() else
             getMultipleProjects(mrCandidates).associateBy { it.slug.trim().lowercase() }
-        val resolution = resolveManifestEntries(index, hashVersions, projects, cfFallback, cfSlugToMrSlug, mrProjectBySlug)
+        val resolution = resolveManifestEntries(
+            index,
+            hashVersions,
+            projects,
+            cfFallback,
+            cfSlugToMrSlug,
+            mrProjectBySlug,
+            parsedModloader,
+        )
 
         LoadedModpack(
             index = index,
@@ -168,13 +212,20 @@ object ModrinthService {
         cfFallback: Map<Pair<ModrinthModpackIndex.FileEntry, String>, Pair<CurseForgeFile, CurseForgeModInfo>?> = emptyMap(),
         cfSlugToMrSlug: Map<String, String> = emptyMap(),
         mrProjectsBySlug: Map<String, ModrinthProject> = emptyMap(),
+        loader: ModLoader,
     ): ManifestResolution {
         val mods = mutableListOf<Mod>()
         val extrasByPath = linkedMapOf<String, Content>()
+        val isFabricPack = loader == ModLoader.Fabric
         index.files.forEach { entry ->
             val path = normalizeManifestPath(entry.path)
             val type = manifestContentType(path) ?: return@forEach
             if (type != ContentType.Mod && entry.env?.client == ModrinthModpackIndex.EnvSide.unsupported) return@forEach
+            if (type == ContentType.Mod && isFabricPack && entry.env?.let { env ->
+                    env.client == ModrinthModpackIndex.EnvSide.unsupported &&
+                        env.server == ModrinthModpackIndex.EnvSide.unsupported
+                } == true
+            ) return@forEach
             val sha1 = entry.hashes.sha1.trim().lowercase()
             val version = hashVersions[sha1]
             val mrVersion = version?.takeIf { versionContainsSha1(it, sha1) }
@@ -182,7 +233,9 @@ object ModrinthService {
                 val project = projects[mrVersion.projectId] ?: throw unresolvedManifestEntry(entry.path)
                 val slug = project.slug.takeIf { it.isNotBlank() } ?: throw unresolvedManifestEntry(entry.path)
                 if (type == ContentType.Mod) {
-                    mods += Mod("mr", mrVersion.projectId, slug, mrVersion.id, sha1, project.toModSide(), entry.downloads)
+                    val catalogSide = project.toModSide()
+                    val side = if (isFabricPack) entry.env.toFabricManifestSide() ?: catalogSide else catalogSide
+                    mods += Mod("mr", mrVersion.projectId, slug, mrVersion.id, sha1, side, entry.downloads)
                 } else {
                     appendExtra(extrasByPath, Content(ContentPlatform.Modrinth, type, mrVersion.projectId, mrVersion.id,
                         slug, sha1, path, ContentSide.Client,
@@ -201,7 +254,8 @@ object ModrinthService {
                 ?: mrProjectsBySlug[slug.trim().lowercase()]?.toModSide()
                 ?: Mod.Side.UNKNOWN
             if (type == ContentType.Mod) {
-                mods += Mod("cf", project.id.toString(), slug, file.id.toString(), file.fileFingerprint.toString(), side, entry.downloads)
+                val resolvedSide = if (isFabricPack) entry.env.toFabricManifestSide() ?: side else side
+                mods += Mod("cf", project.id.toString(), slug, file.id.toString(), file.fileFingerprint.toString(), resolvedSide, entry.downloads)
             } else {
                 appendExtra(extrasByPath, Content(ContentPlatform.CurseForge, type, project.id.toString(), file.id.toString(), slug,
                     file.fileFingerprint.toString(), path, ContentSide.Client,
@@ -276,6 +330,13 @@ object ModrinthService {
         return Mod.Side.BOTH
     }
 
+    private fun ModrinthModpackIndex.Env?.toFabricManifestSide(): Mod.Side? = when {
+        this == null -> null
+        client == ModrinthModpackIndex.EnvSide.unsupported -> Mod.Side.SERVER
+        server == ModrinthModpackIndex.EnvSide.unsupported -> Mod.Side.CLIENT
+        else -> null
+    }
+
     private fun parseCurseForgeFileId(url: String): Int? {
         val match = Regex("/files/(\\d+)/(\\d+)/").find(url) ?: return null
         val idPart1 = match.groupValues.getOrNull(1) ?: return null
@@ -284,7 +345,7 @@ object ModrinthService {
         return (idPart1 + paddedPart2).toIntOrNull()
     }
 
-    fun ModrinthProject.toCardVo(modFile: File? = null): Mod.CardVo {
+    fun ModrinthProject.toCardVo(modFile: File? = null, side: Mod.Side = toModSide()): Mod.CardVo {
         val icons = buildIconUrls(iconUrl)
         val resolvedName = (title ?: slug).ifBlank { slug }
         val localMeta = modFile?.readLocalModCardMeta()
@@ -298,23 +359,86 @@ object ModrinthService {
             intro = introText,
             iconData = localMeta?.iconBytes,
             iconUrls = icons,
-            side = Mod.Side.BOTH
+            side = localMeta?.side ?: side
         )
     }
 
     private data class LocalModCardMeta(
         val iconBytes: ByteArray? = null,
-        val description: String? = null
+        val description: String? = null,
+        val side: Mod.Side? = null
     )
 
     private fun File.readLocalModCardMeta(): LocalModCardMeta = runCatching {
         JarFile(this).use { jar ->
+            val metadata = jar.readModMeta()
             LocalModCardMeta(
                 iconBytes = jar.modLogo,
-                description = jar.readModMeta()?.description
+                description = metadata?.description,
+                side = metadata?.side
             )
         }
     }.getOrDefault(LocalModCardMeta())
+
+    private suspend fun HttpResponse.requireSuccessfulJsonResponse() {
+        val responseType = contentType()
+        val isJson = responseType?.let {
+            it.contentType.equals("application", ignoreCase = true) &&
+                (it.contentSubtype.equals("json", ignoreCase = true) ||
+                    it.contentSubtype.endsWith("+json", ignoreCase = true))
+        } == true
+        if (status.isSuccess() && isJson) return
+
+        val errorMessage = "Modrinth请求失败：HTTP${status.value}，Content-Type=${responseType ?: "<none>"}"
+        val requestDescription = "${request.method.value} ${request.url}"
+        val isHtml = responseType?.match(io.ktor.http.ContentType.Text.Html) == true ||
+            responseType?.match("application/xhtml+xml") == true
+        var htmlFile: Path? = null
+        val responseText = try {
+            val channel = bodyAsChannel()
+            try {
+                if (isHtml) {
+                    withContext(Dispatchers.IO) {
+                        val logsDir = Path.of(System.getenv("LOCALAPPDATA") ?: System.getProperty("user.home"))
+                            .resolve(".rdi/logs")
+                        Files.createDirectories(logsDir)
+                        val file = Files.createTempFile(
+                            logsDir,
+                            "modrinth-error-${status.value}-${System.currentTimeMillis()}-",
+                            ".html"
+                        )
+                        htmlFile = file
+                        Files.newByteChannel(file, StandardOpenOption.WRITE).use { output ->
+                            channel.copyTo(output)
+                        }
+                        "完整HTML响应已保存至${file.toAbsolutePath()}"
+                    }
+                } else {
+                    val bytes = channel.readRemaining(MAX_ERROR_BODY_BYTES.toLong() + 1).use { it.readByteArray() }
+                    val truncated = bytes.size > MAX_ERROR_BODY_BYTES
+                    val preview = if (truncated) bytes.copyOf(MAX_ERROR_BODY_BYTES) else bytes
+                    preview.toString(charset() ?: Charsets.UTF_8).ifEmpty { "<empty>" } +
+                        if (truncated) "\n[响应正文已截断，仅记录前64KiB]" else ""
+                }
+            } finally {
+                channel.cancel()
+            }
+        } catch (error: CancellationException) {
+            htmlFile?.let { file ->
+                lgr.warn(error) { "${errorMessage}，${requestDescription}，保存HTML响应已取消，文件可能不完整：${file.toAbsolutePath()}" }
+            }
+            throw error
+        } catch (error: Exception) {
+            lgr.warn(error) {
+                "${errorMessage}，${requestDescription}，读取或保存响应正文失败" +
+                    (htmlFile?.let { "，文件可能不完整：${it.toAbsolutePath()}" } ?: "")
+            }
+            throw IllegalStateException("${errorMessage}，详情见日志", error)
+        }
+        lgr.warn { "${errorMessage}，${requestDescription}\n${responseText}" }
+        throw IllegalStateException("${errorMessage}，详情见日志")
+    }
+
     suspend fun mrreq(
         path: String,
         method: HttpMethod = HttpMethod.Get,
@@ -327,6 +451,8 @@ object ModrinthService {
             body?.let { setBody(it) }
             params?.forEach { parameter(it.key, it.value) }
             this.method = method
+        }.also { response ->
+            response.requireSuccessfulJsonResponse()
         }
 
         if (!ModService.preferMirror) {
@@ -361,6 +487,8 @@ object ModrinthService {
             body?.let { setBody(it) }
             params?.forEach { parameter(it.key, it.value) }
             this.method = method
+        }.also { response ->
+            response.requireSuccessfulJsonResponse()
         }
 
         if (!ModService.preferMirror) {

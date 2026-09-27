@@ -8,11 +8,13 @@ import calebxzhou.rdi.mc.rcmd.chat.PlayerChatRangeState
 import calebxzhou.rdi.mc.rcmd.tpa.TpaService
 // import calebxzhou.rdi.mc.server.chunkcache.RdiChunkCacheServer
 // import calebxzhou.rdi.mc.server.chunkcache.RdiDelayedChunkCache
-import calebxzhou.rdi.mc.server.firmsection.FirmSectionService
 import calebxzhou.rdi.mc.server.mcpimpl.McpNetwork
 import calebxzhou.rdi.mc.server.network.RServerNetwork
 import calebxzhou.rdi.mc.server.rcmd.PlayerNbtChatRangeStore
+import calebxzhou.rdi.mc.server.rcmd.RcmdForgeServerAdapter
 import calebxzhou.rdi.mc.server.world.TerrainCache201
+import calebxzau.rdi.mc.v20.server.rcmd.RcmdServerRuntime20
+import calebxzhou.rdi.mc.server.rcmd.RcmdServerCommands
 import net.minecraft.ChatFormatting
 import net.minecraft.network.chat.ClickEvent
 import net.minecraft.network.chat.Component
@@ -54,11 +56,16 @@ class RDIMain {
 
         private val lgr: Logger = LogManager.getLogger("rdi")
 
+        private var rcmdAdapter: RcmdForgeServerAdapter? = null
+
         @SubscribeEvent
         @JvmStatic
         fun started(e: ServerStartedEvent) {
             val server = (e.getServer() as? DedicatedServer) ?: return
-            WebSocketClient.start(WsHandler201(server))
+            val adapter = RcmdForgeServerAdapter(server)
+            rcmdAdapter = adapter
+            RcmdServerRuntime20.install(adapter)
+            WebSocketClient.start(WsHandler201(server, adapter))
         }
 
         @SubscribeEvent
@@ -87,7 +94,10 @@ class RDIMain {
 
         @SubscribeEvent @JvmStatic
         fun stopped(e: ServerStoppedEvent) {
+            rcmdAdapter?.let { RcmdServerRuntime20.clear(it) }
+            rcmdAdapter = null
             TerrainCache201.closeAll()
+            RcmdServerCommands.clearPosLocks()
             PlayerChatRangeState.clear()
             TpaService.clear()
             WebSocketClient.stop()
@@ -123,7 +133,6 @@ class RDIMain {
 
         private fun sendJoinMessages(player: ServerPlayer) {
             val range = PlayerChatRangeState.get(player.getUUID())
-            val result = FirmSectionService.list(player)
             player.sendSystemMessage(Component.literal("当前聊天范围：" + range.displayName))
             /*player.sendSystemMessage(
                 Component.literal(

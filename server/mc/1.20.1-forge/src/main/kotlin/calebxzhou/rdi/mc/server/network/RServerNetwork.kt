@@ -6,7 +6,6 @@ package calebxzhou.rdi.mc.server.network
 // import calebxzhou.rdi.mc.chunkcache.RChunkRequestPacket
 import calebxzhou.rdi.mc.common.RGlobalPlayerList
 // import calebxzhou.rdi.mc.server.chunkcache.RdiChunkCacheServer
-import calebxzhou.rdi.mc.server.firmsection.FirmSectionService
 import com.google.gson.Gson
 import net.minecraft.network.FriendlyByteBuf
 import net.minecraft.resources.ResourceLocation
@@ -16,7 +15,6 @@ import net.minecraftforge.network.NetworkDirection
 import net.minecraftforge.network.NetworkRegistry
 import net.minecraftforge.network.PacketDistributor
 import net.minecraftforge.network.simple.SimpleChannel
-import java.util.function.Supplier
 import kotlin.concurrent.Volatile
 
 object RServerNetwork {
@@ -148,9 +146,7 @@ object RServerNetwork {
     }
 
     private fun firmSectionsPacket(server: net.minecraft.server.MinecraftServer) =
-        RFirmSectionsPacket(FirmSectionService.all(server).map {
-            RFirmSectionsPacket.Entry(it.dimensionId, it.chunkX, it.sectionY, it.chunkZ)
-        })
+        RFirmSectionsPacket(emptyList())
 
     private fun sendTo(player: ServerPlayer, packet: Any) {
         CHANNEL.send(PacketDistributor.PLAYER.with { player }, packet)

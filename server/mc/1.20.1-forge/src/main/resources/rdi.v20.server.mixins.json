@@ -1,0 +1,26 @@
+{
+  "required": true,
+  "package": "calebxzau.rdi.mc.v20.server.mixin",
+  "compatibilityLevel": "JAVA_17",
+  "refmap": "rdi.mixins.refmap.json",
+  "injectors": {
+    "defaultRequire": 1
+  },
+  "minVersion": "0.7",
+  "mixins": [
+    "mBoundTickingBlockEntityGuard",
+    "mChinesePlayerName",
+    "mFullBrightLightPacket",
+    "mGuardChunkTick",
+    "mGuardLevelTick",
+    "mGuardServerLevelTick",
+    "mLimitEntitiesInSection",
+    "mLimitExecutor",
+    "mRcmdCommandInput20",
+    "mRcmdPlayerChat20",
+    "mServerboundHelloPacket",
+    "mServerLoginIdentity",
+    "mTickingEntity",
+    "mZstdCompression"
+  ]
+}

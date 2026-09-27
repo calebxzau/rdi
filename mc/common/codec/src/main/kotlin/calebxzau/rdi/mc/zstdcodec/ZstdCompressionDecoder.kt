@@ -46,42 +46,54 @@ internal class ZstdCompressionDecoder(
         }
 
         val compressedSize = input.readableBytes()
+        if (compressedSize == 0) throw DecoderException("Compressed packet contains no Zstd frame")
         if (compressedSize > ZstdCompressionPipeline.MAXIMUM_COMPRESSED_LENGTH) {
             throw DecoderException(
                 "Badly compressed packet - compressed size of $compressedSize is larger than protocol maximum of ${ZstdCompressionPipeline.MAXIMUM_COMPRESSED_LENGTH}"
             )
         }
 
-        val source = ByteArray(compressedSize)
-        input.readBytes(source)
-        val frameSize = Zstd.findFrameCompressedSize(source)
-        if (frameSize != compressedSize.toLong()) {
-            throw DecoderException(
-                "Badly compressed packet - expected one Zstd frame of $compressedSize bytes, found $frameSize"
-            )
+        val sourceBuffer = if (input.isDirect && input.nioBufferCount() == 1) {
+            null
+        } else {
+            context.alloc().directBuffer(compressedSize, compressedSize)
         }
-
-        val decoded = context.alloc().directBuffer(declaredSize, declaredSize)
         try {
-            val destination = decoded.nioBuffer(0, declaredSize)
-            val decodedSize = decompressionContext.decompressByteArrayToDirectByteBuffer(
-                destination,
-                0,
-                declaredSize,
-                source,
-                0,
-                source.size,
-            )
-            if (decodedSize != declaredSize) {
+            sourceBuffer?.writeBytes(input, input.readerIndex(), compressedSize)
+            val source = sourceBuffer?.nioBuffer(sourceBuffer.readerIndex(), compressedSize)
+                ?: input.nioBuffer(input.readerIndex(), compressedSize)
+            val frameSize = Zstd.findFrameCompressedSize(source)
+            if (frameSize != compressedSize.toLong()) {
                 throw DecoderException(
-                    "Badly compressed packet - actual length of uncompressed payload $decodedSize does not match declared size $declaredSize"
+                    "Badly compressed packet - expected one Zstd frame of $compressedSize bytes, found $frameSize"
                 )
             }
-            decoded.writerIndex(decodedSize)
-            output.add(decoded)
-        } catch (exception: Throwable) {
-            decoded.release()
-            throw exception
+
+            val decoded = context.alloc().directBuffer(declaredSize, declaredSize)
+            try {
+                val destination = decoded.nioBuffer(0, declaredSize)
+                val decodedSize = decompressionContext.decompressDirectByteBuffer(
+                    destination,
+                    0,
+                    declaredSize,
+                    source,
+                    source.position(),
+                    compressedSize,
+                )
+                if (decodedSize != declaredSize) {
+                    throw DecoderException(
+                        "Badly compressed packet - actual length of uncompressed payload $decodedSize does not match declared size $declaredSize"
+                    )
+                }
+                decoded.writerIndex(decodedSize)
+                input.skipBytes(compressedSize)
+                output.add(decoded)
+            } catch (exception: Throwable) {
+                decoded.release()
+                throw exception
+            }
+        } finally {
+            sourceBuffer?.release()
         }
     }
 

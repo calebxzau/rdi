@@ -2,6 +2,7 @@ package calebxzau.rdi.client.modcatalog
 
 import calebxzhou.rdi.common.model.McVersion
 import calebxzhou.rdi.common.model.ModLoader
+import calebxzhou.rdi.common.model.supportsRuntime
 import java.nio.file.Path
 import java.time.Duration
 import java.time.Instant
@@ -150,7 +151,7 @@ data class CatalogTarget(
 ) {
     init {
         require(minecraftVersion.enabled) { "Minecraft version is disabled" }
-        require(loader in minecraftVersion.loaderVersions) {
+        require(minecraftVersion.supportsRuntime(loader)) {
             "${minecraftVersion.mcVer} does not support ${loader.name}"
         }
     }

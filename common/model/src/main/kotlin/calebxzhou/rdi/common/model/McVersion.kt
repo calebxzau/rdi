@@ -89,8 +89,15 @@ enum class McVersion(
 }
 fun McVersion.supportLoader(loader: ModLoader): Boolean = this.loaderVersions.containsKey(loader)
 
-fun McVersion.recognizesLoader(loader: ModLoader): Boolean =
-    supportLoader(loader) || (this == McVersion.V201 && loader == ModLoader.Fabric)
+/** Ordered loaders that RDI can currently run for this Minecraft version. */
+val McVersion.runtimeLoaders: List<ModLoader>
+    get() = buildList {
+        addAll(loaderVersions.keys)
+        if (this@runtimeLoaders == McVersion.V201) add(ModLoader.Fabric)
+    }
+
+/** Business/runtime eligibility, separate from configured installer metadata. */
+fun McVersion.supportsRuntime(loader: ModLoader): Boolean = loader in runtimeLoaders
 
 fun McVersion.supportsModpackUpload(): Boolean =
     this == McVersion.V201 || this == McVersion.V211

@@ -2,8 +2,8 @@ package calebxzau.rdi.common.model
 
 import calebxzhou.rdi.common.model.McVersion
 import calebxzhou.rdi.common.model.ModLoader
-import calebxzhou.rdi.common.model.recognizesLoader
 import calebxzhou.rdi.common.model.supportLoader
+import calebxzhou.rdi.common.model.supportsRuntime
 import calebxzhou.rdi.common.serdesJson
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.decodeFromString
@@ -26,12 +26,12 @@ class LoaderRecognitionTest {
     }
 
     @Test
-    fun `fabric is recognized for 1 20 1 but remains unsupported at runtime`() {
-        assertTrue(McVersion.V201.recognizesLoader(ModLoader.Fabric))
+    fun `fabric runs for 1 20 1 without joining the forge installer metadata`() {
+        assertTrue(McVersion.V201.supportsRuntime(ModLoader.Fabric))
         assertFalse(McVersion.V201.supportLoader(ModLoader.Fabric))
-        assertFalse(McVersion.V211.recognizesLoader(ModLoader.Fabric))
-        assertTrue(McVersion.V201.supportLoader(ModLoader.forge))
-        assertTrue(McVersion.V211.supportLoader(ModLoader.neoforge))
+        assertFalse(McVersion.V211.supportsRuntime(ModLoader.Fabric))
+        assertTrue(McVersion.V201.supportsRuntime(ModLoader.forge))
+        assertTrue(McVersion.V211.supportsRuntime(ModLoader.neoforge))
     }
 
     @Test

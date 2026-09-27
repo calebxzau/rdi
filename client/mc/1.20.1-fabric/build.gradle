@@ -1,0 +1,145 @@
+import java.nio.charset.StandardCharsets
+import java.util.Base64
+
+plugins {
+    id 'fabric-loom' version '1.18.2'
+    id 'org.jetbrains.kotlin.jvm' version '2.4.10'
+}
+
+base {
+    archivesName = 'rdi'
+}
+
+group = 'calebxzhou.rdi'
+version = mod_version
+
+def sharedBuildProjects = [':c-mc-common', ':mediaproc']
+sharedBuildProjects.each { projectPath ->
+    evaluationDependsOn(projectPath)
+}
+sharedBuildProjects.each { projectPath ->
+    project(projectPath).layout.buildDirectory.set(
+            rootProject.layout.buildDirectory.dir("shared/${projectPath.substring(1)}")
+    )
+}
+
+def playArg = [
+        'http://127.0.0.1:65231',
+        '127.0.0.1:51468',
+        'Fabric Developer Host',
+        '51468',
+        '68b314bb-adaf-52dd-ab96-b5ed00000000',
+        'FabricDeveloper'
+].join('\n')
+
+java {
+    toolchain.languageVersion = JavaLanguageVersion.of(25)
+    sourceCompatibility = JavaVersion.VERSION_25
+    targetCompatibility = JavaVersion.VERSION_25
+    withSourcesJar()
+}
+
+kotlin {
+    jvmToolchain(25)
+}
+
+loom {
+    mods {
+        rdi {
+            sourceSet sourceSets.main
+        }
+    }
+    runs {
+        client {
+            client()
+            configName = 'Fabric Client'
+            runDir = 'run'
+            programArgs [
+                    "--width",
+                    "2560",
+                    "--height",
+                    "1440",
+            ]
+            vmArg '--enable-native-access=ALL-UNNAMED'
+            vmArg "-Drdi.play=${Base64.encoder.encodeToString(playArg.getBytes(StandardCharsets.UTF_8))}"
+        }
+    }
+}
+
+sourceSets.test.kotlin.srcDir '../../../mc/20/src/test/kotlin'
+sourceSets.test.kotlin.srcDir '../../../mc/common/codec/src/test/kotlin'
+
+tasks.named('test', Test).configure {
+    useJUnitPlatform()
+}
+
+sourceSets.main {
+    java.srcDir '../../../mc/20/src/client/java'
+    kotlin.srcDir '../../../mc/20/src/client/kotlin'
+    kotlin.srcDir '../../../mc/20/src/main/kotlin'
+    kotlin.srcDir '../../../mc/common/codec/src/main/kotlin'
+    kotlin.srcDir '../../../mc/rcmd/src/main/kotlin'
+    resources {
+        srcDir project(":c-mc-common").file("src/main/resources")
+    }
+}
+
+tasks.named('processResources').configure {
+    inputs.property 'version', project.version
+    filesMatching('fabric.mod.json') {
+        expand 'version': project.version
+    }
+}
+
+repositories {
+    mavenCentral()
+    maven { url = 'https://maven.fabricmc.net/' }
+}
+
+dependencies {
+    minecraft "com.mojang:minecraft:${minecraft_version}"
+    mappings loom.officialMojangMappings()
+    modImplementation "net.fabricmc:fabric-loader:${fabric_loader_version}"
+    modImplementation('net.fabricmc.fabric-api:fabric-resource-loader-v0:0.11.12+fb82e9d777')
+    modImplementation('net.fabricmc.fabric-api:fabric-networking-api-v1:1.3.15+0caff8d077')
+    modImplementation('net.fabricmc.fabric-api:fabric-api-base:0.4.32+1802ada577')
+    modImplementation('net.fabricmc.fabric-api:fabric-lifecycle-events-v1:2.2.23+1802ada577')
+    modImplementation('net.fabricmc:fabric-language-kotlin:1.13.13+kotlin.2.4.10')
+
+    implementation project(':c-mc-common')
+    implementation project(':mediaproc')
+
+    testImplementation 'org.jetbrains.kotlin:kotlin-test-junit5:2.4.10'
+    testRuntimeOnly 'org.junit.jupiter:junit-jupiter-engine:6.1.1'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher:6.1.1'
+
+    modImplementation('com.github.luben:zstd-jni:1.5.7-11')
+    modImplementation('org.bytedeco:javacv:1.5.13') {
+        transitive = false
+    }
+    modImplementation('org.bytedeco:javacpp:1.5.13')
+    modImplementation('org.bytedeco:ffmpeg:8.0.1-1.5.13') {
+        transitive = false
+    }
+    modImplementation('org.bytedeco:ffmpeg:8.0.1-1.5.13:windows-x86_64-gpl') {
+        transitive = false
+    }
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+}
+
+tasks.named('jar', Jar).configure {
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+    dependsOn project(':c-mc-common').tasks.named('classes')
+    dependsOn project(':mediaproc').tasks.named('classes')
+    from(project(':c-mc-common').sourceSets.main.output.classesDirs)
+    from(project(':mediaproc').sourceSets.main.output.classesDirs)
+}
+
+tasks.named('remapJar') {
+    archiveBaseName = 'rdi'
+    archiveVersion = '5-mc-client-1.20.1-fabric'
+}
+project(':c-mc-common').ext.registerClientCopyTask(project)

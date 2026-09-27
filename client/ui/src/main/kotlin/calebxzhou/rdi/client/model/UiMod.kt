@@ -8,7 +8,8 @@ import java.util.Locale
 data class UiMod(
     val mod: Mod,
     val card: Mod.CardVo? = null,
-    val file: File? = null
+    val file: File? = null,
+    val fabricEnvironmentSide: Mod.Side? = null,
 ) {
     val key: String
         get() = mod.uiModKey

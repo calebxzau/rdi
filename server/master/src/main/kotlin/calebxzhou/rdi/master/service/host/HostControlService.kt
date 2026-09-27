@@ -9,6 +9,7 @@ import calebxzhou.rdi.common.model.Host
 import calebxzhou.rdi.common.model.HostStatus
 import calebxzhou.rdi.common.model.McVersion
 import calebxzhou.rdi.common.model.Mod
+import calebxzhou.rdi.common.model.ModLoader
 import calebxzhou.rdi.common.model.Modpack
 import calebxzhou.rdi.common.model.isDav
 import calebxzhou.rdi.common.model.normalizedSlug
@@ -16,6 +17,7 @@ import calebxzhou.rdi.common.util.str
 import calebxzhou.rdi.master.model.WsMessage
 import calebxzhou.rdi.master.service.DockerService
 import calebxzhou.rdi.master.service.ModpackService
+import calebxzhou.rdi.master.service.libsDir
 import calebxzhou.rdi.master.service.modpack.ModpackQueryService.getVersion
 import calebxzhou.rdi.master.service.host.HostContainerService.isDisabledMod
 import calebxzhou.rdi.master.service.host.HostContainerService.isServerInstalledMod
@@ -28,6 +30,7 @@ import calebxzhou.rdi.master.service.host.HostRuntimeService.listenCrashOnStart
 import calebxzhou.rdi.model.Role
 import io.ktor.websocket.*
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.withTimeout
 import org.bson.types.ObjectId
@@ -125,7 +128,16 @@ object HostControlService {
         val version = modpack.getVersion(current.packVer) ?: throw RequestError("无此版本")
         requireModernLog4j2Config(modpack.mcVer)
         current.requireRequiredStartupMods(modpack, version)
-        if (!hasEnabledKotlinForForge(current, version) && modpack.mcVer.isModern) {
+        if (modpack.modloader == ModLoader.Fabric) {
+            FabricServerRuntimeFiles.requireAvailable(
+                modpack.libsDir.absoluteFile,
+                modpack.mcVer,
+                modpack.modloader,
+            )
+        }
+        if (modpack.modloader in setOf(ModLoader.forge, ModLoader.neoforge) &&
+            !hasEnabledKotlinForForge(current, version) && modpack.mcVer.isModern
+        ) {
             throw RequestError("请先为此房间安装kotlinforforge模组才能启动")
         }
         DockerService.deleteContainer(current._id.str)
@@ -162,6 +174,28 @@ object HostControlService {
     }
 
     private suspend fun HostContext.restartLocked() {
+        val modpack = calebxzhou.rdi.master.service.modpack.ModpackQueryService.getById(host.modpackId)
+            ?: throw RequestError("无此整合包")
+        if (modpack.modloader == ModLoader.Fabric) {
+            FabricServerRuntimeFiles.requireAvailable(modpack.libsDir.absoluteFile, modpack.mcVer, modpack.modloader)
+            sendCommand("stop")
+            clearShutFlag(host._id)
+            try {
+                withTimeout(120_000L) {
+                    while (true) {
+                        val stoppedRoom = DockerService.findContainer(host._id.str)
+                            ?: throw RequestError("无法确认房间已停止，请稍后重新启动")
+                        if (stoppedRoom.state.equals("exited", ignoreCase = true)) break
+                        delay(500L)
+                    }
+                }
+            } catch (timeout: TimeoutCancellationException) {
+                throw RequestError("房间仍在保存或停止中，请稍后重新启动", timeout)
+            }
+            host.refreshWorldSizeAfterStop(waitForStop = false)
+            fresh().startLocked()
+            return
+        }
         sendCommand("stop")
         clearShutFlag(host._id)
         DockerService.restart(host._id.str)

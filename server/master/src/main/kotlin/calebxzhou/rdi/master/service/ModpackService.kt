@@ -14,7 +14,7 @@ import io.ktor.server.routing.Route
 import java.io.File
 
 val Modpack.dir get() = MODPACK_DATA_DIR.resolve(_id.str)
-val Modpack.libsDir get() = GAME_LIBS_DIR.resolve("${mcVer.mcVer}-${modloader}")
+val Modpack.libsDir get() = GAME_LIBS_DIR.resolve("${mcVer.mcVer}-${modloader.directorySlug}")
 val Modpack.Version.storageDir get() = MODPACK_DATA_DIR.resolve(modpackId.str)
 fun Modpack.Version.tempDir(buildId: String): File = storageDir.resolve(".build-$name-$buildId")
 val Modpack.Version.zip get() = storageDir.resolve("${name}.zip")

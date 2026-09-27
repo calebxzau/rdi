@@ -1,9 +1,6 @@
 package calebxzhou.rdi.mc.server.rcmd
 
 import calebxzhou.rdi.mc.common.RDI
-import calebxzhou.rdi.mc.firmsection.FirmSectionKey
-import calebxzhou.rdi.mc.firmsection.FirmSectionLimits
-import calebxzhou.rdi.mc.firmsection.FirmSectionSetStatus
 import calebxzhou.rdi.mc.rcmd.RcmdCommonServerCommands
 import calebxzhou.rdi.mc.rcmd.RcmdContext
 import calebxzhou.rdi.mc.rcmd.RcmdDispatcher
@@ -17,7 +14,6 @@ import calebxzhou.rdi.mc.rcmd.home.HomeService
 import calebxzhou.rdi.mc.rcmd.tpa.TpaResult
 import calebxzhou.rdi.mc.rcmd.tpa.TpaService
 import calebxzhou.rdi.mc.server.home.HomePlayer201
-import calebxzhou.rdi.mc.server.firmsection.FirmSectionService
 import calebxzhou.rdi.mc.server.tpa.TpaPlayer201
 import calebxzhou.rdi.mc.server.tpa.TpaPlayerLookup201
 import net.minecraft.resources.ResourceKey
@@ -69,6 +65,11 @@ object RcmdServerCommands : RcmdServerCommandHandler {
     @JvmStatic
     fun getChatRange(playerId: UUID): String =
         PlayerChatRangeState.get(playerId).name.lowercase(Locale.ROOT)
+
+    @JvmStatic
+    fun clearPosLocks() {
+        posLocks.clear()
+    }
 
     @SubscribeEvent
     @JvmStatic
@@ -151,61 +152,6 @@ object RcmdServerCommands : RcmdServerCommandHandler {
         return RcmdResult.ok("位置锁定已开启")
     }
 
-    override fun setFirmSection(context: RcmdContext): RcmdResult {
-        val player = playerOrNull(context.source) ?: return RcmdResult.error("此rcmd命令只能由玩家执行")
-        val result = FirmSectionService.set(player)
-        val label = firmSectionLabel(result.key)
-        return when (result.status) {
-            FirmSectionSetStatus.ADDED ->
-                RcmdResult.ok("已持久当前子区块：$label ${firmSectionCountLabel(result.playerCount, result.total)}")
-
-            FirmSectionSetStatus.ALREADY_PRESENT ->
-                RcmdResult.ok("当前子区块已经持久了")
-
-            FirmSectionSetStatus.OCCUPIED_BY_OTHER ->
-                RcmdResult.error("当前子区块已被其他玩家持久了")
-
-            FirmSectionSetStatus.PLAYER_LIMIT_REACHED ->
-                RcmdResult.error("你持久的子区块已达到个人上限${FirmSectionLimits.maxPerson}个")
-
-            FirmSectionSetStatus.TOTAL_LIMIT_REACHED ->
-                RcmdResult.error("持久子区块已达到全世界上限${FirmSectionLimits.maxTotal}个")
-        }
-    }
-
-    override fun unsetFirmSection(context: RcmdContext): RcmdResult {
-        val player = playerOrNull(context.source) ?: return RcmdResult.error("此rcmd命令只能由玩家执行")
-        val result = FirmSectionService.unset(player)
-        val label = firmSectionLabel(result.key)
-        return if (result.removed) {
-            RcmdResult.ok("已取消持久当前子区块：$label ${firmSectionCountLabel(result.playerCount, result.total)}")
-        } else {
-            RcmdResult.ok("当前子区块尚未持久")
-        }
-    }
-
-    override fun listFirmSections(context: RcmdContext): RcmdResult {
-        val player = playerOrNull(context.source) ?: return RcmdResult.error("此rcmd命令只能由玩家执行")
-        val result = FirmSectionService.list(player)
-        if (result.sections.isEmpty()) {
-            return RcmdResult.ok("你还没有持久子区块。${firmSectionCountLabel(result.playerCount, result.total)}")
-        }
-        val lines = buildList {
-            add("持久子区块数量：${firmSectionCountLabel(result.playerCount, result.total)}")
-            result.sections.groupBy { it.dimensionId }.forEach { (dimensionId, sections) ->
-                add("$dimensionId : ${sections.map { firmSectionPositionLabel(it) }}")
-            }
-        }
-        return RcmdResult.ok(lines.joinToString("\n"))
-    }
-
-    override fun setFirmSectionAutoSet(context: RcmdContext): RcmdResult {
-        val player = playerOrNull(context.source) ?: return RcmdResult.error("此rcmd命令只能由玩家执行")
-        val enabled = context.getBool("enabled")
-        FirmSectionService.setAutoSetEnabled(player, enabled)
-        return RcmdResult.ok("放置方块实体时自动设置持久子区块已${if (enabled) "开启" else "关闭"}")
-    }
-
     override fun testEntity(context: RcmdContext): RcmdResult {
         val player = playerOrNull(context.source)
             ?: return RcmdResult.error("此rcmd命令只能由玩家执行")
@@ -259,19 +205,6 @@ object RcmdServerCommands : RcmdServerCommandHandler {
         is RcmdCommandSourceStackSource -> source.player
         else -> null
     }
-
-    private fun firmSectionLabel(key: FirmSectionKey): String =
-        "${key.dimensionId},${key.chunkX},${key.sectionY},${key.chunkZ}"
-
-    private fun firmSectionPositionLabel(key: FirmSectionKey): String =
-        "${key.chunkX},${key.sectionY},${key.chunkZ}"
-
-    private fun firmSectionCountLabel(playerCount: Int, total: Int): String =
-        if (FirmSectionLimits.maxPerson > 0) {
-            "你：${playerCount}/${FirmSectionLimits.maxPerson}，全世界：${total}/${FirmSectionLimits.maxTotal}"
-        } else {
-            "你：${playerCount}个，全世界：${total}/${FirmSectionLimits.maxTotal}"
-        }
 
     private fun TpaResult.toRcmdResult(): RcmdResult =
         if (success) RcmdResult.ok(message) else RcmdResult.error(message)

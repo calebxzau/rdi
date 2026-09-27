@@ -81,7 +81,7 @@ object ModpackUploadService {
     }
 
     private fun requireModpackUploadLoader(mcVersion: McVersion, modLoader: ModLoader) {
-        if (!mcVersion.supportLoader(modLoader)) {
+        if (!mcVersion.supportsRuntime(modLoader)) {
             throw RequestError("当前版本暂不支持上传Minecraft${mcVersion.mcVer}／${modLoader.name}整合包")
         }
     }
@@ -572,7 +572,7 @@ object ModpackUploadService {
             name = verName,
             changelog = "新上传",
             status = Modpack.Status.WAIT,
-            mods = ModpackModProcessor.processMods(mods),
+            mods = ModpackModProcessor.processMods(mods, modpack.modloader),
             clientExtras = clientExtras,
             time = System.currentTimeMillis(),
             uploaderId = uploaderId,

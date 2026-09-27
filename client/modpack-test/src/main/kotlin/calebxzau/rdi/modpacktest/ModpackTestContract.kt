@@ -3,6 +3,7 @@ package calebxzau.rdi.modpacktest
 import calebxzhou.rdi.common.model.McVersion
 import calebxzhou.rdi.common.model.Mod
 import calebxzhou.rdi.common.model.ModLoader
+import calebxzhou.rdi.common.model.ServerLoaderRuntime
 import calebxzau.rdi.common.model.Content
 import java.io.File
 
@@ -52,26 +53,24 @@ interface ModpackTestLauncher {
         onProgress: (String) -> Unit,
     ): Result<Unit>
 
-    suspend fun prepareClientLibraries(
+    suspend fun prepareClientLaunch(
         mcVersion: McVersion,
+        loader: ModLoader,
         versionId: String,
         versionDir: File,
         onProgress: (String) -> Unit,
-    ): Result<Unit>
-
-    fun launchClient(
-        mcVersion: McVersion,
-        versionId: String,
-        versionDir: File,
-        onLine: (String) -> Unit,
-    ): Result<ModpackTestProcess>
+    ): Result<ModpackTestPreparedClient>
 
     fun launchServer(
-        mcVersion: McVersion,
-        loaderVersion: ModLoader.Version,
+        runtime: ServerLoaderRuntime,
         workDir: File,
         onLine: (String) -> Unit,
     ): Result<ModpackTestProcess>
+}
+
+/** One run's prepared client, consumed inside the session's process ownership lock. */
+fun interface ModpackTestPreparedClient {
+    fun launch(onLine: (String) -> Unit): Result<ModpackTestProcess>
 }
 
 interface ModpackTestProcess {

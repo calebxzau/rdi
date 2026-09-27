@@ -2,6 +2,7 @@ package calebxzau.rdi.modpacktest
 
 import calebxzhou.rdi.common.model.McVersion
 import calebxzhou.rdi.common.model.Mod
+import calebxzhou.rdi.common.model.resolveServerRuntime
 import calebxzau.rdi.common.model.ContentSide
 import calebxzhou.rdi.common.util.deleteRecursivelyNoSymlink
 import calebxzhou.rdi.common.util.hardLinkDirectory
@@ -16,6 +17,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
@@ -24,11 +27,13 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
 import kotlin.random.Random
+import kotlin.concurrent.thread
 
 const val CLIENT_TEST_SUCCESS_MARKER = "开始运行客户端测试"
 
@@ -42,7 +47,18 @@ class ModpackTestSession(
     private val modSourceResolver: ModpackTestModSourceResolver,
     private val clientExtraResolver: ModpackTestClientExtraResolver? = null,
 ) : AutoCloseable {
+    private class TestRun(
+        val mods: List<Mod>,
+        val startedAtMillis: Long,
+    ) {
+        var crashTriggered = false
+        var testDir: File? = null
+        var stopRequested = false
+    }
+
     private val logger = KotlinLogging.logger {}
+    private val processLock = Any()
+    private val stopLock = Any()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val _state = MutableStateFlow(ModpackTestState())
     private val logChannel = Channel<String>(Channel.UNLIMITED)
@@ -52,38 +68,54 @@ class ModpackTestSession(
 
     @Volatile
     private var process: ModpackTestProcess? = null
+    private var processOwner: TestRun? = null
+    private var activeRun: TestRun? = null
+    @Volatile
     private var testJob: Job? = null
+    private var testJobOwner: TestRun? = null
     private var testDir: File? = null
     @Volatile
     private var currentMods: List<Mod> = loadedModpack.mods
-    private var crashTriggered = false
-    private var startedAtMillis = 0L
+    private var closed = false
 
-    fun isRunning(): Boolean = testJob?.isActive == true || process?.isAlive() == true
+    fun isRunning(): Boolean = synchronized(processLock) {
+        activeRun != null || process?.isAlive() == true
+    }
 
     fun start(mods: List<Mod>): Result<Unit> = runCatching {
-        check(!isRunning()) { if (target == ModpackTestTarget.CLIENT) "测试客户端已经在运行中" else "测试服务器已经在运行中" }
         if (target == ModpackTestTarget.SERVER) {
-            checkNotNull(loadedModpack.mcVersion.loaderVersions[loadedModpack.modloader]) {
-                "缺少加载器版本配置，无法启动测试服务器"
+            checkNotNull(loadedModpack.mcVersion.resolveServerRuntime(loadedModpack.modloader)) {
+                "不支持${loadedModpack.mcVersion.mcVer} ${loadedModpack.modloader}测试服务端"
             }
         }
-        currentMods = mods.toList()
-        crashTriggered = false
-        startedAtMillis = System.currentTimeMillis()
-        _state.value = ModpackTestState(status = ModpackTestStatus.RUNNING)
-        emitLog(if (target == ModpackTestTarget.CLIENT) "[RDI] 启动客户端测试..." else "[RDI] 启动测试服务器...")
+        val run = synchronized(processLock) {
+            check(!closed) { "整合包测试会话已关闭" }
+            if (process?.isAlive() != true) {
+                process = null
+                processOwner = null
+            }
+            check(activeRun == null && process == null) {
+                if (target == ModpackTestTarget.CLIENT) "测试客户端已经在运行中" else "测试服务器已经在运行中"
+            }
+            TestRun(mods.toList(), System.currentTimeMillis()).also {
+                activeRun = it
+                currentMods = it.mods
+                _state.value = ModpackTestState(status = ModpackTestStatus.RUNNING)
+            }
+        }
+        emitLog(run, if (target == ModpackTestTarget.CLIENT) "[RDI] 启动客户端测试..." else "[RDI] 启动测试服务器...")
 
-        val job = scope.launch {
+        val job = scope.launch(start = kotlinx.coroutines.CoroutineStart.LAZY) {
             try {
+                ensureRunActive(run)
                 when (target) {
-                    ModpackTestTarget.CLIENT -> runClientTest()
-                    ModpackTestTarget.SERVER -> runServerTest()
+                    ModpackTestTarget.CLIENT -> runClientTest(run)
+                    ModpackTestTarget.SERVER -> runServerTest(run)
                 }
             } catch (cancel: CancellationException) {
                 throw cancel
             } catch (cause: Throwable) {
-                fail(
+                fail(run,
                     message = if (target == ModpackTestTarget.CLIENT) {
                         "启动客户端测试失败: ${cause.message}"
                     } else {
@@ -91,203 +123,339 @@ class ModpackTestSession(
                     },
                     cause = cause,
                 )
-                terminateProcess().onFailure { logger.warn(it) { "终止整合包测试进程失败" } }
+                terminateProcess(run).onFailure { logger.warn(it) { "终止整合包测试进程失败" } }
             }
         }
-        testJob = job
-        job.invokeOnCompletion {
-            if (testJob === job) testJob = null
+        synchronized(processLock) {
+            if (isRunCurrentLocked(run) && !run.stopRequested) {
+                testJob = job
+                testJobOwner = run
+            } else {
+                job.cancel()
+            }
         }
+        job.invokeOnCompletion {
+            if (it is CancellationException) {
+                terminateProcess(run).onFailure { cause -> logger.warn(cause) { "取消整合包测试时终止进程失败" } }
+            }
+            synchronized(processLock) {
+                if (testJob === job && testJobOwner === run) {
+                    testJob = null
+                    testJobOwner = null
+                }
+                if (activeRun === run) {
+                    if (it is CancellationException && _state.value.status == ModpackTestStatus.RUNNING) {
+                        _state.value = _state.value.copy(status = ModpackTestStatus.STOPPED)
+                    }
+                    activeRun = null
+                }
+            }
+        }
+        job.start()
         return@runCatching
     }
 
     fun onModsChanged(mods: List<Mod>) {
         currentMods = mods.toList()
-        val previous = _state.value
-        _state.value = previous.copy(
-            status = if (previous.status == ModpackTestStatus.PASSED) ModpackTestStatus.NOT_RUN else previous.status,
-            passSeconds = if (previous.status == ModpackTestStatus.PASSED) null else previous.passSeconds,
-            testedModsSignature = null,
-        )
+        synchronized(processLock) {
+            val previous = _state.value
+            _state.value = previous.copy(
+                status = if (previous.status == ModpackTestStatus.PASSED) ModpackTestStatus.NOT_RUN else previous.status,
+                passSeconds = if (previous.status == ModpackTestStatus.PASSED) null else previous.passSeconds,
+                testedModsSignature = null,
+            )
+        }
     }
 
     fun stop(): Result<Unit> = stop(markStopped = true, emitMessage = true)
 
     override fun close() {
-        testJob?.cancel()
-        testJob = null
-        terminateProcess().onFailure { logger.warn(it) { "关闭整合包测试进程失败" } }
-        scope.cancel()
-        testDir?.let { dir ->
-            runCatching { dir.deleteRecursivelyNoSymlink() }
-                .onFailure { logger.warn(it) { "清理整合包测试目录失败: ${dir.absolutePath}" } }
+        val (activeJob, originalDir) = synchronized(processLock) {
+            closed = true
+            testJob to testDir
         }
-        testDir = null
+        activeJob?.cancel()
+        scope.cancel()
         logChannel.close()
+        thread(name = "modpack-test-cleanup", isDaemon = true) {
+            val (activeProcess, stopResult) = stopOwnedProcess()
+            stopResult.onFailure { logger.warn(it) { "关闭整合包测试进程失败" } }
+            if (stopResult.isFailure || activeProcess?.isAlive() == true) {
+                logger.warn { "测试进程未确认退出，保留测试目录以避免影响世界保存: ${originalDir?.absolutePath}" }
+                return@thread
+            }
+            runBlocking { activeJob?.join() }
+            val dir = synchronized(processLock) {
+                testDir.also { testDir = null }
+            } ?: originalDir
+            dir?.let {
+                runCatching { it.deleteRecursivelyNoSymlink() }
+                    .onFailure { cause -> logger.warn(cause) { "清理整合包测试目录失败: ${it.absolutePath}" } }
+            }
+        }
     }
 
-    private suspend fun runClientTest() {
+    private suspend fun runClientTest(run: TestRun) {
         environment.launcher.prepareClientLoader(
             mcVersion = loadedModpack.mcVersion,
             loader = loadedModpack.modloader,
-            onProgress = { emitLog("[RDI] $it") },
+            onProgress = { emitLog(run, "[RDI] $it") },
         ).getOrThrow()
+        ensureRunActive(run)
         val versionDir = createClientTestVersionDir(
             loadedModpack = loadedModpack,
-            mods = currentMods,
+            mods = run.mods,
             workDir = environment.paths.workDir,
-            existingDir = testDir,
+            existingDir = run.testDir,
             modSourceResolver = modSourceResolver,
             clientExtraResolver = clientExtraResolver,
         )
-        testDir = versionDir
-        environment.launcher.prepareClientLibraries(
+        setTestDir(run, versionDir)
+        val preparedClient = environment.launcher.prepareClientLaunch(
             mcVersion = loadedModpack.mcVersion,
+            loader = loadedModpack.modloader,
             versionId = versionDir.name,
             versionDir = versionDir,
-            onProgress = { emitLog("[RDI] $it") },
+            onProgress = { emitLog(run, "[RDI] $it") },
         ).getOrThrow()
-        val launchedProcess = environment.launcher.launchClient(
-            mcVersion = loadedModpack.mcVersion,
-            versionId = versionDir.name,
-            versionDir = versionDir,
-            onLine = ::handleClientLine,
-        ).getOrThrow()
-        process = launchedProcess
-        completeProcess(launchedProcess, launchedProcess.waitFor().getOrThrow(), "客户端测试异常退出")
+        ensureRunActive(run)
+        val launchedProcess = launchAndRegisterProcess(run) {
+            preparedClient.launch { line -> handleClientLine(run, line) }
+        }
+        completeProcess(run, launchedProcess, launchedProcess.waitFor().getOrThrow(), "客户端测试异常退出")
     }
 
-    private suspend fun runServerTest() {
-        val loaderVersion = checkNotNull(loadedModpack.mcVersion.loaderVersions[loadedModpack.modloader])
+    private suspend fun runServerTest(run: TestRun) {
+        val runtime = checkNotNull(loadedModpack.mcVersion.resolveServerRuntime(loadedModpack.modloader)) {
+            "不支持${loadedModpack.mcVersion.mcVer} ${loadedModpack.modloader}测试服务端"
+        }
         val workDir = createServerTestWorkDir(
             loadedModpack = loadedModpack,
-            mods = currentMods,
+            mods = run.mods,
             paths = environment.paths,
-            existingDir = testDir,
+            existingDir = run.testDir,
             modSourceResolver = modSourceResolver,
         )
-        testDir = workDir
-        val launchedProcess = environment.launcher.launchServer(
-            mcVersion = loadedModpack.mcVersion,
-            loaderVersion = loaderVersion,
-            workDir = workDir,
-            onLine = ::handleServerLine,
-        ).getOrThrow()
-        process = launchedProcess
-        completeProcess(launchedProcess, launchedProcess.waitFor().getOrThrow(), "测试服务器异常退出")
+        setTestDir(run, workDir)
+        val launchedProcess = launchAndRegisterProcess(run) {
+            environment.launcher.launchServer(
+                runtime = runtime,
+                workDir = workDir,
+                onLine = { line -> handleServerLine(run, line) },
+            )
+        }
+        completeProcess(run, launchedProcess, launchedProcess.waitFor().getOrThrow(), "测试服务器异常退出")
     }
 
-    private fun completeProcess(completedProcess: ModpackTestProcess, exitCode: Int, exitMessage: String) {
-        if (process === completedProcess) process = null
-        val current = _state.value
-        if (current.status == ModpackTestStatus.PASSED) return
-        _state.value = current.copy(
-            status = if (crashTriggered) ModpackTestStatus.FAILED else ModpackTestStatus.STOPPED,
-            errorMessage = if (exitCode != 0 && crashTriggered) "$exitMessage: $exitCode" else current.errorMessage,
-        )
+    private suspend fun launchAndRegisterProcess(
+        run: TestRun,
+        launch: () -> Result<ModpackTestProcess>,
+    ): ModpackTestProcess {
+        val ownerJob = currentCoroutineContext()[Job]
+        ownerJob?.ensureActive()
+        val launchedProcess = synchronized(processLock) {
+            ownerJob?.ensureActive()
+            if (!isRunCurrentLocked(run)) throw CancellationException("整合包测试已取消")
+            check(process == null) { "已有整合包测试进程正在运行" }
+            launch().getOrThrow().also {
+                process = it
+                processOwner = run
+            }
+        }
+        ownerJob?.ensureActive()
+        return launchedProcess
     }
 
-    private fun handleClientLine(line: String) {
-        emitLog(line)
-        if (_state.value.status != ModpackTestStatus.RUNNING) return
+    private fun completeProcess(
+        run: TestRun,
+        completedProcess: ModpackTestProcess,
+        exitCode: Int,
+        exitMessage: String,
+    ) {
+        synchronized(processLock) {
+            if (process === completedProcess && processOwner === run) {
+                process = null
+                processOwner = null
+            }
+            if (!isRunCurrentLocked(run)) return
+            val current = _state.value
+            if (current.status == ModpackTestStatus.PASSED) return
+            _state.value = current.copy(
+                status = if (run.crashTriggered) ModpackTestStatus.FAILED else ModpackTestStatus.STOPPED,
+                errorMessage = if (exitCode != 0 && run.crashTriggered) "$exitMessage: $exitCode" else current.errorMessage,
+            )
+        }
+    }
+
+    private fun handleClientLine(run: TestRun, line: String) {
+        emitLog(run, line)
+        if (!isActiveRun(run) || _state.value.status != ModpackTestStatus.RUNNING) return
         when {
             line.contains(CLIENT_TEST_SUCCESS_MARKER) -> {
-                val elapsed = (System.currentTimeMillis() - startedAtMillis) / 1000.0
-                _state.value = _state.value.copy(
-                    status = ModpackTestStatus.PASSED,
-                    passSeconds = "%.1f".format(elapsed),
-                    testedModsSignature = currentModsSignature(),
-                    errorMessage = null,
-                )
-                emitLog("[RDI] 客户端测试通过")
-                terminateProcessAfter(500L)
+                synchronized(processLock) {
+                    if (!isRunCurrentLocked(run)) return
+                    val elapsed = (System.currentTimeMillis() - run.startedAtMillis) / 1000.0
+                    _state.value = _state.value.copy(
+                        status = ModpackTestStatus.PASSED,
+                        passSeconds = "%.1f".format(elapsed),
+                        testedModsSignature = currentModsSignature(run),
+                        errorMessage = null,
+                    )
+                }
+                emitLog(run, "[RDI] 客户端测试通过")
+                terminateProcessAfter(run, 500L)
             }
 
             CLIENT_CRASH_TRIGGER_KEYWORDS.any { line.contains(it, ignoreCase = true) } -> {
-                crashTriggered = true
-                _state.value = _state.value.copy(status = ModpackTestStatus.FAILED)
-                terminateProcessAfter(1000L)
+                synchronized(processLock) {
+                    if (!isRunCurrentLocked(run)) return
+                    run.crashTriggered = true
+                    _state.value = _state.value.copy(status = ModpackTestStatus.FAILED)
+                }
+                terminateProcessAfter(run, 1000L)
             }
         }
     }
 
-    private fun handleServerLine(line: String) {
-        emitLog(line)
-        if (_state.value.status != ModpackTestStatus.RUNNING) return
+    private fun handleServerLine(run: TestRun, line: String) {
+        emitLog(run, line)
+        if (!isActiveRun(run) || _state.value.status != ModpackTestStatus.RUNNING) return
         val passed = SERVER_PASS_REGEX.find(line)
         when {
             passed != null -> {
-                _state.value = _state.value.copy(
-                    status = ModpackTestStatus.PASSED,
-                    passSeconds = passed.groupValues.getOrNull(1),
-                    testedModsSignature = currentModsSignature(),
-                    errorMessage = null,
-                )
-                terminateProcessAfter(1000L)
+                synchronized(processLock) {
+                    if (!isRunCurrentLocked(run)) return
+                    _state.value = _state.value.copy(
+                        status = ModpackTestStatus.PASSED,
+                        passSeconds = passed.groupValues.getOrNull(1),
+                        testedModsSignature = currentModsSignature(run),
+                        errorMessage = null,
+                    )
+                }
+                terminateProcessAfter(run, 1000L)
             }
 
-            line.contains("Error: could not open") -> emitLog(
+            line.contains("Error: could not open") -> emitLog(run,
                 "${loadedModpack.mcVersion.mcVer}-${loadedModpack.modloader.name}缺少测试服务端文件，请在界面上方下载"
             )
 
             SERVER_CRASH_TRIGGER_KEYWORDS.any { line.contains(it, ignoreCase = true) } -> {
-                crashTriggered = true
-                _state.value = _state.value.copy(status = ModpackTestStatus.FAILED)
-                terminateProcessAfter(1000L)
+                synchronized(processLock) {
+                    if (!isRunCurrentLocked(run)) return
+                    run.crashTriggered = true
+                    _state.value = _state.value.copy(status = ModpackTestStatus.FAILED)
+                }
+                terminateProcessAfter(run, 1000L)
             }
         }
     }
 
-    private fun terminateProcessAfter(delayMillis: Long) {
+    private fun terminateProcessAfter(run: TestRun, delayMillis: Long) {
         scope.launch {
             delay(delayMillis)
-            terminateProcess().onFailure { logger.warn(it) { "终止整合包测试进程失败" } }
+            terminateProcess(run).onFailure { logger.warn(it) { "终止整合包测试进程失败" } }
         }
     }
 
     private fun stop(markStopped: Boolean, emitMessage: Boolean): Result<Unit> {
         val wasRunning = isRunning()
-        testJob?.cancel()
-        testJob = null
-        return terminateProcess().map {
-            if (wasRunning && markStopped && _state.value.status != ModpackTestStatus.PASSED) {
-                _state.value = _state.value.copy(status = ModpackTestStatus.STOPPED)
+        val (run, job) = synchronized(processLock) {
+            val ownedRun = activeRun ?: processOwner
+            if (ownedRun != null) ownedRun.stopRequested = true
+            ownedRun to testJob
+        }
+        job?.cancel()
+        return terminateProcess(run).map {
+            synchronized(processLock) {
+                if (run != null && isRunCurrentLocked(run) && wasRunning && markStopped &&
+                    _state.value.status != ModpackTestStatus.PASSED
+                ) {
+                    _state.value = _state.value.copy(status = ModpackTestStatus.STOPPED)
+                }
             }
             if (wasRunning && emitMessage) {
-                emitLog(
+                val message =
                     if (target == ModpackTestTarget.CLIENT) {
                         "[RDI] 已发送停止客户端测试指令"
                     } else {
                         "[RDI] 已发送停止测试服务器指令"
                     }
-                )
+                if (run != null) emitLog(run, message) else logChannel.trySend(message)
             }
         }.onFailure { cause ->
             logger.warn(cause) { "停止整合包测试失败" }
-            _state.value = _state.value.copy(errorMessage = "停止测试失败: ${cause.message}")
+            synchronized(processLock) {
+                if (run != null && isRunCurrentLocked(run)) {
+                    _state.value = _state.value.copy(errorMessage = "停止测试失败: ${cause.message}")
+                }
+            }
         }
     }
 
-    private fun terminateProcess(): Result<Unit> {
-        val activeProcess = process ?: return Result.success(Unit)
-        process = null
-        return activeProcess.stop()
+    private fun terminateProcess(run: TestRun?): Result<Unit> {
+        return synchronized(stopLock) {
+            val activeProcess = synchronized(processLock) {
+                process.takeIf { run != null && processOwner === run }
+            } ?: return@synchronized Result.success(Unit)
+            val result = activeProcess.stop()
+            synchronized(processLock) {
+                if (result.isSuccess && !activeProcess.isAlive() && process === activeProcess && processOwner === run) {
+                    process = null
+                    processOwner = null
+                }
+            }
+            result
+        }
     }
 
-    private fun currentModsSignature(): String = currentMods.asSequence()
+    private fun stopOwnedProcess(): Pair<ModpackTestProcess?, Result<Unit>> = synchronized(stopLock) {
+        val activeProcess = synchronized(processLock) { process }
+        if (activeProcess == null) return@synchronized null to Result.success(Unit)
+        val result = activeProcess.stop()
+        synchronized(processLock) {
+            if (result.isSuccess && !activeProcess.isAlive() && process === activeProcess) {
+                process = null
+                processOwner = null
+            }
+        }
+        activeProcess to result
+    }
+
+    private fun currentModsSignature(run: TestRun): String = run.mods.asSequence()
         .sortedBy(::modStableKey)
         .joinToString("|") { "${modStableKey(it)}:${it.side.name}" }
 
-    private fun emitLog(message: String) {
-        logChannel.trySend(message)
+    private fun emitLog(run: TestRun, message: String) {
+        synchronized(processLock) {
+            if (isRunCurrentLocked(run)) logChannel.trySend(message)
+        }
     }
 
-    private fun fail(message: String, cause: Throwable) {
-        logger.error(cause) { message }
-        _state.value = _state.value.copy(
-            status = ModpackTestStatus.FAILED,
-            errorMessage = message,
-        )
+    private fun isActiveRun(run: TestRun): Boolean = synchronized(processLock) { isRunCurrentLocked(run) }
+
+    private fun isRunCurrentLocked(run: TestRun): Boolean = activeRun === run && !closed
+
+    private fun ensureRunActive(run: TestRun) {
+        if (!isActiveRun(run)) throw CancellationException("整合包测试已结束")
+    }
+
+    private fun setTestDir(run: TestRun, directory: File) {
+        synchronized(processLock) {
+            run.testDir = directory
+            if (activeRun === run) testDir = directory
+            if (!isRunCurrentLocked(run)) throw CancellationException("整合包测试已结束")
+        }
+    }
+
+    private fun fail(run: TestRun, message: String, cause: Throwable) {
+        synchronized(processLock) {
+            if (!isRunCurrentLocked(run)) return
+            logger.error(cause) { message }
+            _state.value = _state.value.copy(
+                status = ModpackTestStatus.FAILED,
+                errorMessage = message,
+            )
+        }
     }
 }
 

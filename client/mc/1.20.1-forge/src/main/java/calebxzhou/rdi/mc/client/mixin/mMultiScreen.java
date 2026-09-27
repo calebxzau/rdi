@@ -13,7 +13,7 @@ import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
-import static calebxzhou.rdi.mc.client.RDIMain.JOIN_BUTTON;
+import static calebxzau.rdi.mc.v20.client.RoomJoinUi20.JOIN_BUTTON;
 
 /**
  * calebxzhou @ 2026-01-26 20:41

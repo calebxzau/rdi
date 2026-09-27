@@ -3,7 +3,7 @@ package calebxzhou.rdi.client.service
 import calebxzhou.rdi.client.database.MinecraftInstallationStore
 import calebxzhou.rdi.common.model.McVersion
 import calebxzhou.rdi.common.model.ModLoader
-import calebxzhou.rdi.common.model.recognizesLoader
+import calebxzhou.rdi.common.model.supportsRuntime
 import calebxzhou.rdi.common.serdesJson
 import calebxzau.rdi.mclaunch.model.MojangVersionManifest
 import io.github.oshai.kotlinlogging.KotlinLogging
@@ -57,7 +57,7 @@ internal fun detectLocalModLoader(
         require(libraryLoader == entrypointLoader) { "版本清单的启动类与Mod加载器运行库冲突" }
     }
     val loader = entrypointLoader ?: error("不支持启动类${mainClass.orEmpty()}")
-    require(mcVersion.recognizesLoader(loader)) { "不支持${mcVersion.mcVer}/$loader" }
+    require(mcVersion.supportsRuntime(loader)) { "不支持${mcVersion.mcVer}/$loader" }
     loader
 }
 
@@ -118,7 +118,7 @@ class LocalModpackScanner(
             manifest.libraries.map { it.name },
             mcVersion,
         ).getOrThrow()
-        require(modLoader in mcVersion.loaderVersions) { "不支持${mcVersion.mcVer}/$modLoader" }
+        require(mcVersion.supportsRuntime(modLoader)) { "不支持${mcVersion.mcVer}/$modLoader" }
 
         LocalModpackCandidate(
             name = name,
