@@ -38,6 +38,7 @@ fun Route.baseWorldRoutes() = route("/baseworld") {
         val account = call.player()
         response(
             data = call.baseWorldService().create(
+                owner = account,
                 ownerId = account._id.toUUID(),
                 name = dto.name,
                 levelType = dto.levelType,

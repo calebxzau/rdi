@@ -21,6 +21,8 @@ import calebxzau.rdi.server.service.upload.ChunkedUploadService
 import calebxzau.rdi.server.account.PgAccountRepo
 import calebxzhou.rdi.common.util.validateModpackName
 import calebxzau.rdi.common.util.uuid7j
+import calebxzhou.rdi.common.model.RAccount
+import calebxzhou.rdi.common.model.isDav
 import io.ktor.utils.io.ByteReadChannel
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -91,6 +93,7 @@ class BaseWorldService(
         generatorSettings: String?,
         size: Long,
         generated: Boolean = false,
+        owner: RAccount,
     ): Result<BaseWorld> = resultOf {
         name.validateModpackName().getOrElse { error ->
             throw RequestError(error.message?.replace("整合包", "地图模板") ?: "地图模板名称不正确", error)
@@ -118,7 +121,9 @@ class BaseWorldService(
                     createdMarker = true
                     val created = database.transaction {
                         if (!accounts.lock(ownerId)) throw RequestError("玩家不存在")
-                        if (repository.countByOwner(ownerId) >= 3) throw RequestError("每位玩家最多拥有3个地图模板")
+                        if(!owner.isDav){
+                            if (repository.countByOwner(ownerId) >= 3) throw RequestError("每位玩家最多拥有3个地图模板")
+                        }
                         repository.create(id, ownerId, name, levelType, generatorSettings, size)
                     }
                     inserted = true
@@ -137,7 +142,7 @@ class BaseWorldService(
         }
         database.transaction {
             if (!accounts.lock(ownerId)) throw RequestError("玩家不存在")
-            if (repository.countByOwner(ownerId) >= 3) throw RequestError("每位玩家最多拥有3个地图模板")
+            if (!owner.isDav && repository.countByOwner(ownerId) >= 3) throw RequestError("每位玩家最多拥有3个地图模板")
             repository.create(ownerId, name, levelType, generatorSettings, size)
         }
     }
