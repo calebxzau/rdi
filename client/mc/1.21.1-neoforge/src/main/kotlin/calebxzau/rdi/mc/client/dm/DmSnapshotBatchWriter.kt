@@ -29,8 +29,8 @@ object DmSnapshotBatchWriter {
         val records = ArrayList<Record>(batch.plans.size)
         val started = System.nanoTime()
         fun check() {
-            check(!cancelled()) { "FirmChunk同步已取消" }
-            require(deadlineNanos - System.nanoTime() > 0L) { "FirmChunk同步本地写入超时" }
+            check(!cancelled()) { "SyncChunk同步已取消" }
+            require(deadlineNanos - System.nanoTime() > 0L) { "SyncChunk同步本地写入超时" }
         }
         fun read(future: CompletableFuture<java.util.Optional<CompoundTag>>?, description: String): CompoundTag? {
             if (future == null) return null

@@ -9,13 +9,11 @@
     "defaultRequire": 1
   },
   "mixins": [
-    "AChunkMap",
     "AServerEntity",
     "mAllowChineseNameLogin",
     "mFullBrightLightPacket",
     "mArsNouveauAlakarkinosRecipeSync",
     "mBoundTickingBlockEntityGuard",
-    "mCancelWorldGenAnimalSpawning",
     "mChatMsg",
     "mChinesePlayerName",
     "mGuardChunkTick",

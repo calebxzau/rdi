@@ -12,7 +12,6 @@ import calebxzhou.rdi.mc.server.mcpimpl.McpNetwork
 import calebxzhou.rdi.mc.server.network.RServerNetwork
 import calebxzhou.rdi.mc.server.rcmd.PlayerNbtChatRangeStore
 import calebxzhou.rdi.mc.server.rcmd.RcmdForgeServerAdapter
-import calebxzhou.rdi.mc.server.world.TerrainCache201
 import calebxzau.rdi.mc.v20.server.rcmd.RcmdServerRuntime20
 import calebxzhou.rdi.mc.server.rcmd.RcmdServerCommands
 import net.minecraft.ChatFormatting
@@ -96,7 +95,6 @@ class RDIMain {
         fun stopped(e: ServerStoppedEvent) {
             rcmdAdapter?.let { RcmdServerRuntime20.clear(it) }
             rcmdAdapter = null
-            TerrainCache201.closeAll()
             RcmdServerCommands.clearPosLocks()
             PlayerChatRangeState.clear()
             TpaService.clear()
@@ -121,7 +119,6 @@ class RDIMain {
                 }
             }
             RServerNetwork.sendLastTo(player)
-            RServerNetwork.sendFirmSectionsTo(player)
             sendJoinSubtitle(player)
         }
 

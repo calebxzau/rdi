@@ -27,7 +27,6 @@ sourceSets.main {
     kotlin.srcDir '../../../mc/20/src/server/kotlin'
     kotlin.srcDir '../../../mc/common/2021/src/main/kotlin'
     kotlin.srcDir '../../../mc/common/codec/src/main/kotlin'
-    kotlin.srcDir '../../../mc/firmsection/src/main/kotlin'
     kotlin.srcDir '../../../mc/syncchunk/src/main/kotlin'
     kotlin.srcDir '../../../mc/rcmd/src/main/kotlin'
     kotlin.srcDir '../../../mc/rmcp/server/src/main/kotlin'
@@ -100,8 +99,6 @@ legacyForge {
             systemProperty("rdi.ihq.url", "127.0.0.1:65231")
             systemProperty("rdi.debug", "true")
             systemProperty("rdi.host.id", "695f9e5ad05510e77c09ea1a")
-            systemProperty 'rdi.onlySaveFirmSections', 'true'
-            systemProperty "rdi.terrain.cache.path","C:\\Users\\calebxzhou\\Documents\\chunkcachetest\\20"
             systemProperty("mixin.hotSwap", "true")
             programArguments = [
                 "--nogui",

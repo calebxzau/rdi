@@ -4,6 +4,7 @@ import calebxzhou.rdi.common.model.Host
 import calebxzhou.rdi.common.model.ModLoader
 import calebxzhou.rdi.common.model.Modpack
 import calebxzhou.rdi.common.model.McVersion
+import calebxzhou.rdi.common.model.World
 import calebxzau.rdi.common.model.Content
 import calebxzau.rdi.common.model.ContentPlatform
 import calebxzau.rdi.common.model.ContentSide
@@ -25,6 +26,40 @@ import kotlin.test.assertEquals
 import kotlin.test.assertNull
 
 class MongoCodecsTest {
+    @Test
+    fun `production Mongo codecs read worlds with retired section metadata`(): Unit {
+        val legacy = BsonDocument.parse(
+            """
+            {
+                "_id": {"${'$'}oid": "00112233445566778899aabb"},
+                "name": "Existing world",
+                "ownerId": {"${'$'}oid": "aabbccddeeff001122334455"},
+                "modpackId": {"${'$'}oid": "11223344556677889900aabb"},
+                "size": 42,
+                "sections": [{"dimension": "minecraft:overworld", "chunkPos": 12, "sectionY": 4}]
+            }
+            """.trimIndent(),
+        )
+        val codec = productionMongoCodecRegistry().get(World::class.java)
+
+        val world = codec.decode(BsonDocumentReader(legacy), DecoderContext.builder().build())
+
+        assertEquals(
+            World(
+                _id = ObjectId("00112233445566778899aabb"),
+                name = "Existing world",
+                ownerId = ObjectId("aabbccddeeff001122334455"),
+                modpackId = ObjectId("11223344556677889900aabb"),
+                size = 42,
+            ),
+            world,
+        )
+        val encoded = BsonDocument().also { document ->
+            codec.encode(BsonDocumentWriter(document), world, EncoderContext.builder().build())
+        }
+        assertNull(encoded["sections"])
+    }
+
     @Test
     fun `production Mongo codecs preserve version client extras and missing field defaults`() {
         val pack = Modpack(

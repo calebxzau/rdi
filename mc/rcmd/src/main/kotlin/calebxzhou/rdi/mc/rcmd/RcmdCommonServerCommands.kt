@@ -6,7 +6,6 @@ object RcmdCommonServerCommands {
         dispatcher: RcmdDispatcher,
         handler: RcmdServerCommandHandler,
         debug: Boolean = false,
-        includeFirmSection: Boolean = true,
     ) {
         dispatcher.register(
             RcmdCommandSpec.builder("ping")

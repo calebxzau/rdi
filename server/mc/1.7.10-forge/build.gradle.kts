@@ -40,7 +40,6 @@ kotlin {
 }
 
 kotlin.sourceSets.named("main") {
-    kotlin.srcDir(file("../../../mc/firmsection/src/main/kotlin"))
     kotlin.srcDir(file("../../../mc/rcmd/src/main/kotlin"))
     kotlin.srcDir(file("../../../mc/rmcp/common/src/main/kotlin"))
     kotlin.srcDir(file("../../../ktutils/std/src/main/kotlin"))
@@ -63,9 +62,7 @@ tasks.withType<Jar>().configureEach {
 }
 
 tasks.named<RunMinecraftTask>("runServer21") {
-    systemProperty("rdi.onlySaveFirmSections", "true")
     systemProperty("rdi.ihq.url", "127.0.0.1:65231")
-    systemProperty("rdi.terrain.cache.path","C:\\Users\\calebxzhou\\Documents\\chunkcachetest\\7")
     systemProperty("rdi.host.id", "697b286a8e2f0e5c09a78b22")
     systemProperty("mixin.hotSwap", "true")
 

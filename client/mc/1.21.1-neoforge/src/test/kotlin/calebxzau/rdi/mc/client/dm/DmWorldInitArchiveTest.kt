@@ -17,7 +17,7 @@ import kotlin.test.assertTrue
 
 class DmWorldInitArchiveTest {
     @Test
-    fun removesOwnerPlayerAndExcludesRegionFiles() {
+    fun removesOwnerPlayerAndExcludesRegionAndLegacyFirmSectionMetadata() {
         val temporary = Files.createTempDirectory("dm-world-init-test-")
         try {
             val world = temporary.resolve("world")

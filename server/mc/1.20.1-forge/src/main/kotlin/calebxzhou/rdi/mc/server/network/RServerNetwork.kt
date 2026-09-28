@@ -53,15 +53,6 @@ object RServerNetwork {
             .decoder { obj: FriendlyByteBuf -> RGlobalPlayerListPacket.decode(obj) }
             .consumerMainThread(RGlobalPlayerListPacket::handle)
             .add()
-        CHANNEL.messageBuilder(
-            RFirmSectionsPacket::class.java,
-            1,
-            NetworkDirection.PLAY_TO_CLIENT
-        )
-            .encoder(RFirmSectionsPacket::encode)
-            .decoder(RFirmSectionsPacket::decode)
-            .consumerMainThread(RFirmSectionsPacket::handle)
-            .add()
         /* CHANNEL.messageBuilder(
             RChunkCacheManifestPacket::class.java,
             2,
@@ -135,18 +126,6 @@ object RServerNetwork {
             sendTo(player, packet)
         }
     }
-
-    fun sendFirmSectionsToAll(server: net.minecraft.server.MinecraftServer) {
-        val packet = firmSectionsPacket(server)
-        server.playerList.players.forEach { sendTo(it, packet) }
-    }
-
-    fun sendFirmSectionsTo(player: ServerPlayer) {
-        sendTo(player, firmSectionsPacket(player.server))
-    }
-
-    private fun firmSectionsPacket(server: net.minecraft.server.MinecraftServer) =
-        RFirmSectionsPacket(emptyList())
 
     private fun sendTo(player: ServerPlayer, packet: Any) {
         CHANNEL.send(PacketDistributor.PLAYER.with { player }, packet)

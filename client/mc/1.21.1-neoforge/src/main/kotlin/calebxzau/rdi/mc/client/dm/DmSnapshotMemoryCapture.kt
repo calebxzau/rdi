@@ -120,7 +120,7 @@ object DmSnapshotMemoryCapture {
             val terrain = resolveTerrain(level, column, visible, updating, pending)
             when (terrain.source) {
                 DmSnapshotTerrainSource.Wait -> wait += ReadinessBlocker(describe(column), terrain.reason)
-                DmSnapshotTerrainSource.Failure -> error("FirmChunk地形保存状态失败：${describe(column)} ${terrain.reason}")
+                DmSnapshotTerrainSource.Failure -> error("SyncChunk地形保存状态失败：${describe(column)} ${terrain.reason}")
                 else -> Unit
             }
             val manager = (level as AccessorServerLevel).`rdi$getEntityManager`()
@@ -186,7 +186,7 @@ object DmSnapshotMemoryCapture {
             val updating = chunkAccessor.`rdi$getUpdatingChunkMap`()[key]
             val terrain = resolveTerrain(level, column, visible, updating, pending)
             if (terrain.source == DmSnapshotTerrainSource.Wait) wait += ReadinessBlocker(describe(column), terrain.reason)
-            if (terrain.source == DmSnapshotTerrainSource.Failure) error("FirmChunk地形保存状态失败：${describe(column)} ${terrain.reason}")
+            if (terrain.source == DmSnapshotTerrainSource.Failure) error("SyncChunk地形保存状态失败：${describe(column)} ${terrain.reason}")
             val entityManager = (level as AccessorServerLevel).`rdi$getEntityManager`()
             val entityAccessor = entityManager as AccessorPersistentEntitySectionManager
             val entityLoaded = level.areEntitiesLoaded(key)

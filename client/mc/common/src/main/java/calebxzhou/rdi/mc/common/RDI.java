@@ -39,10 +39,6 @@ public class RDI {
     public static String getTextureQueryUrl(UUID profileId, String authlibVer) {
         return IHQ_URL + "/mc-profile/" + profileId + "/clothes?authlibVer=" + authlibVer;
     }
-    public static boolean SHOW_SET_FIRM_SECTIONS=false;
-    public static boolean SHOW_NOW_FIRM_SECTION=false;
-    //维度id与永久子区块
-    public static Map<String, List<calebxzhou.rdi.mc.common.SectionPos>> FIRM_CHUNKS = new HashMap<>();
     public static boolean SHOW_SET_SYNC_CHUNKS=false;
     public static boolean SHOW_NOW_SYNC_CHUNK=false;
     //维度id与同步区块；SectionPos.index固定为0，仅复用轻量坐标容器。

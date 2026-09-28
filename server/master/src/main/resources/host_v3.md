@@ -1,3 +1,16 @@
+# 分布式房间设计资料
+
+旧的子区块同步与房主迁移草案已归档至[历史设计](../../../../../DEL/firmsection-design-20260927-01/server/master/src/main/resources/host_v3.md)。当前实现使用整列同步区块和世界快照。
+
+当前行为及接口以以下文档为准：
+
+- [客户端房间与同步命令](../../../../../client/mc/1.21.1-neoforge/DM_GATEWAY.md)
+- [dm-master接口和存储](../../../../dm-master/README.md)
+
+区块名单、快照捕获和房主迁移是不同能力；现有快照不能直接视为可安全接管的完整运行状态。
+
+
+old:
 
 read game source, i have an idea about minecraft network-efficient multiplaying:
 1. player1(p1 as abbr) sets "firm sections" for a singleplayer world, then upload the world metadata & firm sections to rdi server, created a virtual "host".
@@ -38,7 +51,7 @@ read game source, i have an idea about minecraft network-efficient multiplaying:
    保留所有变化，至少需要覆盖下面这些状态：
 
    | 状态 | 为什么不能只同步子区块方块 |
-      |---|---|
+         |---|---|
    | 方块、机器和箱子 | 机器内部库存、能量、加工进度可能没有发给客户端 |
    | 生物、掉落物、载具 | 有独立的实体存储，还会跨区块移动 |
    | 玩家 | 背包、末影箱、位置、经验、进度等单独保存 |

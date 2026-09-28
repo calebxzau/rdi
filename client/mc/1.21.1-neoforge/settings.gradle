@@ -20,8 +20,6 @@ dependencyResolutionManagement {
 rootProject.name = "c21"
 include(":c-mc-common")
 project(":c-mc-common").projectDir = file("../common")
-include(":firmsection")
-project(":firmsection").projectDir = file("../../../mc/firmsection")
 include(":c-mc-common2")
 project(":c-mc-common2").projectDir = file("../common2")
 include(":rmcp-common")

@@ -3,19 +3,16 @@ package calebxzhou.rdi.mc.server
 import calebxzhou.rdi.mc.common.RDI
 import calebxzhou.rdi.mc.common.WebSocketClient
 import calebxzhou.rdi.mc.common.WsMessage
-import calebxzhou.rdi.mc.firmsection.FirmSectionSetStatus
 import calebxzhou.rdi.mc.rcmd.Rcmd
 import calebxzhou.rdi.mc.rcmd.RcmdSource
 import calebxzhou.rdi.mc.rcmd.chat.PlayerChatRangeState
 import calebxzhou.rdi.mc.rcmd.chat.RChatMessage
 import calebxzhou.rdi.mc.rcmd.tpa.TpaService
-import calebxzhou.rdi.mc.server.firmsection.FirmSectionService1710
 import calebxzhou.rdi.mc.server.mcp.McpServerNetwork1710
 import calebxzhou.rdi.mc.server.network.RServerNetwork
 import calebxzhou.rdi.mc.server.rcmd.PlayerNbtChatRangeStore
 import calebxzhou.rdi.mc.server.rcmd.RcmdServerCommands1710
 import calebxzhou.rdi.mc.server.rcmd.RcmdServerSource1710
-import calebxzhou.rdi.mc.server.world.TerrainCache1710
 import cpw.mods.fml.common.FMLCommonHandler
 import cpw.mods.fml.common.Mod
 import cpw.mods.fml.common.event.FMLServerStartedEvent
@@ -68,7 +65,6 @@ class RDI {
 
     @Mod.EventHandler
     fun stopped(event: FMLServerStoppedEvent) {
-        TerrainCache1710.closeAll()
         WebSocketClient.stop()
         PlayerChatRangeState.clear()
         TpaService.clear()
@@ -83,7 +79,6 @@ class RDI {
         pendingJoinMessages += PendingJoinMessage(playerId, serverTick + JOIN_MESSAGE_DELAY_TICKS)
 
         RServerNetwork.sendLastTo(player)
-        RServerNetwork.sendFirmSectionsTo(player)
 
         if (!RDI.isAllOp()) {
             return
@@ -133,27 +128,6 @@ class RDI {
         pendingJoinMessages.removeAll { it.playerId == playerId }
         PlayerChatRangeState.remove(playerId)
         TpaService.removeRelated(playerId)
-    }
-
-    @SubscribeEvent(priority = EventPriority.LOWEST)
-    fun onBlockPlaced(event: BlockEvent.PlaceEvent) {
-        if (event.isCanceled || event.world.isRemote || !event.placedBlock.hasTileEntity(event.blockMetadata)) {
-            return
-        }
-        val player = event.player as? EntityPlayerMP ?: return
-        if (!FirmSectionService1710.isAutoSetEnabled(player)) {
-            return
-        }
-        val result = FirmSectionService1710.set(
-            player,
-            event.world,
-            event.x.toDouble(),
-            event.y.toDouble(),
-            event.z.toDouble(),
-        )
-        if (result.status == FirmSectionSetStatus.ADDED) {
-            RServerNetwork.sendFirmSectionsToAll(server)
-        }
     }
 
     @SubscribeEvent

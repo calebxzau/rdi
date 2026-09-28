@@ -94,9 +94,6 @@ object HostContainerService {
             if (modpack.supportsForgeguard(modpack.modloader)) {
                 this.add("-javaagent:$FORGEGUARD_CONTAINER_PATH")
             }
-            /*if (worldId != null) {
-                this.add("-Drdi.terrain.cache.path=/data/world/cache")
-            }*/
             if (mcv.isModern) {
                 this.add(MC_LOG4J2_CONFIGURATION_ARG)
             }
@@ -236,15 +233,10 @@ object HostContainerService {
             if (realVersion == 2) {
                 // v2 worlds live below the host root bind at /opt/server/world.
             } else if (worldId != null) {
-                val worldCacheDir = prepareWorldCacheDir(worldId)
                 this += Mount()
                     .withType(MountType.BIND)
                     .withSource(WorldService.getLevelDir(worldId).absolutePath)
                     .withTarget("/opt/server/world")
-                this += Mount()
-                    .withType(MountType.BIND)
-                    .withSource(worldCacheDir.absolutePath)
-                    .withTarget("/data/world/cache")
             } else {
                 this += Mount()
                     .withType(MountType.TMPFS)
@@ -269,17 +261,6 @@ object HostContainerService {
             image,
             containerEnv(modpack.mcVer, loaderVer, modpack, lwjgl3ifyRuntime, fabricRuntime)
         )
-    }
-
-    private fun prepareWorldCacheDir(worldId: ObjectId): File {
-        val dir = WorldService.getCacheDir(worldId).canonicalFile
-        if (!dir.exists() && !dir.mkdirs()) {
-            throw RequestError("世界缓存目录创建失败: ${dir.absolutePath}")
-        }
-        if (!dir.isDirectory) {
-            throw RequestError("世界缓存路径不是目录: ${dir.absolutePath}")
-        }
-        return dir
     }
 
     internal fun isServerInstalledMod(mod: Mod): Boolean =

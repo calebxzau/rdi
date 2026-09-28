@@ -7,8 +7,4 @@ interface RcmdClientBridge : RcmdSource {
     fun gameDirectory(): Path
 
     fun executeOnMainThread(task: Runnable)
-
-    fun toggleSetFirmSectionsVisible(): Boolean
-
-    fun toggleNowFirmSectionVisible(): Boolean
 }

@@ -15,7 +15,6 @@ data class World(
     @Contextual
     val modpackId: ObjectId,
     val size: Long = 0,
-    val sections: List<FirmSection> = arrayListOf()
 ) {
     @Serializable
     enum class Scale(val level: Int) {   // 缩放等级 0~7
@@ -54,15 +53,6 @@ data class World(
                 entries.firstOrNull { it.blocksByPixel == bpp }
                     ?: throw IllegalArgumentException("Invalid blocksByPixel: $bpp")
         }
-    }
-
-    @Serializable
-    data class FirmSection(
-        val dimension: String,
-        val chunkPos: Int,
-        val sectionY: Byte,
-    ) {
-
     }
 
     @Serializable

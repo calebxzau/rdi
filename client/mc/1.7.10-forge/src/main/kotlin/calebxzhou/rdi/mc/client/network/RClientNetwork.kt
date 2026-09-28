@@ -23,11 +23,5 @@ object RClientNetwork {
             0,
             Side.CLIENT
         )
-        CHANNEL.registerMessage(
-            RFirmSectionsPacket.Handler::class.java,
-            RFirmSectionsPacket::class.java,
-            1,
-            Side.CLIENT
-        )
     }
 }

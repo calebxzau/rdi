@@ -31,7 +31,7 @@ import java.util.UUID
 
 class FabricRcmdServerAdapter(server: MinecraftServer) : AbstractRcmdServerAdapter20(server), RcmdServerCommandHandler {
     private val dispatcher = RcmdDispatcher().also {
-        RcmdCommonServerCommands.register(it, this, RDI.DEBUG, includeFirmSection = false)
+        RcmdCommonServerCommands.register(it, this, RDI.DEBUG)
     }
     private val posLocks = mutableMapOf<UUID, PosLockState>()
 

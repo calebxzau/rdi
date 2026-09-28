@@ -28,7 +28,7 @@ class DmWorldDataCaptureTest {
     }
 
     @Test
-    fun capturesUnknownUnicodeHiddenAndEmptyDirectoriesWhileKeepingBackupAndTmp(): Unit {
+    fun capturesUnknownDataAndExcludesLegacyFirmSectionMetadata(): Unit {
         val root = Files.createTempDirectory("dm-world-capture-")
         try {
             val world = root.resolve("world")

@@ -1,6 +1,5 @@
 package calebxzhou.rdi.mc.client.rcmd
 
-import calebxzhou.rdi.mc.common.RDI
 import calebxzhou.rdi.mc.common2.rcmd.client.RcmdClientBridge
 import calebxzhou.rdi.mc.rcmd.RcmdSource
 import net.minecraft.client.Minecraft
@@ -28,16 +27,6 @@ class RcmdClientBridge1710(private val minecraft: Minecraft) : RcmdClientBridge 
 
     override fun executeOnMainThread(task: Runnable) {
         minecraft.func_152344_a(task)
-    }
-
-    override fun toggleSetFirmSectionsVisible(): Boolean {
-        RDI.SHOW_SET_FIRM_SECTIONS = !RDI.SHOW_SET_FIRM_SECTIONS
-        return RDI.SHOW_SET_FIRM_SECTIONS
-    }
-
-    override fun toggleNowFirmSectionVisible(): Boolean {
-        RDI.SHOW_NOW_FIRM_SECTION = !RDI.SHOW_NOW_FIRM_SECTION
-        return RDI.SHOW_NOW_FIRM_SECTION
     }
 
     private fun sendMessage(message: String) {

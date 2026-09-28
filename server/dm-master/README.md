@@ -49,7 +49,7 @@ owner may delete it, and another player cannot claim it. Duplicate adds remain
 successful at capacity. The persisted chunk schema uses `ownerId`.
 
 Only the active routes above are accepted. Section-shaped requests, `ownerUuid`,
-and the former section and FirmChunk route names are invalid.
+and the former section-based routes are invalid.
 
 ## World Snapshots (v5)
 

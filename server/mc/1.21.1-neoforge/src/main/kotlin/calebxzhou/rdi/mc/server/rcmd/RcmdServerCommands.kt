@@ -31,7 +31,7 @@ object RcmdServerCommands : RcmdServerCommandHandler {
     private const val TEST_ENTITY_ITEM_COUNT = 32
 
     init {
-        RcmdCommonServerCommands.register(DISPATCHER, this, RDI.DEBUG, includeFirmSection = false)
+        RcmdCommonServerCommands.register(DISPATCHER, this, RDI.DEBUG)
     }
 
     @JvmStatic
@@ -103,63 +103,7 @@ object RcmdServerCommands : RcmdServerCommandHandler {
         stopPlayerMovement(player)
         return RcmdResult.ok("位置锁定已开启")
     }
-/*
 
-    override fun setFirmSection(context: RcmdContext): RcmdResult {
-        val player = playerOrNull(context.source) ?: return RcmdResult.error("此rcmd命令只能由玩家执行")
-        val result = FirmSectionService.set(player)
-        val label = firmSectionLabel(result.key)
-        return when (result.status) {
-            FirmSectionSetStatus.ADDED ->
-                RcmdResult.ok("已设为同步区域：$label ${firmSectionCountLabel(result.playerCount, result.total)}")
-
-            FirmSectionSetStatus.ALREADY_PRESENT ->
-                RcmdResult.ok("这已经是同步区域了")
-
-            FirmSectionSetStatus.OCCUPIED_BY_OTHER ->
-                RcmdResult.error("这早就是其他玩家的同步区域了")
-
-            FirmSectionSetStatus.PLAYER_LIMIT_REACHED ->
-                RcmdResult.error("你设的同步区域数量 已经达到了上限${FirmSectionLimits.maxPerson}个")
-
-            FirmSectionSetStatus.TOTAL_LIMIT_REACHED ->
-                RcmdResult.error("同步区域数量 已达到全房间上限${FirmSectionLimits.maxTotal}个")
-        }
-    }
-
-    override fun unsetFirmSection(context: RcmdContext): RcmdResult {
-        val player = playerOrNull(context.source) ?: return RcmdResult.error("此rcmd命令只能由玩家执行")
-        val result = FirmSectionService.unset(player)
-        val label = firmSectionLabel(result.key)
-        return if (result.removed) {
-            RcmdResult.ok("已取消同步区域：$label ${firmSectionCountLabel(result.playerCount, result.total)}")
-        } else {
-            RcmdResult.ok("这不是同步区域")
-        }
-    }
-
-    override fun listFirmSections(context: RcmdContext): RcmdResult {
-        val player = playerOrNull(context.source) ?: return RcmdResult.error("此rcmd命令只能由玩家执行")
-        val result = FirmSectionService.list(player)
-        if (result.sections.isEmpty()) {
-            return RcmdResult.ok("你还没有同步区域。${firmSectionCountLabel(result.playerCount, result.total)}")
-        }
-        val lines = buildList {
-            add("同步区域数量：${firmSectionCountLabel(result.playerCount, result.total)}")
-            result.sections.groupBy { it.dimensionId }.forEach { (dimensionId, sections) ->
-                add("$dimensionId : ${sections.map { firmSectionPositionLabel(it) }}")
-            }
-        }
-        return RcmdResult.ok(lines.joinToString("\n"))
-    }
-
-    override fun setFirmSectionAutoSet(context: RcmdContext): RcmdResult {
-        val player = playerOrNull(context.source) ?: return RcmdResult.error("此rcmd命令只能由玩家执行")
-        val enabled = context.getBool("enabled")
-        FirmSectionService.setAutoSetEnabled(player, enabled)
-        return RcmdResult.ok("放置容器时 自动设置同步区域 已${if (enabled) "开启" else "关闭"}")
-    }
-*/
 
     override fun requestTpa(context: RcmdContext): RcmdResult {
         val requester = playerOrNull(context.source) ?: return RcmdResult.error("此rcmd命令只能由玩家执行")
@@ -260,18 +204,7 @@ object RcmdServerCommands : RcmdServerCommandHandler {
             else -> null
         }
 
-    /*private fun firmSectionLabel(key: FirmSectionKey): String =
-        "${key.dimensionId},${key.chunkX},${key.sectionY},${key.chunkZ}"
-
-    private fun firmSectionPositionLabel(key: FirmSectionKey): String =
-        "${key.chunkX},${key.sectionY},${key.chunkZ}"
-
-    private fun firmSectionCountLabel(playerCount: Int, total: Int): String =
-        if (FirmSectionLimits.maxPerson > 0) {
-            "你：${playerCount}/${FirmSectionLimits.maxPerson}，全世界：${total}/${FirmSectionLimits.maxTotal}"
-        } else {
-            "你：${playerCount}个，全世界：${total}/${FirmSectionLimits.maxTotal}"
-        }*/
+    
 
     @JvmRecord
     data class PosLockState(

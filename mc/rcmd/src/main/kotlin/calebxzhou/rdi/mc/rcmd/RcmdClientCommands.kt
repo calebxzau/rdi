@@ -1,42 +1,16 @@
 package calebxzhou.rdi.mc.rcmd
 
-import calebxzhou.rdi.mc.rcmd.RcmdCommandSpec.Companion.builder
-import calebxzhou.rdi.mc.rcmd.RcmdResult.Companion.ok
 
 object RcmdClientCommands {
     private val DISPATCHER = RcmdDispatcher()
-    @Volatile
-    private var firmSectionDisplayEnabled = true
-
-    init {
-        DISPATCHER.register(
-            builder("firmsection", "display", "set")
-                .description("开关已设置同步区域边框")
-                .command(RcmdCommand { context: RcmdContext? -> toggleSetFirmSections(context!!.source as RcmdClientBridge) })
-                .build()
-        )
-        DISPATCHER.register(
-            builder("firmsection", "display", "now")
-                .description("切换当前同步区域边框")
-                .command(RcmdCommand { context: RcmdContext? -> toggleNowFirmSection(context!!.source as RcmdClientBridge) })
-                .build()
-        )
-    }
     @JvmStatic
     fun isRcmd(message: String?): Boolean =
         message != null && message.startsWith("\\")
     @JvmStatic
     fun dispatch(bridge: RcmdClientBridge, message: String): RcmdDispatchResult {
-        if (!firmSectionDisplayEnabled && message.trimStart().startsWith("\\firmsection", ignoreCase = true)) {
-            return RcmdDispatchResult.notFound()
-        }
         return DISPATCHER.dispatch(bridge, message)
     }
 
-    @JvmStatic
-    fun setFirmSectionDisplayEnabled(enabled: Boolean) {
-        firmSectionDisplayEnabled = enabled
-    }
     @JvmStatic
     fun reply(bridge: RcmdClientBridge, result: RcmdResult?) {
         if (result == null || result.message().isEmpty()) {
@@ -52,15 +26,5 @@ object RcmdClientCommands {
                 bridge.sendError(message)
             }
         }
-    }
-
-    private fun toggleSetFirmSections(bridge: RcmdClientBridge): RcmdResult {
-        val visible = bridge.toggleSetFirmSectionsVisible()
-        return ok("已设定的同步区域边框：" + (if (visible) "显示" else "隐藏"))
-    }
-
-    private fun toggleNowFirmSection(bridge: RcmdClientBridge): RcmdResult {
-        val visible = bridge.toggleNowFirmSectionVisible()
-        return ok("当前区域边框：" + (if (visible) "显示" else "隐藏"))
     }
 }

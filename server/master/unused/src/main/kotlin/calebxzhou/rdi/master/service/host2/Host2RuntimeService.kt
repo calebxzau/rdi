@@ -318,7 +318,6 @@ object Host2RuntimeService {
 
     private fun buildJvmArgs(mcVersion: McVersion, modLoader: ModLoader) = buildList {
         add("-Xmx8G")
-        add("-Drdi.onlySaveFirmSections=true")
         if (mcVersion.supportsForgeguard(modLoader)) add("-javaagent:$FORGEGUARD_CONTAINER_PATH")
         add("-XX:+UseCompactObjectHeaders")
         if (mcVersion == McVersion.V071) add("-Dfml.queryResult=confirm")

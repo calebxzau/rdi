@@ -9,6 +9,7 @@ import net.minecraft.resources.ResourceLocation
 import net.minecraftforge.network.NetworkDirection
 import net.minecraftforge.network.NetworkRegistry
 import net.minecraftforge.network.simple.SimpleChannel
+import java.util.function.BiConsumer
 import kotlin.concurrent.Volatile
 
 object RClientNetwork {
@@ -38,14 +39,14 @@ object RClientNetwork {
             .decoder(RGlobalPlayerListPacket::decode)
             .consumerMainThread { packet, context -> RGlobalPlayerListPacket.handle(packet, context) }
             .add()
+        // Older protocol-3 servers still send packet 1 on login.
         CHANNEL.messageBuilder(
-            RFirmSectionsPacket::class.java,
+            LegacyFirmSectionsPacket::class.java,
             1,
             NetworkDirection.PLAY_TO_CLIENT
         )
-            .encoder { packet, buf -> RFirmSectionsPacket.encode(packet, buf) }
-            .decoder(RFirmSectionsPacket::decode)
-            .consumerMainThread { packet, context -> RFirmSectionsPacket.handle(packet, context) }
+            .decoder(LegacyFirmSectionsPacket::decode)
+            .consumerNetworkThread(BiConsumer { _, context -> context.get().packetHandled = true })
             .add()
         /* CHANNEL.messageBuilder(
             RChunkCacheManifestPacket::class.java,

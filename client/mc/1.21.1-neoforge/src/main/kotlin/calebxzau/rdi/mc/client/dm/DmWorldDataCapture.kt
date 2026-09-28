@@ -44,7 +44,7 @@ object DmWorldDataCapture {
     private val FIXED_EXCLUDED_FILES = setOf(
         "session.lock",
         "rdi/host.json",
-        // Master owns FirmSection ownership; a stale world copy must never overwrite it.
+        // Keep excluding legacy FirmSection metadata so stale world data is not synchronized.
         "data/rdi_firm_sections.dat",
         "data/rdi_firm_sections.dat_old",
     )

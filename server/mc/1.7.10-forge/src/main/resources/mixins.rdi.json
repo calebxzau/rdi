@@ -6,12 +6,9 @@
   "target": "@env(DEFAULT)",
   "compatibilityLevel": "JAVA_8",
   "mixins": [
-    "AChunkProviderServer1710",
     "mAllowChineseNameLogin",
-    "mCancelWorldGenAnimalSpawning1710",
     "mIgnoreBrokenForcedChunks1710",
     "mLimitTerrainGenerationThreads1710",
-    "mTerrainCacheChunkLoad1710",
     "mServerUtilitiesClaimedChunksUpdate1710",
     "mServerUtilitiesTeamData1710",
     "mServerLoginPacketListener"

@@ -10,12 +10,10 @@
   "mixins": [
     "AChunkMap",
     "AServerEntity",
-    "mCancelWorldGenAnimalSpawning",
     // "mChunkCache",
     // "mDelayedChunkCache",
     "mHandshakeDiagnostics",
     "mNetworkRegistryDiagnostics",
-    "mOnlySaveFirmSections",
     "mPackListener",
     "mPlusTimeout",
     "mSaveBandwidth",

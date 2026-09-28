@@ -29,7 +29,7 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.max
 
-/** Manual, local-only benchmark for the FirmSection backup payload. */
+/** Manual, local-only benchmark for the SyncChunk snapshot data. */
 object DmSnapshotTestService {
     private const val MAX_COLUMNS = 256
     private const val MAX_STAGING_BYTES = 256L * 1024L * 1024L
@@ -139,7 +139,7 @@ object DmSnapshotTestService {
                 current = null
                 active.set(false)
                 lease.release()
-                logger.error("Failed to prepare FirmChunk snapshot test", error)
+                logger.error("Failed to prepare SyncChunk snapshot test", error)
                 send(minecraft, "同步区块快照测试无法开始：${error.message ?: "未知错误"}")
             }
         }
@@ -221,8 +221,8 @@ object DmSnapshotTestService {
                 job.maxObservedPreflightMs = max(job.maxObservedPreflightMs ?: 0L, (System.nanoTime() - finalPreflightStart) / 1_000_000L)
                 val afterCapture = DmSnapshotArchive.columns(SyncChunkService.snapshotForBackup(job.owner).getOrThrow())
                 require(afterCapture == columns) { "同步区块选择在捕获期间发生变化" }
-                require(batch.memoryColumns + batch.storedColumns + batch.mixedColumns == columns.size) { "FirmChunk来源分类计数不一致" }
-                require(batch.memoryEntityColumns + batch.storedEntityColumns == columns.size) { "FirmChunk实体来源分类计数不一致" }
+                require(batch.memoryColumns + batch.storedColumns + batch.mixedColumns == columns.size) { "SyncChunk来源分类计数不一致" }
+                require(batch.memoryEntityColumns + batch.storedEntityColumns == columns.size) { "SyncChunk实体来源分类计数不一致" }
                 checkSaveErrors(appender.summary())
                 val captureEnd = System.nanoTime()
                 job.pauseMs = (captureEnd - captureStart) / 1_000_000L
@@ -248,7 +248,7 @@ object DmSnapshotTestService {
                 val summary = appender.summary()
                 appender.remove()
                 if (summary.errors > 0 || summary.warnings > 0) {
-                    logger.warn("FirmChunk memory snapshot observed save logs: errors={}, warnings={}, messages={}", summary.errors, summary.warnings, summary.messages)
+                    logger.warn("SyncChunk memory snapshot observed save logs: errors={}, warnings={}, messages={}", summary.errors, summary.warnings, summary.messages)
                 }
                 if (job.captureEndedNanos == null) job.captureEndedNanos = System.nanoTime()
                 capturedBatch?.let { future.complete(it) }
@@ -293,7 +293,7 @@ object DmSnapshotTestService {
         } catch (error: Throwable) {
             job.failure = error
             if (job.failureStage == null) job.failureStage = job.stage
-            logger.error("FirmChunk snapshot test failed at {}", job.failureStage, error)
+            logger.error("SyncChunk snapshot test failed at {}", job.failureStage, error)
         } finally {
             if (job.captureEndedNanos != null) awaitTick(job, afterCapture = true)
             if (!writeMetrics(job, result)) {
@@ -333,7 +333,7 @@ object DmSnapshotTestService {
                 val message = if (result == "ok") {
                 "同步区块快照测试（${job.mode.displayName}）完成：${job.columns.size}列，暂停${job.pauseMs ?: "?"}ms，ZIP${job.zipBytes ?: "?"}字节，结果：${job.archive}"
             } else {
-                "FirmChunk快照测试失败（${job.failureStage ?: "unknown"}）：${job.failure?.message ?: "未知错误"}；结果：${job.runDirectory}"
+                "SyncChunk快照测试失败（${job.failureStage ?: "unknown"}）：${job.failure?.message ?: "未知错误"}；结果：${job.runDirectory}"
             }
             send(job, message)
         }
@@ -515,7 +515,7 @@ object DmSnapshotTestService {
                 val summary = it.summary()
                 it.remove()
                 if (summary.errors > 0 || summary.warnings > 0) {
-                    logger.warn("FirmChunk snapshot observed save logs: errors={}, warnings={}, messages={}", summary.errors, summary.warnings, summary.messages)
+                    logger.warn("SyncChunk snapshot observed save logs: errors={}, warnings={}, messages={}", summary.errors, summary.warnings, summary.messages)
                 }
             }
             job.captureEndedNanos = System.nanoTime()

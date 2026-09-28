@@ -77,7 +77,6 @@ neoForge {
             jvmArgument '-Xmx4G'
             programArgument '--nogui'
             systemProperty 'rdi.debug', 'true'
-            systemProperty 'rdi.onlySaveFirmSections', 'true'
             systemProperty 'neoforge.enabledGameTestNamespaces', 'rdi'
         }
 
@@ -107,7 +106,6 @@ sourceSets.named('main') {
     kotlin.srcDir '../../../mc/common/2021/src/main/kotlin'
     kotlin.srcDir '../../../mc/common/codec/src/main/kotlin'
     kotlin.srcDir '../../../mc/common/all/src/main/kotlin'
-    //kotlin.srcDir '../../../mc/firmsection/src/main/kotlin'
     kotlin.srcDir '../../../mc/syncchunk/src/main/kotlin'
     kotlin.srcDir '../../../mc/syncchunk/src/21/kotlin'
     kotlin.srcDir '../../../mc/rcmd/src/main/kotlin'

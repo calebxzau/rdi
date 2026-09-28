@@ -22,7 +22,7 @@ class RSyncChunksPayloadTest {
     }
 
     @Test
-    fun wireFormatKeepsFirmSectionFourFieldLayout(): Unit {
+    fun wireFormatKeepsSyncChunkFourFieldLayout(): Unit {
         val entry = RSyncChunksPayload.Entry("minecraft:the_nether", -5, 12)
         val rawBuffer = Unpooled.buffer()
         try {
