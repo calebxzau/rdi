@@ -64,6 +64,8 @@ class ModpackServiceArchiveTest {
                 writer.addFile("shaderpacks/matched.zip.txt", "shader-options-direct".toByteArray())
                 writer.addFile("shaderpacks/unmatched.zip.txt", "drop".toByteArray())
                 writer.addFile("overrides/world/region/r.0.0.mca", byteArrayOf(3))
+                writer.addFile("overrides/world/region/r.1.0.MCA", byteArrayOf())
+                writer.addFile("overrides/world/region/c.0.0.mcc", byteArrayOf(8))
                 writer.addFile("gtnh/config/keep.cfg", byteArrayOf(4))
                 writer.addFile("server/config/not-client.cfg", byteArrayOf(5))
             }
@@ -81,7 +83,9 @@ class ModpackServiceArchiveTest {
             assertFalse("shaderpacks/ignored.zip" in entries)
             assertFalse("shaderpacks/unmatched.txt" in entries)
             assertFalse(copiedBytes.keys.any { it.startsWith("shaderpacks/") && !it.endsWith(".zip.txt") })
-            assertFalse(entries.any { it.endsWith(".mca") })
+            assertFalse("world/region/r.0.0.mca" in entries)
+            assertContentEquals(byteArrayOf(), copiedBytes["world/region/r.1.0.MCA"])
+            assertContentEquals(byteArrayOf(8), copiedBytes["world/region/c.0.0.mcc"])
             assertFalse(entries.any { it.startsWith("server/") })
         } finally {
             pack.dir.deleteRecursivelyNoSymlink()

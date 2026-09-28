@@ -1085,13 +1085,8 @@ class ModpackProcessor(
             .mapNotNull { file ->
                 val relativePath = file.relativeTo(rootDir).invariantSeparatorsPath
                 if (relativePath.isBlank()) return@mapNotNull null
-                if (shouldSkipServerExtraFile(relativePath, file)) {
-                    if (shouldExcludeMca(relativePath, isDirectory = false)) {
-                        containsExcludedMcaFiles = true
-                    }
-                    return@mapNotNull null
-                }
-                if (containsExcludedMcaArchiveEntry(file)) {
+                if (shouldSkipServerExtraFile(relativePath, file)) return@mapNotNull null
+                if (shouldExcludeMca(relativePath, isDirectory = false) || containsExcludedMcaArchiveEntry(file)) {
                     containsExcludedMcaFiles = true
                 }
                 ServerExtraFile(
@@ -1120,7 +1115,6 @@ class ModpackProcessor(
 
     private fun shouldSkipServerExtraFile(relativePath: String, file: File): Boolean {
         if (isDisabledFile(relativePath, isDirectory = false)) return true
-        if (shouldExcludeMca(relativePath, isDirectory = false)) return true
         val relativeLower = relativePath.lowercase()
         val fileNameLower = file.name.lowercase()
         if (relativeLower.startsWith("libraries/")) return true
@@ -1431,7 +1425,11 @@ class ModpackProcessor(
                     if (isDisabledFile(relative, isDirectory = false) ||
                         isDisabledFile(sourceFile.name, isDirectory = false)
                     ) continue
-                    if (shouldExcludeMca(relative, isDirectory = false)) continue
+                    if (shouldExcludeMca(relative, isDirectory = false)) {
+                        ensureArchiveParents(relative, out, addedDirs)
+                        out.addFile(relative, byteArrayOf(), sourceFile.lastModified())
+                        continue
+                    }
                     ensureArchiveParents(relative, out, addedDirs)
                     val bytes = if (
                         sourceFile.extension.equals("zip", ignoreCase = true) ||
@@ -1610,7 +1608,6 @@ class ModpackProcessor(
         if (relativeLower.startsWith("config/") && relativeLower.removePrefix("config/").isExcludedConfigPath()) return true
         if (disallowedClientPathKeywords.any { relativeLower.contains(it) }) return true
         if (relativeLower.endsWith(".mp4") || relativeLower.endsWith(".mov")) return true
-        if (shouldExcludeMca(rawRelativeLower, isDirectory)) return true
         if (isQuestLangEntryDisallowed(relativeLower, isDirectory)) return true
         return false
     }
@@ -1683,6 +1680,12 @@ class ModpackProcessor(
             return
         }
 
+        if (shouldExcludeMca(relative, isDirectory)) {
+            ensureArchiveParents(relative, out, addedDirs)
+            out.addFile(relative, byteArrayOf(), lastModified)
+            return
+        }
+
         val effectiveRelativeLower = relativeLower.removePrefix("overrides/")
         if (effectiveRelativeLower == "resourcepacks" ||
             effectiveRelativeLower.startsWith("resourcepacks/", ignoreCase = true)
@@ -1721,7 +1724,12 @@ class ModpackProcessor(
         preserveResourcepackEntries: Boolean = false,
         mcaOnly: Boolean = false
     ) {
-        if (shouldExcludeMca(relative, isDirectory)) return
+        if (shouldExcludeMca(relative, isDirectory)) {
+            ensureZipParents(relative, out, addedDirs)
+            out.putNextEntry(ZipEntry(relative).apply { time = lastModified })
+            out.closeEntry()
+            return
+        }
         if (mcaOnly) {
             if (isDirectory) {
                 addZipDirectoryEntry(relative, out, addedDirs)

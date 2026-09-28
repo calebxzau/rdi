@@ -286,13 +286,23 @@ class MinecraftLauncher(
         if (launchClasspath.isNotEmpty() && !hasClasspathDeclaration) {
             processedJvmArgs += listOf("-cp", classpath)
         }
-        processedJvmArgs += resolveMaxMemory(request.launchOverrides.maxMemoryMb)
+        val maxMemoryMb = resolveMaxMemory(request.launchOverrides.maxMemoryMb)
+        processedJvmArgs += "-Xmx${maxMemoryMb}M"
+        //memory-efficient params
+        processedJvmArgs += listOf(
+            "-Xms512M",
+            "-XX:+UseZGC",
+            "-XX:SoftMaxHeapSize=${maxMemoryMb * 3 / 4}M",
+            "-XX:ZUncommitDelay=60",
+            "-XX:+UseCompactObjectHeaders"
+        )
         processedJvmArgs += utf8LoggingJvmArgs
         mediaRuntime?.let {
             processedJvmArgs += "-Dorg.bytedeco.javacpp.pathsFirst=true"
             processedJvmArgs += "-Dorg.bytedeco.javacpp.platform.preloadpath=${it.nativeLibraryDir.absolutePath}"
             processedJvmArgs += earlyDisplayJvmArgs(request.mcVersion, it.nativeLibraryDir)
         }
+
         launchManifests.gtnhExtensionRoot?.let {
             processedJvmArgs += gtnh.java25JvmArgs(
                 extensionRoot = it,
@@ -441,18 +451,18 @@ class MinecraftLauncher(
     private fun resolveJavaPath(overridePath: String?): String =
         overridePath?.trim()?.takeIf(String::isNotEmpty) ?: resolveJava25Path()
 
-    private fun resolveMaxMemory(overrideMaxMemoryMb: Int?): String {
+    private fun resolveMaxMemory(overrideMaxMemoryMb: Int?): Long {
         val maxMemoryMb = overrideMaxMemoryMb ?: environment.java.maxMemoryMb
         return if (maxMemoryMb > 0) {
-            "-Xmx${maxMemoryMb}M"
-    } else {
-        runCatching {
-            val osBean = ManagementFactory.getOperatingSystemMXBean() as? OperatingSystemMXBean
-            val freeBytes = osBean?.freeMemorySize ?: return@runCatching "-Xmx8G"
-            val freeMb = freeBytes / (1024L * 1024)
-            lgr.info { "剩余内存${freeBytes.humanFileSize}" }
-            "-Xmx${if (freeMb > 8192) freeMb else 8192}M"
-        }.getOrDefault("-Xmx8G")
+            maxMemoryMb.toLong()
+        } else {
+            runCatching {
+                val osBean = ManagementFactory.getOperatingSystemMXBean() as? OperatingSystemMXBean
+                val freeBytes = osBean?.freeMemorySize ?: return@runCatching 8192L
+                val freeMb = freeBytes / (1024L * 1024)
+                lgr.info { "剩余内存${freeBytes.humanFileSize}" }
+                if (freeMb > 8192) freeMb else 8192L
+            }.getOrDefault(8192L)
         }
     }
 
