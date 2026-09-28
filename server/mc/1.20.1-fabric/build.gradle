@@ -22,6 +22,7 @@ kotlin {
 }
 
 loom {
+    accessWidenerPath = file('src/main/resources/rdi.server.accesswidener')
     mods {
         rdi {
             sourceSet sourceSets.main
@@ -44,9 +45,13 @@ sourceSets.main {
     java.srcDir '../../../mc/20/src/main/java'
     kotlin.srcDir '../../../mc/20/src/server/kotlin'
     kotlin.srcDir '../../../mc/20/src/main/kotlin'
+    java.srcDir '../../../mc/common/codec/src/server/java'
     kotlin.srcDir '../../../mc/common/codec/src/main/kotlin'
     kotlin.srcDir '../../../mc/rcmd/src/main/kotlin'
 }
+
+sourceSets.test.kotlin.srcDir '../../../mc/20/src/serverTest/kotlin'
+sourceSets.test.kotlin.srcDir '../../../mc/common/codec/src/serverTest/kotlin'
 
 repositories {
     mavenCentral()
@@ -68,6 +73,15 @@ dependencies {
     include(modImplementation('com.neovisionaries:nv-websocket-client:2.14'))
 
     implementation project(':s-mc-common')
+
+    testImplementation 'org.jetbrains.kotlin:kotlin-test-junit5:2.4.10'
+    testRuntimeOnly 'org.junit.jupiter:junit-jupiter-engine:6.1.1'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher:6.1.1'
+    testRuntimeOnly 'io.github.llamalad7:mixinextras-common:0.5.5'
+}
+
+tasks.named('test', Test) {
+    useJUnitPlatform()
 }
 
 evaluationDependsOn(':s-mc-common')

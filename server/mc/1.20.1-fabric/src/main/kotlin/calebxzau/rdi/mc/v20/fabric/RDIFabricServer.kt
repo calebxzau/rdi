@@ -10,6 +10,7 @@ import calebxzau.rdi.mc.v20.protocol.FabricRoomWire20
 import calebxzau.rdi.mc.v20.protocol.EncodedPlayerList20
 import calebxzau.rdi.mc.v20.server.rcmd.RcmdServerRuntime20
 import calebxzau.rdi.mc.zstdcodec.ZstdCompressionPipeline
+import calebxzau.rdi.mc.v20.server.region.RegionZstdCodec
 import com.google.gson.Gson
 import com.google.gson.GsonBuilder
 import com.google.gson.JsonElement
@@ -55,6 +56,9 @@ class RDIFabricServer : DedicatedServerModInitializer {
             WebSocketClient.pauseReconnect()
         }
         ServerLifecycleEvents.SERVER_STOPPED.register {
+            runCatching { RegionZstdCodec.closeAll() }.onFailure { error ->
+                logger.error("Failed to close Zstd region compression pool", error)
+            }
             WebSocketClient.stop()
             rcmdAdapter?.let { RcmdServerRuntime20.clear(it) }
             rcmdAdapter = null

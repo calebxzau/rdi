@@ -1,6 +1,7 @@
 package calebxzhou.rdi.mc.server
 
 import calebxzau.rdi.mc.zstdcodec.ZstdCompressionPipeline
+import calebxzau.rdi.mc.v20.server.region.RegionZstdCodec
 import calebxzau.mc.common2021.RdiLoggingConfiguration
 import calebxzhou.rdi.mc.common.RDI
 import calebxzhou.rdi.mc.common.WebSocketClient
@@ -93,6 +94,9 @@ class RDIMain {
 
         @SubscribeEvent @JvmStatic
         fun stopped(e: ServerStoppedEvent) {
+            runCatching { RegionZstdCodec.closeAll() }.onFailure { error ->
+                lgr.error("Failed to close Zstd region compression pool", error)
+            }
             rcmdAdapter?.let { RcmdServerRuntime20.clear(it) }
             rcmdAdapter = null
             RcmdServerCommands.clearPosLocks()

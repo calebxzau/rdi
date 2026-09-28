@@ -26,6 +26,7 @@ sourceSets.main {
     java.srcDir '../../../mc/common/2021/src/main/java'
     kotlin.srcDir '../../../mc/20/src/server/kotlin'
     kotlin.srcDir '../../../mc/common/2021/src/main/kotlin'
+    java.srcDir '../../../mc/common/codec/src/server/java'
     kotlin.srcDir '../../../mc/common/codec/src/main/kotlin'
     kotlin.srcDir '../../../mc/syncchunk/src/main/kotlin'
     kotlin.srcDir '../../../mc/rcmd/src/main/kotlin'
@@ -43,6 +44,8 @@ sourceSets.create('zstdTest') {
     kotlin.srcDir '../../../mc/common/codec/src/main/kotlin'
     kotlin.srcDir '../../../mc/common/codec/src/test/kotlin'
 }
+sourceSets.test.kotlin.srcDir '../../../mc/20/src/serverTest/kotlin'
+sourceSets.test.kotlin.srcDir '../../../mc/common/codec/src/serverTest/kotlin'
 mixin {
     add sourceSets.main, 'rdi.mixins.refmap.json'
     config "rdi.mixins.json"
@@ -92,6 +95,7 @@ repositories {
 }
 legacyForge {
     version = "1.20.1-47.4.20"
+    addModdingDependenciesTo sourceSets.test
     validateAccessTransformers = true
     runs {
         server {
@@ -171,6 +175,15 @@ dependencies {
     zstdTestImplementation 'io.netty:netty-common:4.1.97.Final'
     zstdTestImplementation 'io.netty:netty-transport:4.1.97.Final'
     zstdTestRuntimeOnly 'org.junit.jupiter:junit-jupiter-engine:6.1.1'
+
+    testImplementation 'org.jetbrains.kotlin:kotlin-test-junit5:2.4.10'
+    testRuntimeOnly 'org.junit.jupiter:junit-jupiter-engine:6.1.1'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher:6.1.1'
+    testImplementation 'io.github.llamalad7:mixinextras-common:0.5.3'
+}
+
+tasks.named('test', Test) {
+    useJUnitPlatform()
 }
 
 tasks.register('zstdTest', Test) {

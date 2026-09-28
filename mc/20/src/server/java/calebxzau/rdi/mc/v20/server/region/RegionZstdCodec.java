@@ -1,4 +1,4 @@
-package calebxzau.rdi.mc.server.region;
+package calebxzau.rdi.mc.v20.server.region;
 
 import calebxzau.rdi.mc.regioncodec.RegionZstdStreams;
 import net.minecraft.util.FastBufferedInputStream;
@@ -10,7 +10,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 
-/** Minecraft 1.21.1 registration and buffering adapter for the shared ID8 codec. */
+/** Minecraft 1.20.1 registration and buffering adapter for the shared ID8 codec. */
 public final class RegionZstdCodec {
     public static final int COMPRESSION_ID = RegionZstdStreams.COMPRESSION_ID;
     public static final int COMPRESSION_LEVEL = RegionZstdStreams.COMPRESSION_LEVEL;
@@ -33,7 +33,6 @@ public final class RegionZstdCodec {
             }
             version = RegionFileVersion.register(new RegionFileVersion(
                 COMPRESSION_ID,
-                null,
                 RegionZstdCodec::wrapInput,
                 RegionZstdCodec::wrapOutput
             ));

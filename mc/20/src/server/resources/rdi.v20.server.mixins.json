@@ -8,6 +8,9 @@
   },
   "minVersion": "0.7",
   "mixins": [
+    "mRegionFile",
+    "mRegionFileStorage",
+    "mRegionFileVersion",
     "mChinesePlayerName",
     "mServerboundHelloPacket",
     "mServerLoginIdentity",

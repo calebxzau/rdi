@@ -7,6 +7,7 @@
   "authors": ["calebxzau"],
   "license": "GPL-3.0",
   "environment": "server",
+  "accessWidener": "rdi.server.accesswidener",
   "entrypoints": {
     "server": [
       "calebxzau.rdi.mc.v20.fabric.RDIFabricServer"
