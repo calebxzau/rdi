@@ -1797,7 +1797,7 @@ class ModpackProcessor(
     }
 
     private val disallowedClientPathPrefixes = setOf(
-        "config/fancymenu/",
+        //一些包有材质 "config/fancymenu/",
         //有材质 "packmenu",
         "shaderpacks/",
         "kubejs/probe/"
