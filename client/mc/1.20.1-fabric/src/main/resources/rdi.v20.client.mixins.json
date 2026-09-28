@@ -17,6 +17,7 @@
     "mOptions",
     "mRcmdChatInput20",
     "mRcmdChatShortcut20",
+    "mKeyboardInputGuard",
     "mRdiUserApi",
     "mSkinManager",
     "mPlayerTabOverlay",
