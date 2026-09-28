@@ -1,5 +1,7 @@
 package calebxzhou.rdi.client.ui
 
+import kotlinx.coroutines.suspendCancellableCoroutine
+import java.awt.EventQueue
 import java.awt.FileDialog
 import java.awt.Frame
 import java.io.File
@@ -18,6 +20,7 @@ private fun <T> withFileDialog(
     defaultFile: String? = null,
     multipleMode: Boolean = false,
     filenameFilter: ((File, String) -> Boolean)? = null,
+    onCreated: (FileDialog) -> Unit = {},
     block: (FileDialog) -> T
 ): T {
     val owner = Frame()
@@ -32,6 +35,7 @@ private fun <T> withFileDialog(
                 }
             }
         }
+        onCreated(dialog)
         dialog.isVisible = true
         block(dialog)
     } finally {
@@ -93,6 +97,40 @@ internal fun pickAwtOpenFiles(
         ?.filter { it.exists() && it.isFile }
         ?.distinctBy { it.absolutePath }
         ?.takeIf { it.isNotEmpty() }
+}
+
+/** Post outside Compose's dispatcher so the modal event loop cannot re-enter its click flush. */
+internal suspend fun pickAwtOpenFilesAsync(
+    title: String,
+    defaultDirectory: File = defaultDialogDirectory(),
+    filenameFilter: ((File, String) -> Boolean)? = null
+): List<File>? = suspendCancellableCoroutine { continuation ->
+    // Accessed only on the AWT event thread, including cancellation cleanup.
+    var openDialog: FileDialog? = null
+    continuation.invokeOnCancellation {
+        EventQueue.invokeLater { openDialog?.dispose() }
+    }
+    EventQueue.invokeLater {
+        if (!continuation.isActive) return@invokeLater
+        val result = runCatching {
+            withFileDialog(
+                title = title,
+                mode = FileDialog.LOAD,
+                defaultDirectory = defaultDirectory,
+                multipleMode = true,
+                filenameFilter = filenameFilter,
+                onCreated = { openDialog = it }
+            ) { dialog ->
+                dialog.files
+                    ?.toList()
+                    ?.filter { it.exists() && it.isFile }
+                    ?.distinctBy { it.absolutePath }
+                    ?.takeIf { it.isNotEmpty() }
+            }
+        }
+        openDialog = null
+        continuation.resumeWith(result)
+    }
 }
 
 internal fun pickAwtSaveFile(

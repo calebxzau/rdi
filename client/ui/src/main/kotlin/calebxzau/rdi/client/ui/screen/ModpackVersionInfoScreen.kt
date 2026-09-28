@@ -55,7 +55,9 @@ import calebxzhou.rdi.client.net.loggedAccount
 import calebxzhou.rdi.client.ui.comp.HeadButton
 import calebxzhou.rdi.client.ui.comp.ModGrid
 import calebxzhou.rdi.client.ui.screen.canManageModpackVersion
-import calebxzhou.rdi.client.ui.screen.selectHostExtraModFiles
+import calebxzhou.rdi.client.ui.pickAwtOpenFilesAsync
+import io.github.oshai.kotlinlogging.KotlinLogging
+import kotlinx.coroutines.CancellationException
 import calebxzhou.rdi.common.model.ModRef
 import calebxzhou.rdi.common.model.Modpack
 import calebxzhou.rdi.common.model.isDav
@@ -64,6 +66,8 @@ import calebxzhou.rdi.common.util.millisToHumanDateTime
 import kotlinx.coroutines.launch
 import org.koin.compose.viewmodel.koinViewModel
 import org.koin.core.parameter.parametersOf
+
+private val modpackVersionInfoLogger = KotlinLogging.logger {}
 
 /** Selected-version details and Mod management. */
 @Composable
@@ -81,6 +85,7 @@ fun ModpackVersionInfoScreen(
     val snackbarHostState = remember { SnackbarHostState() }
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     var selectedModKeys by remember<MutableState<Set<String>>> { mutableStateOf(emptySet()) }
+    var modFilePickerOpen by remember { mutableStateOf(false) }
     var editingMods by remember<MutableState<List<UiMod>>> { mutableStateOf(emptyList()) }
     var deleteConfirmMods by remember<MutableState<List<UiMod>>> { mutableStateOf(emptyList()) }
     LaunchedEffect(uiState.okMessage) {
@@ -273,12 +278,27 @@ fun ModpackVersionInfoScreen(
                                         },
                                         bgColor = themeNow.secondary,
                                         showText = false,
-                                        enabled = canMutate && !uiState.addDialogLoading
+                                        enabled = canMutate && !uiState.addDialogLoading && !modFilePickerOpen
                                     ) {
+                                        if (modFilePickerOpen) return@CircleIconButton
                                         val mcVersion = uiState.pack?.mcVer ?: return@CircleIconButton
+                                        modFilePickerOpen = true
                                         scope.launch {
-                                            val files = selectHostExtraModFiles() ?: return@launch
-                                            viewModel.matchFiles(files, mcVersion)
+                                            try {
+                                                val files = pickAwtOpenFilesAsync(
+                                                    title = "选择额外Mod JAR",
+                                                    filenameFilter = { _, name -> name.endsWith(".jar", ignoreCase = true) }
+                                                )?.filter { it.extension.equals("jar", ignoreCase = true) }
+                                                    ?.takeIf { it.isNotEmpty() } ?: return@launch
+                                                viewModel.matchFiles(files, mcVersion)
+                                            } catch (cancel: CancellationException) {
+                                                throw cancel
+                                            } catch (cause: Exception) {
+                                                modpackVersionInfoLogger.error(cause) { "选择额外Mod文件失败" }
+                                                snackbarHostState.showSnackbar("选择Mod文件失败，请重试")
+                                            } finally {
+                                                modFilePickerOpen = false
+                                            }
                                         }
                                     }
                                     CircleIconButton(
