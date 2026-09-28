@@ -17,8 +17,7 @@
     "mPackListener",
     "mPlusTimeout",
     "mSaveBandwidth",
-    "mServerLoginPacketListener",
-    "mServerPlayer"
+    "mServerLoginPacketListener"
   ],
   "client": [
   ]
