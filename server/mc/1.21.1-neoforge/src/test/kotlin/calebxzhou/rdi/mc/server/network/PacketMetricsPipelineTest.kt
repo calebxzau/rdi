@@ -1,5 +1,6 @@
 package calebxzhou.rdi.mc.server.network
 
+import calebxzau.rdi.mc.metrics.PacketDirection
 import calebxzau.rdi.mc.server.network.MinecraftVarIntCodec211
 import calebxzau.rdi.mc.zstdcodec.ZstdCompressionPipeline
 import io.netty.buffer.ByteBuf
@@ -27,17 +28,19 @@ class PacketMetricsPipelineTest {
             harness.encoder.bodySize = 2048
             val wireFrame = harness.writePacket(42)
             val sentSample = harness.samples.single()
-            assertEquals(42L, packetId(sentSample.first))
-            assertEquals(innerFrameSize(wireFrame), sentSample.second)
-            assertTrue(sentSample.second < 2048)
+            assertEquals(42L, packetId(sentSample.packet))
+            assertEquals(PacketDirection.S2C, sentSample.direction)
+            assertEquals(innerFrameSize(wireFrame), sentSample.bytes)
+            assertTrue(sentSample.bytes < 2048)
 
             harness.samples.clear()
             harness.channel.writeInbound(Unpooled.wrappedBuffer(wireFrame))
             val received = harness.channel.readInbound<ServerboundKeepAlivePacket>()
             assertEquals(42L, received.id)
             val receivedSample = harness.samples.single()
-            assertEquals(42L, packetId(receivedSample.first))
-            assertEquals(innerFrameSize(wireFrame), receivedSample.second)
+            assertEquals(42L, packetId(receivedSample.packet))
+            assertEquals(PacketDirection.C2S, receivedSample.direction)
+            assertEquals(innerFrameSize(wireFrame), receivedSample.bytes)
         } finally {
             harness.close()
         }
@@ -49,13 +52,13 @@ class PacketMetricsPipelineTest {
         try {
             harness.encoder.bodySize = 31
             val belowThreshold = harness.writePacket(1)
-            assertEquals(innerFrameSize(belowThreshold), harness.samples.last().second)
+            assertEquals(innerFrameSize(belowThreshold), harness.samples.last().bytes)
 
             harness.setThreshold(-1)
             harness.encoder.bodySize = 2048
             val disabled = harness.writePacket(2)
-            assertEquals(innerFrameSize(disabled), harness.samples.last().second)
-            assertEquals(2048, harness.samples.last().second)
+            assertEquals(innerFrameSize(disabled), harness.samples.last().bytes)
+            assertEquals(2048, harness.samples.last().bytes)
         } finally {
             harness.close()
         }
@@ -73,13 +76,14 @@ class PacketMetricsPipelineTest {
             harness.setThreshold(16)
             val compressedAgain = harness.writePacket(12)
 
-            assertEquals(listOf(10L, 11L, 12L), harness.samples.map { packetId(it.first) })
+            assertEquals(listOf(10L, 11L, 12L), harness.samples.map { packetId(it.packet) })
+            assertTrue(harness.samples.all { it.direction == PacketDirection.S2C })
             assertEquals(
                 listOf(compressed, raw, compressedAgain).map(::innerFrameSize),
-                harness.samples.map { it.second },
+                harness.samples.map { it.bytes },
             )
-            assertTrue(harness.samples[0].second < harness.samples[1].second)
-            assertTrue(harness.samples[2].second < harness.samples[1].second)
+            assertTrue(harness.samples[0].bytes < harness.samples[1].bytes)
+            assertTrue(harness.samples[2].bytes < harness.samples[1].bytes)
         } finally {
             harness.close()
         }
@@ -95,8 +99,10 @@ class PacketMetricsPipelineTest {
             first.writePacket(21)
             second.writePacket(22)
             first.writePacket(23)
-            assertEquals(listOf(21L, 23L), first.samples.map { packetId(it.first) })
-            assertEquals(listOf(22L), second.samples.map { packetId(it.first) })
+            assertEquals(listOf(21L, 23L), first.samples.map { packetId(it.packet) })
+            assertEquals(listOf(22L), second.samples.map { packetId(it.packet) })
+            assertTrue(first.samples.all { it.direction == PacketDirection.S2C })
+            assertTrue(second.samples.all { it.direction == PacketDirection.S2C })
         } finally {
             first.close()
             second.close()
@@ -123,8 +129,9 @@ class PacketMetricsPipelineTest {
             harness.channel.config().isAutoRead = true
             harness.channel.read()
 
-            assertEquals(listOf(24L, 25L), harness.samples.map { packetId(it.first) })
-            assertEquals(listOf(innerFrameSize(first), innerFrameSize(second)), harness.samples.map { it.second })
+            assertEquals(listOf(24L, 25L), harness.samples.map { packetId(it.packet) })
+            assertEquals(listOf(innerFrameSize(first), innerFrameSize(second)), harness.samples.map { it.bytes })
+            assertTrue(harness.samples.all { it.direction == PacketDirection.C2S })
         } finally {
             harness.close()
         }
@@ -170,7 +177,8 @@ class PacketMetricsPipelineTest {
             assertTrue(harness.samples.isEmpty())
             harness.encoder.bodySize = 1024
             harness.writePacket(31)
-            assertEquals(listOf(31L), harness.samples.map { packetId(it.first) })
+            assertEquals(listOf(31L), harness.samples.map { packetId(it.packet) })
+            assertEquals(PacketDirection.S2C, harness.samples.single().direction)
 
             val goodWireFrame = harness.writePacket(32)
             harness.samples.clear()
@@ -178,7 +186,8 @@ class PacketMetricsPipelineTest {
             assertFails { harness.channel.writeInbound(Unpooled.wrappedBuffer(goodWireFrame)) }
             assertTrue(harness.samples.isEmpty())
             harness.channel.writeInbound(Unpooled.wrappedBuffer(goodWireFrame))
-            assertEquals(listOf(32L), harness.samples.map { packetId(it.first) })
+            assertEquals(listOf(32L), harness.samples.map { packetId(it.packet) })
+            assertEquals(PacketDirection.C2S, harness.samples.single().direction)
         } finally {
             harness.close()
         }
@@ -199,7 +208,7 @@ class PacketMetricsPipelineTest {
     }
 
     private class Harness(threshold: Int, recordFailure: Boolean = false) {
-        val samples = mutableListOf<Pair<Packet<*>, Int>>()
+        val samples = mutableListOf<CapturedSample>()
         val encoder = FakePacketEncoder()
         var decoder = FakePacketDecoder()
         val channel = EmbeddedChannel()
@@ -211,8 +220,8 @@ class PacketMetricsPipelineTest {
             channel.pipeline().addLast("prepender", OuterFramePrepender())
             channel.pipeline().addLast("encoder", encoder)
             ZstdCompressionPipeline.setup(channel, threshold, true, MinecraftVarIntCodec211.INSTANCE)
-            PacketMetricsPipeline.install(channel.pipeline()) { packet, bytes ->
-                samples += packet to bytes
+            PacketMetricsPipeline.install(channel.pipeline()) { packet, direction, bytes ->
+                samples += CapturedSample(packet, direction, bytes)
                 if (recordFailure) throw IllegalStateException("test record failure")
             }
         }
@@ -236,6 +245,12 @@ class PacketMetricsPipelineTest {
             channel.finishAndReleaseAll()
         }
     }
+
+    private data class CapturedSample(
+        val packet: Packet<*>,
+        val direction: PacketDirection,
+        val bytes: Int,
+    )
 
     private class FakePacketEncoder : MessageToMessageEncoder<Packet<*>>() {
         var bodySize = 8

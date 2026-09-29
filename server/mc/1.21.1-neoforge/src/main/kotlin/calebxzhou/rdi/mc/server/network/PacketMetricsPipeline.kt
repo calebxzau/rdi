@@ -1,5 +1,6 @@
 package calebxzhou.rdi.mc.server.network
 
+import calebxzau.rdi.mc.metrics.PacketDirection
 import io.netty.buffer.ByteBuf
 import io.netty.buffer.DefaultByteBufHolder
 import io.netty.channel.ChannelHandlerContext
@@ -24,7 +25,7 @@ object PacketMetricsPipeline {
     private val logger = LogManager.getLogger("rdi.packet-metrics")
 
     internal fun interface Recorder {
-        fun record(packet: Packet<*>, bytes: Int)
+        fun record(packet: Packet<*>, direction: PacketDirection, bytes: Int)
     }
 
     private class State(val recorder: Recorder) {
@@ -33,8 +34,8 @@ object PacketMetricsPipeline {
         var outboundPacket: Packet<*>? = null
         var writing = false
 
-        fun recordSafely(packet: Packet<*>, bytes: Int) {
-            runCatching { recorder.record(packet, bytes) }
+        fun recordSafely(packet: Packet<*>, direction: PacketDirection, bytes: Int) {
+            runCatching { recorder.record(packet, direction, bytes) }
                 .onFailure { logger.error("Failed to collect a compressed packet metric", it) }
         }
     }
@@ -86,7 +87,7 @@ object PacketMetricsPipeline {
         val bytes = state.inboundBytes
         if (bytes == NO_FRAME) return
         state.inboundBytes = NO_FRAME
-        state.recordSafely(packet, bytes)
+        state.recordSafely(packet, PacketDirection.C2S, bytes)
     }
 
     private class Capture(val state: State) : ChannelInboundHandlerAdapter() {
@@ -140,7 +141,7 @@ object PacketMetricsPipeline {
         override fun write(ctx: ChannelHandlerContext, msg: Any, promise: ChannelPromise) {
             val packet = state.outboundPacket
             state.outboundPacket = null
-            if (packet != null && msg is ByteBuf) state.recordSafely(packet, msg.readableBytes())
+            if (packet != null && msg is ByteBuf) state.recordSafely(packet, PacketDirection.S2C, msg.readableBytes())
             ctx.write(msg, promise)
         }
     }

@@ -68,7 +68,7 @@ class RDIMain {
         fun starting(e: ServerStartingEvent) {
             val server = e.getServer() as DedicatedServer
             mcs = server
-            PacketMetrics.start(server.serverDirectory.resolve("rdi").resolve("packet-traffic_v2.db"))
+            PacketMetrics.start(server.serverDirectory.resolve("rdi").resolve("packet-traffic_v3.db"))
             GameRules.visitGameRuleTypes(object : GameRules.GameRuleTypeVisitor {
                 override fun <T : GameRules.Value<T>> visit(key: GameRules.Key<T>, type: GameRules.Type<T>) {
                     val gameRuleEnv = System.getenv("GAME_RULE_" + key.getId())
