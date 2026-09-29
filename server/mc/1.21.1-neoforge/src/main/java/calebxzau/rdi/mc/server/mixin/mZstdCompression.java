@@ -2,6 +2,7 @@ package calebxzau.rdi.mc.server.mixin;
 
 import calebxzau.rdi.mc.server.network.MinecraftVarIntCodec211;
 import calebxzau.rdi.mc.zstdcodec.ZstdCompressionPipeline;
+import calebxzhou.rdi.mc.server.network.PacketMetricsPipeline;
 import io.netty.channel.Channel;
 import net.minecraft.network.Connection;
 import org.spongepowered.asm.mixin.Mixin;
@@ -18,6 +19,7 @@ public abstract class mZstdCompression {
     @Inject(method = "setupCompression", at = @At("HEAD"), cancellable = true)
     private void RDI$setupCompression(int threshold, boolean validateDecompressed, CallbackInfo ci) {
         ZstdCompressionPipeline.setup(channel(), threshold, validateDecompressed, MinecraftVarIntCodec211.INSTANCE);
+        PacketMetricsPipeline.compressionChanged(channel().pipeline());
         ci.cancel();
     }
 }

@@ -21,6 +21,7 @@
     "mGuardServerLevelTick",
     "mLimitEntitiesInSection",
     "mLimitExecutor",
+    "mPacketMetricsConnection",
     "mPacketMetricsDecoder",
     "mPacketMetricsEncoder",
     "mRegionFileStorage",

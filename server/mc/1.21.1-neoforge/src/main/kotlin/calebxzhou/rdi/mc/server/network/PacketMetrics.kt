@@ -16,8 +16,8 @@ import java.util.concurrent.atomic.AtomicReference
 
 internal data class PacketMetricSample(
     val key: PacketMetricKey,
-    /** Uncompressed packet-body bytes. */
-    val encodedBytes: Long,
+    /** Compressed frame-content bytes, including the inner compression envelope and excluding the outer frame length. */
+    val compressedFrameBytes: Long,
 )
 
 internal data class PacketMetricKey(
@@ -28,7 +28,7 @@ internal data class PacketMetricKey(
 
 internal data class PacketMetricTotal(
     var packetCount: Long,
-    var encodedBytes: Long,
+    var compressedFrameBytes: Long,
     var baselineLoaded: Boolean = false,
 )
 
@@ -64,13 +64,13 @@ object PacketMetrics {
     }
 
     @JvmStatic
-    fun record(packet: Packet<*>, encodedBytes: Int) {
+    fun record(packet: Packet<*>, compressedFrameBytes: Int) {
         val recorder = active.get() ?: return
         runCatching {
             recorder.offer(
                 PacketMetricSample(
                     key = packetMetricKey(packet),
-                    encodedBytes = encodedBytes.toLong(),
+                    compressedFrameBytes = compressedFrameBytes.toLong(),
                 ),
             )
         }.onFailure { error -> logger.error("Packet metrics ingress failed", error) }
@@ -106,19 +106,19 @@ internal class PacketMetricsRecorder(
                 statement.execute("PRAGMA synchronous=NORMAL")
                 statement.execute("PRAGMA foreign_keys=ON")
                 statement.execute(
-                    """CREATE TABLE IF NOT EXISTS packet_totals (
+                    """CREATE TABLE IF NOT EXISTS packet_compressed_totals (
                         packet_type TEXT NOT NULL,
                         namespace TEXT,
                         path TEXT,
                         packet_count INTEGER NOT NULL,
-                        sum_encoded_bytes INTEGER NOT NULL,
+                        sum_compressed_frame_bytes INTEGER NOT NULL,
                         CHECK ((namespace IS NULL AND path IS NULL) OR (namespace IS NOT NULL AND path IS NOT NULL))
                     )""".trimIndent(),
                 )
                 // ':' is invalid in ResourceLocation components, so NULL stays distinct from an empty component.
                 statement.execute(
-                    """CREATE UNIQUE INDEX IF NOT EXISTS packet_totals_key
-                        ON packet_totals(packet_type, COALESCE(namespace, ':'), COALESCE(path, ':'))""".trimIndent(),
+                    """CREATE UNIQUE INDEX IF NOT EXISTS packet_compressed_totals_key
+                        ON packet_compressed_totals(packet_type, COALESCE(namespace, ':'), COALESCE(path, ':'))""".trimIndent(),
                 )
                 statement.execute(
                     """CREATE TABLE IF NOT EXISTS packet_metrics_state (
@@ -218,7 +218,7 @@ internal class PacketMetricsRecorder(
         val current = aggregates[sample.key]
         if (current != null) {
             current.packetCount++
-            current.encodedBytes += sample.encodedBytes
+            current.compressedFrameBytes += sample.compressedFrameBytes
             return
         }
         if (aggregates.size >= AGGREGATE_CAPACITY) {
@@ -227,12 +227,12 @@ internal class PacketMetricsRecorder(
         }
         aggregates[sample.key] = PacketMetricTotal(
             packetCount = 1,
-            encodedBytes = sample.encodedBytes,
+            compressedFrameBytes = sample.compressedFrameBytes,
         )
     }
 
     private fun readPersistedTotal(key: PacketMetricKey): Pair<Long, Long> = connection.prepareStatement(
-        """SELECT packet_count, sum_encoded_bytes FROM packet_totals
+        """SELECT packet_count, sum_compressed_frame_bytes FROM packet_compressed_totals
            WHERE packet_type=? AND COALESCE(namespace, ':')=COALESCE(?, ':')
            AND COALESCE(path, ':')=COALESCE(?, ':')""".trimIndent(),
     ).use { statement ->
@@ -252,24 +252,24 @@ internal class PacketMetricsRecorder(
         connection.autoCommit = false
         try {
             connection.prepareStatement(
-                """INSERT INTO packet_totals(packet_type, namespace, path, packet_count, sum_encoded_bytes)
+                """INSERT INTO packet_compressed_totals(packet_type, namespace, path, packet_count, sum_compressed_frame_bytes)
                     VALUES (?, ?, ?, ?, ?)
                     ON CONFLICT(packet_type, COALESCE(namespace, ':'), COALESCE(path, ':')) DO UPDATE SET
-                    packet_count=excluded.packet_count, sum_encoded_bytes=excluded.sum_encoded_bytes""".trimIndent(),
+                    packet_count=excluded.packet_count, sum_compressed_frame_bytes=excluded.sum_compressed_frame_bytes""".trimIndent(),
             ).use { statement ->
                 aggregates.forEach { (key, total) ->
                     if (!total.baselineLoaded) {
                         beforeBaselineRead?.invoke()
                         val persisted = readPersistedTotal(key)
                         total.packetCount += persisted.first
-                        total.encodedBytes += persisted.second
+                        total.compressedFrameBytes += persisted.second
                         total.baselineLoaded = true
                     }
                     statement.setString(1, key.packetType)
                     statement.setString(2, key.namespace)
                     statement.setString(3, key.path)
                     statement.setLong(4, total.packetCount)
-                    statement.setLong(5, total.encodedBytes)
+                    statement.setLong(5, total.compressedFrameBytes)
                     statement.addBatch()
                 }
                 statement.executeBatch()

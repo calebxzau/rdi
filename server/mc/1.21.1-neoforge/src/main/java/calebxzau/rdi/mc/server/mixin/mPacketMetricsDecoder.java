@@ -1,6 +1,6 @@
 package calebxzau.rdi.mc.server.mixin;
 
-import calebxzhou.rdi.mc.server.network.PacketMetrics;
+import calebxzhou.rdi.mc.server.network.PacketMetricsPipeline;
 import io.netty.buffer.ByteBuf;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.local.LocalChannel;
@@ -19,16 +19,12 @@ import java.util.List;
 @Mixin(PacketDecoder.class)
 public abstract class mPacketMetricsDecoder {
     @Unique private static final Logger RDI$LOGGER = LogManager.getLogger("rdi.packet-metrics");
-    @Unique private int rdi$readableBytesBefore;
-    @Unique private int rdi$readerIndexBefore;
     @Unique private int rdi$outputSizeBefore;
     @Unique private boolean rdi$hadInput;
 
     @Inject(method = "decode", at = @At("HEAD"))
     private void rdi$capturePacketStart(ChannelHandlerContext context, ByteBuf input, List<Object> output, CallbackInfo ci) {
         rdi$hadInput = input.isReadable();
-        rdi$readableBytesBefore = input.readableBytes();
-        rdi$readerIndexBefore = input.readerIndex();
         rdi$outputSizeBefore = output.size();
     }
 
@@ -40,11 +36,7 @@ public abstract class mPacketMetricsDecoder {
 
             Object decoded = output.get(output.size() - 1);
             if (!(decoded instanceof Packet<?> packet)) return;
-            int packetStart = rdi$readerIndexBefore;
-            int consumedBytes = input.readerIndex() - packetStart;
-            if (consumedBytes <= 0 || consumedBytes > rdi$readableBytesBefore) return;
-
-            PacketMetrics.record(packet, consumedBytes);
+            PacketMetricsPipeline.decoded(context, packet);
         } catch (Throwable error) {
             RDI$LOGGER.error("Failed to collect an inbound packet metric", error);
         }

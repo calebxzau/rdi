@@ -1,6 +1,6 @@
 package calebxzau.rdi.mc.server.mixin;
 
-import calebxzhou.rdi.mc.server.network.PacketMetrics;
+import calebxzhou.rdi.mc.server.network.PacketMetricsPipeline;
 import io.netty.buffer.ByteBuf;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.local.LocalChannel;
@@ -22,7 +22,7 @@ public abstract class mPacketMetricsEncoder {
         try {
             if (context.channel() instanceof LocalChannel || context.channel().remoteAddress() == null) return;
 
-            PacketMetrics.record(packet, output.readableBytes());
+            PacketMetricsPipeline.encoded(context, packet);
         } catch (Throwable error) {
             RDI$LOGGER.error("Failed to collect an outbound packet metric", error);
         }

@@ -21,14 +21,14 @@ class PacketMetricsTest {
     lateinit var tempDir: Path
 
     @Test
-    fun `fresh schema has five packet total columns and no per run tables`() {
+    fun `fresh schema has five compressed packet total columns and no per run tables`() {
         val databasePath = tempDir.resolve("schema.sqlite")
         val recorder = PacketMetricsRecorder(databasePath, flushIntervalMs = 20)
         recorder.close()
 
         DriverManager.getConnection("jdbc:sqlite:$databasePath").use { connection ->
             connection.createStatement().use { statement ->
-                statement.executeQuery("PRAGMA table_info(packet_totals)").use { result ->
+                statement.executeQuery("PRAGMA table_info(packet_compressed_totals)").use { result ->
                     val columns = mutableListOf<Pair<String, Int>>()
                     while (result.next()) columns += result.getString("name") to result.getInt("notnull")
                     assertEquals(
@@ -37,7 +37,7 @@ class PacketMetricsTest {
                             "namespace" to 0,
                             "path" to 0,
                             "packet_count" to 1,
-                            "sum_encoded_bytes" to 1,
+                            "sum_compressed_frame_bytes" to 1,
                         ),
                         columns,
                     )
@@ -89,9 +89,51 @@ class PacketMetricsTest {
 
         DriverManager.getConnection("jdbc:sqlite:$databasePath").use { connection ->
             connection.createStatement().use { statement ->
-                statement.executeQuery("SELECT COUNT(*) FROM packet_totals").use { result ->
+                statement.executeQuery("SELECT COUNT(*) FROM packet_compressed_totals").use { result ->
                     assertTrue(result.next())
                     assertEquals(5, result.getInt(1))
+                }
+            }
+        }
+    }
+
+    @Test
+    fun `compressed totals use a separate table and preserve legacy packet totals`() {
+        val databasePath = tempDir.resolve("legacy.sqlite")
+        DriverManager.getConnection("jdbc:sqlite:$databasePath").use { connection ->
+            connection.createStatement().use { statement ->
+                statement.execute(
+                    """CREATE TABLE packet_totals (
+                        packet_type TEXT NOT NULL,
+                        namespace TEXT,
+                        path TEXT,
+                        packet_count INTEGER NOT NULL,
+                        sum_encoded_bytes INTEGER NOT NULL
+                    )""".trimIndent(),
+                )
+                statement.execute(
+                    """INSERT INTO packet_totals VALUES ('minecraft:keep_alive', NULL, NULL, 4, 128)""",
+                )
+            }
+        }
+
+        val key = packetMetricKey(ServerboundKeepAlivePacket(1L))
+        val recorder = PacketMetricsRecorder(databasePath, flushIntervalMs = 20)
+        try {
+            recorder.offer(sample(key, 7))
+            waitForTotal(databasePath, key, 1, 7)
+        } finally {
+            recorder.close()
+        }
+
+        DriverManager.getConnection("jdbc:sqlite:$databasePath").use { connection ->
+            connection.createStatement().use { statement ->
+                statement.executeQuery(
+                    "SELECT packet_count, sum_encoded_bytes FROM packet_totals WHERE packet_type='minecraft:keep_alive'",
+                ).use { result ->
+                    assertTrue(result.next())
+                    assertEquals(4L, result.getLong(1))
+                    assertEquals(128L, result.getLong(2))
                 }
             }
         }
@@ -132,7 +174,7 @@ class PacketMetricsTest {
         setup.close()
         DriverManager.getConnection("jdbc:sqlite:$databasePath").use { connection ->
             connection.prepareStatement(
-                "INSERT INTO packet_totals(packet_type, namespace, path, packet_count, sum_encoded_bytes) VALUES (?, NULL, NULL, ?, ?)",
+                "INSERT INTO packet_compressed_totals(packet_type, namespace, path, packet_count, sum_compressed_frame_bytes) VALUES (?, NULL, NULL, ?, ?)",
             ).use { statement ->
                 statement.setString(1, key.packetType)
                 statement.setLong(2, 7)
@@ -144,7 +186,7 @@ class PacketMetricsTest {
         val secondKey = packetMetricKey(ServerboundCustomPayloadPacket(payload("example", "second")))
         DriverManager.getConnection("jdbc:sqlite:$databasePath").use { connection ->
             connection.prepareStatement(
-                "INSERT INTO packet_totals(packet_type, namespace, path, packet_count, sum_encoded_bytes) VALUES (?, ?, ?, ?, ?)",
+                "INSERT INTO packet_compressed_totals(packet_type, namespace, path, packet_count, sum_compressed_frame_bytes) VALUES (?, ?, ?, ?, ?)",
             ).use { statement ->
                 statement.setString(1, secondKey.packetType)
                 statement.setString(2, secondKey.namespace)
@@ -211,7 +253,7 @@ class PacketMetricsTest {
         while (System.nanoTime() < deadline) {
             val total = DriverManager.getConnection("jdbc:sqlite:$databasePath").use { connection ->
                 connection.prepareStatement(
-                    """SELECT packet_count, sum_encoded_bytes FROM packet_totals
+                    """SELECT packet_count, sum_compressed_frame_bytes FROM packet_compressed_totals
                        WHERE packet_type=? AND COALESCE(namespace, ':')=COALESCE(?, ':')
                        AND COALESCE(path, ':')=COALESCE(?, ':')""".trimIndent(),
                 ).use { statement ->
