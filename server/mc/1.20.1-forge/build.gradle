@@ -11,6 +11,7 @@ plugins {
     id 'net.neoforged.moddev.legacyforge' version '2.0.141'
     id 'org.jetbrains.kotlin.jvm' version '2.4.10'
     id 'org.jetbrains.kotlin.plugin.serialization' version '2.4.10'
+    id 'idea'
 }
 
 base {
@@ -31,14 +32,6 @@ sourceSets.main {
     kotlin.srcDir '../../../mc/syncchunk/src/main/kotlin'
     kotlin.srcDir '../../../mc/rcmd/src/main/kotlin'
     kotlin.srcDir '../../../mc/rmcp/server/src/main/kotlin'
-    java.exclude(
-            'calebxzhou/rdi/mc/server/mixin/mChatMsg.java',
-            'calebxzhou/rdi/mc/server/mixin/mFullBrightLightPacket.java',
-            'calebxzhou/rdi/mc/server/mixin/mGuardTick.java',
-            'calebxzhou/rdi/mc/server/mixin/mLimitEntitiesInSection.java',
-            'calebxzhou/rdi/mc/server/mixin/mLimitExecutor.java',
-            'calebxzhou/rdi/mc/server/mixin/mRcmdCommandInput.java'
-    )
 }
 sourceSets.create('zstdTest') {
     kotlin.srcDir '../../../mc/common/codec/src/main/kotlin'
