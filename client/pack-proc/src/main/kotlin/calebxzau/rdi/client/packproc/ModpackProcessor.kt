@@ -1104,6 +1104,7 @@ class ModpackProcessor(
         val name = dir.name.lowercase()
         if (name == "cache" || name == "logs" || name == "crash-reports") return true
         if (relativePath.startsWith("libraries/")) return true
+        if (relativePath.startsWith("xaero/")) return true
         val childDirNames = dir.listFiles()
             ?.asSequence()
             ?.filter { it.isDirectory }
