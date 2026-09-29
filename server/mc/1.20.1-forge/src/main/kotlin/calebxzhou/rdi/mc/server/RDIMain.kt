@@ -13,6 +13,7 @@ import calebxzhou.rdi.mc.server.mcpimpl.McpNetwork
 import calebxzhou.rdi.mc.server.network.RServerNetwork
 import calebxzhou.rdi.mc.server.rcmd.PlayerNbtChatRangeStore
 import calebxzhou.rdi.mc.server.rcmd.RcmdForgeServerAdapter
+import calebxzau.rdi.mc.v20.server.network.PacketMetrics20
 import calebxzau.rdi.mc.v20.server.rcmd.RcmdServerRuntime20
 import calebxzhou.rdi.mc.server.rcmd.RcmdServerCommands
 import net.minecraft.ChatFormatting
@@ -72,6 +73,7 @@ class RDIMain {
         @JvmStatic
         fun starting(e: ServerStartingEvent) {
             val server = (e.getServer() as? DedicatedServer) ?: return
+            PacketMetrics20.start(server.serverDirectory.toPath().resolve("rdi").resolve("packet-traffic_v3.db"))
 
             GameRules.visitGameRuleTypes(object : GameRules.GameRuleTypeVisitor {
                 override fun <T : GameRules.Value<T>> visit(key: GameRules.Key<T>, type: GameRules.Type<T>) {
@@ -94,6 +96,7 @@ class RDIMain {
 
         @SubscribeEvent @JvmStatic
         fun stopped(e: ServerStoppedEvent) {
+            PacketMetrics20.stop()
             runCatching { RegionZstdCodec.closeAll() }.onFailure { error ->
                 lgr.error("Failed to close Zstd region compression pool", error)
             }

@@ -1,6 +1,7 @@
 plugins {
     id 'fabric-loom' version '1.18.2'
     id 'org.jetbrains.kotlin.jvm' version '2.4.10'
+    id 'idea'
 }
 
 base {
@@ -47,11 +48,13 @@ sourceSets.main {
     kotlin.srcDir '../../../mc/20/src/main/kotlin'
     java.srcDir '../../../mc/common/codec/src/server/java'
     kotlin.srcDir '../../../mc/common/codec/src/main/kotlin'
+    kotlin.srcDir '../../../mc/common/network-metrics/src/main/kotlin'
     kotlin.srcDir '../../../mc/rcmd/src/main/kotlin'
 }
 
 sourceSets.test.kotlin.srcDir '../../../mc/20/src/serverTest/kotlin'
 sourceSets.test.kotlin.srcDir '../../../mc/common/codec/src/serverTest/kotlin'
+sourceSets.test.kotlin.srcDir '../../../mc/common/network-metrics/src/test/kotlin'
 
 repositories {
     mavenCentral()
@@ -73,12 +76,21 @@ dependencies {
     include(modImplementation('com.neovisionaries:nv-websocket-client:2.14'))
 
     implementation project(':s-mc-common')
+    // Development runs and tests load the Windows natives; the release nests Linux only.
+    implementation('org.xerial:sqlite-jdbc:3.53.4.0')
+    implementation('org.xerial:sqlite-jdbc:3.53.4.0:natives-windows')
+    include('org.xerial:sqlite-jdbc:3.53.4.0:without-natives')
+    include('org.xerial:sqlite-jdbc:3.53.4.0:natives-linux')
 
     testImplementation 'org.jetbrains.kotlin:kotlin-test-junit5:2.4.10'
     testRuntimeOnly 'org.junit.jupiter:junit-jupiter-engine:6.1.1'
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher:6.1.1'
     testRuntimeOnly 'io.github.llamalad7:mixinextras-common:0.5.5'
 }
+
+// Use only named Minecraft artifacts; resolving main compileClasspath would pull project builds.
+ext.packetClassNamesMinecraft = loom.namedMinecraftJars
+apply from: '../../../mc/common/network-metrics/packet-class-names.gradle'
 
 tasks.named('test', Test) {
     useJUnitPlatform()

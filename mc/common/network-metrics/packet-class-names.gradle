@@ -1,0 +1,35 @@
+// Both 1.20 server builds supply a lazy FileCollection of Mojang-named Minecraft artifacts.
+// The generator has its own classpath: it must never depend on main compilation or load Minecraft.
+def minecraftInputs = files(project.ext.packetClassNamesMinecraft)
+def generatorRoot = file('../../../mc/common/network-metrics')
+def generatorSources = sourceSets.create('packetMetricsGenerator') {
+    kotlin.srcDir new File(generatorRoot, 'src/generator/kotlin')
+}
+
+dependencies {
+    add(generatorSources.implementationConfigurationName, 'org.ow2.asm:asm:9.10.1')
+    add(generatorSources.implementationConfigurationName, 'org.jetbrains.kotlin:kotlin-stdlib:2.4.10')
+}
+
+def generatedDirectory = layout.buildDirectory.dir('generated/sources/packet-metrics/java')
+def generatePacketClassNames = tasks.register('generatePacketClassNames', JavaExec) {
+    group = 'build'
+    description = 'Generates stable Mojang packet class names from mapped Minecraft bytecode.'
+    classpath = generatorSources.runtimeClasspath
+    mainClass = 'calebxzau.rdi.mc.metrics.generator.GeneratePacketClassNames'
+    javaLauncher = javaToolchains.launcherFor(java.toolchain)
+    workingDir = generatorRoot
+    dependsOn(generatorSources.classesTaskName, minecraftInputs)
+    inputs.files(minecraftInputs).withPropertyName('mappedMinecraft').withNormalizer(ClasspathNormalizer)
+    outputs.dir(generatedDirectory).withPropertyName('generatedPacketClassNames')
+    doFirst {
+        setArgs([generatedDirectory.get().asFile.absolutePath] +
+                minecraftInputs.files.collect { it.absolutePath }.sort())
+    }
+}
+
+// Task-backed sources also carry the dependency into Java compilation and sourcesJar.
+sourceSets.main.java.srcDir(generatePacketClassNames)
+tasks.named('compileKotlin') {
+    dependsOn(generatePacketClassNames)
+}

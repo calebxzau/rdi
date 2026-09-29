@@ -216,6 +216,154 @@ class PacketMetricsRecorderTest {
         }
     }
 
+    @Test
+    fun `channel budget survives flushes and restarts while overflow keeps direction and totals`(): Unit {
+        val databasePath = tempDir.resolve("channel-budget.sqlite")
+        val known = key(PacketDirection.C2S, "example", "known")
+        val second = key(PacketDirection.C2S, "example", "second")
+        val c2sOverflow = overflowKey(PacketDirection.C2S)
+        val s2cOverflow = overflowKey(PacketDirection.S2C)
+        val first = PacketMetricsRecorder(databasePath, flushIntervalMs = 20, channelCapacity = 2)
+        try {
+            first.offer(sample(known, 10))
+            waitForTotal(databasePath, known, 1, 10)
+            first.offer(sample(second, 20))
+            first.offer(sample(key(PacketDirection.C2S, "example", "third"), 30))
+            first.offer(sample(key(PacketDirection.S2C, "example", "third"), 40))
+            waitForTotal(databasePath, c2sOverflow, 1, 30)
+        } finally {
+            first.close()
+        }
+
+        val reopened = PacketMetricsRecorder(databasePath, flushIntervalMs = 20, channelCapacity = 2)
+        try {
+            reopened.offer(sample(known, 5))
+            reopened.offer(sample(key(PacketDirection.C2S, "example", "fourth"), 7))
+            reopened.offer(sample(key(PacketDirection.S2C, "another", "fifth"), 9))
+            // Channel-less packets remain separate from overflow even when the budget is full.
+            reopened.offer(sample(key(PacketDirection.C2S), 11))
+        } finally {
+            reopened.close()
+        }
+        waitForTotal(databasePath, known, 2, 15)
+        waitForTotal(databasePath, second, 1, 20)
+        waitForTotal(databasePath, c2sOverflow, 2, 37)
+        waitForTotal(databasePath, s2cOverflow, 2, 49)
+        waitForTotal(databasePath, key(PacketDirection.C2S), 1, 11)
+        assertEquals(5, rowCount(databasePath))
+    }
+
+    @Test
+    fun `oversized channels merge without consuming a slot or colliding with a real overflow name`(): Unit {
+        val databasePath = tempDir.resolve("channel-length.sqlite")
+        val maximum = key(PacketDirection.C2S, "a", "x".repeat(PacketMetricsRecorder.MAX_CHANNEL_NAME_LENGTH - 2))
+        val realOverflowName = key(PacketDirection.C2S, "rdi", "overflow")
+        val recorder = PacketMetricsRecorder(databasePath, channelCapacity = 2)
+        try {
+            recorder.offer(sample(key(PacketDirection.C2S, "a", "x".repeat(255)), 3))
+            recorder.offer(sample(key(PacketDirection.C2S, "x".repeat(256), ""), 5))
+            recorder.offer(sample(maximum, 7))
+            recorder.offer(sample(realOverflowName, 11))
+        } finally {
+            recorder.close()
+        }
+        waitForTotal(databasePath, overflowKey(PacketDirection.C2S), 2, 8)
+        waitForTotal(databasePath, maximum, 1, 7)
+        waitForTotal(databasePath, realOverflowName, 1, 11)
+        assertEquals(3, rowCount(databasePath))
+    }
+
+    @Test
+    fun `legacy rows above the limit are preserved and do not grant new channel slots`(): Unit {
+        val databasePath = tempDir.resolve("legacy-channel-budget.sqlite")
+        val setup = PacketMetricsRecorder(databasePath, channelCapacity = 3)
+        try {
+            repeat(3) { index -> setup.offer(sample(key(PacketDirection.C2S, "old", "channel${index}"), 10)) }
+        } finally {
+            setup.close()
+        }
+        repeat(2) { restart ->
+            val recorder = PacketMetricsRecorder(databasePath, channelCapacity = 1)
+            try {
+                recorder.offer(sample(key(PacketDirection.C2S, "old", "channel0"), 2))
+                recorder.offer(sample(key(PacketDirection.C2S, "new", "channel${restart}"), 3))
+            } finally {
+                recorder.close()
+            }
+        }
+        waitForTotal(databasePath, key(PacketDirection.C2S, "old", "channel0"), 3, 14)
+        waitForTotal(databasePath, key(PacketDirection.C2S, "old", "channel1"), 1, 10)
+        waitForTotal(databasePath, key(PacketDirection.C2S, "old", "channel2"), 1, 10)
+        waitForTotal(databasePath, overflowKey(PacketDirection.C2S), 2, 6)
+        assertEquals(4, rowCount(databasePath))
+    }
+
+    @Test
+    fun `legacy oversized rows occupy the restored budget without being reused`(): Unit {
+        val databasePath = tempDir.resolve("legacy-long-channel.sqlite")
+        PacketMetricsRecorder(databasePath).close()
+        val legacy = key(PacketDirection.C2S, "old", "x".repeat(1_024))
+        DriverManager.getConnection("jdbc:sqlite:$databasePath").use { connection ->
+            connection.prepareStatement(
+                """INSERT INTO packet_compressed_totals
+                   (packet_type, direction, namespace, path, packet_count, sum_compressed_frame_bytes)
+                   VALUES (?, ?, ?, ?, 1, 10)""".trimIndent(),
+            ).use { statement ->
+                statement.setString(1, legacy.packetType)
+                statement.setString(2, legacy.direction.databaseValue)
+                statement.setString(3, legacy.namespace)
+                statement.setString(4, legacy.path)
+                statement.executeUpdate()
+            }
+        }
+        val recorder = PacketMetricsRecorder(databasePath, channelCapacity = 1)
+        try {
+            recorder.offer(sample(legacy, 3))
+            recorder.offer(sample(key(PacketDirection.C2S, "new", "channel"), 5))
+        } finally {
+            recorder.close()
+        }
+        waitForTotal(databasePath, legacy, 1, 10)
+        waitForTotal(databasePath, overflowKey(PacketDirection.C2S), 2, 8)
+        assertEquals(2, rowCount(databasePath))
+    }
+
+    @Test
+    fun `overflow survives a failed flush without losing or duplicating samples`(): Unit {
+        val databasePath = tempDir.resolve("overflow-retry.sqlite")
+        val attempts = AtomicInteger()
+        val recorder = PacketMetricsRecorder(
+            databasePath,
+            flushIntervalMs = 20,
+            beforeBaselineRead = {
+                if (attempts.incrementAndGet() == 1) throw IllegalStateException("temporary baseline read failure")
+            },
+            channelCapacity = 0,
+        )
+        try {
+            recorder.offer(sample(key(PacketDirection.C2S, "example", "first"), 3))
+            recorder.offer(sample(key(PacketDirection.C2S, "example", "second"), 5))
+            waitForTotal(databasePath, overflowKey(PacketDirection.C2S), 2, 8)
+        } finally {
+            recorder.close()
+        }
+        assertTrue(attempts.get() >= 2)
+        assertEquals(1, rowCount(databasePath))
+    }
+
+    private fun overflowKey(direction: PacketDirection): PacketMetricKey =
+        key(direction, PacketMetricsRecorder.OVERFLOW_CHANNEL, PacketMetricsRecorder.OVERFLOW_CHANNEL)
+
+    private fun rowCount(databasePath: Path): Int =
+        DriverManager.getConnection("jdbc:sqlite:$databasePath").use { connection ->
+            connection.createStatement().use { statement ->
+                statement.executeQuery("SELECT COUNT(*) FROM packet_compressed_totals").use { result ->
+                    check(result.next())
+                    result.getInt(1)
+                }
+            }
+        }
+
     private fun waitForTotal(databasePath: Path, key: PacketMetricKey, count: Long, bytes: Long) {
         val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(3)
         while (System.nanoTime() < deadline) {

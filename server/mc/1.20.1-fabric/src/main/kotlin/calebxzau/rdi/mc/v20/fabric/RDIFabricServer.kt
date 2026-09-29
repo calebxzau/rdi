@@ -8,6 +8,7 @@ import calebxzhou.rdi.mc.common.WsMessageHandler
 import calebxzhou.rdi.mc.rcmd.chat.RChatMessage
 import calebxzau.rdi.mc.v20.protocol.FabricRoomWire20
 import calebxzau.rdi.mc.v20.protocol.EncodedPlayerList20
+import calebxzau.rdi.mc.v20.server.network.PacketMetrics20
 import calebxzau.rdi.mc.v20.server.rcmd.RcmdServerRuntime20
 import calebxzau.rdi.mc.zstdcodec.ZstdCompressionPipeline
 import calebxzau.rdi.mc.v20.server.region.RegionZstdCodec
@@ -38,6 +39,9 @@ class RDIFabricServer : DedicatedServerModInitializer {
         ServerPlayConnectionEvents.DISCONNECT.register { handler, _ ->
             rcmdAdapter?.onPlayerDisconnect(handler.player)
         }
+        ServerLifecycleEvents.SERVER_STARTING.register { server ->
+            PacketMetrics20.start(server.serverDirectory.toPath().resolve("rdi").resolve("packet-traffic_v3.db"))
+        }
         ServerLifecycleEvents.SERVER_STARTED.register { server ->
             val session = FabricServerSession(server)
             currentSession = session
@@ -56,6 +60,7 @@ class RDIFabricServer : DedicatedServerModInitializer {
             WebSocketClient.pauseReconnect()
         }
         ServerLifecycleEvents.SERVER_STOPPED.register {
+            PacketMetrics20.stop()
             runCatching { RegionZstdCodec.closeAll() }.onFailure { error ->
                 logger.error("Failed to close Zstd region compression pool", error)
             }

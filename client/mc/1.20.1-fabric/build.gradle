@@ -4,6 +4,7 @@ import java.util.Base64
 plugins {
     id 'fabric-loom' version '1.18.2'
     id 'org.jetbrains.kotlin.jvm' version '2.4.10'
+    id 'idea'
 }
 
 base {

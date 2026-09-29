@@ -74,6 +74,7 @@ internal class PacketMetricsRecorder(
     databasePath: Path,
     private val flushIntervalMs: Long = 5_000L,
     private val beforeBaselineRead: (() -> Unit)? = null,
+    private val channelCapacity: Int = MAX_CHANNEL_KEYS,
 ) {
     private val logger = LogManager.getLogger("rdi.packet-metrics")
     private val queue = ArrayBlockingQueue<PacketMetricSample>(QUEUE_CAPACITY)
@@ -81,11 +82,15 @@ internal class PacketMetricsRecorder(
     private val stopping = AtomicBoolean(false)
     private val shutdownDeadlineNanos = AtomicLong(Long.MAX_VALUE)
     private val persistedDroppedSamples = AtomicLong()
+    // Initialized from SQLite before the writer starts, then owned only by the writer.
+    private val admittedChannelKeys = HashSet<PacketMetricKey>()
+    private var channelSlotsUsed = 0
     private val connection: Connection
     private val initialDroppedSamples: Long
     private val writer: Thread
 
     init {
+        require(channelCapacity >= 0) { "Packet metric channel capacity must be nonnegative" }
         Files.createDirectories(databasePath.parent)
         connection = DriverManager.getConnection("jdbc:sqlite:${databasePath.toAbsolutePath()}")
         try {
@@ -123,6 +128,7 @@ internal class PacketMetricsRecorder(
                     result.getLong(1)
                 }
             }
+            loadChannelKeys()
             writer = Thread(::runWriter, "rdi-packet-metrics-writer").apply {
                 isDaemon = true
                 start()
@@ -136,10 +142,58 @@ internal class PacketMetricsRecorder(
     }
 
     fun offer(sample: PacketMetricSample) {
-        if (stopping.get() || !queue.offer(sample)) {
+        // Do not retain arbitrarily long client-controlled names in the bounded queue.
+        val boundedSample = if (hasOversizedChannel(sample.key)) {
+            sample.copy(key = overflowKey(sample.key))
+        } else {
+            sample
+        }
+        if (stopping.get() || !queue.offer(boundedSample)) {
             droppedSamples.incrementAndGet()
         }
     }
+
+    private fun loadChannelKeys() {
+        connection.prepareStatement(
+            """SELECT packet_type, direction, namespace, path FROM packet_compressed_totals
+               WHERE namespace IS NOT NULL AND NOT (namespace=? AND path=?)
+               ORDER BY rowid LIMIT ?""".trimIndent(),
+        ).use { statement ->
+            statement.setString(1, OVERFLOW_CHANNEL)
+            statement.setString(2, OVERFLOW_CHANNEL)
+            statement.setInt(3, channelCapacity)
+            statement.executeQuery().use { result ->
+                while (result.next()) {
+                    // Legacy oversized rows still occupy a slot, without retaining their names.
+                    channelSlotsUsed++
+                    val key = PacketMetricKey(
+                        packetType = result.getString(1),
+                        direction = PacketDirection.entries.first { it.databaseValue == result.getString(2) },
+                        namespace = result.getString(3),
+                        path = result.getString(4),
+                    )
+                    if (!hasOversizedChannel(key)) admittedChannelKeys.add(key)
+                }
+            }
+        }
+    }
+
+    private fun boundedChannelKey(key: PacketMetricKey): PacketMetricKey {
+        if (key.namespace == null || isOverflowKey(key) || key in admittedChannelKeys) return key
+        if (channelSlotsUsed >= channelCapacity) return overflowKey(key)
+        admittedChannelKeys.add(key)
+        channelSlotsUsed++
+        return key
+    }
+
+    private fun hasOversizedChannel(key: PacketMetricKey): Boolean =
+        key.namespace != null && key.namespace.length.toLong() + 1 + (key.path?.length ?: 0) > MAX_CHANNEL_NAME_LENGTH
+
+    private fun isOverflowKey(key: PacketMetricKey): Boolean =
+        key.namespace == OVERFLOW_CHANNEL && key.path == OVERFLOW_CHANNEL
+
+    private fun overflowKey(key: PacketMetricKey): PacketMetricKey =
+        key.copy(namespace = OVERFLOW_CHANNEL, path = OVERFLOW_CHANNEL)
 
     fun close() {
         if (!stopping.compareAndSet(false, true)) return
@@ -204,7 +258,8 @@ internal class PacketMetricsRecorder(
     }
 
     private fun addSample(aggregates: LinkedHashMap<PacketMetricKey, PacketMetricTotal>, sample: PacketMetricSample) {
-        val current = aggregates[sample.key]
+        val key = boundedChannelKey(sample.key)
+        val current = aggregates[key]
         if (current != null) {
             current.packetCount++
             current.compressedFrameBytes += sample.compressedFrameBytes
@@ -214,7 +269,7 @@ internal class PacketMetricsRecorder(
             droppedSamples.incrementAndGet()
             return
         }
-        aggregates[sample.key] = PacketMetricTotal(
+        aggregates[key] = PacketMetricTotal(
             packetCount = 1,
             compressedFrameBytes = sample.compressedFrameBytes,
         )
@@ -290,7 +345,11 @@ internal class PacketMetricsRecorder(
         }
     }
 
-    private companion object {
+    internal companion object {
+        const val MAX_CHANNEL_KEYS = 4_096
+        const val MAX_CHANNEL_NAME_LENGTH = 256
+        // ':' cannot occur inside a ResourceLocation component; distinct from SQL's NULL sentinel ':'.
+        const val OVERFLOW_CHANNEL = ":overflow"
         const val QUEUE_CAPACITY = 65_536
         const val AGGREGATE_CAPACITY = 131_072
         const val MAX_DRAIN_BATCH = 8_192

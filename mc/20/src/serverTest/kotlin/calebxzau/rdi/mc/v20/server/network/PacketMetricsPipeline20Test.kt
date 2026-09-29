@@ -1,0 +1,378 @@
+package calebxzau.rdi.mc.v20.server.network
+
+import calebxzau.rdi.mc.metrics.PacketDirection
+import calebxzau.rdi.mc.zstdcodec.ZstdCompressionPipeline
+import io.netty.buffer.ByteBuf
+import io.netty.buffer.Unpooled
+import io.netty.channel.ChannelHandlerContext
+import io.netty.channel.embedded.EmbeddedChannel
+import io.netty.handler.codec.ByteToMessageDecoder
+import io.netty.handler.codec.MessageToMessageEncoder
+import net.minecraft.network.protocol.Packet
+import net.minecraft.network.protocol.game.ServerboundKeepAlivePacket
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertFails
+import kotlin.test.assertTrue
+
+/**
+ * Exercises the 1.20.1 metrics pipeline without a running server. The harness mirrors the
+ * vanilla handler names and ordering: splitter -> decompress -> decoder inbound, and
+ * encoder -> compress -> prepender outbound, with no FlowControlHandler.
+ */
+class PacketMetricsPipeline20Test {
+    @Test
+    fun `records compressed inner frame bytes in both directions`(): Unit {
+        val harness = Harness(threshold = 32)
+        try {
+            harness.encoder.bodySize = 2048
+            val wireFrame = harness.writePacket(42)
+            val sent = harness.samples.single()
+            assertEquals(42L, packetId(sent.packet))
+            assertEquals(PacketDirection.S2C, sent.direction)
+            assertEquals(innerFrameSize(wireFrame), sent.bytes)
+            assertTrue(sent.bytes < 2048)
+
+            harness.samples.clear()
+            harness.channel.writeInbound(Unpooled.wrappedBuffer(wireFrame))
+            val received = harness.channel.readInbound<ServerboundKeepAlivePacket>()
+            assertEquals(42L, received.id)
+            val inbound = harness.samples.single()
+            assertEquals(42L, packetId(inbound.packet))
+            assertEquals(PacketDirection.C2S, inbound.direction)
+            assertEquals(innerFrameSize(wireFrame), inbound.bytes)
+        } finally {
+            harness.close()
+        }
+    }
+
+    @Test
+    fun `records actual envelope bytes below threshold and when compression is disabled`(): Unit {
+        val harness = Harness(threshold = 32)
+        try {
+            harness.encoder.bodySize = 31
+            val belowThreshold = harness.writePacket(1)
+            assertEquals(innerFrameSize(belowThreshold), harness.samples.last().bytes)
+            assertEquals(PacketDirection.S2C, harness.samples.last().direction)
+
+            harness.setThreshold(-1)
+            harness.encoder.bodySize = 2048
+            val disabled = harness.writePacket(2)
+            assertEquals(innerFrameSize(disabled), harness.samples.last().bytes)
+            assertEquals(2048, harness.samples.last().bytes)
+        } finally {
+            harness.close()
+        }
+    }
+
+    @Test
+    fun `threshold changes keep sample association across consecutive frames`(): Unit {
+        val harness = Harness(threshold = 64)
+        try {
+            harness.encoder.bodySize = 2048
+            val compressed = harness.writePacket(10)
+            harness.setThreshold(4096)
+            val raw = harness.writePacket(11)
+            harness.setThreshold(-1)
+            harness.setThreshold(16)
+            val compressedAgain = harness.writePacket(12)
+
+            assertEquals(listOf(10L, 11L, 12L), harness.samples.map { packetId(it.packet) })
+            assertEquals(
+                listOf(compressed, raw, compressedAgain).map(::innerFrameSize),
+                harness.samples.map { it.bytes },
+            )
+            assertTrue(harness.samples[0].bytes < harness.samples[1].bytes)
+            assertTrue(harness.samples[2].bytes < harness.samples[1].bytes)
+        } finally {
+            harness.close()
+        }
+    }
+
+    @Test
+    fun `metrics installed before compression still measure the compressed envelope`(): Unit {
+        val harness = Harness(threshold = -1, installBeforeCompression = true)
+        try {
+            harness.setThreshold(32)
+            harness.encoder.bodySize = 2048
+            val frame = harness.writePacket(50)
+
+            val sample = harness.samples.single()
+            assertEquals(PacketDirection.S2C, sample.direction)
+            assertEquals(innerFrameSize(frame), sample.bytes)
+            assertTrue(sample.bytes < 2048)
+        } finally {
+            harness.close()
+        }
+    }
+
+    @Test
+    fun `two frames in one read keep their own sizes`(): Unit {
+        val harness = Harness(threshold = 16)
+        try {
+            harness.encoder.bodySize = 512
+            val first = harness.writePacket(24)
+            val second = harness.writePacket(25)
+            harness.samples.clear()
+
+            harness.channel.writeInbound(Unpooled.wrappedBuffer(first, second))
+
+            assertEquals(listOf(24L, 25L), harness.samples.map { packetId(it.packet) })
+            assertEquals(
+                listOf(innerFrameSize(first), innerFrameSize(second)),
+                harness.samples.map { it.bytes },
+            )
+            assertTrue(harness.samples.all { it.direction == PacketDirection.C2S })
+        } finally {
+            harness.close()
+        }
+    }
+
+    @Test
+    fun `channels keep independent state`(): Unit {
+        val first = Harness(threshold = 64)
+        val second = Harness(threshold = 64)
+        try {
+            first.encoder.bodySize = 1024
+            second.encoder.bodySize = 1024
+            first.writePacket(21)
+            second.writePacket(22)
+            first.writePacket(23)
+
+            assertEquals(listOf(21L, 23L), first.samples.map { packetId(it.packet) })
+            assertEquals(listOf(22L), second.samples.map { packetId(it.packet) })
+            assertTrue(first.samples.all { it.direction == PacketDirection.S2C })
+            assertTrue(second.samples.all { it.direction == PacketDirection.S2C })
+        } finally {
+            first.close()
+            second.close()
+        }
+    }
+
+    @Test
+    fun `failed and empty frames do not attribute stale bytes to the next packet`(): Unit {
+        val harness = Harness(threshold = 16)
+        try {
+            harness.encoder.bodySize = 1024
+            harness.encoder.failNext = true
+            assertFails { harness.writePacket(30) }
+            assertTrue(harness.samples.isEmpty())
+
+            harness.encoder.bodySize = ZstdCompressionPipeline.MAXIMUM_UNCOMPRESSED_LENGTH + 1
+            assertFails { harness.writePacket(31) }
+            assertTrue(harness.samples.isEmpty())
+
+            harness.encoder.bodySize = 1024
+            val wireFrame = harness.writePacket(31)
+            assertEquals(listOf(31L), harness.samples.map { packetId(it.packet) })
+            assertEquals(innerFrameSize(wireFrame), harness.samples.single().bytes)
+
+            harness.samples.clear()
+            harness.decoder.swallowNext = true
+            harness.channel.writeInbound(Unpooled.wrappedBuffer(wireFrame))
+            assertTrue(harness.samples.isEmpty())
+            harness.channel.writeInbound(Unpooled.wrappedBuffer(wireFrame))
+            assertEquals(innerFrameSize(wireFrame), harness.samples.single().bytes)
+
+            harness.samples.clear()
+            harness.decoder.failNext = true
+            assertFails { harness.channel.writeInbound(Unpooled.wrappedBuffer(wireFrame)) }
+            assertTrue(harness.samples.isEmpty())
+            harness.channel.writeInbound(Unpooled.wrappedBuffer(wireFrame))
+            assertEquals(PacketDirection.C2S, harness.samples.single().direction)
+            assertEquals(innerFrameSize(wireFrame), harness.samples.single().bytes)
+        } finally {
+            harness.close()
+        }
+    }
+
+    @Test
+    fun `a frame that decodes to no packet leaves no bytes for the next frame`(): Unit {
+        val harness = Harness(threshold = 16)
+        try {
+            harness.encoder.bodySize = 1024
+            val wireFrame = harness.writePacket(60)
+            harness.samples.clear()
+
+            // Outer frame whose whole content is the compression envelope of an empty payload, so
+            // the packet decoder is never called for this frame.
+            harness.channel.writeInbound(Unpooled.wrappedBuffer(byteArrayOf(0x01, 0x00)))
+            assertTrue(harness.samples.isEmpty())
+
+            harness.channel.writeInbound(Unpooled.wrappedBuffer(wireFrame))
+            assertEquals(listOf(60L), harness.samples.map { packetId(it.packet) })
+            assertEquals(innerFrameSize(wireFrame), harness.samples.single().bytes)
+        } finally {
+            harness.close()
+        }
+    }
+
+    @Test
+    fun `record callback failure does not interrupt packet forwarding`(): Unit {
+        val harness = Harness(threshold = 16, recordFailure = true)
+        try {
+            harness.encoder.bodySize = 1024
+            val frame = harness.writePacket(40)
+            assertTrue(frame.isNotEmpty())
+            harness.channel.writeInbound(Unpooled.wrappedBuffer(frame))
+            assertEquals(40L, harness.channel.readInbound<ServerboundKeepAlivePacket>().id)
+        } finally {
+            harness.close()
+        }
+    }
+
+    private class Harness(
+        threshold: Int,
+        recordFailure: Boolean = false,
+        installBeforeCompression: Boolean = false,
+    ) {
+        val samples = mutableListOf<CapturedSample>()
+        val encoder = FakePacketEncoder()
+        var decoder = FakePacketDecoder()
+        val channel = EmbeddedChannel()
+
+        init {
+            channel.pipeline().addLast("splitter", OuterFrameSplitter())
+            channel.pipeline().addLast("decoder", decoder)
+            channel.pipeline().addLast("prepender", OuterFramePrepender())
+            channel.pipeline().addLast("encoder", encoder)
+            val install = {
+                PacketMetricsPipeline20.install(channel.pipeline()) { packet, direction, bytes ->
+                    samples += CapturedSample(packet, direction, bytes)
+                    if (recordFailure) throw IllegalStateException("test record failure")
+                }
+            }
+            if (installBeforeCompression) {
+                install()
+                setThreshold(threshold)
+            } else {
+                setThreshold(threshold)
+                install()
+            }
+        }
+
+        fun setThreshold(threshold: Int) {
+            ZstdCompressionPipeline.setup(channel, threshold, true, MinecraftVarIntCodec20.INSTANCE)
+            PacketMetricsPipeline20.compressionChanged(channel.pipeline())
+        }
+
+        fun writePacket(id: Long): ByteArray {
+            assertTrue(channel.writeOutbound(ServerboundKeepAlivePacket(id)))
+            val frame = channel.readOutbound<ByteBuf>() ?: error("packet encoder produced no frame")
+            return try {
+                ByteArray(frame.readableBytes()).also(frame::readBytes)
+            } finally {
+                frame.release()
+            }
+        }
+
+        fun close() {
+            channel.finishAndReleaseAll()
+        }
+    }
+
+    private data class CapturedSample(
+        val packet: Packet<*>,
+        val direction: PacketDirection,
+        val bytes: Int,
+    )
+
+    private class FakePacketEncoder : MessageToMessageEncoder<Packet<*>>() {
+        var bodySize = 8
+        var failNext = false
+
+        override fun encode(ctx: ChannelHandlerContext, packet: Packet<*>, out: MutableList<Any>) {
+            PacketMetricsPipeline20.encoded(ctx, packet)
+            if (failNext) {
+                failNext = false
+                throw IllegalStateException("test encoder failure")
+            }
+            val id = packetId(packet)
+            val body = Unpooled.buffer(bodySize).writeLong(id)
+            repeat((bodySize - Long.SIZE_BYTES).coerceAtLeast(0)) { index -> body.writeByte((id + index).toInt()) }
+            out += body
+        }
+    }
+
+    /**
+     * Mirrors the vanilla PacketDecoder: a real [ByteToMessageDecoder] that consumes one whole frame
+     * per call, so an empty payload never reaches [decode] and a frame that produces no packet leaves
+     * no unread bytes behind.
+     */
+    private class FakePacketDecoder : ByteToMessageDecoder() {
+        var failNext = false
+        var swallowNext = false
+
+        override fun decode(ctx: ChannelHandlerContext, input: ByteBuf, out: MutableList<Any>) {
+            if (failNext) {
+                failNext = false
+                input.skipBytes(input.readableBytes())
+                throw IllegalStateException("test decoder failure")
+            }
+            val id = input.readLong()
+            input.skipBytes(input.readableBytes())
+            if (swallowNext) {
+                // Mirrors PacketDecoder.decode consuming a complete frame that produces no packet.
+                swallowNext = false
+                PacketMetricsPipeline20.discarded(ctx)
+                return
+            }
+            val packet = ServerboundKeepAlivePacket(id)
+            out += packet
+            PacketMetricsPipeline20.decoded(ctx, packet)
+        }
+    }
+
+    private class OuterFrameSplitter : ByteToMessageDecoder() {
+        override fun decode(ctx: ChannelHandlerContext, input: ByteBuf, out: MutableList<Any>) {
+            if (!input.isReadable) return
+            input.markReaderIndex()
+            val size = readVarInt(input)
+            if (input.readableBytes() < size) {
+                input.resetReaderIndex()
+                return
+            }
+            out += input.readRetainedSlice(size)
+        }
+    }
+
+    private class OuterFramePrepender : MessageToMessageEncoder<ByteBuf>() {
+        override fun encode(ctx: ChannelHandlerContext, input: ByteBuf, out: MutableList<Any>) {
+            val size = input.readableBytes()
+            val framed = ctx.alloc().buffer(varIntSize(size) + size)
+            writeVarInt(framed, size)
+            framed.writeBytes(input, input.readerIndex(), size)
+            out += framed
+        }
+    }
+
+    private companion object {
+        fun packetId(packet: Packet<*>): Long = (packet as ServerboundKeepAlivePacket).id
+
+        fun innerFrameSize(outerFrame: ByteArray): Int = outerFrame.size - varIntSizeFrom(outerFrame)
+
+        fun varIntSizeFrom(bytes: ByteArray): Int {
+            var index = 0
+            while (index < bytes.size && index < 5) {
+                if (bytes[index++].toInt() and 0x80 == 0) return index
+            }
+            error("invalid outer frame length")
+        }
+
+        fun varIntSize(value: Int): Int {
+            var remaining = value
+            var size = 1
+            while (remaining and 0xFFFFFF80.toInt() != 0) {
+                size++
+                remaining = remaining ushr 7
+            }
+            return size
+        }
+
+        fun readVarInt(buffer: ByteBuf): Int = MinecraftVarIntCodec20.INSTANCE.read(buffer)
+
+        fun writeVarInt(buffer: ByteBuf, value: Int) {
+            MinecraftVarIntCodec20.INSTANCE.write(buffer, value)
+        }
+    }
+}

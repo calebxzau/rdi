@@ -29,6 +29,7 @@ sourceSets.main {
     kotlin.srcDir '../../../mc/common/2021/src/main/kotlin'
     java.srcDir '../../../mc/common/codec/src/server/java'
     kotlin.srcDir '../../../mc/common/codec/src/main/kotlin'
+    kotlin.srcDir '../../../mc/common/network-metrics/src/main/kotlin'
     kotlin.srcDir '../../../mc/syncchunk/src/main/kotlin'
     kotlin.srcDir '../../../mc/rcmd/src/main/kotlin'
     kotlin.srcDir '../../../mc/rmcp/server/src/main/kotlin'
@@ -39,6 +40,7 @@ sourceSets.create('zstdTest') {
 }
 sourceSets.test.kotlin.srcDir '../../../mc/20/src/serverTest/kotlin'
 sourceSets.test.kotlin.srcDir '../../../mc/common/codec/src/serverTest/kotlin'
+sourceSets.test.kotlin.srcDir '../../../mc/common/network-metrics/src/test/kotlin'
 mixin {
     add sourceSets.main, 'rdi.mixins.refmap.json'
     config "rdi.mixins.json"
@@ -132,6 +134,33 @@ legacyForge {
 
 def shadedConfiguration = configurations.maybeCreate('shaded')
 
+// Keep the SQLite driver and its Linux natives in one JarJar artifact so dependency
+// identity selection cannot drop the native library from the release jar.
+def sqliteLinuxRuntimeConfiguration = configurations.create('sqliteLinuxRuntime') {
+    canBeConsumed = false
+    canBeResolved = true
+    transitive = false
+}
+
+def sqliteLinuxRuntimeJar = tasks.register('sqliteLinuxRuntimeJar', Jar) {
+    dependsOn(sqliteLinuxRuntimeConfiguration)
+    from {
+        sqliteLinuxRuntimeConfiguration.collect { dependency -> zipTree(dependency) }
+    }
+    exclude 'META-INF/MANIFEST.MF', 'META-INF/*.SF', 'META-INF/*.RSA', 'META-INF/*.DSA'
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+    manifest {
+        attributes(
+                'Automatic-Module-Name': 'org.xerial.sqlitejdbc',
+                'Multi-Release'        : 'true',
+        )
+    }
+    archiveFileName = 'sqlite-jdbc-3.53.4.0-linux-runtime.jar'
+    destinationDirectory = layout.buildDirectory.dir('generated/sqlite-runtime')
+    reproducibleFileOrder = true
+    preserveFileTimestamps = false
+}
+
 dependencies {
     implementation("org.jetbrains.kotlin:kotlin-stdlib:2.4.10")
     additionalRuntimeClasspath("org.jetbrains.kotlin:kotlin-stdlib:2.4.10")
@@ -141,6 +170,14 @@ dependencies {
     annotationProcessor "org.spongepowered:mixin:0.8.5:processor"
     compileOnly(annotationProcessor("io.github.llamalad7:mixinextras-common:0.5.3"))
     implementation(jarJar("io.github.llamalad7:mixinextras-forge:0.5.3"))
+    // Development runs and tests load the Windows natives; the release jar carries Linux only.
+    implementation("org.xerial:sqlite-jdbc:3.53.4.0")
+    additionalRuntimeClasspath("org.xerial:sqlite-jdbc:3.53.4.0")
+    additionalRuntimeClasspath("org.xerial:sqlite-jdbc:3.53.4.0:natives-windows")
+    sqliteLinuxRuntime("org.xerial:sqlite-jdbc:3.53.4.0:without-natives")
+    sqliteLinuxRuntime("org.xerial:sqlite-jdbc:3.53.4.0:natives-linux")
+    jarJar(files(sqliteLinuxRuntimeJar.flatMap { it.archiveFile }).builtBy(sqliteLinuxRuntimeJar))
+
     implementation project(':s-mc-common')
     additionalRuntimeClasspath project(':s-mc-common')
     implementation project(':rmcp-common')
@@ -174,6 +211,10 @@ dependencies {
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher:6.1.1'
     testImplementation 'io.github.llamalad7:mixinextras-common:0.5.3'
 }
+
+// Use only named Minecraft artifacts; resolving main compileClasspath would pull project builds.
+ext.packetClassNamesMinecraft = files(tasks.named('createMinecraftArtifacts').flatMap { it.gameJarArtifact })
+apply from: '../../../mc/common/network-metrics/packet-class-names.gradle'
 
 tasks.named('test', Test) {
     useJUnitPlatform()
