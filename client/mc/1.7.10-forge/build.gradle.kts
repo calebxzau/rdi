@@ -129,3 +129,16 @@ tasks.register("runClient21Another") {
 @Suppress("UNCHECKED_CAST")
 val registerClientCopyTask = commonProject.extensions.extraProperties["registerClientCopyTask"] as Closure<*>
 registerClientCopyTask.call(project)
+
+// Run tests and launch tasks from this module's run directory.
+val rdiRunDirectory = layout.projectDirectory.dir("run").asFile
+tasks.withType<Test>().configureEach {
+    workingDir = rdiRunDirectory
+    doFirst { rdiRunDirectory.mkdirs() }
+}
+tasks.withType<JavaExec>().configureEach {
+    // Keep explicit run directories such as run2, run/client, or run/server.
+    if (workingDir != project.projectDir) return@configureEach
+    workingDir = rdiRunDirectory
+    doFirst { rdiRunDirectory.mkdirs() }
+}

@@ -289,3 +289,16 @@ jar {
     }
 }
 project(':s-mc-common').ext.registerServerCopyTask(project)
+
+// Run tests and launch tasks from this module's run directory.
+def rdiRunDirectory = layout.projectDirectory.dir("run").asFile
+tasks.withType(Test).configureEach {
+    workingDir = rdiRunDirectory
+    doFirst { rdiRunDirectory.mkdirs() }
+}
+tasks.withType(JavaExec).configureEach {
+    // Keep explicit run directories such as run2, run/client, or run/server.
+    if (workingDir != project.projectDir) return
+    workingDir = rdiRunDirectory
+    doFirst { rdiRunDirectory.mkdirs() }
+}
