@@ -9,11 +9,13 @@ import calebxzau.rdi.common.model.ContentPlatform
 import calebxzau.rdi.common.model.ContentSide
 import calebxzau.rdi.common.model.ContentType
 import calebxzhou.rdi.common.service.ModService
+import calebxzhou.rdi.common.service.CurseForgeService
 import calebxzhou.rdi.common.service.murmur2
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
 import kotlinx.coroutines.runBlocking
+import java.io.IOException
 import java.nio.file.Files
 import java.nio.file.FileSystemException
 import java.nio.file.Path
@@ -27,6 +29,117 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
 class ClientContentStoreTest {
+    @Test
+    fun `resource pack requests prefer a deduplicated mirror with official fallbacks`() {
+        val previousPreferMirror = ModService.preferMirror
+        try {
+            ModService.preferMirror = true
+            val urls = listOf(
+                "https://edge.forgecdn.net/files/1234/567/pack.zip",
+                "https://mediafilez.forgecdn.net/files/1234/567/pack.zip",
+            )
+            val content = Content(
+                ContentPlatform.CurseForge,
+                ContentType.ResPack,
+                "123",
+                "456",
+                "pack",
+                "123456",
+                "resourcepacks/pack.zip",
+                ContentSide.Client,
+                downloadUrls = urls + urls.first(),
+            )
+            val request = content.toClientContentRequest()
+            assertEquals(
+                listOf("https://mod.mcimirror.top/files/1234/567/pack.zip") + urls,
+                request.sources.map { it.url },
+            )
+            request.sources.forEach { source ->
+                assertEquals(CurseForgeService.downloadHeadersFor(source.url!!), source.headers)
+            }
+            assertEquals(listOf(ContentDigest(ContentDigestAlgorithm.MURMUR2, content.hash)), request.digests)
+        } finally {
+            ModService.preferMirror = previousPreferMirror
+        }
+    }
+
+    @Test
+    fun `shader pack requests honor the mirror preference and keep unsupported urls`() {
+        val previousPreferMirror = ModService.preferMirror
+        try {
+            val officialUrl = "https://cdn.modrinth.com/data/project/versions/version/shader.zip"
+            val content = Content(
+                ContentPlatform.Modrinth,
+                ContentType.ShaderPack,
+                "project",
+                "version",
+                "shader",
+                "a".repeat(40),
+                "shaderpacks/shader.zip",
+                ContentSide.Client,
+                downloadUrls = listOf(officialUrl),
+            )
+            ModService.preferMirror = false
+            assertEquals(listOf(officialUrl), content.toClientContentRequest().sources.map { it.url })
+            ModService.preferMirror = true
+            assertEquals(
+                listOf("https://mod.mcimirror.top/data/project/versions/version/shader.zip", officialUrl),
+                content.toClientContentRequest().sources.map { it.url },
+            )
+            val unsupportedUrl = "https://example.com/shader.zip"
+            assertEquals(
+                listOf(unsupportedUrl),
+                content.copy(downloadUrls = listOf(unsupportedUrl)).toClientContentRequest().sources.map { it.url },
+            )
+        } finally {
+            ModService.preferMirror = previousPreferMirror
+        }
+    }
+
+    @Test
+    fun `client extras fall back to official bytes when the mirror fails or has a wrong digest`(): Unit = runBlocking {
+        val previousPreferMirror = ModService.preferMirror
+        try {
+            ModService.preferMirror = true
+            val payload = "verified-client-extra".toByteArray()
+            val content = Content(
+                ContentPlatform.Modrinth,
+                ContentType.ShaderPack,
+                "project",
+                "version",
+                "shader",
+                digest(payload, "SHA-1"),
+                "shaderpacks/shader.zip",
+                ContentSide.Client,
+                downloadUrls = listOf("https://cdn.modrinth.com/data/project/versions/version/shader.zip"),
+            )
+            for (unavailable in listOf(true, false)) {
+                val attemptedUrls = mutableListOf<String?>()
+                val originalRequest = content.toClientContentRequest()
+                val request = originalRequest.copy(
+                    sources = originalRequest.sources.mapIndexed { index, source ->
+                        source.copy(downloader = { target, _ ->
+                            attemptedUrls.add(source.url)
+                            if (index == 0 && unavailable) {
+                                Result.failure(IOException("Mirror unavailable"))
+                            } else {
+                                Result.success(Files.write(target, if (index == 0) "wrong-extra".toByteArray() else payload))
+                            }
+                        })
+                    },
+                )
+                val cacheRoot = Files.createTempDirectory("rdi-extra-mirror-cache")
+                val targetRoot = Files.createTempDirectory("rdi-extra-mirror-target")
+                ClientContentStore(cacheRoot).materialize(listOf(request), targetRoot).getOrThrow()
+                assertEquals(originalRequest.sources.map { it.url }, attemptedUrls)
+                assertContentEquals(payload, Files.readAllBytes(targetRoot.resolve(content.path)))
+                assertContentEquals(payload, Files.readAllBytes(cacheRoot.resolve("${content.hash}.sha1")))
+            }
+        } finally {
+            ModService.preferMirror = previousPreferMirror
+        }
+    }
+
     @Test
     fun `client extra materialization reuses one cached blob at two placements`() = runBlocking {
         val bytes = "shared-extra".toByteArray()

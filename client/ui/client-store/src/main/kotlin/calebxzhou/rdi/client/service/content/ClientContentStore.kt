@@ -14,6 +14,7 @@ import calebxzhou.rdi.common.model.CurseForgeFile
 import calebxzhou.rdi.common.net.DownloadProgress
 import calebxzhou.rdi.common.net.downloadFileFrom
 import calebxzhou.rdi.common.service.ModService
+import calebxzhou.rdi.common.service.ModService.ofMirrorUrl
 import calebxzhou.rdi.common.service.CurseForgeService
 import calebxzhou.rdi.common.util.hardLinkFile
 import kotlinx.coroutines.CancellationException
@@ -1165,6 +1166,11 @@ fun Content.toClientContentRequest(
         else -> ContentDigest(ContentDigestAlgorithm.SHA1, hash)
     }
     val urls = validated.downloadUrls
+    val candidateUrls = if (ModService.preferMirror) {
+        (urls.map { it.ofMirrorUrl }.filterNot { it in urls } + urls).distinct()
+    } else {
+        urls
+    }
     val fallbackMod = Mod(
         platform = when (platform.name.lowercase()) {
             "curseforge" -> "cf"
@@ -1182,8 +1188,12 @@ fun Content.toClientContentRequest(
         relativePath = normalizedPath,
         size = size,
         digests = listOf(digest),
-        sources = if (urls.isNotEmpty()) urls.map { url ->
-            ContentSource(url = url, headers = if (platform.name.equals("CurseForge", true)) CurseForgeService.downloadHeadersFor(url) else emptyMap(), name = "${platform.name}:${slug}")
+        sources = if (candidateUrls.isNotEmpty()) candidateUrls.map { url ->
+            ContentSource(
+                url = url,
+                headers = if (platform.name.equals("CurseForge", true)) CurseForgeService.downloadHeadersFor(url) else emptyMap(),
+                name = "${platform.name}:${slug}",
+            )
         } else listOf(ContentSource(downloader = { target, onProgress -> ModService.downloadModToPath(fallbackMod, target, onProgress) }, name = "${platform.name}:${slug}")),
         displayName = slug,
     )
