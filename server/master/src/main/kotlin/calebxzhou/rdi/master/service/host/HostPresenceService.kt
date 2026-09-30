@@ -35,6 +35,8 @@ import kotlinx.coroutines.CancellationException as KxCancellationException
 
 object HostPresenceService {
     private val lgr by Loggers
+    // GTNH公共房间不参与闲置关停。
+    private val IDLE_SHUTDOWN_EXEMPT_HOST_ID = ObjectId("69eaf161cae162f1a7e8459a")
 
     private val onlinePlayersCache = ConcurrentHashMap<ObjectId, OnlinePlayersCacheEntry>()
     private val onlinePlayersRefreshJobs = ConcurrentHashMap<ObjectId, Job>()
@@ -199,6 +201,11 @@ object HostPresenceService {
         if (runningHosts.isEmpty()) return
 
         for (host in runningHosts) {
+            if (host._id == IDLE_SHUTDOWN_EXEMPT_HOST_ID) {
+                clearShutFlag(host._id)
+                continue
+            }
+
             val onlinePlayers = try {
                 host.fetchOnlinePlayersNow()
             } catch (cancel: KxCancellationException) {
