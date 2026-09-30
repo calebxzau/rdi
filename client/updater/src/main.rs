@@ -5,9 +5,9 @@ mod download;
 #[cfg(windows)]
 mod http;
 #[cfg(windows)]
-mod library_switch_recovery;
+mod java_discovery;
 #[cfg(windows)]
-mod ntfs_mft_enum;
+mod library_switch_recovery;
 #[cfg(windows)]
 mod ui_library_updater;
 #[cfg(windows)]
@@ -16,7 +16,7 @@ mod win32;
 #[cfg(windows)]
 use std::collections::{HashMap, HashSet};
 #[cfg(windows)]
-use std::fs::{self, OpenOptions};
+use std::fs;
 #[cfg(windows)]
 use std::io::{BufRead, BufReader, Read, Write};
 #[cfg(windows)]
@@ -55,15 +55,9 @@ use library_switch_recovery::{
 };
 
 #[cfg(windows)]
-const MFT_SEARCH_ARGUMENT: &str = "--mft-search";
-#[cfg(windows)]
 const UNINSTALL_CONFIRMATION: &str = "confirm";
 #[cfg(windows)]
 const JVM_ARGUMENT_PREFIX: &str = "--jvmArg=";
-#[cfg(windows)]
-const MFT_LOG_PREFIX: &str = "LOG\t";
-#[cfg(windows)]
-const MFT_PATH_PREFIX: &str = "PATH\t";
 #[cfg(windows)]
 const MAX_PARALLEL_JDK_CHECKS: usize = 8;
 #[cfg(windows)]
@@ -98,9 +92,6 @@ fn run_inner(args: Vec<String>) -> Result<i32> {
         .parent()
         .ok_or_else(|| anyhow!("无法确定updater目录"))?
         .to_path_buf();
-    if args.first().map(String::as_str) == Some(MFT_SEARCH_ARGUMENT) && args.len() == 2 {
-        return Ok(run_elevated_mft_search(&args[1]));
-    }
     if args.first().map(String::as_str) == Some(library_switch_recovery::ELEVATED_KILL_ARGUMENT) {
         return Ok(library_switch_recovery::run_elevated_kill(
             &launcher_root,
@@ -468,9 +459,7 @@ fn show_startup_options(launcher_root: &Path) -> Result<StartupSelection> {
                             jdk: Some(jdk),
                             ..StartupSelection::default()
                         }),
-                        ManualJdkSelectionResult::AutoSearch | ManualJdkSelectionResult::Failed => {
-                            Ok(StartupSelection::default())
-                        }
+                        ManualJdkSelectionResult::Failed => Ok(StartupSelection::default()),
                     },
                     1 => Ok(StartupSelection {
                         solid_window: true,
@@ -612,45 +601,29 @@ fn parse_jvm_arguments(arguments: &str) -> Result<Vec<String>> {
 
 #[cfg(windows)]
 fn resolve_best_jdk25(launcher_root: &Path) -> Option<JdkCandidate> {
-    let mut allow_mft_search = true;
+    if let Some(java) = find_best_jdk25(launcher_root) {
+        return Some(java);
+    }
     loop {
-        match find_best_jdk25(launcher_root, allow_mft_search) {
-            JdkSearchResult::Found(best_java) => return Some(best_java),
-            JdkSearchResult::AdministratorPermissionDenied => {
-                allow_mft_search = false;
-                match select_manual_jdk25(launcher_root) {
-                    Ok(ManualJdkSelectionResult::Selected(manual_java)) => {
-                        return Some(manual_java);
-                    }
-                    Ok(ManualJdkSelectionResult::AutoSearch) => continue,
-                    Ok(ManualJdkSelectionResult::Failed) => {
-                        write_info("未选择可用Java25，返回Java选项");
-                    }
-                    Err(error) => write_info(&format!("手动选择Java25失败: {error}")),
-                }
-            }
-            JdkSearchResult::NotFound => {}
-        }
-        show_no_java_options(allow_mft_search);
+        show_no_java_options();
         match read_simple_key() {
-            Ok(KeyCode::Char(' ')) => {
-                if install_jdk25() {
-                    write_info("将重新搜索Java25");
+            Ok(key) => match java_menu_choice(key) {
+                Some(JavaMenuChoice::Download) => {
+                    if let Some(java) = install_jdk25(launcher_root) {
+                        return Some(java);
+                    }
                 }
-            }
-            Ok(KeyCode::Enter) => match select_manual_jdk25(launcher_root) {
-                Ok(ManualJdkSelectionResult::Selected(manual_java)) => {
-                    return Some(manual_java);
-                }
-                Ok(ManualJdkSelectionResult::AutoSearch) => continue,
-                Ok(ManualJdkSelectionResult::Failed) => {
-                    write_info("手动选择未得到可用Java25，返回选择菜单");
-                }
-                Err(error) => write_info(&format!("手动选择Java25失败: {error}")),
+                Some(JavaMenuChoice::Manual) => match select_manual_jdk25(launcher_root) {
+                    Ok(ManualJdkSelectionResult::Selected(java)) => return Some(java),
+                    Ok(ManualJdkSelectionResult::Failed) => {}
+                    Err(error) => write_info(&format!("手动选择Java25失败：{error:#}")),
+                },
+                None => {}
             },
-            Ok(_) if allow_mft_search => write_info("用户选择重新授权并搜索Java25"),
-            Ok(_) => write_info("跳过管理员搜索，重新扫描Java25"),
-            Err(error) => write_info(&format!("读取选择失败: {error}")),
+            Err(error) => {
+                write_info(&format!("读取选择失败：{error}"));
+                return None;
+            }
         }
     }
 }
@@ -661,21 +634,34 @@ fn read_simple_key() -> Result<KeyCode> {
 }
 
 #[cfg(windows)]
-fn show_no_java_options(allow_mft_search: bool) {
-    println!();
-    println!("没找到完整版Java25");
-    println!("按空格键下载并安装Java25，按回车键手动选择Java安装目录，随便按一个键重新搜索");
-    if allow_mft_search {
-        println!("重新搜索可能会再次请求管理员权限");
-    } else {
-        println!("已跳过管理员搜索，后续搜索不会再次请求管理员权限");
+#[derive(Debug, PartialEq, Eq)]
+enum JavaMenuChoice {
+    Download,
+    Manual,
+}
+
+#[cfg(windows)]
+fn java_menu_choice(key: KeyCode) -> Option<JavaMenuChoice> {
+    match key {
+        KeyCode::Char('y' | 'Y' | ' ') => Some(JavaMenuChoice::Download),
+        KeyCode::Char('m' | 'M') => Some(JavaMenuChoice::Manual),
+        _ => None,
     }
 }
 
 #[cfg(windows)]
-fn install_jdk25() -> bool {
-    let result = (|| -> Result<()> {
+fn show_no_java_options() {
+    println!();
+    println!("没找到可用的完整版64位JDK25");
+    println!("按Y键自动下载安装java25 按M键手动选择目录");
+    println!("如果你不懂前面在说什么 按空格键（键盘底下最大最长的那个）");
+}
+
+#[cfg(windows)]
+fn install_jdk25(launcher_root: &Path) -> Option<JdkCandidate> {
+    let result = (|| -> Result<Option<JdkCandidate>> {
         let installer_path = std::env::current_dir()?.join("java25install.msi");
+        let log_path = launcher_root.join("java25install.log");
         write_info("正在下载Java25安装程序");
         download::file(
             JDK25_DOWNLOAD_URL,
@@ -684,161 +670,248 @@ fn install_jdk25() -> bool {
             Some(progress_callback()),
             Some(info_callback()),
         )?;
-        write_info("下载完成，正在启动Java25安装程序");
-        let status = Command::new("msiexec.exe")
-            .arg("/i")
-            .arg(installer_path.to_string_lossy().as_ref())
-            .arg("/norestart")
-            .status()
-            .context("无法启动Java25安装程序")?;
-        if !matches!(status.code(), Some(0) | Some(3010)) {
-            bail!("安装程序退出码: {:?}", status.code());
+        write_info("下载完成，请允许管理员授权，随后将自动安装Java25");
+        let msiexec = PathBuf::from(
+            std::env::var_os("SystemRoot").ok_or_else(|| anyhow!("无法确定Windows系统目录"))?,
+        )
+        .join("System32")
+        .join("msiexec.exe");
+        let arguments = vec![
+            "/i".to_owned(),
+            installer_path.to_string_lossy().into_owned(),
+            "/quiet".to_owned(),
+            "/norestart".to_owned(),
+            "ADDLOCAL=FeatureMain,FeatureEnvironment,FeatureJarFileRunWith,FeatureJavaHome"
+                .to_owned(),
+            "/L*v".to_owned(),
+            log_path.to_string_lossy().into_owned(),
+        ];
+        let process = match win32::start_elevated_with_error_code(&msiexec, &arguments) {
+            Ok(process) => process,
+            Err(win32::ERROR_CANCELLED) => {
+                write_info("已取消Java25安装授权");
+                return Ok(None);
+            }
+            Err(code) => bail!("无法启动Java25安装程序，Windows错误码{code}"),
+        };
+        write_info("正在自动安装Java25，请稍候");
+        if !win32::wait_process(process.0, win32::INFINITE) {
+            bail!(
+                "等待Java25安装程序失败，安装可能仍在进行。日志：{}",
+                log_path.display()
+            );
+        }
+        let exit_code = win32::process_exit_code(process.0)?;
+        if !matches!(exit_code, 0 | 3010) {
+            bail!("安装程序退出码：{exit_code}。日志：{}", log_path.display());
+        }
+        if exit_code == 3010 {
+            write_info("Java25安装完成，安装程序提示需要重启；正在检查是否可以直接使用");
+        }
+        let java = find_installed_temurin25().ok_or_else(|| {
+            anyhow!(
+                "安装结束但未在默认目录找到可用Java25。退出码：{exit_code}。日志：{}{}",
+                log_path.display(),
+                if exit_code == 3010 {
+                    "。请重启电脑后再试"
+                } else {
+                    "。可返回菜单手动选择Java目录"
+                },
+            )
+        })?;
+        if let Err(error) = write_cached_jdk_list(launcher_root, std::slice::from_ref(&java)) {
+            write_info(&format!("Java25已可用，但保存Java缓存失败：{error:#}"));
         }
         write_info("Java25安装完成");
-        Ok(())
+        Ok(Some(java))
     })();
     match result {
-        Ok(()) => true,
+        Ok(java) => java,
         Err(error) => {
             show_start_error(&format!("Java25下载安装失败。\r\n错误: {error}"));
-            false
+            None
         }
     }
 }
 
 #[cfg(windows)]
-enum ManualJdkCancelChoice {
-    Download,
-    AutoSearch,
-    Manual,
+fn find_installed_temurin25() -> Option<JdkCandidate> {
+    // Do not rely on this process's environment reflecting the MSI's JAVA_HOME/PATH changes.
+    let mut candidates = HashMap::new();
+    for variable in ["ProgramW6432", "ProgramFiles"] {
+        let Some(program_files) = std::env::var_os(variable) else {
+            continue;
+        };
+        let root = PathBuf::from(program_files).join("Eclipse Adoptium");
+        match fs::read_dir(&root) {
+            Ok(entries) => {
+                for entry in entries {
+                    match entry {
+                        Ok(entry) => add_jdk_path(&mut candidates, &entry.path()),
+                        Err(error) => write_info(&format!("读取Java安装目录项失败：{error}")),
+                    }
+                }
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => write_info(&format!("读取Java安装目录{}失败：{error}", root.display())),
+        }
+    }
+    select_best_jdk25_candidate(find_valid_jdk25_candidates(&candidates, "安装后检查"))
+}
+
+#[cfg(windows)]
+fn run_java_probe(executable: &Path, arguments: &[&str]) -> Result<String> {
+    const OUTPUT_LIMIT: u64 = 64 * 1024;
+    let mut child = Command::new(executable)
+        .args(arguments)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .creation_flags(0x0800_0000) // CREATE_NO_WINDOW
+        .spawn()
+        .with_context(|| format!("无法运行{}", executable.display()))?;
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let (sender, receiver) = std::sync::mpsc::channel();
+    let readers: [Box<dyn Read + Send>; 2] = [
+        Box::new(child.stdout.take().expect("Java探测stdout已重定向")),
+        Box::new(child.stderr.take().expect("Java探测stderr已重定向")),
+    ];
+    for reader in readers {
+        let sender = sender.clone();
+        thread::spawn(move || {
+            let mut bytes = Vec::new();
+            let result = reader
+                .take(OUTPUT_LIMIT + 1)
+                .read_to_end(&mut bytes)
+                .map(|_| bytes);
+            let _ = sender.send(result);
+        });
+    }
+    drop(sender);
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) if Instant::now() < deadline => thread::sleep(Duration::from_millis(25)),
+            result => {
+                if let Err(error) = child.kill() {
+                    write_info(&format!("结束Java探测进程失败：{error}"));
+                }
+                child.wait().context("等待Java探测进程退出失败")?;
+                match result {
+                    Err(error) => return Err(error).context("读取Java探测进程状态失败"),
+                    _ => bail!("Java探测超过10秒：{}", executable.display()),
+                }
+            }
+        }
+    };
+    if !status.success() {
+        bail!(
+            "Java探测失败，退出码：{:?}，路径：{}",
+            status.code(),
+            executable.display()
+        );
+    }
+    let mut output = String::new();
+    for _ in 0..2 {
+        let bytes = receiver
+            .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+            .context("读取Java探测输出超时或失败")?
+            .context("读取Java探测输出失败")?;
+        if bytes.len() as u64 > OUTPUT_LIMIT {
+            bail!("Java探测输出超过64KiB");
+        }
+        output.push_str(&String::from_utf8_lossy(&bytes));
+        output.push('\n');
+    }
+    Ok(output)
+}
+
+#[cfg(windows)]
+fn validate_jdk25_probe(java_output: &str, compiler_output: &str) -> Result<String> {
+    let property = |name: &str| {
+        java_output.lines().find_map(|line| {
+            let (key, value) = line.trim().split_once('=')?;
+            (key.trim() == name).then(|| value.trim())
+        })
+    };
+    let version = property("java.version").ok_or_else(|| anyhow!("Java未返回版本"))?;
+    let architecture = property("os.arch").ok_or_else(|| anyhow!("Java未返回架构"))?;
+    if parse_java_major_version(version) != Some(25) || !is_64_bit_architecture(architecture) {
+        bail!("需要64位JDK25，实际Java版本：{version}，架构：{architecture}");
+    }
+    let compiler_version = compiler_output
+        .lines()
+        .find_map(|line| {
+            let mut words = line.split_whitespace();
+            (words.next()? == "javac").then(|| words.next()).flatten()
+        })
+        .ok_or_else(|| anyhow!("javac未返回版本"))?;
+    if parse_java_major_version(compiler_version) != Some(25) {
+        bail!("需要JDK25编译器，实际javac版本：{compiler_version}");
+    }
+    Ok(format!(
+        "Java={version}，javac={compiler_version}，架构={architecture}"
+    ))
 }
 
 #[cfg(windows)]
 enum ManualJdkSelectionResult {
     Selected(JdkCandidate),
-    AutoSearch,
     Failed,
 }
 
 #[cfg(windows)]
-fn prompt_manual_jdk_cancel() -> Result<ManualJdkCancelChoice> {
-    println!();
-    println!("未选择Java25安装目录");
-    println!("按Y下载Java25安装程序，按R自动搜索，按M重新手动选择");
-    loop {
-        match read_simple_key()? {
-            KeyCode::Char('y') | KeyCode::Char('Y') => {
-                return Ok(ManualJdkCancelChoice::Download);
-            }
-            KeyCode::Char('r') | KeyCode::Char('R') => {
-                return Ok(ManualJdkCancelChoice::AutoSearch);
-            }
-            KeyCode::Char('m') | KeyCode::Char('M') => {
-                return Ok(ManualJdkCancelChoice::Manual);
-            }
-            _ => {}
-        }
-    }
-}
-
-#[cfg(windows)]
 fn select_manual_jdk25(launcher_root: &Path) -> Result<ManualJdkSelectionResult> {
-    loop {
-        write_info("请手动选择Java25安装目录");
-        let Some(selected_path) = win32::pick_folder_path("选择Java25安装目录")? else {
-            write_info("未选择目录");
-            match prompt_manual_jdk_cancel()? {
-                ManualJdkCancelChoice::Download => {
-                    install_jdk25();
-                    return Ok(ManualJdkSelectionResult::AutoSearch);
-                }
-                ManualJdkCancelChoice::AutoSearch => {
-                    return Ok(ManualJdkSelectionResult::AutoSearch);
-                }
-                ManualJdkCancelChoice::Manual => continue,
-            }
-        };
-        write_info(&format!("已选择目录: {selected_path}"));
-        let mut candidates = HashMap::new();
-        add_jdk_path(&mut candidates, Path::new(&selected_path));
-        let valid_candidates = find_valid_jdk25_candidates(&candidates, "手动选择");
-        if valid_candidates.is_empty() {
-            show_start_error(&format!(
-                "所选目录不是可用的64位Java25：\r\n{selected_path}"
-            ));
-            return Ok(ManualJdkSelectionResult::Failed);
-        }
-        write_cached_jdk_list(launcher_root, &valid_candidates)?;
-        print_available_jdk_list(&valid_candidates, "手动选择");
-        return Ok(select_best_jdk25_candidate(valid_candidates)
-            .map(ManualJdkSelectionResult::Selected)
-            .unwrap_or(ManualJdkSelectionResult::Failed));
-    }
-}
-
-#[cfg(windows)]
-enum JdkSearchResult {
-    Found(JdkCandidate),
-    AdministratorPermissionDenied,
-    NotFound,
-}
-
-#[cfg(windows)]
-fn find_best_jdk25(launcher_root: &Path, allow_mft_search: bool) -> JdkSearchResult {
-    write_info("开始搜索Java25");
-    if let Some(cached_java_homes) = read_cached_jdk_list(launcher_root) {
-        if !cached_java_homes.is_empty() {
-            write_info("优先使用Java缓存列表");
-            let mut cached_candidates = HashMap::new();
-            for java_home in cached_java_homes {
-                add_jdk_path(&mut cached_candidates, Path::new(&java_home));
-            }
-            if let Some(cached_java) =
-                find_first_valid_jdk25_candidate(&cached_candidates, "缓存校验")
-            {
-                write_info("缓存中的Java25仍然可用，跳过其它缓存项校验");
-                return JdkSearchResult::Found(cached_java);
-            }
-            write_info("缓存中的Java25已失效，开始重新搜索");
-        }
-    }
-
-    if allow_mft_search {
-        let mft_search = find_javac_executables_with_administrator_privilege();
-        if mft_search.cancelled {
-            return JdkSearchResult::AdministratorPermissionDenied;
-        }
-        if !mft_search.succeeded {
-            return JdkSearchResult::NotFound;
-        }
-        let mut mft_candidates = HashMap::new();
-        for path in mft_search.candidates {
-            add_jdk_path(&mut mft_candidates, Path::new(&path));
-        }
-        if let Some(mft_java) = find_first_valid_jdk25_candidate(&mft_candidates, "MFT搜索") {
-            let candidates = vec![mft_java.clone()];
-            let _ = write_cached_jdk_list(launcher_root, &candidates);
-            print_available_jdk_list(&candidates, "MFT搜索");
-            return JdkSearchResult::Found(mft_java);
-        }
-    }
-
-    let drive_roots = win32::get_drive_roots();
-    write_info(&format!(
-        "快速搜索未找到可用Java25，开始目录搜索，共{}个磁盘",
-        drive_roots.len()
-    ));
-    let directory_candidates = search_jdk25_candidates(&drive_roots, "搜索Java");
-    let valid_candidates = find_valid_jdk25_candidates(&directory_candidates, "最终校验");
+    write_info("请手动选择JDK25安装目录");
+    let Some(selected_path) = win32::pick_folder_path("选择JDK25安装目录")? else {
+        write_info("未选择目录，返回Java选项");
+        return Ok(ManualJdkSelectionResult::Failed);
+    };
+    write_info(&format!("已选择目录: {selected_path}"));
+    let mut candidates = HashMap::new();
+    add_jdk_path(&mut candidates, Path::new(&selected_path));
+    let valid_candidates = find_valid_jdk25_candidates(&candidates, "手动选择");
     if valid_candidates.is_empty() {
-        let _ = fs::remove_file(launcher_root.join("available_jdks.txt"));
-        return JdkSearchResult::NotFound;
+        show_start_error(&format!(
+            "所选目录不是可用的完整版64位JDK25：\r\n{selected_path}"
+        ));
+        return Ok(ManualJdkSelectionResult::Failed);
     }
-    let _ = write_cached_jdk_list(launcher_root, &valid_candidates);
-    print_available_jdk_list(&valid_candidates, "重新搜索");
-    select_best_jdk25_candidate(valid_candidates)
-        .map(JdkSearchResult::Found)
-        .unwrap_or(JdkSearchResult::NotFound)
+    cache_jdk_candidates(launcher_root, &valid_candidates);
+    print_available_jdk_list(&valid_candidates, "手动选择");
+    Ok(select_best_jdk25_candidate(valid_candidates)
+        .map(ManualJdkSelectionResult::Selected)
+        .unwrap_or(ManualJdkSelectionResult::Failed))
+}
+
+#[cfg(windows)]
+fn find_best_jdk25(launcher_root: &Path) -> Option<JdkCandidate> {
+    write_info("开始搜索JDK25");
+    if let Some(cached_java_homes) = read_cached_jdk_list(launcher_root) {
+        let mut cached_candidates = HashMap::new();
+        for java_home in cached_java_homes {
+            add_jdk_path(&mut cached_candidates, Path::new(&java_home));
+        }
+        if let Some(java) = find_first_valid_jdk25_candidate(&cached_candidates, "缓存校验") {
+            return Some(java);
+        }
+    }
+    write_info("正在检查环境变量、注册表和常见Java安装目录");
+    let mut candidates = HashMap::new();
+    for path in java_discovery::candidate_paths() {
+        insert_candidate(&mut candidates, path);
+    }
+    let valid = find_valid_jdk25_candidates(&candidates, "JDK25校验");
+    cache_jdk_candidates(launcher_root, &valid);
+    print_available_jdk_list(&valid, "JDK25搜索");
+    select_best_jdk25_candidate(valid)
+}
+
+#[cfg(windows)]
+fn cache_jdk_candidates(launcher_root: &Path, candidates: &[JdkCandidate]) {
+    if let Err(error) = write_cached_jdk_list(launcher_root, candidates) {
+        write_info(&format!("保存Java缓存失败：{error:#}"));
+    }
 }
 
 #[cfg(windows)]
@@ -891,79 +964,6 @@ fn write_cached_jdk_list(launcher_root: &Path, candidates: &[JdkCandidate]) -> R
         java_homes.len()
     ));
     Ok(())
-}
-
-#[cfg(windows)]
-fn search_jdk25_candidates(roots: &[String], stage_name: &str) -> HashMap<String, String> {
-    let mut candidates = HashMap::new();
-    let mut seen_directories = HashSet::new();
-    for (index, candidate_root) in roots.iter().enumerate() {
-        let root = PathBuf::from(candidate_root);
-        if !root.is_dir() {
-            continue;
-        }
-        write_info(&format!(
-            "搜索阶段[{stage_name}] {}/{}: {}",
-            index + 1,
-            roots.len(),
-            root.display()
-        ));
-        add_jdk_path(&mut candidates, &root);
-        let force_deep = candidate_root.to_ascii_lowercase().contains(".jdks")
-            || candidate_root.to_ascii_lowercase().contains(".sdkman");
-        let mut stack = vec![SearchDirectory {
-            path: root,
-            force_deep,
-            depth: 0,
-        }];
-        while let Some(current) = stack.pop() {
-            let key = current.path.to_string_lossy().to_ascii_lowercase();
-            if !seen_directories.insert(key) || !current.path.is_dir() {
-                continue;
-            }
-            let Ok(directory_entries) = fs::read_dir(&current.path) else {
-                continue;
-            };
-            for entry in directory_entries.flatten() {
-                let path = entry.path();
-                let Ok(metadata) = fs::symlink_metadata(&path) else {
-                    continue;
-                };
-                if metadata.file_type().is_symlink() || !metadata.is_dir() {
-                    continue;
-                }
-                let name = path
-                    .file_name()
-                    .and_then(|value| value.to_str())
-                    .unwrap_or_default()
-                    .to_ascii_lowercase();
-                let interesting = current.force_deep
-                    || name == "bin"
-                    || is_numeric_directory_name(&name)
-                    || search_keywords()
-                        .iter()
-                        .any(|keyword| name.contains(keyword));
-                if !interesting {
-                    continue;
-                }
-                add_jdk_path(&mut candidates, &path);
-                let next_depth = current.depth + 1;
-                if current.force_deep || next_depth < 4 {
-                    let force_deep = current.force_deep
-                        || matches!(
-                            name.as_str(),
-                            "java" | "jdk" | "jre" | "runtime" | "jbr" | "bin"
-                        );
-                    stack.push(SearchDirectory {
-                        path,
-                        force_deep,
-                        depth: next_depth,
-                    });
-                }
-            }
-        }
-    }
-    candidates
 }
 
 #[cfg(windows)]
@@ -1076,7 +1076,7 @@ fn test_java_candidate(java_executable: &str) -> Option<JdkCandidate> {
     }
     let java_home = java_exe.parent()?.parent()?.to_path_buf();
     let javac_exe = java_home.join("bin").join("javac.exe");
-    if !javac_exe.is_file() {
+    if !javac_exe.is_file() || !java_home.join("bin/javaw.exe").is_file() {
         write_info(&format!("跳过该Java，不是JDK: {}", java_home.display()));
         return None;
     }
@@ -1101,22 +1101,33 @@ fn test_java_candidate(java_executable: &str) -> Option<JdkCandidate> {
         ));
         return None;
     }
-    if is_32_bit_architecture(&release.os_arch) {
+    if !is_64_bit_architecture(&release.os_arch) {
         write_info(&format!("跳过该Java，不是64位: {java_executable}"));
         return None;
     }
-    write_info(&format!(
-        "检测到JDK版本: {java_executable} -> JAVA_VERSION=\"{}\"，OS_ARCH=\"{}\"",
-        release.java_version, release.os_arch
-    ));
-    Some(JdkCandidate {
-        path_score: path_score(java_exe),
-        java_home,
-        version_text: format!(
-            "JAVA_VERSION=\"{}\"，OS_ARCH=\"{}\"",
-            release.java_version, release.os_arch
-        ),
-    })
+    let probe = (|| -> Result<String> {
+        let java_output = run_java_probe(java_exe, &["-XshowSettings:properties", "-version"])?;
+        let compiler_output = run_java_probe(&javac_exe, &["-version"])?;
+        validate_jdk25_probe(&java_output, &compiler_output)
+    })();
+    match probe {
+        Ok(version_text) => {
+            write_info(&format!(
+                "验证JDK25成功：{java_executable} -> {version_text}"
+            ));
+            Some(JdkCandidate {
+                path_score: path_score(java_exe),
+                java_home,
+                version_text,
+            })
+        }
+        Err(error) => {
+            write_info(&format!(
+                "跳过不可用的JDK：{java_executable}，原因：{error:#}"
+            ));
+            None
+        }
+    }
 }
 
 #[cfg(windows)]
@@ -1144,22 +1155,20 @@ fn read_release_field(content: &str, field: &str) -> Option<String> {
 
 #[cfg(windows)]
 fn parse_java_major_version(version: &str) -> Option<i32> {
-    let mut parts = version.split('.');
-    if version.starts_with("1.") {
-        parts.nth(1)?.parse::<i32>().ok()
-    } else {
-        parts.next()?.parse::<i32>().ok()
-    }
+    let version = version.strip_prefix("1.").unwrap_or(version);
+    version
+        .split(|ch: char| !ch.is_ascii_digit())
+        .next()?
+        .parse()
+        .ok()
 }
 
 #[cfg(windows)]
-fn is_32_bit_architecture(os_arch: &str) -> bool {
-    os_arch.eq_ignore_ascii_case("x86")
-        || os_arch.eq_ignore_ascii_case("i386")
-        || os_arch.eq_ignore_ascii_case("i686")
-        || os_arch.eq_ignore_ascii_case("x86_32")
-        || os_arch.eq_ignore_ascii_case("arm")
-        || os_arch.eq_ignore_ascii_case("aarch32")
+fn is_64_bit_architecture(architecture: &str) -> bool {
+    matches!(
+        architecture.to_ascii_lowercase().as_str(),
+        "amd64" | "x86_64" | "aarch64" | "arm64"
+    )
 }
 
 #[cfg(windows)]
@@ -1247,121 +1256,6 @@ fn launcher_root_string() -> String {
         .unwrap_or_default()
         .to_string_lossy()
         .to_string()
-}
-
-#[cfg(windows)]
-fn run_elevated_mft_search(result_file: &str) -> i32 {
-    let result = (|| -> Result<()> {
-        fs::write(result_file, b"")?;
-        let callback = |path: String| {
-            let _ = append_line(result_file, &format!("{MFT_PATH_PREFIX}{path}"));
-        };
-        let result = ntfs_mft_enum::find_javac_executables(Some(&callback));
-        for diagnostic in result.diagnostics {
-            append_line(result_file, &format!("{MFT_LOG_PREFIX}{diagnostic}"))?;
-        }
-        Ok(())
-    })();
-    match result {
-        Ok(()) => 0,
-        Err(error) => {
-            eprintln!("{error}");
-            1
-        }
-    }
-}
-
-#[cfg(windows)]
-fn append_line(path: &str, line: &str) -> Result<()> {
-    let mut file = OpenOptions::new().create(true).append(true).open(path)?;
-    writeln!(file, "{line}")?;
-    Ok(())
-}
-
-#[cfg(windows)]
-struct MftSearchResult {
-    succeeded: bool,
-    cancelled: bool,
-    candidates: HashSet<String>,
-}
-
-#[cfg(windows)]
-fn find_javac_executables_with_administrator_privilege() -> MftSearchResult {
-    let result_file =
-        std::env::temp_dir().join(format!("rdi-java-{}.txt", uuid::Uuid::new_v4().simple()));
-    let mut candidates = HashSet::new();
-    let mut succeeded = false;
-    let mut cancelled = false;
-    let result = (|| -> Result<()> {
-        write_info("请给予管理员权限以搜索电脑上所有的java25");
-        let executable = std::env::current_exe()?;
-        let result_file_string = result_file.to_string_lossy().to_string();
-        write_info("正在搜索java25，请稍等15~60秒左右");
-        let process = match win32::start_elevated_with_error_code(
-            &executable,
-            &[MFT_SEARCH_ARGUMENT.to_owned(), result_file_string],
-        ) {
-            Ok(process) => process,
-            Err(error) if error == win32::ERROR_CANCELLED => {
-                cancelled = true;
-                write_info("用户拒绝管理员权限，将改为手动选择Java25");
-                return Ok(());
-            }
-            Err(error) => bail!("启动管理员流程失败，错误码{error}"),
-        };
-        let mut read_character_count = 0;
-        while !win32::wait_process(process.0, 100) {
-            read_mft_search_updates(&result_file, &mut candidates, &mut read_character_count);
-        }
-        read_mft_search_updates(&result_file, &mut candidates, &mut read_character_count);
-        if win32::process_exit_code(process.0)? != 0 {
-            write_info("搜索失败");
-            return Ok(());
-        }
-        succeeded = true;
-        write_info(&format!("搜索完成，找到{}个javac.exe", candidates.len()));
-        Ok(())
-    })();
-    if let Err(error) = result {
-        write_info(&format!("搜索失败: {error}"));
-    }
-    let _ = fs::remove_file(result_file);
-    MftSearchResult {
-        succeeded,
-        cancelled,
-        candidates,
-    }
-}
-
-#[cfg(windows)]
-fn read_mft_search_updates(
-    result_file: &Path,
-    candidates: &mut HashSet<String>,
-    read_character_count: &mut usize,
-) {
-    let Ok(content) = fs::read_to_string(result_file) else {
-        return;
-    };
-    let Some(last_newline) = content[..].rfind('\n') else {
-        return;
-    };
-    let complete_length = last_newline + 1;
-    if complete_length <= *read_character_count {
-        return;
-    }
-    for line in content[*read_character_count..complete_length]
-        .split(['\r', '\n'])
-        .filter(|line| !line.is_empty())
-    {
-        if let Some(message) = line.strip_prefix(MFT_LOG_PREFIX) {
-            write_info(message);
-        } else if let Some(path) = line.strip_prefix(MFT_PATH_PREFIX) {
-            if candidates.insert(path.to_owned()) {
-                write_info(&format!("发现javac.exe: {path}"));
-            }
-        }
-    }
-    *read_character_count = complete_length;
 }
 
 #[cfg(windows)]
@@ -1474,13 +1368,6 @@ struct JdkCandidate {
 }
 
 #[cfg(windows)]
-struct SearchDirectory {
-    path: PathBuf,
-    force_deep: bool,
-    depth: usize,
-}
-
-#[cfg(windows)]
 fn normalize_path(path: &Path) -> PathBuf {
     let path = PathBuf::from(path.to_string_lossy().trim().trim_matches('"'));
     if path.is_absolute() {
@@ -1492,40 +1379,55 @@ fn normalize_path(path: &Path) -> PathBuf {
     }
 }
 
-#[cfg(windows)]
-fn search_keywords() -> &'static [&'static str] {
-    &[
-        "java",
-        "jdk",
-        "jre",
-        "runtime",
-        "jbr",
-        "temurin",
-        "zulu",
-        "oracle",
-        "microsoft",
-        "corretto",
-        "graal",
-        "graalvm",
-        "openjdk",
-        "sdk",
-        "bin",
-        "program",
-        "cache",
-        "software",
-        "local",
-        "packages",
-        "appdata",
-        "users",
-        "public",
-        "25",
-    ]
-}
+#[cfg(all(test, windows))]
+mod jdk_tests {
+    use super::*;
 
-#[cfg(windows)]
-fn is_numeric_directory_name(name: &str) -> bool {
-    !name.is_empty()
-        && name
-            .split('.')
-            .all(|part| !part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit()))
+    #[test]
+    fn java_menu_accepts_only_download_or_manual_keys() {
+        for key in ['y', 'Y', ' '] {
+            assert_eq!(
+                java_menu_choice(KeyCode::Char(key)),
+                Some(JavaMenuChoice::Download)
+            );
+        }
+        for key in ['m', 'M'] {
+            assert_eq!(
+                java_menu_choice(KeyCode::Char(key)),
+                Some(JavaMenuChoice::Manual)
+            );
+        }
+        assert_eq!(java_menu_choice(KeyCode::Enter), None);
+        assert_eq!(java_menu_choice(KeyCode::Char('r')), None);
+    }
+
+    #[test]
+    fn requires_both_java25_and_javac25() {
+        let properties = "Property settings:\n    java.version = 25.0.3\n    os.arch = amd64\n";
+        assert!(validate_jdk25_probe(properties, "javac 25.0.3\n").is_ok());
+        assert!(validate_jdk25_probe(properties, "javac 21.0.8\n").is_err());
+        assert!(validate_jdk25_probe(properties, "").is_err());
+        assert!(
+            validate_jdk25_probe(&properties.replace("25.0.3", "21.0.8"), "javac 25.0.3").is_err()
+        );
+    }
+
+    #[test]
+    fn rejects_32_bit_unknown_architecture_and_incomplete_probe() {
+        for architecture in ["x86", "i386", "arm", "unknown", ""] {
+            let properties = format!("java.version = 25\nos.arch = {architecture}");
+            assert!(validate_jdk25_probe(&properties, "javac 25").is_err());
+        }
+        assert!(validate_jdk25_probe("java.version = 25", "javac 25").is_err());
+        assert!(validate_jdk25_probe("os.arch = amd64", "javac 25").is_err());
+    }
+
+    #[test]
+    fn recognizes_major_version_without_accepting_other_releases() {
+        assert_eq!(parse_java_major_version("25"), Some(25));
+        assert_eq!(parse_java_major_version("25.0.3+9"), Some(25));
+        assert_eq!(parse_java_major_version("25-ea"), Some(25));
+        assert_eq!(parse_java_major_version("1.8.0_451"), Some(8));
+        assert_eq!(parse_java_major_version("invalid"), None);
+    }
 }

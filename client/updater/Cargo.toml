@@ -22,7 +22,7 @@ sha1 = "0.10"
 sha2 = "0.10"
 uuid = { version = "1", features = ["v4"] }
 urlencoding = "2"
-windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Networking_WinHttp"] }
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Networking_WinHttp", "Win32_System_Registry"] }
 zip = { version = "2", default-features = false, features = ["deflate-zlib"] }
 
 [build-dependencies]

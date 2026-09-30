@@ -13,30 +13,14 @@ pub type RawHandle = *mut c_void;
 pub const INVALID_HANDLE_VALUE: RawHandle = -1isize as RawHandle;
 pub const ERROR_ALREADY_EXISTS: u32 = 183;
 pub const ERROR_MORE_DATA: u32 = 234;
-pub const ERROR_HANDLE_EOF: u32 = 38;
-pub const ERROR_FILE_NOT_FOUND: u32 = 2;
-pub const ERROR_PATH_NOT_FOUND: u32 = 3;
-pub const ERROR_ACCESS_DENIED: u32 = 5;
-pub const ERROR_SHARING_VIOLATION: u32 = 32;
-pub const ERROR_INSUFFICIENT_BUFFER: u32 = 122;
 pub const ERROR_INVALID_HANDLE: u32 = 6;
 pub const ERROR_CANCELLED: u32 = 1223;
 pub const STILL_ACTIVE: u32 = 259;
-
-pub const GENERIC_READ: u32 = 0x8000_0000;
-pub const FILE_SHARE_READ: u32 = 0x0000_0001;
-pub const FILE_SHARE_WRITE: u32 = 0x0000_0002;
-pub const FILE_SHARE_DELETE: u32 = 0x0000_0004;
-pub const OPEN_EXISTING: u32 = 3;
-pub const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
-pub const FILE_ATTRIBUTE_DIRECTORY: u32 = 0x0000_0010;
-pub const FSCTL_ENUM_USN_DATA: u32 = 0x0009_00B3;
 
 pub const PROCESS_TERMINATE: u32 = 0x0001;
 pub const PROCESS_QUERY_LIMITED_INFORMATION: u32 = 0x1000;
 pub const SYNCHRONIZE: u32 = 0x0010_0000;
 
-pub const DRIVE_REMOTE: u32 = 4;
 pub const WAIT_OBJECT_0: u32 = 0;
 pub const INFINITE: u32 = 0xFFFF_FFFF;
 
@@ -110,23 +94,6 @@ pub struct ShFileOpStructW {
 
 #[repr(C)]
 #[derive(Clone, Copy, Default)]
-pub struct MftEnumDataV0 {
-    pub start_file_reference_number: u64,
-    pub low_usn: i64,
-    pub high_usn: i64,
-}
-
-#[repr(C)]
-#[derive(Clone, Copy, Default)]
-pub struct FileIdDescriptor {
-    pub size: u32,
-    pub id_type: u32,
-    pub file_id: i64,
-    pub padding: u32,
-}
-
-#[repr(C)]
-#[derive(Clone, Copy, Default)]
 pub struct RmUniqueProcess {
     pub process_id: u32,
     pub process_start_time: FileTime,
@@ -177,51 +144,6 @@ unsafe extern "system" {
         kernel_time: *mut FileTime,
         user_time: *mut FileTime,
     ) -> i32;
-    pub fn GetLogicalDrives() -> u32;
-    pub fn GetDriveTypeW(root_path_name: *const u16) -> u32;
-    pub fn GetVolumeInformationW(
-        root_path_name: *const u16,
-        volume_name_buffer: *mut u16,
-        volume_name_size: u32,
-        volume_serial_number: *mut u32,
-        maximum_component_length: *mut u32,
-        file_system_flags: *mut u32,
-        file_system_name_buffer: *mut u16,
-        file_system_name_size: u32,
-    ) -> i32;
-    pub fn CreateFileW(
-        file_name: *const u16,
-        desired_access: u32,
-        share_mode: u32,
-        security_attributes: RawHandle,
-        creation_disposition: u32,
-        flags_and_attributes: u32,
-        template_file: RawHandle,
-    ) -> RawHandle;
-    pub fn DeviceIoControl(
-        device: RawHandle,
-        io_control_code: u32,
-        input_buffer: *mut c_void,
-        input_buffer_size: u32,
-        output_buffer: *mut c_void,
-        output_buffer_size: u32,
-        bytes_returned: *mut u32,
-        overlapped: RawHandle,
-    ) -> i32;
-    pub fn OpenFileById(
-        volume_hint: RawHandle,
-        file_id: *mut FileIdDescriptor,
-        desired_access: u32,
-        share_mode: u32,
-        security_attributes: RawHandle,
-        flags_and_attributes: u32,
-    ) -> RawHandle;
-    pub fn GetFinalPathNameByHandleW(
-        file: RawHandle,
-        file_path: *mut u16,
-        file_path_length: u32,
-        flags: u32,
-    ) -> u32;
     pub fn LocalFree(memory: RawHandle) -> RawHandle;
 }
 
@@ -579,47 +501,6 @@ pub fn move_to_recycle_bin(path: &Path) -> Result<()> {
         bail!("移入回收站被取消");
     }
     Ok(())
-}
-
-pub fn get_drive_roots() -> Vec<String> {
-    get_drive_roots_filtered(false)
-}
-
-pub fn get_ntfs_drive_roots() -> Vec<String> {
-    get_drive_roots_filtered(true)
-}
-
-fn get_drive_roots_filtered(only_ntfs: bool) -> Vec<String> {
-    let drives = unsafe { GetLogicalDrives() };
-    let mut roots = Vec::new();
-    for index in 0..26 {
-        if drives & (1 << index) == 0 {
-            continue;
-        }
-        let letter = (b'A' + index as u8) as char;
-        let root = format!("{letter}:\\");
-        let root_wide = wide(&root);
-        if unsafe { GetDriveTypeW(root_wide.as_ptr()) } == DRIVE_REMOTE {
-            continue;
-        }
-        let mut file_system = [0u16; 32];
-        let valid = unsafe {
-            GetVolumeInformationW(
-                root_wide.as_ptr(),
-                null_mut(),
-                0,
-                null_mut(),
-                null_mut(),
-                null_mut(),
-                file_system.as_mut_ptr(),
-                file_system.len() as u32,
-            )
-        } != 0;
-        if valid && (!only_ntfs || from_wide(&file_system).eq_ignore_ascii_case("NTFS")) {
-            roots.push(root);
-        }
-    }
-    roots
 }
 
 pub fn quote_windows_argument(argument: &str) -> String {

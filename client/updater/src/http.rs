@@ -18,7 +18,12 @@ pub struct Client {
 
 impl Client {
     pub fn with_timeout(timeout: Duration) -> Self {
-        let timeout_ms = timeout.as_millis().clamp(1, i32::MAX as u128) as i32;
+        // WinHTTP uses zero for an infinite timeout, as requested by download callers.
+        let timeout_ms = if timeout.is_zero() {
+            0
+        } else {
+            timeout.as_millis().clamp(1, i32::MAX as u128) as i32
+        };
         Self { timeout_ms }
     }
 
@@ -394,4 +399,24 @@ impl ParsedUrl {
 
 fn default_port(secure: bool) -> u16 {
     if secure { 443 } else { 80 }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn infinite_download_timeout_remains_infinite() {
+        assert_eq!(Client::with_timeout(Duration::ZERO).timeout_ms, 0);
+    }
+
+    #[test]
+    fn finite_timeouts_remain_nonzero_and_do_not_overflow() {
+        assert_eq!(
+            Client::with_timeout(Duration::from_secs(5)).timeout_ms,
+            5_000
+        );
+        assert_eq!(Client::with_timeout(Duration::from_nanos(1)).timeout_ms, 1);
+        assert_eq!(Client::with_timeout(Duration::MAX).timeout_ms, i32::MAX);
+    }
 }
