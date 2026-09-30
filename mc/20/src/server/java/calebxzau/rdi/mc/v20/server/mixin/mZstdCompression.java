@@ -18,8 +18,13 @@ abstract class mZstdCompression {
 
     @Inject(method = "setupCompression", at = @At("HEAD"), cancellable = true)
     private void RDI$SetupCompression(int threshold, boolean validateDecompressed, CallbackInfo ci) {
-        ZstdCompressionPipeline.setup(channel, threshold, validateDecompressed, MinecraftVarIntCodec20.INSTANCE);
-        PacketMetricsPipeline20.compressionChanged(channel.pipeline());
+        Runnable setup = () -> {
+            ZstdCompressionPipeline.setup(channel, threshold, validateDecompressed, MinecraftVarIntCodec20.INSTANCE);
+            PacketMetricsPipeline20.thresholdChanged(channel, threshold);
+            PacketMetricsPipeline20.compressionChanged(channel.pipeline());
+        };
+        if (channel.eventLoop().inEventLoop()) setup.run();
+        else channel.eventLoop().execute(setup);
         ci.cancel();
     }
 }

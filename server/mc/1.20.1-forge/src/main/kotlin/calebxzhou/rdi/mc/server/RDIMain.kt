@@ -2,6 +2,7 @@ package calebxzhou.rdi.mc.server
 
 import calebxzau.rdi.mc.zstdcodec.ZstdCompressionPipeline
 import calebxzau.rdi.mc.v20.server.region.RegionZstdCodec
+import calebxzau.mc.common2021.RdiBatchChannel
 import calebxzau.mc.common2021.RdiLoggingConfiguration
 import calebxzhou.rdi.mc.common.RDI
 import calebxzhou.rdi.mc.common.WebSocketClient
@@ -11,6 +12,7 @@ import calebxzhou.rdi.mc.rcmd.tpa.TpaService
 // import calebxzhou.rdi.mc.server.chunkcache.RdiDelayedChunkCache
 import calebxzhou.rdi.mc.server.mcpimpl.McpNetwork
 import calebxzhou.rdi.mc.server.network.RServerNetwork
+import calebxzhou.rdi.mc.server.network.RServerBatching
 import calebxzhou.rdi.mc.server.rcmd.PlayerNbtChatRangeStore
 import calebxzhou.rdi.mc.server.rcmd.RcmdForgeServerAdapter
 import calebxzau.rdi.mc.v20.server.network.PacketMetrics20
@@ -27,6 +29,7 @@ import net.minecraft.server.dedicated.DedicatedServer
 import net.minecraft.server.level.ServerPlayer
 import net.minecraft.world.level.GameRules
 import net.minecraftforge.event.entity.player.PlayerEvent
+import net.minecraftforge.event.TickEvent
 import net.minecraftforge.event.server.ServerStartedEvent
 import net.minecraftforge.event.server.ServerStartingEvent
 import net.minecraftforge.event.server.ServerStoppedEvent
@@ -47,6 +50,7 @@ class RDIMain {
     init {
         RdiLoggingConfiguration.reapplyConfiguredLog4j2()
         RServerNetwork.register()
+        RdiBatchChannel.register()
         McpNetwork.register()
     }
 
@@ -73,7 +77,7 @@ class RDIMain {
         @JvmStatic
         fun starting(e: ServerStartingEvent) {
             val server = (e.getServer() as? DedicatedServer) ?: return
-            PacketMetrics20.start(server.serverDirectory.toPath().resolve("rdi").resolve("packet-traffic_v3.db"))
+            PacketMetrics20.startBatchMetrics(server.serverDirectory.toPath().resolve("rdi").resolve("packet-traffic_v4.db"))
 
             GameRules.visitGameRuleTypes(object : GameRules.GameRuleTypeVisitor {
                 override fun <T : GameRules.Value<T>> visit(key: GameRules.Key<T>, type: GameRules.Type<T>) {
@@ -109,6 +113,14 @@ class RDIMain {
         }
 
         @SubscribeEvent @JvmStatic
+        fun onServerTick(e: TickEvent.ServerTickEvent) {
+            if (e.phase != TickEvent.Phase.END) {
+                return
+            }
+            RServerBatching.flushAtTickEnd(e.server)
+        }
+
+        @SubscribeEvent @JvmStatic
         fun onPlayerJoin(e: PlayerEvent.PlayerLoggedInEvent) {
             val player: ServerPlayer = e.entity as ServerPlayer
             PlayerChatRangeState.restore(player.uuid, PlayerNbtChatRangeStore(player))
@@ -126,6 +138,7 @@ class RDIMain {
                 }
             }
             RServerNetwork.sendLastTo(player)
+            RServerBatching.onPlayerJoined(player)
             sendJoinSubtitle(player)
         }
 

@@ -1,10 +1,12 @@
 package calebxzhou.rdi.mc.client
 
 import calebxzau.rdi.mc.zstdcodec.ZstdCompressionPipeline
+import calebxzau.mc.common2021.RdiBatchChannel
 import calebxzau.rdi.mc.v20.client.RoomJoinUi20
 // import calebxzhou.rdi.mc.client.chunkcache.RdiChunkCacheClient
 // import calebxzhou.rdi.mc.client.chunkcache.RdiChunkCacheClientHandler
 import calebxzhou.rdi.mc.client.network.RClientNetwork
+import calebxzhou.rdi.mc.client.network.RClientBatching
 import calebxzau.rdi.mc.v20.client.GlobalPlayerListState
 import calebxzhou.rdi.mc.client.mcp.standard.StandardMcpServer
 import calebxzhou.rdi.mc.client.mcpimpl.McpGameImpl
@@ -29,6 +31,7 @@ import org.apache.logging.log4j.LogManager
 class RDIMain {
     init {
         RClientNetwork.register()
+        RdiBatchChannel.register()
         McpNetwork.register()
         LogManager.getLogger("rdi").info("❄❄❄❄❄❄❄❄RDI客户端核心模块已加载❄❄❄❄❄❄❄❄")
     }
@@ -50,6 +53,7 @@ class RDIMain {
         @JvmStatic
         fun onClientJoinServer(event: ClientPlayerNetworkEvent.LoggingIn) {
             GlobalPlayerListState.beginSession(event.connection)
+            RClientBatching.onJoin(event.connection)
             /* RdiChunkCacheClientHandler.clearDeferredPackets()
             RdiChunkCacheClient.open(
                 Minecraft.getInstance().gameDirectory.toPath(),
@@ -65,6 +69,7 @@ class RDIMain {
         @JvmStatic
         fun onClientLeaveServer(event: ClientPlayerNetworkEvent.LoggingOut) {
             GlobalPlayerListState.endSession(event.connection)
+            RClientBatching.onLeave(event.connection)
             StandardMcpServer.stop()
             /* RdiChunkCacheClientHandler.clearDeferredPackets()
             RdiChunkCacheClient.close() */

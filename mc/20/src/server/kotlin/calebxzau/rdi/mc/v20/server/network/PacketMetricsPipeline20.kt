@@ -1,6 +1,16 @@
 package calebxzau.rdi.mc.v20.server.network
 
 import calebxzau.rdi.mc.metrics.PacketDirection
+import calebxzau.rdi.mc.zstdcodec.ZstdCompressionPipeline
+import calebxzau.rdi.mc.zstdcodec.ZstdBatchObserver
+import calebxzau.rdi.mc.zstdcodec.ZstdBatchPolicy
+import calebxzau.rdi.mc.zstdcodec.ZstdBatchSample
+import calebxzau.rdi.mc.zstdcodec.ZstdPacketIdentity
+import calebxzau.rdi.mc.zstdcodec.ZstdSendingRecord
+import calebxzau.rdi.mc.zstdcodec.ZstdStreamSampler
+import io.netty.channel.Channel
+import java.util.ArrayDeque
+import java.util.IdentityHashMap
 import io.netty.buffer.ByteBuf
 import io.netty.channel.ChannelHandlerContext
 import io.netty.channel.ChannelInboundHandlerAdapter
@@ -26,6 +36,7 @@ object PacketMetricsPipeline20 {
     private const val CAPTURE = "rdi_metrics_capture"
     private const val MEASURE = "rdi_metrics_measure"
     private const val OUTBOUND = "rdi_metrics_outbound"
+    private const val RECORD = "rdi_encoded_record"
     private const val SPLITTER = "splitter"
     private const val DECODER = "decoder"
     private const val PREPENDER = "prepender"
@@ -42,7 +53,15 @@ object PacketMetricsPipeline20 {
     private class State(val recorder: Recorder) {
         var pendingInboundBytes: Int = 0
         var outboundPacket: Packet<*>? = null
-        var writing = false
+        val encodingScopes = ArrayDeque<IdentityHashMap<ByteBuf, Packet<*>>>()
+        var selective = false
+        var longWindow = false
+        var verifiedChannels: Set<String> = emptySet()
+        var sampler: ZstdStreamSampler? = null
+        var threshold = -1
+
+        fun isBatchingPaused(context: ChannelHandlerContext): Boolean =
+            ZstdCompressionPipeline.isOutboundBatchingEnabled(context.channel())
 
         fun recordSafely(packet: Packet<*>, direction: PacketDirection, bytes: Int) {
             runCatching { recorder.record(packet, direction, bytes) }
@@ -70,6 +89,7 @@ object PacketMetricsPipeline20 {
         channel.attr(STATE).set(state)
         pipeline.addAfter(SPLITTER, CAPTURE, Capture(state))
         pipeline.addAfter(PREPENDER, MEASURE, Measure(state))
+        pipeline.addBefore(ENCODER, RECORD, EncodedRecord(state))
         pipeline.addAfter(ENCODER, OUTBOUND, Outbound(state))
         compressionChanged(pipeline)
     }
@@ -79,6 +99,9 @@ object PacketMetricsPipeline20 {
     fun compressionChanged(pipeline: ChannelPipeline) {
         if (pipeline.get(CAPTURE) == null) return
         val state = pipeline.channel().attr(STATE).get() ?: return
+        if (PacketMetrics20.batchMetricsEnabled) {
+            ZstdCompressionPipeline.setBatchObserver(pipeline.channel(), MetricsObserver)
+        }
         if (pipeline.get(DECOMPRESS) != null) {
             pipeline.remove(CAPTURE)
             pipeline.addBefore(DECOMPRESS, CAPTURE, Capture(state))
@@ -89,10 +112,57 @@ object PacketMetricsPipeline20 {
         }
     }
 
+    /** Metadata is keyed by the exact successfully encoded buffer, then transferred with its bytes. */
     @JvmStatic
-    fun encoded(context: ChannelHandlerContext, packet: Packet<*>) {
+    fun encoded(context: ChannelHandlerContext, packet: Packet<*>, output: ByteBuf) {
         val state = context.channel().attr(STATE).get() ?: return
-        if (state.writing) state.outboundPacket = packet
+        state.encodingScopes.peekLast()?.put(output, packet)
+    }
+
+    fun configureBatching(
+        channel: Channel,
+        longWindow: Boolean,
+        verifiedChannels: Set<String>,
+    ) {
+        val task = Runnable {
+            val state = channel.attr(STATE).get() ?: return@Runnable
+            state.selective = true
+            state.longWindow = longWindow
+            if (state.verifiedChannels != verifiedChannels) state.verifiedChannels = verifiedChannels.toSet()
+        }
+        if (channel.eventLoop().inEventLoop()) task.run() else channel.eventLoop().execute(task)
+    }
+
+    internal fun attachSampler(channel: Channel, sampler: ZstdStreamSampler?) {
+        check(channel.eventLoop().inEventLoop()) { "Sampler ownership belongs to the connection event loop" }
+        channel.attr(STATE).get()?.sampler = sampler
+    }
+
+    @JvmStatic
+    fun thresholdChanged(channel: Channel, threshold: Int) {
+        val state = channel.attr(STATE).get() ?: return
+        state.threshold = threshold
+        if (threshold < 0) state.sampler?.finish()
+        else state.sampler?.thresholdChanged(threshold)
+    }
+
+    /** Called on Netty in the same task and before the codec's global tick notification. */
+    fun sampleTick(channel: Channel) {
+        channel.attr(STATE).get()?.sampler?.tick()
+    }
+
+    private object MetricsObserver : ZstdBatchObserver {
+        override fun recordEncoded(identity: ZstdPacketIdentity?, encodedBytes: Int, policy: ZstdBatchPolicy) {
+            PacketMetrics20.recordLogical(identity, encodedBytes)
+        }
+
+        override fun batchFlushed(sample: ZstdBatchSample) = PacketMetrics20.recordFrame(sample)
+
+        override fun writeCompleted(sample: ZstdBatchSample, success: Boolean) {
+            PacketMetrics20.recordWriteOutcome(success, sample.recordCount)
+        }
+
+        override fun encodingFailed(recordCount: Int) = PacketMetrics20.recordEncodingFailure(recordCount)
     }
 
     @JvmStatic
@@ -139,24 +209,63 @@ object PacketMetricsPipeline20 {
         override fun write(ctx: ChannelHandlerContext, msg: Any, promise: ChannelPromise) {
             val packet = state.outboundPacket
             state.outboundPacket = null
-            if (packet != null && msg is ByteBuf) {
+            if (packet != null && msg is ByteBuf && !PacketMetrics20.batchMetricsEnabled && !state.isBatchingPaused(ctx)) {
                 state.recordSafely(packet, PacketDirection.S2C, msg.readableBytes())
             }
             ctx.write(msg, promise)
         }
     }
 
+    private class EncodedRecord(val state: State) : ChannelOutboundHandlerAdapter() {
+        override fun write(ctx: ChannelHandlerContext, msg: Any, promise: ChannelPromise) {
+            if (msg !is ByteBuf) {
+                runCatching { state.sampler?.barrier() }
+                    .onFailure { logger.error("Failed to sample an outbound barrier", it) }
+                ctx.write(msg, promise)
+                return
+            }
+            val packet = state.encodingScopes.peekLast()?.remove(msg)
+            val key = packet?.let { PacketMetrics20.metricKey(it, PacketDirection.S2C) }
+            val identity = key?.let { ZstdPacketIdentity(it.packetType, it.namespace, it.path) }
+            val policy = if (state.selective && packet != null) {
+                PacketBatchPolicy20.classify(packet, msg, state.verifiedChannels, state.longWindow)
+            } else {
+                ZstdBatchPolicy.Immediate
+            }
+            state.sampler?.let { sampler ->
+                // Record the proven maximum policy so replay can compare 1tick/4ticks
+                // even when production's long-window switch is off during capture.
+                val capturePolicy = if (state.selective && packet != null) {
+                    PacketBatchPolicy20.classify(packet, msg, state.verifiedChannels, true)
+                } else ZstdBatchPolicy.Immediate
+                runCatching { sampler.record(msg, capturePolicy, identity, state.threshold) }
+                    .onFailure { logger.error("Failed to sample an encoded packet", it) }
+            }
+            val previous = state.outboundPacket
+            state.outboundPacket = packet
+            try {
+                if (ZstdCompressionPipeline.hasOutboundEncoder(ctx.channel())) {
+                    ctx.write(ZstdSendingRecord(msg, policy, identity), promise)
+                } else {
+                    if (PacketMetrics20.batchMetricsEnabled) {
+                        PacketMetrics20.recordUncompressed(identity, msg.readableBytes(), promise)
+                    }
+                    ctx.write(msg, promise)
+                }
+            } finally {
+                state.outboundPacket = previous
+            }
+        }
+    }
+
     private class Outbound(val state: State) : ChannelOutboundHandlerAdapter() {
         override fun write(ctx: ChannelHandlerContext, msg: Any, promise: ChannelPromise) {
-            val previous = state.outboundPacket
-            val wasWriting = state.writing
-            state.outboundPacket = null
-            state.writing = true
+            val scope = IdentityHashMap<ByteBuf, Packet<*>>()
+            state.encodingScopes.addLast(scope)
             try {
                 ctx.write(msg, promise)
             } finally {
-                state.outboundPacket = previous
-                state.writing = wasWriting
+                state.encodingScopes.removeLast()
             }
         }
     }

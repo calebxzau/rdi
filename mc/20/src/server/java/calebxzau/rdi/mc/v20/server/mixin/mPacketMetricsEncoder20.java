@@ -23,7 +23,7 @@ public abstract class mPacketMetricsEncoder20 {
     )
     private void rdi$recordPacket(ChannelHandlerContext context, Packet<?> packet, ByteBuf output, CallbackInfo ci) {
         try {
-            PacketMetricsPipeline20.encoded(context, packet);
+            PacketMetricsPipeline20.encoded(context, packet, output);
         } catch (Throwable error) {
             RDI$LOGGER.error("Failed to collect an outbound packet metric", error);
         }

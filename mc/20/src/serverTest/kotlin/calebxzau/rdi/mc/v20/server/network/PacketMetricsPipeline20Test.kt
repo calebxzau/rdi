@@ -2,6 +2,15 @@ package calebxzau.rdi.mc.v20.server.network
 
 import calebxzau.rdi.mc.metrics.PacketDirection
 import calebxzau.rdi.mc.zstdcodec.ZstdCompressionPipeline
+import calebxzau.rdi.mc.zstdcodec.ZstdBatchObserver
+import calebxzau.rdi.mc.zstdcodec.ZstdBatchPolicy
+import calebxzau.rdi.mc.zstdcodec.ZstdPacketIdentity
+import calebxzau.rdi.mc.zstdcodec.ZstdBatchSample
+import io.netty.channel.ChannelInboundHandlerAdapter
+import io.netty.channel.ChannelOutboundHandlerAdapter
+import net.minecraft.network.FriendlyByteBuf
+import net.minecraft.network.protocol.game.ClientboundUpdateAttributesPacket
+import net.minecraft.network.protocol.game.ClientboundKeepAlivePacket
 import io.netty.buffer.ByteBuf
 import io.netty.buffer.Unpooled
 import io.netty.channel.ChannelHandlerContext
@@ -158,10 +167,6 @@ class PacketMetricsPipeline20Test {
             assertFails { harness.writePacket(30) }
             assertTrue(harness.samples.isEmpty())
 
-            harness.encoder.bodySize = ZstdCompressionPipeline.MAXIMUM_UNCOMPRESSED_LENGTH + 1
-            assertFails { harness.writePacket(31) }
-            assertTrue(harness.samples.isEmpty())
-
             harness.encoder.bodySize = 1024
             val wireFrame = harness.writePacket(31)
             assertEquals(listOf(31L), harness.samples.map { packetId(it.packet) })
@@ -218,6 +223,100 @@ class PacketMetricsPipeline20Test {
             assertEquals(40L, harness.channel.readInbound<ServerboundKeepAlivePacket>().id)
         } finally {
             harness.close()
+        }
+    }
+
+    @Test
+    fun `nested encode and failed outer encode leave next packet attribution intact`(): Unit {
+        val harness = Harness(threshold = 16)
+        try {
+            harness.encoder.bodySize = 1024
+            harness.encoder.nestedPacket = ServerboundKeepAlivePacket(90)
+            harness.encoder.failNext = true
+            assertFails { harness.writePacket(30) }
+            assertEquals(listOf(90L), harness.samples.map { packetId(it.packet) })
+            harness.channel.readOutbound<ByteBuf>()?.release()
+            val nextFrame = harness.writePacket(31)
+            assertEquals(listOf(90L, 31L), harness.samples.map { packetId(it.packet) })
+            assertEquals(innerFrameSize(nextFrame), harness.samples.last().bytes)
+        } finally {
+            harness.close()
+        }
+    }
+
+    @Test
+    fun `oversized encoded packet closes connection and contributes no frame metric`(): Unit {
+        val harness = Harness(threshold = 16)
+        try {
+            harness.encoder.bodySize = ZstdCompressionPipeline.MAXIMUM_UNCOMPRESSED_LENGTH + 1
+            assertFails { harness.writePacket(31) }
+            assertTrue(harness.samples.isEmpty())
+            assertTrue(!harness.channel.isOpen)
+        } finally {
+            harness.close()
+        }
+    }
+
+    @Test
+    fun `selective records bind metadata to bytes and ordinary packet drains earlier queue`(): Unit {
+        val channel = EmbeddedChannel()
+        channel.freezeTime()
+        val originals = mutableListOf<ByteArray>()
+        val identities = mutableListOf<ZstdPacketIdentity?>()
+        val policies = mutableListOf<ZstdBatchPolicy>()
+        val frames = mutableListOf<ZstdBatchSample>()
+        channel.pipeline().addLast("splitter", ChannelInboundHandlerAdapter())
+        channel.pipeline().addLast("decoder", ChannelInboundHandlerAdapter())
+        channel.pipeline().addLast("prepender", ChannelOutboundHandlerAdapter())
+        channel.pipeline().addLast("encoder", object : MessageToMessageEncoder<Packet<*>>() {
+            override fun encode(ctx: ChannelHandlerContext, packet: Packet<*>, out: MutableList<Any>) {
+                // Vanilla PacketEncoder emits the allocated ByteBuf; FriendlyByteBuf is
+                // only its temporary writer facade. Netty touch() may unwrap that facade.
+                val bytes = ctx.alloc().buffer()
+                val writer = FriendlyByteBuf(bytes)
+                writer.writeVarInt(1)
+                packet.write(writer)
+                originals += ByteArray(bytes.readableBytes()).also { bytes.getBytes(bytes.readerIndex(), it) }
+                PacketMetricsPipeline20.encoded(ctx, packet, bytes)
+                out += bytes
+            }
+        })
+        ZstdCompressionPipeline.setup(channel, 16, true, MinecraftVarIntCodec20.INSTANCE)
+        PacketMetricsPipeline20.install(channel.pipeline()) { _, _, _ -> }
+        PacketMetricsPipeline20.configureBatching(channel, false, emptySet())
+        ZstdCompressionPipeline.setBatchObserver(channel, object : ZstdBatchObserver {
+            override fun recordEncoded(identity: ZstdPacketIdentity?, encodedBytes: Int, policy: ZstdBatchPolicy) {
+                identities += identity
+                policies += policy
+            }
+            override fun batchFlushed(sample: ZstdBatchSample) { frames += sample }
+        })
+        ZstdCompressionPipeline.setInboundBatching(channel, true)
+        ZstdCompressionPipeline.setOutboundBatching(channel, true)
+        try {
+            channel.writeOutbound(ClientboundUpdateAttributesPacket(1, emptyList()))
+            channel.writeOutbound(ClientboundUpdateAttributesPacket(2, emptyList()))
+            assertEquals(listOf(ZstdBatchPolicy.OneTick, ZstdBatchPolicy.OneTick), policies)
+            assertEquals(0, frames.size)
+            channel.writeOutbound(ClientboundKeepAlivePacket(33))
+            assertEquals(listOf(ZstdBatchPolicy.OneTick, ZstdBatchPolicy.OneTick, ZstdBatchPolicy.Immediate), policies)
+            assertEquals(listOf("net.minecraft.network.protocol.game.ClientboundUpdateAttributesPacket",
+                "net.minecraft.network.protocol.game.ClientboundUpdateAttributesPacket",
+                "net.minecraft.network.protocol.game.ClientboundKeepAlivePacket"), identities.map { it?.packetType })
+            assertEquals(3, frames.sumOf { it.recordCount })
+            while (true) {
+                val frame = channel.readOutbound<ByteBuf>() ?: break
+                channel.writeInbound(frame)
+            }
+            val decoded = mutableListOf<ByteArray>()
+            while (true) {
+                val packet = channel.readInbound<ByteBuf>() ?: break
+                try { decoded += ByteArray(packet.readableBytes()).also(packet::readBytes) }
+                finally { packet.release() }
+            }
+            assertEquals(originals.map { it.toList() }, decoded.map { it.toList() })
+        } finally {
+            channel.finishAndReleaseAll()
         }
     }
 
@@ -280,16 +379,19 @@ class PacketMetricsPipeline20Test {
     private class FakePacketEncoder : MessageToMessageEncoder<Packet<*>>() {
         var bodySize = 8
         var failNext = false
+        var nestedPacket: Packet<*>? = null
 
         override fun encode(ctx: ChannelHandlerContext, packet: Packet<*>, out: MutableList<Any>) {
-            PacketMetricsPipeline20.encoded(ctx, packet)
-            if (failNext) {
-                failNext = false
-                throw IllegalStateException("test encoder failure")
-            }
+            val shouldFail = failNext
+            failNext = false
+            val nested = nestedPacket
+            nestedPacket = null
+            if (nested != null) ctx.channel().writeAndFlush(nested)
+            if (shouldFail) throw IllegalStateException("test encoder failure")
             val id = packetId(packet)
             val body = Unpooled.buffer(bodySize).writeLong(id)
             repeat((bodySize - Long.SIZE_BYTES).coerceAtLeast(0)) { index -> body.writeByte((id + index).toInt()) }
+            PacketMetricsPipeline20.encoded(ctx, packet, body)
             out += body
         }
     }
