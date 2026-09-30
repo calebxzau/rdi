@@ -10,7 +10,8 @@ import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
-@Mixin(Connection.class)
+// Own the negotiated wire codec before another mod can cancel setupCompression at HEAD.
+@Mixin(value = Connection.class, priority = ZstdCompressionPipeline.SETUP_MIXIN_PRIORITY)
 public abstract class mZstdCompression {
     @Shadow
     private Channel channel;

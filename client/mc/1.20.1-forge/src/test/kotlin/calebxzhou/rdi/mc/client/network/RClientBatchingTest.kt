@@ -20,11 +20,70 @@ import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertFailsWith
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertSame
+import kotlin.test.assertTrue
 
 class RClientBatchingTest {
+    @Test
+    fun `foreign decoder after negotiation reports actual handlers without unsafe fallback`() {
+        val client = emptyPipelineChannel()
+        try {
+            val foreignDecoder = ChannelInboundHandlerAdapter()
+            val foreignEncoder = ChannelOutboundHandlerAdapter()
+            client.pipeline().addAfter("splitter", "decompress", foreignDecoder)
+            client.pipeline().addAfter("prepender", "compress", foreignEncoder)
+
+            val error = assertFailsWith<IllegalStateException> {
+                RClientBatching.onLoginPacket(connectionFor(client, remoteBatchChannel = true))
+            }
+
+            assertTrue(error.message.orEmpty().contains("decompress=${foreignDecoder.javaClass.name}"))
+            assertTrue(error.message.orEmpty().contains("compress=${foreignEncoder.javaClass.name}"))
+            assertSame(foreignDecoder, client.pipeline().get("decompress"))
+            assertSame(foreignEncoder, client.pipeline().get("compress"))
+        } finally {
+            client.finishAndReleaseAll()
+        }
+    }
+
+    @Test
+    fun `fresh reconnects install RDI handlers and decode legacy then batch after repeated setup`() {
+        repeat(2) {
+            val server = compressionChannel()
+            val client = emptyPipelineChannel()
+            try {
+                client.pipeline().addAfter("splitter", "decompress", ChannelInboundHandlerAdapter())
+                client.pipeline().addAfter("prepender", "compress", ChannelOutboundHandlerAdapter())
+                ZstdCompressionPipeline.setup(client, COMPRESSION_THRESHOLD, false, MinecraftVarIntCodec201.INSTANCE)
+                val decoder = client.pipeline().get("decompress")
+                val connection = connectionFor(client, remoteBatchChannel = true)
+                RClientBatching.onLoginPacket(connection)
+
+                val legacyRecord = ByteArray(300) { (it * 7).toByte() }
+                server.writeOutbound(Unpooled.wrappedBuffer(legacyRecord))
+                client.writeInbound(assertNotNull(server.readOutbound<ByteBuf>()))
+                assertDecodedRecords(client, listOf(legacyRecord))
+
+                ZstdCompressionPipeline.setup(client, COMPRESSION_THRESHOLD, false, MinecraftVarIntCodec201.INSTANCE)
+                assertSame(decoder, client.pipeline().get("decompress"))
+                setOutboundBatching(server, true)
+                val batchRecords = listOf(ByteArray(300) { 3 }, ByteArray(400) { 4 })
+                batchRecords.forEach { server.writeOneOutbound(Unpooled.wrappedBuffer(it)) }
+                ZstdCompressionPipeline.flushBatched(server)
+                server.runPendingTasks()
+                client.writeInbound(assertNotNull(server.readOutbound<ByteBuf>()))
+                assertDecodedRecords(client, batchRecords)
+                RClientBatching.onLeave(connection)
+            } finally {
+                server.finishAndReleaseAll()
+                client.finishAndReleaseAll()
+            }
+        }
+    }
+
     @Test
     fun `enables batch decoding on Netty before queued login work and decodes first block`() {
         val server = compressionChannel()

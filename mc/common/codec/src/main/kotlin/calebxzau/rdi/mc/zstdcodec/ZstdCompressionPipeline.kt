@@ -17,6 +17,12 @@ import io.netty.channel.local.LocalServerChannel
  * so a peer that only knows the legacy envelope keeps working.
  */
 object ZstdCompressionPipeline {
+    /**
+     * Mixin 0.8.5 prepends later HEAD injections. Apply after Krypton's priority-1000 mixin
+     * so our cancelling callback executes first; a higher priority would execute last.
+     */
+    const val SETUP_MIXIN_PRIORITY: Int = 900
+
     const val MAXIMUM_COMPRESSED_LENGTH: Int = 2 * 1024 * 1024
     const val MAXIMUM_UNCOMPRESSED_LENGTH: Int = 8 * 1024 * 1024
 
@@ -110,6 +116,15 @@ object ZstdCompressionPipeline {
     @JvmStatic
     fun hasOutboundEncoder(channel: Channel): Boolean =
         channel.pipeline().get(COMPRESS_HANDLER_NAME) is ZstdCompressionEncoder
+
+    /** Actual handlers, for diagnosing other mods replacing the compression pipeline. */
+    @JvmStatic
+    fun describeHandlers(channel: Channel): String {
+        val pipeline = channel.pipeline()
+        val decoder = pipeline.get(DECOMPRESS_HANDLER_NAME)?.javaClass?.name ?: "absent"
+        val encoder = pipeline.get(COMPRESS_HANDLER_NAME)?.javaClass?.name ?: "absent"
+        return "decompress=$decoder, compress=$encoder"
+    }
 
     @JvmStatic
     fun isOutboundBatchingEnabled(channel: Channel): Boolean =

@@ -12,3 +12,5 @@ description = '''
 config = "rdi.mixins.json"
 [[mixins]]
 config = "rdi.v20.client.mixins.json"
+[[mixins]]
+config = "rdi.l2.client.mixins.json"

@@ -6,7 +6,7 @@
 
 - Forge1.20.1仅在对端协商了`rdi:batch`时启用S2C批处理；旧端保持既有逐包封套。
 - 原版`ClientboundUpdateAttributesPacket`使用下一次全局tick结束或50ms截止时间。
-- 经目标整合包字节码确认的L2 Tabs0.3.3消息`l2tabs:main`的单字节discriminator0只更新属性修饰符名称。默认1tick，可通过长窗口开关使用4tick或200ms。
+- L2 Tabs0.3.3消息`l2tabs:main`的单字节discriminator1（`SyncAttributeToClient`）只更新属性修饰符名称。默认1tick，可通过长窗口开关使用4tick或200ms。此前误记为0；已按目标整合包的注册字节码及实际捕获修正，ID0为`OpenCuriosPacket`。
 - 未确认消息、其他3个被审计频道、普通包均立即发送，并先排空此前队列。其他L2 Tabs版本不使用该消息白名单。
 - 每连接1条有序队列，保留全部原始编码字节和顺序。记录区含各包长度前缀，达到65536字节立即发送；单包回退逐包封套，小型未压缩批次按含外层长度前缀的成本选择封装。
 - 客户端在`Connection.channelRead0`接到登录包时同步准备解码，早于主线程登录处理。本地连接和关闭压缩的连接保留回退。

@@ -116,6 +116,7 @@ sourceSets.main {
     java.srcDir '../../../mc/20/src/client/java'
     kotlin.srcDir '../../../mc/20/src/client/kotlin'
     kotlin.srcDir '../../../mc/20/src/main/kotlin'
+    kotlin.srcDir '../../../mc/20/forge/src/main/kotlin'
     kotlin.srcDir '../../../mc/rcmd/src/main/kotlin'
     java.exclude(
             'calebxzhou/rdi/mc/client/mixin/mChat.java',
@@ -164,6 +165,7 @@ mixin {
     add sourceSets.main, 'rdi.mixins.refmap.json'
     config "rdi.mixins.json"
     config "rdi.v20.client.mixins.json"
+    config "rdi.l2.client.mixins.json"
 }
 
 repositories {
@@ -276,6 +278,7 @@ legacyForge {
                     "--enable-native-access=ALL",
                     "-mixin.config=rdi.mixins.json",
                     "-mixin.config=rdi.v20.client.mixins.json",
+                    "-mixin.config=rdi.l2.client.mixins.json",
                     "--width",
                     "2560",
                     "--height",
@@ -557,7 +560,7 @@ jar {
                 "Implementation-Version"  : version,
                 "Implementation-Vendor"   : mod_authors,
                 "Implementation-Timestamp": new Date().format("yyyy-MM-dd'T'HH:mm:ssZ"),
-                "MixinConfigs": "rdi.mixins.json,rdi.v20.client.mixins.json"
+                "MixinConfigs": "rdi.mixins.json,rdi.v20.client.mixins.json,rdi.l2.client.mixins.json"
         ])
     }
 }

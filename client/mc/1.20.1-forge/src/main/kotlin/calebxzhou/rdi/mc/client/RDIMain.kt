@@ -32,6 +32,7 @@ class RDIMain {
     init {
         RClientNetwork.register()
         RdiBatchChannel.register()
+        calebxzau.rdi.mc.v20.forge.l2.L2NameChannel.register()
         McpNetwork.register()
         LogManager.getLogger("rdi").info("❄❄❄❄❄❄❄❄RDI客户端核心模块已加载❄❄❄❄❄❄❄❄")
     }
@@ -68,6 +69,7 @@ class RDIMain {
         @SubscribeEvent
         @JvmStatic
         fun onClientLeaveServer(event: ClientPlayerNetworkEvent.LoggingOut) {
+            calebxzau.rdi.mc.client.l2.RClientL2Names.clear()
             GlobalPlayerListState.endSession(event.connection)
             RClientBatching.onLeave(event.connection)
             StandardMcpServer.stop()

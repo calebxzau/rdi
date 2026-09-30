@@ -10,15 +10,15 @@ import kotlin.test.assertEquals
 
 class PacketBatchPolicy20Test {
     @Test
-    fun `verified UI message respects switch and preserves read index`(): Unit {
-        check("l2tabs:main", 0, true, false, ZstdBatchPolicy.OneTick)
-        check("l2tabs:main", 0, true, true, ZstdBatchPolicy.FourTicks)
-        check("l2tabs:main", 0, false, true, ZstdBatchPolicy.Immediate)
+    fun `verified attribute name sync respects switch and preserves read index`(): Unit {
+        check("l2tabs:main", 1, true, false, ZstdBatchPolicy.OneTick)
+        check("l2tabs:main", 1, true, true, ZstdBatchPolicy.FourTicks)
+        check("l2tabs:main", 1, false, true, ZstdBatchPolicy.Immediate)
     }
 
     @Test
-    fun `unknown ids other channels and truncated payloads send immediately`(): Unit {
-        check("l2tabs:main", 1, true, true, ZstdBatchPolicy.Immediate)
+    fun `open curios unknown ids other channels and truncated payloads send immediately`(): Unit {
+        check("l2tabs:main", 0, true, true, ZstdBatchPolicy.Immediate)
         check("l2tabs:main", 255, true, true, ZstdBatchPolicy.Immediate)
         check("elementalcombat:main", 3, true, true, ZstdBatchPolicy.Immediate)
         check("l2tabs:main", null, true, true, ZstdBatchPolicy.Immediate)

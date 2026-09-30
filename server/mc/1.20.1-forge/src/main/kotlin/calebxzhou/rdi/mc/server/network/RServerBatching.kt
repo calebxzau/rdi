@@ -35,8 +35,9 @@ object RServerBatching {
         val channel = connection.channel()
         PacketMetricsPipeline20.configureBatching(channel, longWindowEnabled(), verifiedChannels)
         ZstdCompressionPipeline.setOutboundBatching(channel, batchingEnabled())
-        logger.info("Player {} selective Zstd batching enabled={}, long window={}",
-            player.gameProfile.name, batchingEnabled(), longWindowEnabled())
+        logger.info("Player {} selective Zstd batching requested={}, long window={}, handlers={}",
+            player.gameProfile.name, batchingEnabled(), longWindowEnabled(),
+            ZstdCompressionPipeline.describeHandlers(channel))
     }
 
     fun flushAtTickEnd(server: MinecraftServer) {

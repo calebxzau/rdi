@@ -1,0 +1,9 @@
+{
+  "required": true,
+  "package": "calebxzau.rdi.mc.server.l2.mixin",
+  "plugin": "calebxzau.rdi.mc.server.l2.mixin.L2NamesMixinPlugin",
+  "compatibilityLevel": "JAVA_17",
+  "refmap": "rdi.mixins.refmap.json",
+  "injectors": { "defaultRequire": 1 },
+  "mixins": ["mL2SelfNames"]
+}

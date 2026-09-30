@@ -31,8 +31,8 @@ object PacketBatchPolicy20 {
         for (value in channelBytes) {
             if (cursor.byte() != (value.toInt() and 255)) return ZstdBatchPolicy.Immediate
         }
-        if (cursor.byte() != 0) return ZstdBatchPolicy.Immediate
-        // ID0 SyncAttributeToClient updates name suppliers only. Entity value/skill/combat
+        if (cursor.byte() != 1) return ZstdBatchPolicy.Immediate
+        // ID1 SyncAttributeToClient updates name suppliers only. Entity value/skill/combat
         // updates and unknown messages remain ordering barriers.
         return if (longWindow) ZstdBatchPolicy.FourTicks else ZstdBatchPolicy.OneTick
     }

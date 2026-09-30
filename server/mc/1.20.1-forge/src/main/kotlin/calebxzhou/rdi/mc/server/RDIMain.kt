@@ -52,6 +52,7 @@ class RDIMain {
         RdiLoggingConfiguration.reapplyConfiguredLog4j2()
         RServerNetwork.register()
         RdiBatchChannel.register()
+        calebxzau.rdi.mc.v20.forge.l2.L2NameChannel.register()
         McpNetwork.register()
     }
 

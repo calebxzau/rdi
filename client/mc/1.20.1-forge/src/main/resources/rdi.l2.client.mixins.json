@@ -1,0 +1,13 @@
+{
+  "required": true,
+  "package": "calebxzau.rdi.mc.client.l2.mixin",
+  "compatibilityLevel": "JAVA_17",
+  "refmap": "rdi.mixins.refmap.json",
+  "injectors": {
+    "defaultRequire": 1
+  },
+  "client": [
+    "AAttributeModifierName",
+    "mL2NamesPacketListener"
+  ]
+}

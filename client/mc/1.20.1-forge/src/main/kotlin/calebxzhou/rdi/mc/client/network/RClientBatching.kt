@@ -30,7 +30,8 @@ object RClientBatching {
 
         if (!ZstdCompressionPipeline.setInboundBatchingIfAvailable(channel, true)) {
             val error = IllegalStateException(
-                "The server negotiated rdi:batch, but the inbound compression decoder is unavailable",
+                "The server negotiated rdi:batch, but the inbound compression decoder is unavailable: " +
+                    ZstdCompressionPipeline.describeHandlers(channel),
             )
             logger.error("Unable to enable negotiated packet batching before login", error)
             throw error
@@ -40,6 +41,7 @@ object RClientBatching {
     /** Kept as an idempotent fallback for the later Forge login event. */
     fun onJoin(connection: Connection) {
         onLoginPacket(connection)
+        logger.info("Login compression handlers: {}", ZstdCompressionPipeline.describeHandlers(connection.channel()))
     }
 
     /** Stops accepting batch blocks when the session ends. */
