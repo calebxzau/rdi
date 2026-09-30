@@ -13,6 +13,7 @@ import calebxzhou.rdi.mc.rcmd.tpa.TpaService
 import calebxzhou.rdi.mc.server.mcpimpl.McpNetwork
 import calebxzhou.rdi.mc.server.network.RServerNetwork
 import calebxzhou.rdi.mc.server.network.RServerBatching
+import calebxzhou.rdi.mc.server.network.RServerPacketCapture
 import calebxzhou.rdi.mc.server.rcmd.PlayerNbtChatRangeStore
 import calebxzhou.rdi.mc.server.rcmd.RcmdForgeServerAdapter
 import calebxzau.rdi.mc.v20.server.network.PacketMetrics20
@@ -78,6 +79,7 @@ class RDIMain {
         fun starting(e: ServerStartingEvent) {
             val server = (e.getServer() as? DedicatedServer) ?: return
             PacketMetrics20.startBatchMetrics(server.serverDirectory.toPath().resolve("rdi").resolve("packet-traffic_v4.db"))
+            RServerPacketCapture.start(server)
 
             GameRules.visitGameRuleTypes(object : GameRules.GameRuleTypeVisitor {
                 override fun <T : GameRules.Value<T>> visit(key: GameRules.Key<T>, type: GameRules.Type<T>) {
@@ -100,6 +102,7 @@ class RDIMain {
 
         @SubscribeEvent @JvmStatic
         fun stopped(e: ServerStoppedEvent) {
+            RServerPacketCapture.stop()
             PacketMetrics20.stop()
             runCatching { RegionZstdCodec.closeAll() }.onFailure { error ->
                 lgr.error("Failed to close Zstd region compression pool", error)
@@ -123,6 +126,7 @@ class RDIMain {
         @SubscribeEvent @JvmStatic
         fun onPlayerJoin(e: PlayerEvent.PlayerLoggedInEvent) {
             val player: ServerPlayer = e.entity as ServerPlayer
+            RServerPacketCapture.onPlayerJoined(player)
             PlayerChatRangeState.restore(player.uuid, PlayerNbtChatRangeStore(player))
             if (RDI.isAllOp()) {
                 player.server.playerList.op(player.gameProfile)

@@ -6,9 +6,16 @@ import calebxzau.rdi.mc.zstdcodec.ZstdBatchObserver
 import calebxzau.rdi.mc.zstdcodec.ZstdBatchPolicy
 import calebxzau.rdi.mc.zstdcodec.ZstdPacketIdentity
 import calebxzau.rdi.mc.zstdcodec.ZstdBatchSample
+import calebxzau.rdi.mc.zstdcodec.PacketCaptureRecorder
+import com.github.luben.zstd.ZstdInputStream
+import java.io.DataInputStream
+import java.nio.file.Files
+import java.util.UUID
 import io.netty.channel.ChannelInboundHandlerAdapter
 import io.netty.channel.ChannelOutboundHandlerAdapter
 import net.minecraft.network.FriendlyByteBuf
+import net.minecraft.resources.ResourceLocation
+import net.minecraft.network.protocol.game.ClientboundCustomPayloadPacket
 import net.minecraft.network.protocol.game.ClientboundUpdateAttributesPacket
 import net.minecraft.network.protocol.game.ClientboundKeepAlivePacket
 import io.netty.buffer.ByteBuf
@@ -30,6 +37,83 @@ import kotlin.test.assertTrue
  * encoder -> compress -> prepender outbound, with no FlowControlHandler.
  */
 class PacketMetricsPipeline20Test {
+    @Test
+    fun `capture keeps only custom payloads and attributes across connections and compression changes`(): Unit {
+        val directory = Files.createTempDirectory("rdi-capture-pipeline")
+        val recorder = PacketCaptureRecorder(directory)
+        val player = UUID.fromString("00000000-0000-7000-8000-000000000001")
+        val first = Harness(threshold = -1)
+        val second = Harness(threshold = 16)
+        val customData = FriendlyByteBuf(Unpooled.buffer().writeLong(12))
+        val secondCustomData = FriendlyByteBuf(Unpooled.buffer().writeLong(22))
+        try {
+            assertTrue(PacketMetricsPipeline20.attachCapture(first.channel, recorder.connection(player)))
+            assertTrue(PacketMetricsPipeline20.attachCapture(second.channel, recorder.connection(player)))
+            first.writePacket(ClientboundUpdateAttributesPacket(11, emptyList()))
+            first.writePacket(ClientboundKeepAlivePacket(80))
+            first.setThreshold(16)
+            first.writePacket(ClientboundCustomPayloadPacket(ResourceLocation("l2tabs", "main"), customData))
+            first.setThreshold(-1)
+            first.writePacket(ClientboundUpdateAttributesPacket(13, emptyList()))
+            second.encoder.nestedPacket = ClientboundUpdateAttributesPacket(21, emptyList())
+            second.encoder.failNext = true
+            assertFails { second.writePacket(ClientboundUpdateAttributesPacket(99, emptyList())) }
+            second.channel.readOutbound<ByteBuf>()?.release()
+            second.writePacket(ClientboundKeepAlivePacket(81))
+            second.writePacket(ClientboundCustomPayloadPacket(ResourceLocation("infinite_abyss", "infinite_abyss"), secondCustomData))
+        } finally {
+            customData.release()
+            secondCustomData.release()
+            first.close()
+            second.close()
+            recorder.close().getOrThrow()
+        }
+        val files = Files.list(directory).use { paths ->
+            paths.filter { it.fileName.toString().endsWith(".rdibatch.zst") }.toList()
+        }
+        assertEquals(1, files.size)
+        val records = mutableListOf<Triple<Long, Long, Long>>()
+        val types = mutableListOf<String>()
+        val channels = mutableListOf<String>()
+        DataInputStream(ZstdInputStream(Files.newInputStream(files.single()))).use { input ->
+            assertEquals(1, input.readUnsignedByte())
+            assertEquals(0x52445043, input.readInt())
+            assertEquals(1, input.readUnsignedShort())
+            input.skipNBytes(16 + 8 + 4L)
+            while (true) {
+                when (val kind = input.readUnsignedByte()) {
+                    2 -> repeat(input.readInt()) {
+                        input.readLong() // elapsed time
+                        assertEquals(player, UUID(input.readLong(), input.readLong()))
+                        val connection = input.readLong()
+                        val sequence = input.readLong()
+                        val type = ByteArray(input.readUnsignedShort()).also(input::readFully).toString(Charsets.UTF_8)
+                        types += type.substringAfterLast('.')
+                        channels += ByteArray(input.readUnsignedShort()).also(input::readFully).toString(Charsets.UTF_8)
+                        assertEquals(8, input.readInt())
+                        records += Triple(connection, sequence, input.readLong())
+                    }
+                    3 -> {
+                        assertEquals(5L, input.readLong())
+                        assertEquals(0L, input.readLong())
+                        assertEquals(1, input.readUnsignedByte())
+                        input.readLong()
+                        assertEquals(-1, input.read())
+                        break
+                    }
+                    else -> error("Unexpected capture frame kind $kind")
+                }
+            }
+        }
+        assertEquals(listOf(11L, 12L, 13L, 21L, 22L), records.map { it.third })
+        assertEquals(listOf(1L, 2L, 3L, 1L, 2L), records.map { it.second })
+        assertEquals(2, records.map { it.first }.distinct().size)
+        assertEquals(listOf("ClientboundUpdateAttributesPacket", "ClientboundCustomPayloadPacket",
+            "ClientboundUpdateAttributesPacket", "ClientboundUpdateAttributesPacket",
+            "ClientboundCustomPayloadPacket"), types)
+        assertEquals(listOf("", "l2tabs:main", "", "", "infinite_abyss:infinite_abyss"), channels)
+    }
+
     @Test
     fun `records compressed inner frame bytes in both directions`(): Unit {
         val harness = Harness(threshold = 32)
@@ -355,8 +439,10 @@ class PacketMetricsPipeline20Test {
             PacketMetricsPipeline20.compressionChanged(channel.pipeline())
         }
 
-        fun writePacket(id: Long): ByteArray {
-            assertTrue(channel.writeOutbound(ServerboundKeepAlivePacket(id)))
+        fun writePacket(id: Long): ByteArray = writePacket(ServerboundKeepAlivePacket(id))
+
+        fun writePacket(packet: Packet<*>): ByteArray {
+            assertTrue(channel.writeOutbound(packet))
             val frame = channel.readOutbound<ByteBuf>() ?: error("packet encoder produced no frame")
             return try {
                 ByteArray(frame.readableBytes()).also(frame::readBytes)
@@ -449,7 +535,15 @@ class PacketMetricsPipeline20Test {
     }
 
     private companion object {
-        fun packetId(packet: Packet<*>): Long = (packet as ServerboundKeepAlivePacket).id
+        fun packetId(packet: Packet<*>): Long = when (packet) {
+            is ServerboundKeepAlivePacket -> packet.id
+            is ClientboundKeepAlivePacket -> packet.id
+            is ClientboundUpdateAttributesPacket -> packet.entityId.toLong()
+            is ClientboundCustomPayloadPacket -> packet.data.let { data ->
+                try { data.getLong(data.readerIndex()) } finally { data.release() }
+            }
+            else -> error("Unsupported test packet ${packet.javaClass.name}")
+        }
 
         fun innerFrameSize(outerFrame: ByteArray): Int = outerFrame.size - varIntSizeFrom(outerFrame)
 

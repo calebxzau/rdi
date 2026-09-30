@@ -7,7 +7,7 @@ import calebxzau.rdi.mc.zstdcodec.ZstdBatchPolicy
 import calebxzau.rdi.mc.zstdcodec.ZstdBatchSample
 import calebxzau.rdi.mc.zstdcodec.ZstdPacketIdentity
 import calebxzau.rdi.mc.zstdcodec.ZstdSendingRecord
-import calebxzau.rdi.mc.zstdcodec.ZstdStreamSampler
+import calebxzau.rdi.mc.zstdcodec.PacketCaptureConnection
 import io.netty.channel.Channel
 import java.util.ArrayDeque
 import java.util.IdentityHashMap
@@ -21,6 +21,8 @@ import io.netty.channel.local.LocalChannel
 import io.netty.channel.local.LocalServerChannel
 import io.netty.util.AttributeKey
 import net.minecraft.network.protocol.Packet
+import net.minecraft.network.protocol.game.ClientboundCustomPayloadPacket
+import net.minecraft.network.protocol.game.ClientboundUpdateAttributesPacket
 import org.apache.logging.log4j.LogManager
 
 /**
@@ -57,8 +59,7 @@ object PacketMetricsPipeline20 {
         var selective = false
         var longWindow = false
         var verifiedChannels: Set<String> = emptySet()
-        var sampler: ZstdStreamSampler? = null
-        var threshold = -1
+        var capture: PacketCaptureConnection? = null
 
         fun isBatchingPaused(context: ChannelHandlerContext): Boolean =
             ZstdCompressionPipeline.isOutboundBatchingEnabled(context.channel())
@@ -133,22 +134,12 @@ object PacketMetricsPipeline20 {
         if (channel.eventLoop().inEventLoop()) task.run() else channel.eventLoop().execute(task)
     }
 
-    internal fun attachSampler(channel: Channel, sampler: ZstdStreamSampler?) {
-        check(channel.eventLoop().inEventLoop()) { "Sampler ownership belongs to the connection event loop" }
-        channel.attr(STATE).get()?.sampler = sampler
-    }
-
-    @JvmStatic
-    fun thresholdChanged(channel: Channel, threshold: Int) {
-        val state = channel.attr(STATE).get() ?: return
-        state.threshold = threshold
-        if (threshold < 0) state.sampler?.finish()
-        else state.sampler?.thresholdChanged(threshold)
-    }
-
-    /** Called on Netty in the same task and before the codec's global tick notification. */
-    fun sampleTick(channel: Channel) {
-        channel.attr(STATE).get()?.sampler?.tick()
+    /** Capture does not depend on negotiated batching or a compression handler. */
+    internal fun attachCapture(channel: Channel, capture: PacketCaptureConnection): Boolean {
+        check(channel.eventLoop().inEventLoop()) { "Capture ownership belongs to the connection event loop" }
+        val state = channel.attr(STATE).get() ?: return false
+        state.capture = capture
+        return true
     }
 
     private object MetricsObserver : ZstdBatchObserver {
@@ -194,6 +185,11 @@ object PacketMetricsPipeline20 {
      * frame's sample. The enclosing value is restored so nested reads stay intact.
      */
     private class Capture(val state: State) : ChannelInboundHandlerAdapter() {
+        override fun channelInactive(ctx: ChannelHandlerContext) {
+            state.capture = null
+            ctx.fireChannelInactive()
+        }
+
         override fun channelRead(ctx: ChannelHandlerContext, msg: Any) {
             val enclosing = state.pendingInboundBytes
             state.pendingInboundBytes = if (msg is ByteBuf) msg.readableBytes() else 0
@@ -219,8 +215,6 @@ object PacketMetricsPipeline20 {
     private class EncodedRecord(val state: State) : ChannelOutboundHandlerAdapter() {
         override fun write(ctx: ChannelHandlerContext, msg: Any, promise: ChannelPromise) {
             if (msg !is ByteBuf) {
-                runCatching { state.sampler?.barrier() }
-                    .onFailure { logger.error("Failed to sample an outbound barrier", it) }
                 ctx.write(msg, promise)
                 return
             }
@@ -232,14 +226,13 @@ object PacketMetricsPipeline20 {
             } else {
                 ZstdBatchPolicy.Immediate
             }
-            state.sampler?.let { sampler ->
-                // Record the proven maximum policy so replay can compare 1tick/4ticks
-                // even when production's long-window switch is off during capture.
-                val capturePolicy = if (state.selective && packet != null) {
-                    PacketBatchPolicy20.classify(packet, msg, state.verifiedChannels, true)
-                } else ZstdBatchPolicy.Immediate
-                runCatching { sampler.record(msg, capturePolicy, identity, state.threshold) }
-                    .onFailure { logger.error("Failed to sample an encoded packet", it) }
+            if (packet is ClientboundCustomPayloadPacket || packet is ClientboundUpdateAttributesPacket) {
+                state.capture?.let { capture ->
+                    runCatching { capture.record(msg, identity) }.onFailure {
+                        state.capture = null
+                        logger.error("Failed to capture an encoded packet; capture detached from this connection", it)
+                    }
+                }
             }
             val previous = state.outboundPacket
             state.outboundPacket = packet

@@ -20,7 +20,6 @@ abstract class mZstdCompression {
     private void RDI$SetupCompression(int threshold, boolean validateDecompressed, CallbackInfo ci) {
         Runnable setup = () -> {
             ZstdCompressionPipeline.setup(channel, threshold, validateDecompressed, MinecraftVarIntCodec20.INSTANCE);
-            PacketMetricsPipeline20.thresholdChanged(channel, threshold);
             PacketMetricsPipeline20.compressionChanged(channel.pipeline());
         };
         if (channel.eventLoop().inEventLoop()) setup.run();
