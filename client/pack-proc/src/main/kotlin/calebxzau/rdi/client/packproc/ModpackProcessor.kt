@@ -1079,13 +1079,29 @@ class ModpackProcessor(
         val canonicalMatchedFiles = matchedModFiles.mapTo(mutableSetOf()) { it.canonicalFile }
         var containsExcludedMcaFiles = false
         val files = rootDir.walkTopDown()
-            .onEnter { dir -> !shouldSkipServerExtraDir(rootDir, dir) }
+            .onEnter { dir ->
+                if (shouldSkipServerExtraDir(rootDir, dir)) {
+                    logSkippedUploadEntry(
+                        "server/${dir.relativeTo(rootDir).invariantSeparatorsPath}",
+                        isDirectory = true,
+                        reason = if (dir.name.contains("cache", ignoreCase = true)) "目录名包含cache" else "服务端额外目录过滤规则",
+                    )
+                    false
+                } else true
+            }
             .filter { it.isFile }
             .filterNot { it.canonicalFile in canonicalMatchedFiles }
             .mapNotNull { file ->
                 val relativePath = file.relativeTo(rootDir).invariantSeparatorsPath
                 if (relativePath.isBlank()) return@mapNotNull null
-                if (shouldSkipServerExtraFile(relativePath, file)) return@mapNotNull null
+                if (shouldSkipServerExtraFile(relativePath, file)) {
+                    logSkippedUploadEntry(
+                        "server/${relativePath}",
+                        isDirectory = false,
+                        reason = if (isDisabledFile(relativePath, isDirectory = false)) "文件已禁用（.disabled）" else "服务端额外文件过滤规则",
+                    )
+                    return@mapNotNull null
+                }
                 if (shouldExcludeMca(relativePath, isDirectory = false) || containsExcludedMcaArchiveEntry(file)) {
                     containsExcludedMcaFiles = true
                 }
@@ -1102,7 +1118,7 @@ class ModpackProcessor(
         if (dir == rootDir) return false
         val relativePath = dir.relativeTo(rootDir).invariantSeparatorsPath.lowercase()
         val name = dir.name.lowercase()
-        if (name == "cache" || name == "logs" || name == "crash-reports") return true
+        if (name.contains("cache") || name == "logs" || name == "crash-reports") return true
         if (relativePath.startsWith("libraries/")) return true
         if (relativePath.startsWith("xaero/")) return true
         val childDirNames = dir.listFiles()
@@ -1308,7 +1324,16 @@ class ModpackProcessor(
         val target = paths.workDir.resolve("${safeName}_${System.currentTimeMillis()}.tar.zst")
         val oggWorkDir = Files.createTempDirectory(paths.workDir.toPath(), "ogg-batch-").toFile()
         try {
-            val walkEntries = rootDir.walkTopDown().toList()
+            val walkEntries = rootDir.walkTopDown()
+                .onEnter { dir ->
+                    if (dir == rootDir) return@onEnter true
+                    val relative = dir.relativeTo(rootDir).invariantSeparatorsPath
+                    if (containsCacheDirectory(relative, isDirectory = true)) {
+                        logSkippedUploadEntry(relative, isDirectory = true, reason = "目录名包含cache")
+                        false
+                    } else true
+                }
+                .toList()
             val fileEntries = walkEntries.filter { it != rootDir }
             val oversizedUnpackedResourcepacks = findOversizedUnpackedResourcepacks(rootDir)
             val effectiveLocalExtras = collectEffectiveLocalExtraCandidates(rootDir)
@@ -1376,13 +1401,19 @@ class ModpackProcessor(
                         matchesSourcePath(it.sourceRelativePath, relative)
                     }
                     if (matchedExtra != null) {
+                        logSkippedUploadEntry(relative, file.isDirectory, "已匹配平台内容")
                         continue
                     }
-                    if (shadowedLocalSources.any { relative == it || relative.startsWith("$it/") }) continue
+                    if (shadowedLocalSources.any { relative == it || relative.startsWith("$it/") }) {
+                        logSkippedUploadEntry(relative, file.isDirectory, "已由overrides中的内容覆盖")
+                        continue
+                    }
                     if (oversizedUnpackedResourcepacks.any { relative == it || relative.startsWith("$it/") }) {
+                        logSkippedUploadEntry(relative, file.isDirectory, "资源包超过大小限制")
                         continue
                     }
                     if (isResourcepackZipPath(relative) && file.isFile && file.length() > RESOURCEPACK_MAX_SIZE_BYTES) {
+                        logSkippedUploadEntry(relative, isDirectory = false, reason = "资源包超过大小限制")
                         continue
                     }
                     val relativeLower = relative.lowercase()
@@ -1425,7 +1456,14 @@ class ModpackProcessor(
                     }
                     if (isDisabledFile(relative, isDirectory = false) ||
                         isDisabledFile(sourceFile.name, isDirectory = false)
-                    ) continue
+                    ) {
+                        logSkippedUploadEntry(relative, isDirectory = false, reason = "文件已禁用（.disabled）")
+                        continue
+                    }
+                    if (containsCacheDirectory(extraFile.relativePath, isDirectory = false)) {
+                        logSkippedUploadEntry(relative, isDirectory = false, reason = "所在目录名包含cache")
+                        continue
+                    }
                     if (shouldExcludeMca(relative, isDirectory = false)) {
                         ensureArchiveParents(relative, out, addedDirs)
                         out.addFile(relative, byteArrayOf(), sourceFile.lastModified())
@@ -1521,6 +1559,7 @@ class ModpackProcessor(
         excludedSourcePaths: Set<String>,
         oversizedUnpackedResourcepacks: Set<String>,
     ): Boolean {
+        if (containsCacheDirectory(relative, isDirectory = false)) return true
         if (excludedSourcePaths.any { relative == it || relative.startsWith("$it/") }) return true
         if (oversizedUnpackedResourcepacks.any { relative == it || relative.startsWith("$it/") }) return true
         val normalized = relative.replace('\\', '/').trimStart('/').removePrefix("overrides/")
@@ -1539,6 +1578,7 @@ class ModpackProcessor(
                     val oggWorkDir = Files.createTempDirectory(paths.workDir.toPath(), "ogg-nested-").toFile()
                     try {
                         val entries = zip.entries().asSequence().toList()
+                        val isNestedJarEntry = zipFile.extension.equals("jar", ignoreCase = true)
                         val processedAssets = if (preserveResourcepackEntries || mcaOnly) {
                             emptyMap()
                         } else {
@@ -1548,6 +1588,9 @@ class ModpackProcessor(
                                     .mapNotNull { entry ->
                                         val relative = entry.name.replace('\\', '/').trimStart('/')
                                         if (relative.isBlank()) return@mapNotNull null
+                                        if (!isNestedJarEntry && containsCacheDirectory(relative, isDirectory = false)) {
+                                            return@mapNotNull null
+                                        }
                                         val relativeLower = relative.lowercase()
                                         if (!shouldPreprocessAsset(relativeLower)) return@mapNotNull null
                                         AssetProcessInput(
@@ -1565,9 +1608,15 @@ class ModpackProcessor(
                             if (relative.isBlank()) continue
                             val relativeLower = relative.lowercase()
                             val topLevel = relative.substringBefore('/', relative)
-                            val isNestedJarEntry = zipFile.extension.equals("jar", ignoreCase = true)
+                            if (!preserveResourcepackEntries && !mcaOnly && !isNestedJarEntry &&
+                                containsCacheDirectory(relative, entry.isDirectory)
+                            ) {
+                                logSkippedUploadEntry("${zipFile.path}!/${relative}", entry.isDirectory, "目录名包含cache")
+                                continue
+                            }
                             writeProcessedNestedZipEntry(
                                 relative = relative,
+                                logRelative = "${zipFile.path}!/${relative}",
                                 relativeLower = relativeLower,
                                 isDirectory = entry.isDirectory,
                                 lastModified = entry.time,
@@ -1605,7 +1654,7 @@ class ModpackProcessor(
             relativeLower == it.lowercase().replace('\\', '/').removePrefix("overrides/")
         }
         if (disallowedClientPathPrefixes.any { relativeLower.startsWith(it) } && !retainedConfig) return true
-        if (skipCacheDirectory && containsCacheDirectory(relativeLower)) return true
+        if (skipCacheDirectory && containsCacheDirectory(relativeLower, isDirectory)) return true
         if (relativeLower.startsWith("config/") && relativeLower.removePrefix("config/").isExcludedConfigPath()) return true
         if (disallowedClientPathKeywords.any { relativeLower.contains(it) }) return true
         if (relativeLower.endsWith(".mp4") || relativeLower.endsWith(".mov")) return true
@@ -1647,10 +1696,17 @@ class ModpackProcessor(
         return normalized.split('/').none { it.equals("ftbteambases", ignoreCase = true) }
     }
 
-    private fun containsCacheDirectory(relativeLower: String): Boolean {
-        val normalized = relativeLower.replace('\\', '/').trim('/')
+    private fun containsCacheDirectory(path: String, isDirectory: Boolean): Boolean {
+        val normalized = path.replace('\\', '/').trim('/')
         if (normalized.isEmpty()) return false
-        return normalized.split('/').any { it.equals("cache", ignoreCase = true) }
+        val segments = normalized.split('/')
+        val directorySegments = if (isDirectory) segments else segments.dropLast(1)
+        return directorySegments.any { it.contains("cache", ignoreCase = true) }
+    }
+
+    private fun logSkippedUploadEntry(relative: String, isDirectory: Boolean, reason: String) {
+        val kind = if (isDirectory) "目录" else "文件"
+        lgr.info { "整合包上传跳过${kind}：${relative}（${reason}）" }
     }
 
     private suspend fun writeProcessedEntry(
@@ -1668,13 +1724,19 @@ class ModpackProcessor(
         preprocessedBytes: ByteArray? = null,
         retainedShaderConfigPaths: Set<String> = emptySet(),
     ) {
-        if (isDisabledFile(relative, isDirectory)) return
+        if (isDisabledFile(relative, isDirectory)) {
+            logSkippedUploadEntry(relative, isDirectory, "文件已禁用（.disabled）")
+            return
+        }
         if (shouldSkipEntry(
                 relativeLower,
                 isDirectory,
                 skipCacheDirectory = skipCacheDirectory,
                 retainedShaderConfigPaths = retainedShaderConfigPaths,
-            )) return
+            )) {
+            logSkippedUploadEntry(relative, isDirectory, "上传过滤规则")
+            return
+        }
 
         if (isDirectory) {
             addDirectoryEntry(relative, out, addedDirs)
@@ -1691,8 +1753,11 @@ class ModpackProcessor(
         if (effectiveRelativeLower == "resourcepacks" ||
             effectiveRelativeLower.startsWith("resourcepacks/", ignoreCase = true)
         ) {
-            val bytes = nestedZipBytes?.invoke() ?: resourcepackBytes?.invoke() ?: return
-            if (nestedZipBytes != null && bytes.size > RESOURCEPACK_MAX_SIZE_BYTES) return
+            val bytes = nestedZipBytes?.invoke() ?: resourcepackBytes?.invoke()
+            if (bytes == null || (nestedZipBytes != null && bytes.size > RESOURCEPACK_MAX_SIZE_BYTES)) {
+                logSkippedUploadEntry(relative, isDirectory = false, reason = "资源包文件超过大小限制")
+                return
+            }
             ensureArchiveParents(relative, out, addedDirs)
             out.addFile(relative, bytes, lastModified)
             return
@@ -1711,6 +1776,7 @@ class ModpackProcessor(
 
     private suspend fun writeProcessedNestedZipEntry(
         relative: String,
+        logRelative: String,
         relativeLower: String,
         isDirectory: Boolean,
         lastModified: Long,
@@ -1745,7 +1811,10 @@ class ModpackProcessor(
         }
         if (!preserveResourcepackEntries &&
             shouldSkipEntry(relativeLower, isDirectory, skipCacheDirectory = skipCacheDirectory)
-        ) return
+        ) {
+            logSkippedUploadEntry(logRelative, isDirectory, "压缩包内容过滤规则")
+            return
+        }
 
         if (isDirectory) {
             addZipDirectoryEntry(relative, out, addedDirs)
@@ -1755,7 +1824,10 @@ class ModpackProcessor(
         val bytes = if (preserveResourcepackEntries) {
             if (relativeLower.endsWith(".mp3")) emptyMp3Bytes else readAllBytes()
         } else if (topLevel == "resourcepacks") {
-            resourcepackBytes?.invoke() ?: return
+            resourcepackBytes?.invoke() ?: run {
+                logSkippedUploadEntry(logRelative, isDirectory = false, reason = "资源包文件超过大小限制")
+                return
+            }
         } else {
             when {
                 nestedZipBytes != null -> nestedZipBytes()
