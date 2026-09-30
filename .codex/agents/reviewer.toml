@@ -1,7 +1,7 @@
 name = "reviewer"
 description = "Read-only independent reviewer for changes with material correctness, security, concurrency, data-integrity, compatibility, or lifecycle risk."
 
-model = "gpt-6-sol"
+model = "gpt-6.1-sol"
 model_reasoning_effort = "high"
 sandbox_mode = "read-only"
 
