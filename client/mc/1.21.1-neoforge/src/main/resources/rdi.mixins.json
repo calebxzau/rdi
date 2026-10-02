@@ -10,6 +10,7 @@
     "mClientLightCalculation",
     "mEuphoriaPatcherWarning",
     "mGame",
+    "mGuiRestockGuard",
     "mHttpTexture",
     "mJpgImage",
     "mKubeJsWindowIcon",

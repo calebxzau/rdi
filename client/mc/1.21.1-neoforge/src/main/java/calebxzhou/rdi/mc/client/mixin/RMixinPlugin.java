@@ -17,6 +17,10 @@ public final class RMixinPlugin implements IMixinConfigPlugin {
             "calebxzhou.rdi.mc.client.mixin.mKubeJsWindowIcon";
     private static final String KUBEJS_WINDOW_ICON_TARGET =
             "dev.latvian.mods.kubejs.core.WindowKJS$KJSScaledIconProvider";
+    private static final String AE2WTLIB_RESTOCK_GUARD_MIXIN =
+            "calebxzhou.rdi.mc.client.mixin.mGuiRestockGuard";
+    private static final String AE2WTLIB_GUI_MIXIN_TARGET =
+            "de.mari_023.ae2wtlib.mixin.GuiMixin";
 
     @Override
     public void onLoad(String mixinPackage) {
@@ -34,6 +38,9 @@ public final class RMixinPlugin implements IMixinConfigPlugin {
         }
         if (KUBEJS_WINDOW_ICON_MIXIN.equals(mixinClassName)) {
             return classExists(KUBEJS_WINDOW_ICON_TARGET);
+        }
+        if (AE2WTLIB_RESTOCK_GUARD_MIXIN.equals(mixinClassName)) {
+            return classExists(AE2WTLIB_GUI_MIXIN_TARGET);
         }
         return true;
     }
