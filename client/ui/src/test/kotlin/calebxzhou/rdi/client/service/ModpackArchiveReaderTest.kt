@@ -353,6 +353,47 @@ class ModpackArchiveReaderTest {
     }
 
     @Test
+    fun `accepts modrinth entry whose mirror URL contains raw spaces`() = runBlocking {
+        val archive = zip(
+            "modrinth.index.json" to
+                """
+                {"formatVersion":1,"game":"minecraft","name":"空格地址包","dependencies":{"minecraft":"1.21.1","neoforge":"21.1.100"},"files":[
+                  {"path":"resourcepacks/DetailedAnimationsReworked - V1.15.zip","hashes":{"sha1":"1d0ac0d5d7514a3df02de06a598ae95697339a21"},"downloads":[
+                    "https://cdn.modrinth.com/data/9pR04wDX/versions/dFBidLNv/DetailedAnimationsReworked%20-%20V1.15.zip",
+                    "https://edge.forgecdn.net/files/5822/128/DetailedAnimationsReworked - V1.15.zip"
+                  ],"fileSize":116175}
+                ]}
+                """.trimIndent(),
+        )
+
+        val preview = ModpackArchiveReader(EmptyArchiveCatalog).inspect(archive).getOrThrow()
+
+        assertEquals(
+            listOf(
+                "https://cdn.modrinth.com/data/9pR04wDX/versions/dFBidLNv/DetailedAnimationsReworked%20-%20V1.15.zip",
+                "https://edge.forgecdn.net/files/5822/128/DetailedAnimationsReworked%20-%20V1.15.zip",
+            ),
+            preview.files.single().urls,
+        )
+    }
+
+    @Test
+    fun `rejects modrinth entry without any valid download URL`(): Unit = runBlocking {
+        val archive = zip(
+            "modrinth.index.json" to
+                """
+                {"formatVersion":1,"game":"minecraft","name":"坏地址包","dependencies":{"minecraft":"1.21.1","neoforge":"21.1.100"},"files":[
+                  {"path":"mods/example.jar","hashes":{"sha1":"1111111111111111111111111111111111111111"},"downloads":["https://evil.example.invalid/example.jar"],"fileSize":10}
+                ]}
+                """.trimIndent(),
+        )
+
+        assertFailsWith<IllegalArgumentException> {
+            ModpackArchiveReader(EmptyArchiveCatalog).inspect(archive).getOrThrow()
+        }
+    }
+
+    @Test
     fun `rejects archive path traversal`(): Unit = runBlocking {
         val archive = zip(
             "modrinth.index.json" to

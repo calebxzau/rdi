@@ -12,6 +12,7 @@ import calebxzau.rdi.common.model.Modpack2ContentDto
 import calebxzau.rdi.common.model.Modpack2ContentSourceDto
 import calebxzhou.rdi.common.serdesJson
 import calebxzhou.rdi.common.util.openChineseZip
+import calebxzau.rdi.common.logging.Loggers
 import calebxzau.rdi.client.modcatalog.CatalogDigestAlgorithm
 import calebxzau.rdi.client.modcatalog.CatalogFile
 import calebxzau.rdi.client.modcatalog.CatalogFileHashes
@@ -277,6 +278,8 @@ class CatalogModpackArchiveCatalog(
     }
 }
 
+private val lgr by Loggers
+
 open class ModpackArchiveReader(
     private val catalog: ModpackArchiveCatalog,
 ) {
@@ -409,7 +412,7 @@ open class ModpackArchiveReader(
             if (file.fileId.isNotBlank()) {
                 require(file.murmur2 != null) { "整合包文件缺少Murmur2：${file.fileId}" }
             }
-            validateUrl(file.url)
+            val url = validUrl(file.url).getOrThrow()
             ModpackArchiveFile(
                 key = "cf:${item.projectId}:${item.fileId}",
                 targetPath = safeTarget("${contentType.targetDirectory}/${safeFileName(file.fileName)}"),
@@ -418,7 +421,7 @@ open class ModpackArchiveReader(
                 iconUrls = file.iconUrls,
                 size = file.size,
                 sha1 = validSha1(file.sha1),
-                urls = listOf(file.url),
+                urls = listOf(url),
                 headers = file.headers,
                 required = item.required,
                 contentType = contentType,
@@ -494,7 +497,14 @@ open class ModpackArchiveReader(
                     val targetPath = safeTarget(entry.path)
                     require(entry.fileSize >= 0) { "Modrinth文件大小无效：${entry.path}" }
                     require(entry.downloads.isNotEmpty()) { "Modrinth文件缺少下载地址：${entry.path}" }
-                    entry.downloads.forEach(::validateUrl)
+                    // Some exporters write raw spaces into CurseForge mirror URLs; one bad mirror must not reject the file.
+                    val downloads = entry.downloads.mapNotNull { raw ->
+                        validUrl(raw).getOrElse { cause ->
+                            lgr.warn(cause) { "跳过无效下载地址：${entry.path} -> $raw" }
+                            null
+                        }
+                    }
+                    require(downloads.isNotEmpty()) { "Modrinth文件缺少有效下载地址：${entry.path}" }
                     val sha1 = validSha1(entry.hashes["sha1"].orEmpty())
                     val resolvedFile = resolved[targetPath]
                     val archiveType = contentTypeFromPath(targetPath)
@@ -518,7 +528,7 @@ open class ModpackArchiveReader(
                         iconUrls = resolvedFile?.iconUrls.orEmpty(),
                         size = resolvedFile?.size ?: entry.fileSize,
                         sha1 = sha1,
-                        urls = (resolvedFile?.url?.let(::listOf) ?: entry.downloads).distinct(),
+                        urls = (resolvedFile?.url?.let(::listOf) ?: downloads).distinct(),
                         headers = resolvedFile?.headers.orEmpty(),
                         required = entry.env?.client != Environment.OPTIONAL,
                         contentType = archiveType,
@@ -820,11 +830,35 @@ open class ModpackArchiveReader(
         return parts.joinToString("/")
     }
 
-    private fun validateUrl(value: String) {
-        val uri = runCatching { URI(value) }.getOrElse { throw IllegalArgumentException("无效下载地址：$value") }
+    /** Returns [value] percent-encoded where needed, or fails when it is malformed or not on an allowed host. */
+    private fun validUrl(value: String): Result<String> = runCatching {
+        val normalized = encodeIllegalUrlChars(value.trim())
+        val uri = runCatching { URI(normalized) }.getOrElse { cause ->
+            throw IllegalArgumentException("无效下载地址：$value", cause)
+        }
         require(uri.scheme.equals("https", ignoreCase = true) && uri.host?.lowercase(Locale.ROOT) in ALLOWED_HOSTS) {
             "不允许的下载地址：$value"
         }
+        normalized
+    }
+
+    /** Percent-encodes characters that [URI] rejects (spaces, non-ASCII, ...) while keeping existing escapes. */
+    private fun encodeIllegalUrlChars(value: String): String {
+        val bytes = value.toByteArray(StandardCharsets.UTF_8)
+        val out = StringBuilder(bytes.size)
+        bytes.forEachIndexed { index, byte ->
+            val code = byte.toInt() and 0xFF
+            val char = code.toChar()
+            val isEscape = char == '%' && index + 2 < bytes.size &&
+                HEX_DIGITS.indexOf(bytes[index + 1].toInt().toChar().uppercaseChar()) >= 0 &&
+                HEX_DIGITS.indexOf(bytes[index + 2].toInt().toChar().uppercaseChar()) >= 0
+            if (code < 0x80 && (char.isLetterOrDigit() || char in URL_SAFE_CHARS || isEscape)) {
+                out.append(char)
+            } else {
+                out.append('%').append(HEX_DIGITS[code shr 4]).append(HEX_DIGITS[code and 0x0F])
+            }
+        }
+        return out.toString()
     }
 
     private fun validSha1(value: String): String {
@@ -924,6 +958,8 @@ open class ModpackArchiveReader(
         val DRIVE_PATH = Regex("^[A-Za-z]:[/\\\\].*")
         val WINDOWS_RESERVED = Regex("(?i)^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(\\..*)?$")
         val SHA1 = Regex("^[0-9a-f]{40}$")
+        const val HEX_DIGITS = "0123456789ABCDEF"
+        const val URL_SAFE_CHARS = "-._~:/?#@!$&'()*+,;="
         val ALLOWED_HOSTS = setOf(
             "cdn.modrinth.com",
             "github.com",
