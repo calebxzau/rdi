@@ -60,9 +60,9 @@ class PreviewExportStoreTest {
         val store = PreviewExportStore(root)
         val exportId = store.beginGeneration()
         assertEquals(7, UUID.fromString(exportId).version())
-        writePage(root, exportId)
+        writePage(store, exportId)
 
-        val manifest = manifest(exportId)
+        val manifest = manifest()
         assertEquals(true, store.publish(exportId, manifest).getOrThrow())
         val reusable = store.readReusable().getOrThrow()
         assertNotNull(reusable)
@@ -88,7 +88,7 @@ class PreviewExportStoreTest {
         val store = PreviewExportStore(root)
         val exportId = store.beginGeneration()
         val missingPage = PreviewManifest(
-            pages = listOf(PreviewPage("texture_pages/$exportId/0.png", 64, 64)),
+            pages = listOf(PreviewPage("texture_pages/0.png", 64, 64)),
             items = emptyMap()
         )
         assertTrue(store.publish(exportId, missingPage).isFailure)
@@ -108,14 +108,14 @@ class PreviewExportStoreTest {
     fun rejectsOutOfBoundsAndDuplicateCells(): Unit = withTempRoot { root ->
         val store = PreviewExportStore(root)
         val exportId = store.beginGeneration()
-        writePage(root, exportId)
+        writePage(store, exportId)
 
-        val outOfBounds = manifest(exportId).copy(
+        val outOfBounds = manifest().copy(
             items = mapOf("a" to PreviewItem(0, 64, 0, "item.a"))
         )
         assertTrue(store.publish(exportId, outOfBounds).isFailure)
 
-        val duplicate = manifest(exportId).copy(
+        val duplicate = manifest().copy(
             items = mapOf(
                 "a" to PreviewItem(0, 0, 0, "item.a"),
                 "b" to PreviewItem(0, 0, 0, "item.b")
@@ -123,7 +123,7 @@ class PreviewExportStoreTest {
         )
         assertTrue(store.publish(exportId, duplicate).isFailure)
 
-        val overflow = manifest(exportId).copy(
+        val overflow = manifest().copy(
             items = mapOf("overflow" to PreviewItem(0, Int.MAX_VALUE - 63, 0, "item.overflow"))
         )
         assertTrue(store.publish(exportId, overflow).isFailure)
@@ -133,10 +133,9 @@ class PreviewExportStoreTest {
     fun acceptsRectangularPageAndKeepsLegacySquarePagesReadable(): Unit = withTempRoot { root ->
         val store = PreviewExportStore(root)
         val exportId = store.beginGeneration()
-        root.resolve("texture_pages/$exportId").createDirectories()
-        Files.write(root.resolve("texture_pages/$exportId/0.png"), byteArrayOf(0))
+        writePage(store, exportId)
         val rectangular = PreviewManifest(
-            pages = listOf(PreviewPage("texture_pages/$exportId/0.png", 2048, 64)),
+            pages = listOf(PreviewPage("texture_pages/0.png", 2048, 64)),
             items = mapOf("a" to PreviewItem(0, 1984, 0, "item.a"))
         )
         assertTrue(
@@ -155,44 +154,123 @@ class PreviewExportStoreTest {
         assertEquals(rectangular, store.readReusable().getOrThrow())
 
         val legacy = rectangular.copy(
-            pages = listOf(PreviewPage("texture_pages/$exportId/0.png", 8192, 8192)),
+            pages = listOf(PreviewPage("texture_pages/0.png", 8192, 8192)),
             items = mapOf("a" to PreviewItem(0, 8128, 8128, "item.a"))
         )
-        assertEquals(true, store.publish(exportId, legacy).getOrThrow())
-        assertEquals(legacy, store.readReusable().getOrThrow())
+        // Existing UUID exports remain readable, but new publication uses fixed paths.
+        val legacyManifest = legacy.copy(pages = listOf(PreviewPage("texture_pages/$exportId/0.png", 8192, 8192)))
+        root.resolve("texture_pages/$exportId").createDirectories()
+        Files.write(root.resolve("texture_pages/$exportId/0.png"), byteArrayOf(0))
+        Files.writeString(root.resolve("manifest.json"), Json.encodeToString(legacyManifest))
+        assertEquals(legacyManifest, store.readReusable().getOrThrow())
     }
 
     @Test
     fun staleAndInvalidatedGenerationsCannotPublish(): Unit = withTempRoot { root ->
         val store = PreviewExportStore(root)
         val first = store.beginGeneration()
-        writePage(root, first)
+        writePage(store, first)
         val second = store.beginGeneration()
-        writePage(root, second)
+        writePage(store, second)
 
-        assertEquals(false, store.publish(first, manifest(first)).getOrThrow())
+        assertEquals(false, store.publish(first, manifest()).getOrThrow())
         store.invalidate()
-        assertEquals(false, store.publish(second, manifest(second)).getOrThrow())
+        assertEquals(false, store.publish(second, manifest()).getOrThrow())
         assertFalse(Files.exists(root.resolve("manifest.json")))
     }
 
     @Test
-    fun atomicMoveFailurePreservesPreviousManifest(): Unit = withTempRoot { root ->
-        var failMove = false
+    fun promotionFailureRestoresPreviousCompleteExport(): Unit = withTempRoot { root ->
+        var failPromotion = false
         val store = PreviewExportStore(root) { source, target ->
-            if (failMove) error("injected atomic move failure")
-            Files.move(source, target, java.nio.file.StandardCopyOption.ATOMIC_MOVE, java.nio.file.StandardCopyOption.REPLACE_EXISTING)
+            if (failPromotion && source.fileName.toString() == ".pending") error("injected promotion failure")
+            Files.move(source, target, java.nio.file.StandardCopyOption.ATOMIC_MOVE)
         }
         val first = store.beginGeneration()
-        writePage(root, first)
-        val firstManifest = manifest(first)
+        writePage(store, first)
+        val language = store.writeLanguage(first, mapOf("a" to "旧语言")).getOrThrow()
+        val firstManifest = manifest().copy(languageFile = language)
         assertEquals(true, store.publish(first, firstManifest).getOrThrow())
 
         val second = store.beginGeneration()
-        writePage(root, second)
-        failMove = true
-        assertTrue(store.publish(second, manifest(second)).isFailure)
+        Files.write(store.pageDestination(second, 0), byteArrayOf(1))
+        store.writeLanguage(second, mapOf("a" to "新语言")).getOrThrow()
+        failPromotion = true
+        assertTrue(store.publish(second, manifest().copy(languageFile = language)).isFailure)
         assertEquals(firstManifest, store.readReusable().getOrThrow())
+        assertEquals(listOf<Byte>(0), Files.readAllBytes(root.resolve("texture_pages/0.png")).toList())
+        assertEquals("{\"a\":\"旧语言\"}", Files.readString(root.resolve(language)))
+    }
+
+    @Test
+    fun stagesWholeSnapshotAndReplacesPagesLanguageAndManifestTogether(): Unit = withTempRoot { root ->
+        val store = PreviewExportStore(root)
+        val first = store.beginGeneration()
+        writePage(store, first)
+        val language = store.writeLanguage(first, mapOf("a" to "旧语言")).getOrThrow()
+        assertTrue(store.publish(first, manifest().copy(languageFile = language)).getOrThrow())
+
+        val second = store.beginGeneration()
+        Files.write(store.pageDestination(second, 0), byteArrayOf(1))
+        assertEquals(listOf<Byte>(0), Files.readAllBytes(root.resolve("texture_pages/0.png")).toList())
+        assertTrue(Files.exists(root.resolve(language)))
+        assertFalse(Files.exists(store.pendingRoot.resolve("manifest.json")))
+        assertTrue(store.publish(second, manifest()).getOrThrow())
+        assertEquals(listOf<Byte>(1), Files.readAllBytes(root.resolve("texture_pages/0.png")).toList())
+        assertFalse(Files.exists(root.resolve(language)))
+        assertFalse(Files.exists(store.pendingRoot))
+        assertEquals(manifest(), store.readReusable().getOrThrow())
+        assertTrue(Files.exists(root.resolveSibling(".preview-backup").resolve(language)))
+    }
+
+    @Test
+    fun nextGenerationClearsAbandonedPendingFiles(): Unit = withTempRoot { root ->
+        val store = PreviewExportStore(root)
+        val first = store.beginGeneration()
+        writePage(store, first)
+        store.writeLanguage(first, mapOf("a" to "废弃语言")).getOrThrow()
+        Files.write(store.pageDestination(first, 1), byteArrayOf(9))
+        store.invalidate()
+        val second = store.beginGeneration()
+        writePage(store, second)
+        assertFalse(Files.exists(store.pendingRoot.resolve("texture_pages/1.png")))
+        assertFalse(Files.exists(store.pendingRoot.resolve("lang/zh_cn.json")))
+        assertTrue(store.publish(second, manifest()).getOrThrow())
+    }
+
+    @Test
+    fun restartRestoresBackupAfterInterruptedSwitch(): Unit = withTempRoot { root ->
+        val store = PreviewExportStore(root)
+        val first = store.beginGeneration()
+        writePage(store, first)
+        assertTrue(store.publish(first, manifest()).getOrThrow())
+        Files.move(root.resolveSibling(".preview-backup"), root.resolveSibling("initial-empty-backup"))
+        Files.move(root, root.resolveSibling(".preview-backup"))
+        val restarted = PreviewExportStore(root)
+        restarted.recover().getOrThrow()
+        assertFalse(Files.exists(restarted.pendingRoot))
+        assertEquals(manifest(), restarted.readReusable().getOrThrow())
+        assertTrue(Files.exists(root.resolve("texture_pages/0.png")))
+    }
+
+    @Test
+    fun rollbackFailureRemainsRecoverableAfterRestart(): Unit = withTempRoot { root ->
+        var failMoveToRoot = false
+        val store = PreviewExportStore(root) { source, target ->
+            if (failMoveToRoot && target == root) error("injected switch and rollback failure")
+            Files.move(source, target, java.nio.file.StandardCopyOption.ATOMIC_MOVE)
+        }
+        val first = store.beginGeneration()
+        writePage(store, first)
+        assertTrue(store.publish(first, manifest()).getOrThrow())
+        val second = store.beginGeneration()
+        Files.write(store.pageDestination(second, 0), byteArrayOf(1))
+        failMoveToRoot = true
+        val failure = store.publish(second, manifest()).exceptionOrNull()
+        assertNotNull(failure)
+        assertEquals(1, failure.suppressed.size)
+        assertEquals(manifest(), PreviewExportStore(root).readReusable().getOrThrow())
+        assertEquals(listOf<Byte>(0), Files.readAllBytes(root.resolve("texture_pages/0.png")).toList())
     }
 
     @Test
@@ -210,10 +288,10 @@ class PreviewExportStoreTest {
             )
         }
         val first = store.beginGeneration()
-        writePage(root, first)
+        writePage(store, first)
         val executor = Executors.newFixedThreadPool(2)
         try {
-            val publication = executor.submit<Boolean> { store.publish(first, manifest(first)).getOrThrow() }
+            val publication = executor.submit<Boolean> { store.publish(first, manifest()).getOrThrow() }
             assertTrue(moveEntered.await(5, TimeUnit.SECONDS))
 
             val generationChangeStarted = CountDownLatch(1)
@@ -231,7 +309,7 @@ class PreviewExportStoreTest {
             assertTrue(publication.get(5, TimeUnit.SECONDS))
             assertTrue(generationChangeFinished.await(5, TimeUnit.SECONDS))
             generationChange.get(5, TimeUnit.SECONDS)
-            assertEquals(false, store.publish(first, manifest(first)).getOrThrow())
+            assertEquals(false, store.publish(first, manifest()).getOrThrow())
         } finally {
             releaseMove.countDown()
             executor.shutdownNow()
@@ -244,8 +322,8 @@ class PreviewExportStoreTest {
         val store = PreviewExportStore(root)
         val exportId = store.beginGeneration()
         val relative = store.writeLanguage(exportId, mapOf("z" to "最后", "a" to "第一")).getOrThrow()
-        assertEquals("lang/$exportId/zh_cn.json", relative)
-        assertEquals("{\"a\":\"第一\",\"z\":\"最后\"}", Files.readString(root.resolve(relative)))
+        assertEquals("lang/zh_cn.json", relative)
+        assertEquals("{\"a\":\"第一\",\"z\":\"最后\"}", Files.readString(store.pendingRoot.resolve(relative)))
 
         val manifest = PreviewManifest(
             pages = emptyList(),
@@ -256,22 +334,66 @@ class PreviewExportStoreTest {
         assertEquals(manifest, store.readReusable().getOrThrow())
     }
 
-    private fun manifest(exportId: String): PreviewManifest = PreviewManifest(
-        pages = listOf(PreviewPage("texture_pages/$exportId/0.png", 64, 64)),
+    @Test
+    fun recipesPublishWithSnapshotAndSurvivePromotionFailure(): Unit = withTempRoot { root ->
+        var failPromotion = false
+        val store = PreviewExportStore(root) { source, target ->
+            if (failPromotion && source.fileName.toString() == ".pending") error("injected promotion failure")
+            Files.move(source, target, java.nio.file.StandardCopyOption.ATOMIC_MOVE)
+        }
+        val first = store.beginGeneration()
+        writePage(store, first)
+        val oldJson = "{\"recipes\":{\"test:old\":{}},\"failedRecipes\":{}}"
+        val recipeFile = store.writeRecipes(first, oldJson).getOrThrow()
+        val firstManifest = manifest().copy(recipeFile = recipeFile)
+        assertFalse(Files.exists(root.resolve(recipeFile)))
+        assertTrue(store.publish(first, firstManifest).getOrThrow())
+        assertEquals(oldJson, Files.readString(root.resolve(recipeFile)))
+        assertEquals(firstManifest, store.readReusable().getOrThrow())
+
+        val second = store.beginGeneration()
+        writePage(store, second)
+        val newJson = "{\"recipes\":{},\"failedRecipes\":{\"test:broken\":\"bad recipe\"}}"
+        store.writeRecipes(second, newJson).getOrThrow()
+        failPromotion = true
+        assertTrue(store.publish(second, firstManifest).isFailure)
+        assertEquals(oldJson, Files.readString(root.resolve(recipeFile)))
+        assertEquals(firstManifest, store.readReusable().getOrThrow())
+        failPromotion = false
+        assertTrue(store.publish(second, firstManifest).getOrThrow())
+        assertEquals(newJson, Files.readString(root.resolve(recipeFile)))
+    }
+
+    @Test
+    fun rejectsMissingRecipeFileAndStaleRecipeWriter(): Unit = withTempRoot { root ->
+        val store = PreviewExportStore(root)
+        val first = store.beginGeneration()
+        writePage(store, first)
+        assertTrue(store.publish(first, manifest().copy(recipeFile = "recipes.json")).isFailure)
+        assertTrue(store.publish(first, manifest().copy(recipeFile = "../recipes.json")).isFailure)
+        store.invalidate()
+        val second = store.beginGeneration()
+        writePage(store, second)
+        assertTrue(store.writeRecipes(first, "{}").isFailure)
+        assertFalse(Files.exists(store.pendingRoot.resolve("recipes.json")))
+    }
+
+    private fun manifest(): PreviewManifest = PreviewManifest(
+        pages = listOf(PreviewPage("texture_pages/0.png", 64, 64)),
         items = mapOf("example:item" to PreviewItem(0, 0, 0, "item.example"))
     )
 
-    private fun writePage(root: Path, exportId: String) {
-        root.resolve("texture_pages/$exportId").createDirectories()
-        Files.write(root.resolve("texture_pages/$exportId/0.png"), byteArrayOf(0))
+    private fun writePage(store: PreviewExportStore, exportId: String) {
+        Files.write(store.pageDestination(exportId, 0), byteArrayOf(0))
     }
 
     private fun withTempRoot(block: (Path) -> Unit) {
-        val root = Files.createTempDirectory("preview-export-test-")
+        val container = Files.createTempDirectory("preview-export-test-")
+        val root = container.resolve("preview").createDirectories()
         try {
             block(root)
         } finally {
-            Files.walk(root).use { paths ->
+            Files.walk(container).use { paths ->
                 paths.sorted(Comparator.reverseOrder()).forEach { Files.deleteIfExists(it) }
             }
         }

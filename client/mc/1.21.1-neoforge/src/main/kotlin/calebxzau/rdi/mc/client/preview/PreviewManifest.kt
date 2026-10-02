@@ -12,7 +12,8 @@ data class PreviewManifest(
     val pages: List<PreviewPage>,
     val languageFile: String? = null,
     val items: Map<String, PreviewItem>,
-    val failedItems: Map<String, String> = emptyMap()
+    val failedItems: Map<String, String> = emptyMap(),
+    val recipeFile: String? = null
 )
 
 @Serializable

@@ -3,6 +3,13 @@
   "minVersion": "0.8",
   "package": "calebxzau.rdi.mc.client.mixin",
   "compatibilityLevel": "JAVA_21",
+  "client": [
+    "mChunkCacheConnection",
+    "mChunkCacheMinecraft",
+    "mChunkCachePackets",
+    "mChunkCacheLevel",
+    "mChunkCacheRegionFile"
+  ],
   "mixins": [
     "AccessorSectionStorage",
     "AccessorServerLevel",

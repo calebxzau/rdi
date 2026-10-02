@@ -14,6 +14,7 @@ import com.mojang.blaze3d.vertex.PoseStack
 import com.mojang.blaze3d.vertex.VertexConsumer
 import com.mojang.blaze3d.vertex.VertexFormat
 import net.minecraft.ChatFormatting
+import net.minecraft.commands.Commands
 import net.minecraft.client.Minecraft
 import net.minecraft.client.gui.components.Button
 import net.minecraft.client.gui.screens.ConnectScreen
@@ -34,6 +35,7 @@ import net.neoforged.fml.common.EventBusSubscriber
 import net.neoforged.fml.common.Mod
 import net.neoforged.neoforge.client.event.ClientChatEvent
 import net.neoforged.neoforge.client.event.ClientPlayerNetworkEvent
+import net.neoforged.neoforge.client.event.RegisterClientCommandsEvent
 import net.neoforged.neoforge.client.event.RegisterClientReloadListenersEvent
 import net.neoforged.neoforge.client.event.RenderLevelStageEvent
 import net.neoforged.neoforge.client.event.RenderFrameEvent
@@ -104,15 +106,24 @@ class RDIMain {
                 Search.refreshResourceIndex()
             })
         }
+        @SubscribeEvent
+        @JvmStatic
+        fun registerClientCommands(event: RegisterClientCommandsEvent) {
+            event.dispatcher.register(
+                Commands.literal("rdi")
+                    .then(Commands.literal("preview")
+                        .then(Commands.literal("export").executes { context ->
+                            ItemPreviewExporter.forceExport()
+                            context.source.sendSuccess({ Component.literal("预览图集导出已排队") }, false)
+                            1
+                        })
+                    )
+            )
+        }
+
         @SubscribeEvent @JvmStatic
         fun onClientChat(event: ClientChatEvent) {
             val message = event.message
-            if (message.trim() == "\\preview export") {
-                event.isCanceled = true
-                ItemPreviewExporter.forceExport()
-                Minecraft.getInstance().gui.chat.addMessage(Component.literal("预览图集导出已排队"))
-                return
-            }
             if (!RcmdClientCommands.isRcmd(message)) {
                 return
             }

@@ -6,6 +6,7 @@ import net.minecraft.SharedConstants
 import net.minecraft.client.Minecraft
 import net.minecraft.client.gui.screens.ReceivingLevelScreen
 import net.minecraft.locale.Language
+import net.minecraft.network.chat.Component
 import net.minecraft.world.item.ItemStack
 import net.minecraft.world.item.Items
 import net.minecraft.core.registries.BuiltInRegistries
@@ -17,13 +18,14 @@ import java.util.concurrent.Executors
 import java.util.concurrent.Future
 import java.util.concurrent.RejectedExecutionException
 import java.util.concurrent.ThreadFactory
-import kotlin.io.path.createDirectories
 
 /** Coordinates item enumeration, render-thread work, and bounded PNG I/O. */
 object ItemPreviewExporter {
     private val logger = LoggerFactory.getLogger(ItemPreviewExporter::class.java)
     private const val FRAME_BUDGET_NANOS = 2_000_000L
     private const val MAX_ITEMS_PER_FRAME = 32
+    private const val MAX_RECIPES_PER_FRAME = 32
+    private const val PROGRESS_INTERVAL_NANOS = 250_000_000L
 
     private val ioExecutor: ExecutorService = Executors.newSingleThreadExecutor(ThreadFactory { task ->
         Thread(task, "rdi-item-preview-io").apply { isDaemon = true }
@@ -59,11 +61,13 @@ object ItemPreviewExporter {
         val entries: List<Entry>,
         val pagePlans: List<PreviewPagePlan>,
         val language: Map<String, String>?,
+        val recipes: PreviewRecipeExport,
         val startedAtNanos: Long = System.nanoTime(),
         val pages: ArrayList<PreviewPage> = ArrayList(),
         val items: LinkedHashMap<String, PreviewItem> = LinkedHashMap(),
         val failedItems: LinkedHashMap<String, String> = LinkedHashMap(),
-        var itemIndex: Int = 0
+        var itemIndex: Int = 0,
+        var lastProgressAtNanos: Long = 0L
     ) {
         val pipeline = PreviewPagePipeline(pagePlans.size)
     }
@@ -120,6 +124,10 @@ object ItemPreviewExporter {
             requests.consumeStartIfReady(clientReady = true)?.let(::beginStart)
         }
         if (job != null && !readbackQueued) renderSomeItems(frameDeadline)
+        job?.let { currentJob ->
+            if (currentJob.pipeline.readyToPublish && ioOperation == null) encodeSomeRecipes(currentJob, frameDeadline)
+        }
+        job?.let { showProgress(it) }
     }
 
     fun shutdown() = onRenderThread {
@@ -147,8 +155,13 @@ object ItemPreviewExporter {
         if (initialized) return
         val current = Minecraft.getInstance()
         minecraft = current
-        store = PreviewExportStore(current.gameDirectory.toPath().resolve("rdi").resolve("preview"))
+        val currentStore = PreviewExportStore(current.gameDirectory.toPath().resolve("rdi").resolve("preview"))
+        store = currentStore
         initialized = true
+        // Recovery restores an interrupted directory switch without requesting an export.
+        ioExecutor.execute {
+            currentStore.recover().onFailure { logger.error("Failed to recover item preview export", it) }
+        }
     }
 
     private fun resourcesUsable(): Boolean {
@@ -201,9 +214,11 @@ object ItemPreviewExporter {
             } else {
                 null
             }
+            val level = checkNotNull(currentMinecraft.level)
+            val recipes = PreviewRecipeExport(level.recipeManager.recipes, level.registryAccess())
             val atlas = if (entries.isEmpty()) null else PreviewAtlasRenderer.create(entries.size)
             val selectedPlans = atlas?.pagePlans ?: emptyList()
-            val newJob = Job(id, epoch, entries, selectedPlans, selectedLanguage)
+            val newJob = Job(id, epoch, entries, selectedPlans, selectedLanguage, recipes)
             newJob.failedItems.putAll(failed)
             job = newJob
             renderer = atlas
@@ -218,7 +233,7 @@ object ItemPreviewExporter {
                 atlas?.targetWidth ?: 0,
                 atlas?.targetHeight ?: 0
             )
-            if (entries.isEmpty()) schedulePublish(newJob)
+            showProgress(newJob, force = true)
         } catch (throwable: Throwable) {
             abortGeneration(throwable)
         }
@@ -228,10 +243,7 @@ object ItemPreviewExporter {
         val currentJob = job ?: return
         val atlas = renderer ?: return
         val pageIndex = currentJob.pipeline.renderPageIndex
-        val plan = currentJob.pagePlans.getOrNull(pageIndex) ?: run {
-            if (currentJob.pipeline.readyToPublish && ioOperation == null) schedulePublish(currentJob)
-            return
-        }
+        val plan = currentJob.pagePlans.getOrNull(pageIndex) ?: return
         val pageEnd = plan.firstItemIndex + plan.itemCount
         if (currentJob.itemIndex >= pageEnd) {
             if (!readbackQueued && !currentJob.pipeline.writerBusy) queueReadback(plan)
@@ -291,7 +303,7 @@ object ItemPreviewExporter {
         }
         val pageIndex = currentJob.pipeline.renderPageIndex
         val plan = currentJob.pagePlans[pageIndex]
-        val path = "texture_pages/${currentJob.id}/$pageIndex.png"
+        val path = "texture_pages/$pageIndex.png"
         submitPageWrite(currentJob, plan, image, path)
     }
 
@@ -301,8 +313,7 @@ object ItemPreviewExporter {
             val transferredImage = owned!!
             val future = ioExecutor.submit<Any?> {
                 try {
-                    val destination = store!!.root.resolve(path)
-                    destination.parent.createDirectories()
+                    val destination = store!!.pageDestination(currentJob.id, plan.page)
                     transferredImage.writeToFile(destination)
                     Result.success(Unit)
                 } catch (throwable: Throwable) {
@@ -328,6 +339,16 @@ object ItemPreviewExporter {
         }
     }
 
+    private fun encodeSomeRecipes(currentJob: Job, frameDeadline: Long) {
+        var processed = 0
+        while (!currentJob.recipes.complete && processed < MAX_RECIPES_PER_FRAME && System.nanoTime() < frameDeadline) {
+            val id = currentJob.recipes.nextId
+            currentJob.recipes.encodeNext().onFailure { logger.warn("Failed to export recipe {}", id, it) }
+            processed++
+        }
+        if (currentJob.recipes.complete) schedulePublish(currentJob)
+    }
+
     private fun schedulePublish(currentJob: Job) {
         val currentStore = store ?: return
         val manifestWithoutLanguage = PreviewManifest(
@@ -340,7 +361,8 @@ object ItemPreviewExporter {
         submitIo(currentJob.epoch, currentJob.id, IoKind.Publish) {
             runCatching {
                 val languagePath = language?.let { currentStore.writeLanguage(currentJob.id, it).getOrThrow() }
-                val manifest = manifestWithoutLanguage.copy(languageFile = languagePath)
+                val recipePath = currentStore.writeRecipes(currentJob.id, currentJob.recipes.toJson()).getOrThrow()
+                val manifest = manifestWithoutLanguage.copy(languageFile = languagePath, recipeFile = recipePath)
                 currentStore.publish(currentJob.id, manifest).getOrThrow()
             }
         }
@@ -387,7 +409,6 @@ object ItemPreviewExporter {
                         currentJob.pagePlans.size,
                         currentJob.id
                     )
-                    if (currentJob.pipeline.readyToPublish) schedulePublish(currentJob)
                 }
             }
             IoKind.Publish -> {
@@ -408,6 +429,10 @@ object ItemPreviewExporter {
                             completed.failedItems.size,
                             (System.nanoTime() - completed.startedAtNanos) / 1_000_000L
                         )
+                        minecraft?.player?.displayClientMessage(Component.literal("物品预览导出完成"), true)
+                        minecraft?.gui?.chat?.addMessage(Component.literal(
+                            "物品预览导出完成：${completed.items.size}个物品，${completed.pages.size}张图集，失败${completed.failedItems.size}个；配方${completed.recipes.successfulCount}条，失败${completed.recipes.failedCount}条。已保存至rdi/preview/"
+                        ))
                     }
                     requests.freshExportSettled()
                     retireCurrentJob()
@@ -426,6 +451,26 @@ object ItemPreviewExporter {
         }
     }
 
+    private fun showProgress(currentJob: Job, force: Boolean = false) {
+        val player = minecraft?.player ?: return
+        val now = System.nanoTime()
+        if (!force && now - currentJob.lastProgressAtNanos < PROGRESS_INTERVAL_NANOS) return
+        currentJob.lastProgressAtNanos = now
+        val message = if (currentJob.pipeline.readyToPublish) {
+            val recipes = currentJob.recipes
+            val percent = if (recipes.total == 0) 100L else recipes.processed.toLong() * 100 / recipes.total
+            val status = if (recipes.complete) "，正在保存导出" else ""
+            "配方导出：${recipes.processed}/${recipes.total}（${percent}%）${status}"
+        } else {
+            val total = currentJob.entries.size
+            val processed = currentJob.itemIndex
+            val percent = if (total == 0) 100L else processed.toLong() * 100 / total
+            val status = if (processed == total) "，正在保存图集" else ""
+            "物品预览导出：${processed}/${total}（${percent}%）${status}"
+        }
+        player.displayClientMessage(Component.literal(message), true)
+    }
+
     private fun retireCurrentJob() {
         val oldRenderer = renderer
         renderer = null
@@ -437,6 +482,9 @@ object ItemPreviewExporter {
 
     private fun abortGeneration(throwable: Throwable) {
         logger.error("Item preview export aborted", throwable)
+        val message = Component.literal("物品预览导出失败，请查看日志")
+        minecraft?.player?.displayClientMessage(message, true)
+        minecraft?.gui?.chat?.addMessage(message)
         store?.invalidate()
         requests.freshExportSettled()
         retireCurrentJob()

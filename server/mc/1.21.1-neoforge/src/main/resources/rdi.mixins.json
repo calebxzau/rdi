@@ -15,6 +15,7 @@
     "mArsNouveauAlakarkinosRecipeSync",
     "mBoundTickingBlockEntityGuard",
     "mChatMsg",
+    "mChunkCacheSender",
     "mChinesePlayerName",
     "mGuardChunkTick",
     "mGuardLevelTick",

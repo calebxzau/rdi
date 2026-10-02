@@ -134,8 +134,8 @@ neoForge {
     }
 
     validateAccessTransformers = true
-    def playArg = "http://127.0.0.1:65231\n127.0.0.1:56370\n测试测试12123大世界\n56370\n68b314bb-adaf-52dd-ab96-b5ed00000000\ndavickk"
-    def playArg2 = "http://127.0.0.1:65231\n127.0.0.1:56370\n测试测试12123大世界\n56370\n68b314bb-adaf-52dd-ab96-e5ed00000000\ndev2"
+    def playArg = "http://127.0.0.1:65231\n127.0.0.1:6370\n测试测试12123大世界\n6370\n68b314bb-adaf-52dd-ab96-b5ed00000000\ndavickk"
+    def playArg2 = "http://127.0.0.1:65231\n127.0.0.1:6370\n测试测试12123大世界\n6370\n68b314bb-adaf-52dd-ab96-e5ed00000000\ndev2"
     runs {
         client {
             client()
@@ -149,6 +149,7 @@ neoForge {
             systemProperty 'neoforge.enabledGameTestNamespaces', mod_id
             systemProperty 'mixin.hotSwap', 'true'
             systemProperty 'rdi.debug', 'true'
+            systemProperty("rdi.host.id", "6970b4b685846053425d0529")
             systemProperty 'rdi.dm.server', 'http://127.0.0.1:15566'
             systemProperty 'rdi.play', Base64.encoder.encodeToString(playArg.getBytes(Charset.forName("UTF-8")))
             systemProperty 'rdi.earlyDisplay.ffmpeg', layout.buildDirectory.file('early-display/ffmpeg/ffmpeg.exe').get().asFile.absolutePath
@@ -220,9 +221,12 @@ tasks.register('generateModMetadata', ProcessResources) {
 }
 
 sourceSets.named('main') {
+    kotlin.srcDir '../../../mc/chunkcache/src/main/kotlin'
+    kotlin.srcDir '../../../mc/chunkcache/src/21/kotlin'
     kotlin.srcDir '../../../mc/syncchunk/src/main/kotlin'
     kotlin.srcDir '../../../mc/syncchunk/src/21/kotlin'
     kotlin.srcDir '../../../mc/common/codec/src/main/kotlin'
+    java.srcDir '../../../mc/common/codec/src/server/java'
     kotlin.srcDir '../../../mc/common/2021/src/main/kotlin'
     kotlin.srcDir '../../../mc/rcmd/src/main/kotlin'
     resources.srcDir 'src/generated/resources'
@@ -233,6 +237,8 @@ sourceSets.named('main') {
 }
 
 sourceSets.named('test') {
+    kotlin.srcDir '../../../mc/chunkcache/src/test/kotlin'
+    kotlin.srcDir '../../../mc/chunkcache/src/21Test/kotlin'
     kotlin.srcDir '../../../mc/syncchunk/src/test/kotlin'
     kotlin.srcDir '../../../mc/common/codec/src/test/kotlin'
 }
