@@ -169,6 +169,8 @@ fun McPlayScreen(
                     val localGameAddr = LocalMcProxyService.start(McPlayStore::appendProxyLog).getOrThrow()
                     val proxiedPlayArg = args.playArg.withGameAddr(localGameAddr)
                     add("-Drdi.play=${proxiedPlayArg.encodeBase64}")
+                        args.hostId?.let { add("-Drdi.host.id=${it}") }
+
                 }
                 if (session.stopRequested) return@launchSessionTask
 

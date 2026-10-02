@@ -463,6 +463,7 @@ suspend fun Host.DetailVo.startPlay(): StartPlayResult {
             modLoader = modpack.modloader,
             versionId = versionId,
             playArg = playArg,
+            hostId = _id.toHexString(),
             modpackName = modpack.name,
             versionDir = ModpackService.getVersionDir(version.modpackId, version.name).absolutePath,
             activeBaseMods = activeBaseMods,

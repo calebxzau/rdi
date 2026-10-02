@@ -34,6 +34,7 @@ data class McPlayArgs(
     val manageHostExtraMods: Boolean = false,
     val startupWarnings: List<String> = emptyList(),
     val cleanup: (() -> Unit)? = null,
+    val hostId: String? = null,
 )
 
 class McGameSession(

@@ -11,6 +11,8 @@ public class RDI {
     public static final String IHQ_URL;
     public static final String GAME_IP;
     public static final String HOST_NAME;
+    // Optional: only the RDI room launch path supplies this identity.
+    public static final String HOST_ID = System.getProperty("rdi.host.id");
     public static int HOST_PORT;
     //nullable
     public static UUID PLAYER_ID;
