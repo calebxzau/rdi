@@ -299,6 +299,8 @@ class MinecraftLauncher(
         processedJvmArgs += utf8LoggingJvmArgs
         mediaRuntime?.let {
             processedJvmArgs += "-Dorg.bytedeco.javacpp.pathsFirst=true"
+            // FfmpegNativePreloader loads FFmpeg from preloadpath; JavaCPP's class-path probing scans every mod for seconds.
+            processedJvmArgs += "-Dorg.bytedeco.javacpp.findLibraries=false"
             processedJvmArgs += "-Dorg.bytedeco.javacpp.platform.preloadpath=${it.nativeLibraryDir.absolutePath}"
             processedJvmArgs += earlyDisplayJvmArgs(request.mcVersion, it.nativeLibraryDir)
         }

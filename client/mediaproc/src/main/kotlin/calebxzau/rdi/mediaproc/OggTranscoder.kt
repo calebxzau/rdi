@@ -58,6 +58,7 @@ object OggTranscoder {
     }
 
     private fun loadNativeLibraries() {
+        FfmpegNativePreloader.ensureLoaded().getOrThrow()
         FFmpegFrameGrabber.tryLoad()
         FFmpegFrameRecorder.tryLoad()
         av_log_set_level(AV_LOG_ERROR)

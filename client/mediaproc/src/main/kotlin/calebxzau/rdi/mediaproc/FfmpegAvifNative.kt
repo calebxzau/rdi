@@ -14,6 +14,7 @@ internal object FfmpegAvifNative {
 
     private val decodeReadiness: Result<Unit> by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
         runCatching {
+            FfmpegNativePreloader.ensureLoaded().getOrThrow()
             FFmpegFrameGrabber.tryLoad()
             check(avcodec_find_decoder(AV_CODEC_ID_AV1) != null) {
                 "FFmpeg AV1 decoder is unavailable"

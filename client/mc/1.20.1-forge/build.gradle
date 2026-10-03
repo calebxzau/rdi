@@ -271,6 +271,7 @@ legacyForge {
             client()
             systemProperty("rdi.play", Base64.encoder.encodeToString(playArg.getBytes(StandardCharsets.UTF_8)))
             systemProperty("org.bytedeco.javacpp.pathsFirst", "true")
+            systemProperty("org.bytedeco.javacpp.findLibraries", "false")
             systemProperty("org.bytedeco.javacpp.platform.preloadpath", mediaProcNativeLibraryDir.get().asFile.absolutePath)
             systemProperty("rdi.earlyDisplay.ffmpeg", new File(earlyDisplayFfmpegDir.get().asFile, 'ffmpeg.exe').absolutePath)
             //systemProperty("mixin.hotSwap", "true")

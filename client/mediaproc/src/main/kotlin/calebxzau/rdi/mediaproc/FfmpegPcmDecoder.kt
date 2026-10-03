@@ -126,6 +126,7 @@ object FfmpegPcmDecoder {
 
     private val readiness: Result<Unit> by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
         runCatching {
+            FfmpegNativePreloader.ensureLoaded().getOrThrow()
             FFmpegFrameGrabber.tryLoad()
             val decoder: AVCodec? = avcodec_find_decoder(AV_CODEC_ID_OPUS)
             check(decoder != null) { "Opus decoder is unavailable" }

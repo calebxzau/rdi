@@ -153,6 +153,10 @@ neoForge {
             systemProperty 'rdi.dm.server', 'http://127.0.0.1:15566'
             systemProperty 'rdi.play', Base64.encoder.encodeToString(playArg.getBytes(Charset.forName("UTF-8")))
             systemProperty 'rdi.earlyDisplay.ffmpeg', layout.buildDirectory.file('early-display/ffmpeg/ffmpeg.exe').get().asFile.absolutePath
+            // The early-display directory holds every FFmpeg DLL, including the JavaCPP JNI libraries.
+            systemProperty 'org.bytedeco.javacpp.pathsFirst', 'true'
+            systemProperty 'org.bytedeco.javacpp.findLibraries', 'false'
+            systemProperty 'org.bytedeco.javacpp.platform.preloadpath', layout.buildDirectory.dir('early-display/ffmpeg').get().asFile.absolutePath
             systemProperty 'rdi.earlyDisplay.video', file('startup.mp4').absolutePath
 
         }
@@ -169,6 +173,10 @@ neoForge {
             systemProperty 'rdi.dm.server', 'http://127.0.0.1:15566'
             systemProperty 'rdi.play', Base64.encoder.encodeToString(playArg2.getBytes(Charset.forName("UTF-8")))
             systemProperty 'rdi.earlyDisplay.ffmpeg', layout.buildDirectory.file('early-display/ffmpeg/ffmpeg.exe').get().asFile.absolutePath
+            // The early-display directory holds every FFmpeg DLL, including the JavaCPP JNI libraries.
+            systemProperty 'org.bytedeco.javacpp.pathsFirst', 'true'
+            systemProperty 'org.bytedeco.javacpp.findLibraries', 'false'
+            systemProperty 'org.bytedeco.javacpp.platform.preloadpath', layout.buildDirectory.dir('early-display/ffmpeg').get().asFile.absolutePath
             systemProperty 'rdi.earlyDisplay.video', file('startup.mp4').absolutePath
         }
         configureEach {

@@ -1,6 +1,7 @@
 package calebxzhou.rdi.mc.client
 
 import calebxzau.rdi.mc.zstdcodec.ZstdCompressionPipeline
+import calebxzau.rdi.mediaproc.MediaProcWarmup
 import calebxzhou.rdi.mc.client.mcp.standard.StandardMcpServer
 import calebxzhou.rdi.mc.client.mcpimpl211.McpGameImpl
 import calebxzhou.rdi.mc.client.mcpimpl211.Search
@@ -33,12 +34,14 @@ import net.neoforged.api.distmarker.Dist
 import net.neoforged.bus.api.SubscribeEvent
 import net.neoforged.fml.common.EventBusSubscriber
 import net.neoforged.fml.common.Mod
+import net.neoforged.fml.event.lifecycle.FMLClientSetupEvent
 import net.neoforged.neoforge.client.event.ClientChatEvent
 import net.neoforged.neoforge.client.event.ClientPlayerNetworkEvent
 import net.neoforged.neoforge.client.event.RegisterClientCommandsEvent
 import net.neoforged.neoforge.client.event.RegisterClientReloadListenersEvent
 import net.neoforged.neoforge.client.event.RenderLevelStageEvent
 import net.neoforged.neoforge.client.event.RenderFrameEvent
+import org.slf4j.LoggerFactory
 import java.util.*
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
@@ -105,6 +108,16 @@ class RDIMain {
             event.registerReloadListener(ResourceManagerReloadListener {
                 Search.refreshResourceIndex()
             })
+        }
+        @SubscribeEvent
+        @JvmStatic
+        fun onClientSetup(event: FMLClientSetupEvent) {
+            // Loading FFmpeg the first time takes a while; keep it off the render thread and the first sound.
+            Thread.ofPlatform().daemon().name("rdi-mediaproc-warmup").start {
+                MediaProcWarmup.warmUp().onFailure { error ->
+                    LoggerFactory.getLogger(RDIMain::class.java).error("Failed to load the FFmpeg media runtime", error)
+                }
+            }
         }
         @SubscribeEvent
         @JvmStatic

@@ -42,6 +42,32 @@ dependencies {
 tasks.withType<Test>().configureEach {
     useJUnitPlatform()
 }
+
+val testFfmpegNativeDir = layout.buildDirectory.dir("test-ffmpeg-natives")
+val extractTestFfmpegNatives = tasks.register<Sync>("extractTestFfmpegNatives") {
+    from({
+        configurations.testRuntimeClasspath.get()
+            .filter { it.name.endsWith("-windows-x86_64-gpl.jar") }
+            .map { zipTree(it) }
+    })
+    include("org/bytedeco/ffmpeg/windows-x86_64-gpl/*.dll")
+    eachFile { path = name }
+    includeEmptyDirs = false
+    into(testFfmpegNativeDir)
+}
+
+// Loads FFmpeg the way the game does: JavaCPP library finding disabled, natives only from preloadpath.
+tasks.register<Test>("nativePreloadTest") {
+    group = "verification"
+    testClassesDirs = sourceSets.test.get().output.classesDirs
+    classpath = sourceSets.test.get().runtimeClasspath
+    dependsOn(extractTestFfmpegNatives)
+    filter { includeTestsMatching("calebxzau.rdi.mediaproc.FfmpegNativePreloaderTest") }
+    systemProperty("rdi.test.nativePreload", "true")
+    systemProperty("org.bytedeco.javacpp.pathsFirst", "true")
+    systemProperty("org.bytedeco.javacpp.findLibraries", "false")
+    systemProperty("org.bytedeco.javacpp.platform.preloadpath", testFfmpegNativeDir.get().asFile.absolutePath)
+}
 base {
     archivesName.set("rdi-mediaproc")
 }
