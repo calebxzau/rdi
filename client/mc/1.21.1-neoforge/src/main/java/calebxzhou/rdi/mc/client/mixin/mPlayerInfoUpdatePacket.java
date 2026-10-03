@@ -38,7 +38,12 @@ public class mPlayerInfoUpdatePacket {
         if (actions.contains(ClientboundPlayerInfoUpdatePacket.Action.ADD_PLAYER)) {
             var newEntries = entries.stream().map(entry -> {
                 lgr.info("Inject Profile for {}",entry.profileId());
-                var profile = Minecraft.getInstance().getMinecraftSessionService().fetchProfile(entry.profileId(), false).profile();
+                var profileResult = Minecraft.getInstance().getMinecraftSessionService().fetchProfile(entry.profileId(), false);
+                if (profileResult == null) {
+                    lgr.warn("Could not fetch profile for {}; keeping original player info", entry.profileId());
+                    return entry;
+                }
+                var profile = profileResult.profile();
                 lgr.info("Injected profile for {}: {}", entry.profileId(), profile.getProperties().get("textures"));
                 return new ClientboundPlayerInfoUpdatePacket.Entry(
                         entry.profileId(),
