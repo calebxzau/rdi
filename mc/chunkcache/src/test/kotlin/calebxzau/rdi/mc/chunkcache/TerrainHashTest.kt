@@ -17,12 +17,46 @@ class TerrainHashTest {
 
         assertContentEquals(
             byteArrayOf(
-                0xba.toByte(), 0x20, 0xea.toByte(), 0xc2.toByte(), 0x68, 0x2e, 0xfd.toByte(), 0x0b,
-                0x78, 0x3d, 0x98.toByte(), 0xf7.toByte(), 0x56, 0x8c.toByte(), 0xe0.toByte(),
-                0x8d.toByte(), 0x9a.toByte(), 0x1e, 0x68, 0xe9.toByte(),
+                0xbd.toByte(), 0x4b, 0x9f.toByte(), 0xb3.toByte(), 0xc8.toByte(), 0x26, 0xb3.toByte(), 0x33,
+                0x48, 0x91.toByte(), 0xec.toByte(), 0x07, 0x54, 0xdb.toByte(), 0xfe.toByte(), 0x48,
+                0x62, 0x29, 0xdc.toByte(), 0x6a,
             ),
             digest,
         )
+    }
+
+    @Test
+    fun uniformSectionDigestMatchesReferenceBytes() {
+        val digest = TerrainHash.sha1(3, 1, { _, _, _, _ -> 9 }, { _, _, _, _ -> 1 })
+
+        assertContentEquals(
+            byteArrayOf(
+                0x6d, 0xd1.toByte(), 0xa8.toByte(), 0x26, 0xc9.toByte(), 0xef.toByte(), 0x83.toByte(), 0x06,
+                0x54, 0x24, 0x7b, 0xdb.toByte(), 0xef.toByte(), 0x38, 0xfe.toByte(), 0xc0.toByte(),
+                0x4e, 0x64, 0xfe.toByte(), 0x74,
+            ),
+            digest,
+        )
+    }
+
+    @Test
+    fun uniformShortcutEqualsScannedSection() {
+        val biomes = IntArray(TerrainHash.BIOMES_PER_SECTION) { it % 3 }
+        val scanned = TerrainHash.sectionSha1(IntArray(TerrainHash.BLOCKS_PER_SECTION) { 42 }, biomes)
+
+        assertContentEquals(scanned, TerrainHash.uniformSectionSha1(42, biomes))
+        val oneDifferent = IntArray(TerrainHash.BLOCKS_PER_SECTION) { 42 }.also { it[4095] = 43 }
+        assertNotEquals(scanned.toList(), TerrainHash.sectionSha1(oneDifferent, biomes).toList())
+    }
+
+    @Test
+    fun chunkDigestRejectsMalformedSectionHashes() {
+        assertFailsWith<IllegalArgumentException> { TerrainHash.chunkSha1(0, emptyArray()) }
+        assertFailsWith<IllegalArgumentException> { TerrainHash.chunkSha1(0, arrayOf(ByteArray(19))) }
+        assertFailsWith<IllegalArgumentException> {
+            TerrainHash.sectionSha1(IntArray(TerrainHash.BLOCKS_PER_SECTION - 1), IntArray(TerrainHash.BIOMES_PER_SECTION))
+        }
+        assertFailsWith<IllegalArgumentException> { TerrainHash.uniformSectionSha1(-1, IntArray(TerrainHash.BIOMES_PER_SECTION)) }
     }
 
     @Test

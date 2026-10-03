@@ -2,82 +2,39 @@ package calebxzau.rdi.mc.server.mixin;
 
 import net.minecraft.network.protocol.game.ClientboundLightUpdatePacketData;
 import net.minecraft.world.level.ChunkPos;
-import net.minecraft.world.level.chunk.DataLayer;
+import net.minecraft.world.level.LightLayer;
 import net.minecraft.world.level.lighting.LevelLightEngine;
-import org.spongepowered.asm.mixin.Final;
 import org.spongepowered.asm.mixin.Mixin;
-import org.spongepowered.asm.mixin.Shadow;
-import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.injection.At;
-import org.spongepowered.asm.mixin.injection.Inject;
-import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
+import org.spongepowered.asm.mixin.injection.Redirect;
 
-import javax.annotation.Nullable;
-import java.util.Arrays;
 import java.util.BitSet;
 import java.util.List;
 
+/**
+ * RDI clients compute light locally and discard server light arrays, so light data is sent with no layers.
+ * This skips copying every light section on the server and decoding them on the client.
+ */
 @Mixin(ClientboundLightUpdatePacketData.class)
 public class mFullBrightLightPacket {
-    @Unique
-    private static final byte[] rdi$fullBrightSection = rdi$createFullBrightSection();
-
-    @Shadow
-    @Final
-    private BitSet skyYMask;
-
-    @Shadow
-    @Final
-    private BitSet blockYMask;
-
-    @Shadow
-    @Final
-    private BitSet emptySkyYMask;
-
-    @Shadow
-    @Final
-    private BitSet emptyBlockYMask;
-
-    @Shadow
-    @Final
-    private List<byte[]> skyUpdates;
-
-    @Shadow
-    @Final
-    private List<byte[]> blockUpdates;
-
-    @Inject(
+    @Redirect(
             method = "<init>(Lnet/minecraft/world/level/ChunkPos;Lnet/minecraft/world/level/lighting/LevelLightEngine;Ljava/util/BitSet;Ljava/util/BitSet;)V",
-            at = @At("RETURN")
+            at = @At(
+                    value = "INVOKE",
+                    target = "Lnet/minecraft/network/protocol/game/ClientboundLightUpdatePacketData;prepareSectionData(Lnet/minecraft/world/level/ChunkPos;Lnet/minecraft/world/level/lighting/LevelLightEngine;Lnet/minecraft/world/level/LightLayer;ILjava/util/BitSet;Ljava/util/BitSet;Ljava/util/List;)V"
+            ),
+            require = 2
     )
-    private void rdi$sendFullBrightLight(
+    private void rdi$omitLightSection(
+            ClientboundLightUpdatePacketData data,
             ChunkPos chunkPos,
             LevelLightEngine lightEngine,
-            @Nullable BitSet skyLight,
-            @Nullable BitSet blockLight,
-            CallbackInfo ci
+            LightLayer lightLayer,
+            int index,
+            BitSet mask,
+            BitSet emptyMask,
+            List<byte[]> updates
     ) {
-        int sectionCount = lightEngine.getLightSectionCount();
-
-        skyYMask.clear();
-        skyYMask.set(0, sectionCount);
-        blockYMask.clear();
-        blockYMask.set(0, sectionCount);
-        emptySkyYMask.clear();
-        emptyBlockYMask.clear();
-
-        skyUpdates.clear();
-        blockUpdates.clear();
-        for (int i = 0; i < sectionCount; i++) {
-            skyUpdates.add(rdi$fullBrightSection);
-            blockUpdates.add(rdi$fullBrightSection);
-        }
-    }
-
-    @Unique
-    private static byte[] rdi$createFullBrightSection() {
-        byte[] data = new byte[DataLayer.SIZE];
-        Arrays.fill(data, (byte) 0xFF);
-        return data;
+        // Leave both masks and update lists empty.
     }
 }

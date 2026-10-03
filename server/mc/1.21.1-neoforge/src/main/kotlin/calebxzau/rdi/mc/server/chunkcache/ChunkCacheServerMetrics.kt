@@ -26,6 +26,14 @@ internal class ChunkCacheServerMetrics {
         private set
     var repairAbandoned = 0L
         private set
+    var budgetFallbackFullSends = 0L
+        private set
+    var sectionHashHits = 0L
+        private set
+    var sectionHashMisses = 0L
+        private set
+    var sectionHashStale = 0L
+        private set
 
     var rawSectionPayloadBytes = 0L
         private set
@@ -68,6 +76,10 @@ internal class ChunkCacheServerMetrics {
     fun recordRepairQueued() { repairQueued++ }
     fun recordRepairCompleted() { repairCompleted++ }
     fun recordRepairAbandoned() { repairAbandoned++ }
+    fun recordBudgetFallbackFullSend() { budgetFallbackFullSends++ }
+    fun recordSectionHashHit() { sectionHashHits++ }
+    fun recordSectionHashMiss() { sectionHashMisses++ }
+    fun recordSectionHashStale() { sectionHashStale++ }
     fun recordRawSectionPayloadBytes(bytes: Int) { rawSectionPayloadBytes += bytes }
     fun recordReuseMetadataBytes(bytes: Int) { reuseMetadataBytes += bytes }
 
@@ -104,7 +116,8 @@ internal class ChunkCacheServerMetrics {
 
     fun hasWindowActivity(): Boolean =
         normalChunkAttempts + noOfferFullSends + candidateFallbackFullSends + forcedRepairFullSends + mismatches + reuseSent +
-            reuseConfirmed + clientFailure + reuseTimeout + repairQueued + repairCompleted + repairAbandoned > 0L
+            reuseConfirmed + clientFailure + reuseTimeout + repairQueued + repairCompleted + repairAbandoned +
+            budgetFallbackFullSends + sectionHashStale > 0L
 
     fun resetWindow() {
         normalChunkAttempts = 0
@@ -119,6 +132,10 @@ internal class ChunkCacheServerMetrics {
         repairQueued = 0
         repairCompleted = 0
         repairAbandoned = 0
+        budgetFallbackFullSends = 0
+        sectionHashHits = 0
+        sectionHashMisses = 0
+        sectionHashStale = 0
         rawSectionPayloadBytes = 0
         reuseMetadataBytes = 0
         sectionCopyDecodeNanos = 0

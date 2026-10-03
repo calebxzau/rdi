@@ -115,6 +115,43 @@ class ChunkTerrainCodecTest {
         assertFailsWith<IOException> { ChunkTerrainCodec.hash(Int.MAX_VALUE, arrayOf(section, section), biomes) }
     }
 
+    @Test
+    fun paletteHashMatchesPerBlockReferenceForEveryPaletteKind(): Unit {
+        val biomes = biomeRegistry()
+        val air = LevelChunkSection(biomes)
+        val mixed = LevelChunkSection(biomes).apply {
+            setBlockState(1, 2, 3, Blocks.STONE.defaultBlockState())
+            setBlockState(15, 15, 15, Blocks.DIRT.defaultBlockState())
+        }
+        // Air stays in the linear palette after every cell becomes stone: semantically uniform, not single-valued.
+        val staleUniform = LevelChunkSection(biomes).apply {
+            setBlockState(0, 0, 0, Blocks.DIRT.defaultBlockState())
+            for (y in 0 until 16) for (z in 0 until 16) for (x in 0 until 16) setBlockState(x, y, z, Blocks.STONE.defaultBlockState())
+        }
+        val global = LevelChunkSection(biomes).apply {
+            for (index in 0 until 300) {
+                val state = net.minecraft.world.level.block.Block.BLOCK_STATE_REGISTRY.byId(index + 1)!!
+                setBlockState(index and 15, index shr 8, (index shr 4) and 15, state)
+            }
+        }
+        @Suppress("UNCHECKED_CAST")
+        (global.getBiomes() as PalettedContainer<Holder<Biome>>).getAndSetUnchecked(3, 3, 3, biomes.getHolderOrThrow(otherBiomeKey()))
+
+        val sections = arrayOf(air, mixed, staleUniform, global)
+        val reference = TerrainHash.sha1(-4, sections.size,
+            { section, x, y, z -> net.minecraft.world.level.block.Block.getId(sections[section].getBlockState(x, y, z)) },
+            { section, x, y, z -> biomes.getId(sections[section].getNoiseBiome(x, y, z).value()) })
+
+        assertContentEquals(reference, ChunkTerrainCodec.hash(-4, sections, biomes))
+        assertContentEquals(
+            ChunkTerrainCodec.sectionHash(staleUniform, biomes),
+            TerrainHash.uniformSectionSha1(
+                net.minecraft.world.level.block.Block.getId(Blocks.STONE.defaultBlockState()),
+                IntArray(TerrainHash.BIOMES_PER_SECTION) { biomes.getId(biomes.getOrThrow(Biomes.PLAINS)) },
+            ),
+        )
+    }
+
     private fun biomeRegistry(): MappedRegistry<Biome> {
         val registry = MappedRegistry(Registries.BIOME, Lifecycle.stable())
         registry.register(Biomes.PLAINS, createBiome(), RegistrationInfo.BUILT_IN)

@@ -18,7 +18,7 @@ import net.minecraft.resources.ResourceLocation
 import net.minecraft.server.level.ServerPlayer
 import net.minecraft.server.network.ServerGamePacketListenerImpl
 import net.minecraft.world.level.ChunkPos
-import net.minecraft.world.level.chunk.LevelChunkSection
+import net.minecraft.world.level.chunk.LevelChunk
 import net.neoforged.neoforge.network.PacketDistributor
 import net.neoforged.neoforge.network.registration.NetworkRegistry
 import org.slf4j.LoggerFactory
@@ -30,6 +30,8 @@ object ChunkCacheServerService {
     private val logger = LoggerFactory.getLogger("rdi")
     private val random = SecureRandom()
     private val sessions = mutableMapOf<UUID, Session>()
+    private var budgetTick = Long.MIN_VALUE
+    private var budgetUsedNanos = 0L
 
     private data class Session(
         var epoch: UUID,
@@ -145,8 +147,9 @@ object ChunkCacheServerService {
         PacketDistributor.sendToPlayer(player, ChunkCacheRetirePayload(session.epoch, listOf(token.id)))
     }
 
+    /** [chunk] is the live chunk the packet was just built from on this thread, when the caller has it. */
     @JvmStatic
-    fun replace(listener: ServerGamePacketListenerImpl, packet: Packet<*>): Packet<*> {
+    fun replace(listener: ServerGamePacketListenerImpl, packet: Packet<*>, chunk: LevelChunk?): Packet<*> {
         val player = listener.player
         val session = ensureContext(player) ?: return packet
         val hasChunk = packet is ClientboundLevelChunkWithLightPacket ||
@@ -154,13 +157,13 @@ object ChunkCacheServerService {
         val startNanos = if (hasChunk) System.nanoTime() else 0L
         return try {
             when (packet) {
-                is ClientboundLevelChunkWithLightPacket -> replaceChunk(player, session, packet)
+                is ClientboundLevelChunkWithLightPacket -> replaceChunk(player, session, packet, chunk)
                 is ClientboundBundlePacket -> {
                     val packets = mutableListOf<Packet<in net.minecraft.network.protocol.game.ClientGamePacketListener>>()
                     for (nested in packet.subPackets()) {
                         @Suppress("UNCHECKED_CAST")
                         val replacement: Packet<in net.minecraft.network.protocol.game.ClientGamePacketListener> = if (nested is ClientboundLevelChunkWithLightPacket) {
-                            replaceChunk(player, session, nested) as Packet<in net.minecraft.network.protocol.game.ClientGamePacketListener>
+                            replaceChunk(player, session, nested, chunk) as Packet<in net.minecraft.network.protocol.game.ClientGamePacketListener>
                         } else {
                             nested as Packet<in net.minecraft.network.protocol.game.ClientGamePacketListener>
                         }
@@ -182,6 +185,7 @@ object ChunkCacheServerService {
         player: ServerPlayer,
         session: Session,
         packet: ClientboundLevelChunkWithLightPacket,
+        chunk: LevelChunk?,
     ): Packet<*> {
         val pos = ChunkPos(packet.x, packet.z)
         val repairToken = session.forceFull.find(pos.x, pos.z)
@@ -202,32 +206,35 @@ object ChunkCacheServerService {
             PacketDistributor.sendToPlayer(player, retire)
             return packet
         }
+        if (!reuseBudgetAvailable(player.server.tickCount.toLong())) {
+            session.metrics.recordBudgetFallbackFullSend()
+            PacketDistributor.sendToPlayer(player, retire)
+            return packet
+        }
+        val budgetStart = System.nanoTime()
         try {
             val level = player.serverLevel()
             val biomeRegistry = level.registryAccess().registryOrThrow(Registries.BIOME)
             val sectionBuffer = packet.chunkData.readBuffer
-            val sectionCopyDecodeStart = System.nanoTime()
-            val sectionBytes: ByteArray
-            val sections: Array<LevelChunkSection>
-            try {
-                sectionBytes = try {
-                    if (sectionBuffer.readableBytes() > ChunkCacheLimits.MAX_SECTION_BYTES) {
-                        session.metrics.recordCandidateFallbackFullSend()
-                        PacketDistributor.sendToPlayer(player, retire)
-                        return packet
-                    }
-                    ByteArray(sectionBuffer.readableBytes()).also { sectionBuffer.readBytes(it) }
-                } finally {
-                    sectionBuffer.release()
-                }
-                session.metrics.recordRawSectionPayloadBytes(sectionBytes.size)
-                sections = ChunkTerrainCodec.decode(sectionBytes, level.sectionsCount, biomeRegistry)
+            val sectionPayloadBytes = try {
+                sectionBuffer.readableBytes()
             } finally {
-                session.metrics.recordSectionCopyDecode(System.nanoTime() - sectionCopyDecodeStart)
+                sectionBuffer.release()
             }
+            if (sectionPayloadBytes > ChunkCacheLimits.MAX_SECTION_BYTES) {
+                session.metrics.recordCandidateFallbackFullSend()
+                PacketDistributor.sendToPlayer(player, retire)
+                return packet
+            }
+            session.metrics.recordRawSectionPayloadBytes(sectionPayloadBytes)
             val semanticHashStart = System.nanoTime()
             val hash = try {
-                ChunkTerrainCodec.hash(level.minSection, sections, biomeRegistry)
+                if (chunk != null && chunk.pos == pos && chunk.level === level && chunk.sections.size == level.sectionsCount) {
+                    // The packet was serialized from this chunk earlier in the same server-thread call.
+                    ServerTerrainHashes.chunkHash(chunk, level.minSection, biomeRegistry, session.metrics)
+                } else {
+                    decodedPacketHash(session, packet, level.sectionsCount, level.minSection, biomeRegistry)
+                }
             } finally {
                 session.metrics.recordSemanticHash(System.nanoTime() - semanticHashStart)
             }
@@ -264,7 +271,40 @@ object ChunkCacheServerService {
             logger.debug("Chunk cache candidate failed player={} chunk=({}, {}); sending full chunk", player.scoreboardName, pos.x, pos.z, failure)
             PacketDistributor.sendToPlayer(player, retire)
             return packet
+        } finally {
+            budgetUsedNanos += System.nanoTime() - budgetStart
         }
+    }
+
+    /** Fallback when no live chunk is available, such as a chunk packet nested in a foreign bundle. */
+    private fun decodedPacketHash(
+        session: Session,
+        packet: ClientboundLevelChunkWithLightPacket,
+        sectionCount: Int,
+        minSection: Int,
+        biomeRegistry: net.minecraft.core.Registry<net.minecraft.world.level.biome.Biome>,
+    ): ByteArray {
+        val sectionCopyDecodeStart = System.nanoTime()
+        val sections = try {
+            val sectionBuffer = packet.chunkData.readBuffer
+            val sectionBytes = try {
+                ByteArray(sectionBuffer.readableBytes()).also { sectionBuffer.readBytes(it) }
+            } finally {
+                sectionBuffer.release()
+            }
+            ChunkTerrainCodec.decode(sectionBytes, sectionCount, biomeRegistry)
+        } finally {
+            session.metrics.recordSectionCopyDecode(System.nanoTime() - sectionCopyDecodeStart)
+        }
+        return ChunkTerrainCodec.hash(minSection, sections, biomeRegistry)
+    }
+
+    private fun reuseBudgetAvailable(tick: Long): Boolean {
+        if (budgetTick != tick) {
+            budgetTick = tick
+            budgetUsedNanos = 0
+        }
+        return budgetUsedNanos < ChunkCacheLimits.MAX_SERVER_REUSE_NANOS_PER_TICK
     }
 
     /** Called only after the ordinary packet has been accepted by the connection. */
@@ -311,7 +351,7 @@ object ChunkCacheServerService {
             val metrics = session.metrics
             if (metrics.hasWindowActivity()) {
                 logger.info(
-                    "Chunk cache minute player={} normalAttempts={} noOfferFullSends={} candidateFallbackFullSends={} forcedRepairFullSends={} mismatches={} reuseSent={} reuseConfirmed={} clientFailure={} reuseTimeout={} repairQueued={} repairCompleted={} repairAbandonedEvents={} rawSectionPayloadBytes={} reuseMetadataBytes={} sectionCopyDecodeNanosTotal={} sectionCopyDecodeNanosMax={} semanticHashNanosTotal={} semanticHashNanosMax={} metadataEncodeNanosTotal={} metadataEncodeNanosMax={} replacementNanosTotal={} replacementNanosMax={} replacementNanosCurrentTick={} replacementNanosMaxTick={} replacementTickBoundary=perPlayerSessionServerTick",
+                    "Chunk cache minute player={} normalAttempts={} noOfferFullSends={} candidateFallbackFullSends={} forcedRepairFullSends={} mismatches={} reuseSent={} reuseConfirmed={} clientFailure={} reuseTimeout={} repairQueued={} repairCompleted={} repairAbandonedEvents={} budgetFallbackFullSends={} sectionHashHits={} sectionHashMisses={} sectionHashStale={} rawSectionPayloadBytes={} reuseMetadataBytes={} sectionCopyDecodeNanosTotal={} sectionCopyDecodeNanosMax={} semanticHashNanosTotal={} semanticHashNanosMax={} metadataEncodeNanosTotal={} metadataEncodeNanosMax={} replacementNanosTotal={} replacementNanosMax={} replacementNanosCurrentTick={} replacementNanosMaxTick={} replacementTickBoundary=perPlayerSessionServerTick",
                     player.scoreboardName,
                     metrics.normalChunkAttempts,
                     metrics.noOfferFullSends,
@@ -325,6 +365,10 @@ object ChunkCacheServerService {
                     metrics.repairQueued,
                     metrics.repairCompleted,
                     metrics.repairAbandoned,
+                    metrics.budgetFallbackFullSends,
+                    metrics.sectionHashHits,
+                    metrics.sectionHashMisses,
+                    metrics.sectionHashStale,
                     metrics.rawSectionPayloadBytes,
                     metrics.reuseMetadataBytes,
                     metrics.sectionCopyDecodeNanos,
@@ -357,6 +401,8 @@ object ChunkCacheServerService {
     @JvmStatic
     fun clear() {
         sessions.clear()
+        budgetTick = Long.MIN_VALUE
+        budgetUsedNanos = 0
     }
 
     private fun activeSession(player: ServerPlayer, epoch: UUID, dimension: ResourceLocation): Session? {

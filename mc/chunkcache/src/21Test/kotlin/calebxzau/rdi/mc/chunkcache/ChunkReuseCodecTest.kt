@@ -19,6 +19,7 @@ import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertTrue
 
 class ChunkReuseCodecTest {
     companion object {
@@ -30,7 +31,7 @@ class ChunkReuseCodecTest {
     }
 
     @Test
-    fun metadataRestorePreservesHeightmapsBlockEntitiesAndLightExactly(): Unit {
+    fun metadataRestorePreservesHeightmapsAndBlockEntitiesAndOmitsLight(): Unit {
         val registries = blockEntityRegistries()
         val originalSections = byteArrayOf(1, 3, 5, 7)
         val packet = packet(registries, 4, -9, originalSections, marker = 81)
@@ -49,12 +50,14 @@ class ChunkReuseCodecTest {
         }
         assertEquals(packet.chunkData.heightmaps, restored.chunkData.heightmaps)
         assertEquals(1, readBlockEntities(restored))
-        assertEquals(packet.lightData.skyYMask, restored.lightData.skyYMask)
-        assertEquals(packet.lightData.blockYMask, restored.lightData.blockYMask)
-        assertEquals(packet.lightData.emptySkyYMask, restored.lightData.emptySkyYMask)
-        assertEquals(packet.lightData.emptyBlockYMask, restored.lightData.emptyBlockYMask)
-        assertContentEquals(packet.lightData.skyUpdates.single(), restored.lightData.skyUpdates.single())
-        assertContentEquals(packet.lightData.blockUpdates.single(), restored.lightData.blockUpdates.single())
+        // RDI clients compute light locally, so reuse metadata never carries the server's light arrays.
+        assertTrue(metadata.size < 2048)
+        assertTrue(restored.lightData.skyYMask.isEmpty)
+        assertTrue(restored.lightData.blockYMask.isEmpty)
+        assertTrue(restored.lightData.emptySkyYMask.isEmpty)
+        assertTrue(restored.lightData.emptyBlockYMask.isEmpty)
+        assertTrue(restored.lightData.skyUpdates.isEmpty())
+        assertTrue(restored.lightData.blockUpdates.isEmpty())
     }
 
     @Test

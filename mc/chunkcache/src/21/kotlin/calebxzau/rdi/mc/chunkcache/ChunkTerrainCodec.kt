@@ -5,6 +5,9 @@ import net.minecraft.core.Registry
 import net.minecraft.network.FriendlyByteBuf
 import net.minecraft.world.level.biome.Biome
 import net.minecraft.world.level.block.Block
+import net.minecraft.world.level.block.state.BlockState
+import net.minecraft.world.level.chunk.GlobalPalette
+import net.minecraft.world.level.chunk.SingleValuePalette
 import net.minecraft.world.level.chunk.LevelChunkSection
 import java.io.IOException
 
@@ -40,21 +43,71 @@ object ChunkTerrainCodec {
     @Throws(IOException::class)
     fun hash(minSection: Int, sections: Array<LevelChunkSection>, biomes: Registry<Biome>): ByteArray {
         checkSectionBytes(0, sections.size)
-        if (minSection.toLong() + sections.size - 1 > Int.MAX_VALUE) throw IOException("Invalid section range")
+        return chunkHash(minSection, Array(sections.size) { sectionHash(sections[it], biomes) })
+    }
+
+    @JvmStatic
+    @Throws(IOException::class)
+    fun chunkHash(minSection: Int, sectionHashes: Array<ByteArray>): ByteArray {
+        checkSectionBytes(0, sectionHashes.size)
+        if (minSection.toLong() + sectionHashes.size - 1 > Int.MAX_VALUE) throw IOException("Invalid section range")
         try {
-            return TerrainHash.sha1(
-                minSection,
-                sections.size,
-                blockStateAt = TerrainIdReader { section, x, y, z -> Block.getId(sections[section].getBlockState(x, y, z)) },
-                biomeAt = TerrainIdReader { section, x, y, z ->
-                    val id = biomes.getId(sections[section].getNoiseBiome(x, y, z).value())
-                    if (id < 0) throw IllegalArgumentException("Biome is not in the current registry")
-                    id
-                },
-            )
+            return TerrainHash.chunkSha1(minSection, sectionHashes)
         } catch (failure: IllegalArgumentException) {
+            throw IOException("Invalid terrain section hashes", failure)
+        }
+    }
+
+    /** Reads palette storage once per section instead of resolving every block through the state registry. */
+    @JvmStatic
+    @Throws(IOException::class)
+    fun sectionHash(section: LevelChunkSection, biomes: Registry<Biome>): ByteArray {
+        try {
+            val biomeIds = biomeIds(section, biomes)
+            val data = section.states.data
+            val palette = data.palette()
+            val storage = data.storage()
+            if (storage.size != TerrainHash.BLOCKS_PER_SECTION) throw IOException("Invalid block storage size")
+            if (palette is SingleValuePalette<*>) {
+                return TerrainHash.uniformSectionSha1(Block.getId(palette.valueFor(0) as BlockState), biomeIds)
+            }
+            val ids = IntArray(TerrainHash.BLOCKS_PER_SECTION)
+            var index = 0
+            if (palette is GlobalPalette<*>) {
+                var lastRaw = -1
+                var lastId = -1
+                storage.getAll { raw ->
+                    if (raw != lastRaw) {
+                        lastRaw = raw
+                        lastId = Block.getId(palette.valueFor(raw) as BlockState)
+                    }
+                    ids[index++] = lastId
+                }
+            } else {
+                val paletteIds = IntArray(palette.size) { Block.getId(palette.valueFor(it)) }
+                storage.getAll { raw -> ids[index++] = paletteIds[raw] }
+            }
+            return TerrainHash.sectionSha1(ids, biomeIds)
+        } catch (failure: RuntimeException) {
             throw IOException("Invalid terrain section data", failure)
         }
+    }
+
+    private fun biomeIds(section: LevelChunkSection, biomes: Registry<Biome>): IntArray {
+        val ids = IntArray(TerrainHash.BIOMES_PER_SECTION)
+        var index = 0
+        var last: Biome? = null
+        var lastId = -1
+        for (y in 0 until 4) for (z in 0 until 4) for (x in 0 until 4) {
+            val biome = section.getNoiseBiome(x, y, z).value()
+            if (biome !== last) {
+                last = biome
+                lastId = biomes.getId(biome)
+                if (lastId < 0) throw IllegalArgumentException("Biome is not in the current registry")
+            }
+            ids[index++] = lastId
+        }
+        return ids
     }
 
     @JvmStatic

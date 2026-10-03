@@ -81,7 +81,7 @@ data class ChunkCacheContextPayload(val epoch: UUID, val dimension: ResourceLoca
     }
 
     companion object {
-        val TYPE = CustomPacketPayload.Type<ChunkCacheContextPayload>(ResourceLocation.fromNamespaceAndPath("rdi", "chunk_cache_context"))
+        val TYPE = CustomPacketPayload.Type<ChunkCacheContextPayload>(ResourceLocation.fromNamespaceAndPath("rdi", "chunk_cache_v2_context"))
         val STREAM_CODEC: StreamCodec<RegistryFriendlyByteBuf, ChunkCacheContextPayload> =
             CustomPacketPayload.codec(ChunkCacheContextPayload::write, ::ChunkCacheContextPayload)
     }
@@ -118,7 +118,7 @@ data class ChunkCacheOfferPayload(
     }
 
     companion object {
-        val TYPE = CustomPacketPayload.Type<ChunkCacheOfferPayload>(ResourceLocation.fromNamespaceAndPath("rdi", "chunk_cache_offer"))
+        val TYPE = CustomPacketPayload.Type<ChunkCacheOfferPayload>(ResourceLocation.fromNamespaceAndPath("rdi", "chunk_cache_v2_offer"))
         val STREAM_CODEC: StreamCodec<RegistryFriendlyByteBuf, ChunkCacheOfferPayload> =
             CustomPacketPayload.codec(ChunkCacheOfferPayload::write, ::ChunkCacheOfferPayload)
     }
@@ -132,7 +132,7 @@ data class ChunkCacheRetirePayload(val epoch: UUID, val ids: List<Long>) : Custo
     override fun type(): CustomPacketPayload.Type<out CustomPacketPayload> = TYPE
     fun write(buffer: RegistryFriendlyByteBuf) = writeIds(buffer, epoch, ids)
     companion object {
-        val TYPE = CustomPacketPayload.Type<ChunkCacheRetirePayload>(ResourceLocation.fromNamespaceAndPath("rdi", "chunk_cache_retire"))
+        val TYPE = CustomPacketPayload.Type<ChunkCacheRetirePayload>(ResourceLocation.fromNamespaceAndPath("rdi", "chunk_cache_v2_retire"))
         val STREAM_CODEC: StreamCodec<RegistryFriendlyByteBuf, ChunkCacheRetirePayload> =
             CustomPacketPayload.codec(ChunkCacheRetirePayload::write, ::ChunkCacheRetirePayload)
     }
@@ -146,7 +146,7 @@ data class ChunkCacheCancelPayload(val epoch: UUID, val ids: List<Long>) : Custo
     override fun type(): CustomPacketPayload.Type<out CustomPacketPayload> = TYPE
     fun write(buffer: RegistryFriendlyByteBuf) = writeIds(buffer, epoch, ids)
     companion object {
-        val TYPE = CustomPacketPayload.Type<ChunkCacheCancelPayload>(ResourceLocation.fromNamespaceAndPath("rdi", "chunk_cache_cancel"))
+        val TYPE = CustomPacketPayload.Type<ChunkCacheCancelPayload>(ResourceLocation.fromNamespaceAndPath("rdi", "chunk_cache_v2_cancel"))
         val STREAM_CODEC: StreamCodec<RegistryFriendlyByteBuf, ChunkCacheCancelPayload> =
             CustomPacketPayload.codec(ChunkCacheCancelPayload::write, ::ChunkCacheCancelPayload)
     }
@@ -175,7 +175,7 @@ data class ChunkCacheResultPayload(
         buffer.writeBoolean(success)
     }
     companion object {
-        val TYPE = CustomPacketPayload.Type<ChunkCacheResultPayload>(ResourceLocation.fromNamespaceAndPath("rdi", "chunk_cache_result"))
+        val TYPE = CustomPacketPayload.Type<ChunkCacheResultPayload>(ResourceLocation.fromNamespaceAndPath("rdi", "chunk_cache_v2_result"))
         val STREAM_CODEC: StreamCodec<RegistryFriendlyByteBuf, ChunkCacheResultPayload> =
             CustomPacketPayload.codec(ChunkCacheResultPayload::write, ::ChunkCacheResultPayload)
     }
@@ -214,7 +214,7 @@ data class ChunkCacheReusePayload(
     }
 
     companion object {
-        val TYPE = CustomPacketPayload.Type<ChunkCacheReusePayload>(ResourceLocation.fromNamespaceAndPath("rdi", "chunk_cache_reuse"))
+        val TYPE = CustomPacketPayload.Type<ChunkCacheReusePayload>(ResourceLocation.fromNamespaceAndPath("rdi", "chunk_cache_v2_reuse"))
         val STREAM_CODEC: StreamCodec<RegistryFriendlyByteBuf, ChunkCacheReusePayload> =
             CustomPacketPayload.codec(ChunkCacheReusePayload::write, ::ChunkCacheReusePayload)
 
