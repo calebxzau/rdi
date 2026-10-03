@@ -10,12 +10,14 @@
   "mixins": [
     "AChunkMap",
     "AServerEntity",
+    "mAttributeDedup",
     // "mChunkCache",
     // "mDelayedChunkCache",
     "mHandshakeDiagnostics",
     "mNetworkRegistryDiagnostics",
     "mPackListener",
     "mPlusTimeout",
+    "mRedundantTeamJoin",
     "mSaveBandwidth",
     "mServerLoginPacketListener"
   ],
