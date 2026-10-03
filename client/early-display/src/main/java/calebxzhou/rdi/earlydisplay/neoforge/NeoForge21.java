@@ -37,6 +37,8 @@ public final class NeoForge21 implements ImmediateWindowProvider {
 
     @Override
     public long setupMinecraftWindow(IntSupplier width, IntSupplier height, Supplier<String> title, LongSupplier monitor) {
+        // Runs in Minecraft.<init> after FML's preLaunch logging reload and before ClientModLoader.begin.
+        RootLogLevelFix.applyFromSystemProperty();
         return window.setupMinecraftWindow(width, height, title, monitor);
     }
 

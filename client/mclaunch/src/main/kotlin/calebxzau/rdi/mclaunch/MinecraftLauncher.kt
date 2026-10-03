@@ -41,6 +41,26 @@ internal fun earlyDisplayJvmArgs(mcVersion: McVersion, nativeLibraryDir: File): 
         emptyList()
     }
 
+internal const val RDI_ROOT_LOG_LEVEL_PROPERTY = "rdi.logging.rootLevel"
+
+/**
+ * FML 4.x always reloads its bundled log4j2.xml in production, ignoring `log4j2.configurationFile`.
+ * That config ACCEPTs LOADING/CORE/FORGEMOD markers globally and uses root level `all`, so every per-mod
+ * `LOGGER.trace(LOADING, ...)` builds a log event that the appenders then discard.
+ * The marker filters read these properties; rdi-early-display lowers the root level once FML has reloaded it.
+ * Arguments the user already set in [extraJvmArgs] win.
+ */
+internal fun neoForgeLoggingJvmArgs(mcVersion: McVersion, loader: ModLoader, extraJvmArgs: List<String>): List<String> {
+    if (mcVersion != McVersion.V211 || loader != ModLoader.neoforge) return emptyList()
+    val userKeys = extraJvmArgs.map { it.substringBefore('=') }.toSet()
+    return listOf(
+        "-Dforge.logging.marker.loading=NEUTRAL",
+        "-Dforge.logging.marker.core=NEUTRAL",
+        "-Dforge.logging.marker.forgemod=NEUTRAL",
+        "-D${RDI_ROOT_LOG_LEVEL_PROPERTY}=DEBUG",
+    ).filter { it.substringBefore('=') !in userKeys }
+}
+
 private data class LaunchManifests(
     val manifest: MojangVersionManifest,
     val loaderManifest: MojangVersionManifest,
@@ -297,6 +317,7 @@ class MinecraftLauncher(
             "-XX:+UseCompactObjectHeaders"
         )
         processedJvmArgs += utf8LoggingJvmArgs
+        processedJvmArgs += neoForgeLoggingJvmArgs(request.mcVersion, request.loader, request.extraJvmArgs)
         mediaRuntime?.let {
             processedJvmArgs += "-Dorg.bytedeco.javacpp.pathsFirst=true"
             // FfmpegNativePreloader loads FFmpeg from preloadpath; JavaCPP's class-path probing scans every mod for seconds.

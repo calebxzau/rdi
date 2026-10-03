@@ -211,6 +211,31 @@ class MinecraftLauncherTest {
     }
 
     @Test
+    fun neoForgeLoggingArgsOnlyApplyToNeoForge1211() {
+        assertEquals(
+            listOf(
+                "-Dforge.logging.marker.loading=NEUTRAL",
+                "-Dforge.logging.marker.core=NEUTRAL",
+                "-Dforge.logging.marker.forgemod=NEUTRAL",
+                "-Drdi.logging.rootLevel=DEBUG",
+            ),
+            neoForgeLoggingJvmArgs(McVersion.V211, ModLoader.neoforge, emptyList()),
+        )
+        assertEquals(emptyList(), neoForgeLoggingJvmArgs(McVersion.V201, ModLoader.forge, emptyList()))
+        assertEquals(emptyList(), neoForgeLoggingJvmArgs(McVersion.V211, ModLoader.Fabric, emptyList()))
+    }
+
+    @Test
+    fun neoForgeLoggingArgsKeepUserOverrides() {
+        val args = neoForgeLoggingJvmArgs(
+            McVersion.V211,
+            ModLoader.neoforge,
+            listOf("-Dforge.logging.marker.loading=ACCEPT", "-Drdi.logging.rootLevel=ALL"),
+        )
+        assertEquals(listOf("-Dforge.logging.marker.core=NEUTRAL", "-Dforge.logging.marker.forgemod=NEUTRAL"), args)
+    }
+
+    @Test
     fun fabricLaunchPreservesProfileArgsAndUsesVanillaJarWithoutForgeRuntimeInjection() {
         val root = Files.createTempDirectory("mclaunch fabric profile ").toFile()
         try {

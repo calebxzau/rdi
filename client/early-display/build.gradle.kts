@@ -28,9 +28,11 @@ dependencies {
     compileOnly("org.lwjgl:lwjgl-stb:3.3.3")
     compileOnly("org.lwjgl:lwjgl-tinyfd:3.3.3")
     compileOnly("org.slf4j:slf4j-api:2.0.9")
+    compileOnly("org.apache.logging.log4j:log4j-core:2.22.1")
 
     testImplementation(platform("org.junit:junit-bom:5.11.4"))
     testImplementation("org.junit.jupiter:junit-jupiter")
+    testImplementation("org.apache.logging.log4j:log4j-core:2.22.1")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }
 
