@@ -4,6 +4,7 @@ import calebxzau.rdi.client.modcatalog.ModCatalog
 import calebxzau.rdi.client.modcatalog.CatalogModMetadata
 import calebxzau.rdi.client.modcatalog.CatalogSlugRef
 import calebxzhou.rdi.common.archive.forEachArchiveEntry
+import calebxzhou.rdi.common.archive.resolveClientPackEntryPath
 import calebxzhou.rdi.common.model.McVersion
 import calebxzhou.rdi.common.model.Mod
 import calebxzhou.rdi.common.model.ModLoader
@@ -37,6 +38,22 @@ import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class PackModelsTest {
+    @Test
+    fun `raw client jar shadows manifest-only common mod for sha1 and fallback sources`() {
+        val entry = calebxzhou.rdi.common.model.ModrinthModpackIndex.FileEntry(
+            path = "mods/example.jar",
+            hashes = calebxzhou.rdi.common.model.ModrinthModpackIndex.Hashes("a".repeat(40), "b".repeat(128)),
+            downloads = listOf("https://example.test/example.jar"),
+            fileSize = 3,
+        )
+        val mr = Mod("mr", "project", "example", "file", "a".repeat(40))
+        val cf = Mod("cf", "project", "example", "file", "123", downloadUrls = entry.downloads)
+        val other = mr.copy(hash = "c".repeat(40))
+        val marked = markRawManifestModReplacements(listOf(mr, cf, other), listOf(entry), setOf("mods/example.jar"))
+        assertEquals(listOf(true, true, false), marked.map(Mod::clientOverrideReplaced))
+        assertTrue(markRawManifestModReplacements(listOf(mr), listOf(entry), setOf("mods/other.jar")).none(Mod::clientOverrideReplaced))
+    }
+
     @Test
     fun `Fabric upload recognition stops before catalog resolution`() = runBlocking {
         val root = Files.createTempDirectory("pack-proc-fabric-gate").toFile()
@@ -284,6 +301,129 @@ class PackModelsTest {
                 .loadLocalModpack(noCallModCatalog(), onlyKeptArchive, onProgress = {})
                 .getOrThrow()
             assertFalse(onlyKept.containsExcludedMcaFiles)
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `Modrinth upload accepts client-overrides without overrides and keeps archive layers separate`() = runBlocking {
+        val root = Files.createTempDirectory("pack-proc-client-overrides-preflight").toFile()
+        try {
+            val archive = root.resolve("client-overrides.zip")
+            writeZip(
+                archive,
+                mapOf(
+                    "modrinth.index.json" to modrinthIndexBytes(),
+                    "client-overrides/config/example.json" to "client".toByteArray(),
+                    "client-overrides/resourcepacks/theme.zip" to zipBytes(mapOf("assets/theme.txt" to byteArrayOf(1))),
+                ),
+            )
+            val loaded = ModpackProcessor(
+                PackProcessingPaths(root.resolve("work")),
+                embeddedClientExtraMatcher = { _, _ -> emptyList() },
+            ).loadLocalModpack(noCallModCatalog(), archive, onProgress = {}).getOrThrow()
+
+            assertEquals(LocalModpackSourceType.MODRINTH, loaded.sourceType)
+            assertEquals("test", loaded.packName)
+            assertEquals("client", loaded.sourceDir.resolve("client-overrides/config/example.json").readText())
+            assertTrue(loaded.sourceDir.resolve("overrides/config/example.json").exists().not())
+            val uploaded = ModpackProcessor(PackProcessingPaths(root.resolve("archive-work")))
+                .buildUploadArchive(loaded.toUploadPayload())
+            val paths = mutableSetOf<String>()
+            forEachArchiveEntry(uploaded) { paths += it.path }
+            assertTrue("client-overrides/config/example.json" in paths)
+            assertTrue("client-overrides/resourcepacks/theme.zip" in paths)
+            assertFalse("overrides/config/example.json" in paths)
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `client-overrides extra path wins over overrides and direct files`() = runBlocking {
+        val root = Files.createTempDirectory("pack-proc-client-overrides-extra-precedence").toFile()
+        try {
+            writeZip(root.resolve("resourcepacks/theme.zip"), mapOf("assets/theme.txt" to byteArrayOf(1)))
+            writeZip(root.resolve("overrides/resourcepacks/theme.zip"), mapOf("assets/theme.txt" to byteArrayOf(2)))
+            writeZip(root.resolve("client-overrides/resourcepacks/theme.zip"), mapOf("assets/theme.txt" to byteArrayOf(3)))
+
+            val archive = ModpackProcessor(PackProcessingPaths(root.resolve("work")))
+                .buildUploadArchive(root, "client-overrides-theme")
+            val entries = mutableMapOf<String, ByteArray>()
+            forEachArchiveEntry(archive) { if (!it.isDirectory) entries[it.path] = it.bytes!! }
+
+            assertFalse("resourcepacks/theme.zip" in entries)
+            assertFalse("overrides/resourcepacks/theme.zip" in entries)
+            assertTrue("client-overrides/resourcepacks/theme.zip" in entries)
+            assertNestedZipEntryEquals(
+                entries.getValue("client-overrides/resourcepacks/theme.zip"),
+                "assets/theme.txt",
+                byteArrayOf(3),
+            )
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `client-overrides embedded mod remains client-only and does not suppress common mod`() {
+        val common = Mod(platform = "mr", projectId = "project", slug = "example", fileId = "file", hash = "hash", side = Mod.Side.BOTH)
+        val client = embeddedModUploadSide(common.copy(fileId = "client-file", hash = "client-hash"), isClientOverride = true)
+        val mods = distinctUploadMods(listOf(common, client))
+
+        assertEquals(Mod.Side.CLIENT, client.side)
+        assertTrue(client.clientOnlyOverride)
+        assertEquals(listOf(Mod.Side.BOTH, Mod.Side.CLIENT), mods.map { it.side })
+        val duplicate = distinctUploadMods(listOf(common, embeddedModUploadSide(common, true))).single()
+        assertEquals(Mod.Side.BOTH, duplicate.side)
+        assertFalse(duplicate.clientOnlyOverride)
+    }
+
+    @Test
+    fun `client override flag keeps forced both-side slug client-only during upload processing`() {
+        val overlayMod = Mod(
+            platform = "mr",
+            projectId = "project",
+            slug = "smartbrainlib",
+            fileId = "file",
+            hash = "hash",
+            side = Mod.Side.CLIENT,
+            clientOnlyOverride = true,
+        )
+
+        val processed = ModpackProcessor(PackProcessingPaths(File("unused")))
+            .processUploadMods(listOf(overlayMod))
+
+        assertEquals(Mod.Side.CLIENT, processed.single().side)
+        assertTrue(processed.single().clientOnlyOverride)
+    }
+
+    @Test
+    fun `client-overrides mod at same logical path preserves common jar and selects client jar`() = runBlocking {
+        val root = Files.createTempDirectory("pack-proc-client-overrides-mod-path").toFile()
+        try {
+            val common = root.resolve("mods/example.jar").also { it.parentFile.mkdirs() }
+            writeModJar(common, "example", "1.0")
+            val client = root.resolve("client-overrides/mods/example.jar")
+                .also { it.parentFile.mkdirs() }
+            writeModJar(client, "example", "2.0")
+            val candidates = listOf(common, client).mapNotNull { file ->
+                val path = file.relativeTo(root).invariantSeparatorsPath
+                resolveClientPackEntryPath(path, allowUnprefixed = true)?.let { file to it }
+            }
+
+            val winners = selectEmbeddedModPathWinners(candidates)
+            assertEquals(setOf(common, client), winners.map { it.first }.toSet())
+            assertFalse(isClientOverrideEmbeddedModPath("mods/example.jar"))
+            assertTrue(isClientOverrideEmbeddedModPath("client-overrides/mods/example.jar"))
+
+            val uploaded = ModpackProcessor(PackProcessingPaths(root.resolve("work")))
+                .buildUploadArchive(root, "same-path-mod-layers")
+            val paths = mutableSetOf<String>()
+            forEachArchiveEntry(uploaded) { paths += it.path }
+            assertTrue("mods/example.jar" in paths)
+            assertTrue("client-overrides/mods/example.jar" in paths)
         } finally {
             root.deleteRecursively()
         }

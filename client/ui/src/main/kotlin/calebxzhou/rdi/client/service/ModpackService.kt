@@ -17,7 +17,8 @@ import calebxzhou.rdi.client.service.ModpackService.startInstallTask2
 import calebxzhou.rdi.client.ui.McPlayArgs
 import calebxzau.rdi.client.ui.moveToOsTrash
 import calebxzau.rdi.client.ui.loadResourceStream
-import calebxzhou.rdi.common.archive.extractArchiveToDir
+import calebxzhou.rdi.common.archive.extractClientPackArchiveToDir
+import calebxzhou.rdi.common.service.ModpackModProcessor
 import calebxzhou.rdi.common.json
 import calebxzhou.rdi.common.exception.RequestError
 import calebxzhou.rdi.common.model.*
@@ -60,11 +61,6 @@ object ModpackService {
             lgr.warn(cause) { "批量获取整合包简介失败" }
             Result.failure(cause)
         }
-    }
-
-    private fun normalizeInstalledClientPackPath(path: String): String? {
-        val normalized = path.replace('\\', '/').trimStart('/')
-        return normalized.removePrefix("overrides/").takeIf { it.isNotBlank() }
     }
 
     internal fun clientPackContentRequest(
@@ -122,7 +118,8 @@ object ModpackService {
         clientExtras: List<calebxzau.rdi.common.model.Content> = emptyList(),
     ): Task2 {
         var clientPackRequest: ContentRequest? = null
-        val installableMods = mods.filter(::isClientInstallableMod)
+        val scopedMods = if (mods.any { it.clientOnlyOverride || it.clientOverrideReplaced }) ModpackModProcessor.processMods(mods, modLoader) else mods
+        val installableMods = scopedMods.filter(::isClientInstallableMod)
 
         val downloadClientPackTask = Task2.Leaf("下载客户端整合包") { ctx ->
             val hash = server.makeRequest<String>("modpack/$modpackId/version/$verName/client/hash").data
@@ -176,6 +173,7 @@ object ModpackService {
             embeddedModOriginalFileNames = embeddedModOriginalFileNames,
             clientExtras = clientExtras,
             clientPackProvider = { clientPackFile },
+            clientPackLayered = true,
         )
     )
 
@@ -272,11 +270,13 @@ object ModpackService {
         clientExtras: List<calebxzau.rdi.common.model.Content> = emptyList(),
         embeddedModOriginalFileNames: Map<String, String> = emptyMap(),
         clientPackProvider: (() -> File)?,
+        clientPackLayered: Boolean = false,
         clientPackRequestProvider: (() -> ContentRequest)? = null,
         versionDir: File = getVersionDir(modpackId, verName),
         contentStore: ClientContentStore = ClientContentStores.shared,
     ): List<Task2> {
-        val installableMods = mods.filter(::isClientInstallableMod)
+        val scopedMods = if (mods.any { it.clientOnlyOverride || it.clientOverrideReplaced }) ModpackModProcessor.processMods(mods, modLoader) else mods
+        val installableMods = scopedMods.filter(::isClientInstallableMod)
         val prepareVersionDirTask = Task2.Leaf("准备安装目录") { ctx ->
             if (versionDir.exists()) {
                 ctx.emit(Task2Progress("清理旧版本文件...", null))
@@ -293,10 +293,10 @@ object ModpackService {
         val extractTask = Task2.Leaf("解压客户端整合包") { ctx ->
             fun extract(clientPack: File) {
                 ctx.emit(Task2Progress("扫描压缩包内容...", 0f))
-                extractArchiveToDir(
+                extractClientPackArchiveToDir(
                     archiveFile = clientPack,
                     targetDir = versionDir,
-                    pathTransform = ::normalizeInstalledClientPackPath
+                    layered = clientPackLayered,
                 ) { done, total, currentPath ->
                     val fraction = done.toFloat() / total.coerceAtLeast(1).toFloat()
                     ctx.emit(Task2Progress("解压中 ${currentPath.substringAfterLast('/')}($done/$total)", fraction))

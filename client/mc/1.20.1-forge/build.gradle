@@ -318,6 +318,9 @@ legacyForge {
     }
 }
 
+// Cache packet/store tests bootstrap Minecraft and need its runtime resources too.
+legacyForge.addModdingDependenciesTo(sourceSets.test)
+
 dependencies {
     earlyDisplayNative("org.bytedeco:ffmpeg:8.0.1-1.5.13:windows-x86_64-gpl") {
         transitive = false

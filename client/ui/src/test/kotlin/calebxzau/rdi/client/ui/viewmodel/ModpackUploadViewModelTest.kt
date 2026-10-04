@@ -42,6 +42,26 @@ import kotlin.test.assertTrue
 
 class ModpackUploadViewModelTest {
     @Test
+    fun `same content client override explicitly present on server becomes shared`() = runBlocking {
+        val client = Mod("mr", "project", "example", "file", "a".repeat(40), Mod.Side.CLIENT, clientOnlyOverride = true)
+        val server = client.copy(side = Mod.Side.SERVER, clientOnlyOverride = false)
+        val merged = mergeAsBoth(UiMod(client), UiMod(server))
+        assertEquals(Mod.Side.BOTH, merged.side)
+        assertEquals(false, merged.mod.clientOnlyOverride)
+    }
+
+    @Test
+    fun `different client override and selected server versions remain separate`() = runBlocking {
+        // Invalid cache digests deliberately keep this pure merge test away from content stores.
+        val client = Mod("mr", "project", "example", "client-file", "client-hash", Mod.Side.CLIENT, clientOnlyOverride = true)
+        val server = client.copy(fileId = "server-file", hash = "server-hash", side = Mod.Side.SERVER, clientOnlyOverride = false)
+        val merged = mergeClientAndServerMods(listOf(UiMod(client)), listOf(UiMod(server)))
+        assertEquals(2, merged.size)
+        assertEquals(Mod.Side.CLIENT, merged.first { it.hash == "client-hash" }.side)
+        assertEquals(Mod.Side.SERVER, merged.first { it.hash == "server-hash" }.side)
+    }
+
+    @Test
     fun `merge keeps URLs separate for different local content`() = runBlocking {
         val root = Files.createTempDirectory("rdi-merge-content-mismatch").toFile()
         try {

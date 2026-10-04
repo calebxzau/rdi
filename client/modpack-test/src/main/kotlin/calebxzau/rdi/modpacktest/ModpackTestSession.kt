@@ -1,5 +1,7 @@
 package calebxzau.rdi.modpacktest
 
+import calebxzhou.rdi.common.service.ModpackModProcessor
+
 import calebxzhou.rdi.common.model.McVersion
 import calebxzhou.rdi.common.model.Mod
 import calebxzhou.rdi.common.model.resolveServerRuntime
@@ -97,7 +99,10 @@ class ModpackTestSession(
             check(activeRun == null && process == null) {
                 if (target == ModpackTestTarget.CLIENT) "测试客户端已经在运行中" else "测试服务器已经在运行中"
             }
-            TestRun(mods.toList(), System.currentTimeMillis()).also {
+            val scopedMods = if (mods.any { it.clientOnlyOverride || it.clientOverrideReplaced }) {
+                ModpackModProcessor.processMods(mods, loadedModpack.modloader)
+            } else mods.toList()
+            TestRun(scopedMods, System.currentTimeMillis()).also {
                 activeRun = it
                 currentMods = it.mods
                 _state.value = ModpackTestState(status = ModpackTestStatus.RUNNING)
@@ -571,6 +576,7 @@ private fun createClientTestBaseDir(loadedModpack: LoadedLocalModpack, workDir: 
         sourceDir = loadedModpack.sourceDir,
         targetDir = versionDir,
         skipModsDirectories = true,
+        includeClientOverrides = true,
     )
     writeMinecraftOptions(versionDir, loadedModpack.mcVersion).getOrThrow()
     return versionDir
@@ -597,7 +603,17 @@ private fun prepareClientTestRunContent(
     modsDir.mkdirs()
     stageSourceModDirectories(modsDir, sourceDir)
     stageSourceModFiles(modsDir, sourceDir, mods) { it.side != Mod.Side.SERVER && it.side != Mod.Side.UNKNOWN }
-    stageDownloadedMods(modsDir, modSourceDir, mods) { it.side != Mod.Side.SERVER && it.side != Mod.Side.UNKNOWN }
+    stageClientOverrideModDirectories(modsDir, sourceDir)
+    val clientOverrideModNames = stageClientOverrideModFiles(modsDir, sourceDir, mods) {
+        it.side != Mod.Side.SERVER && it.side != Mod.Side.UNKNOWN
+    }
+    stageDownloadedMods(
+        modsDir,
+        modSourceDir,
+        mods,
+        includeMod = { it.side != Mod.Side.SERVER && it.side != Mod.Side.UNKNOWN },
+        preserveExistingNames = clientOverrideModNames,
+    )
 }
 
 private fun cleanRuntimeOutput(directory: File, children: List<String>) {
@@ -612,18 +628,27 @@ private fun copyTestPackBaseContent(
     targetDir: File,
     skipRootChild: (File) -> Boolean = { false },
     skipModsDirectories: Boolean = false,
+    includeClientOverrides: Boolean = false,
 ) {
-    val overridesDir = sourceDir.resolve("overrides")
-    if (overridesDir.exists() && overridesDir.isDirectory) {
-        copyDirectoryContent(overridesDir, targetDir, skipModsDirectories)
-        return
-    }
     sourceDir.listFiles()?.forEach { child ->
         if (skipRootChild(child)) return@forEach
         if (child.name.equals("mods", ignoreCase = true)) return@forEach
+        if (child.name.equals("overrides", ignoreCase = true)) return@forEach
+        if (child.name.equals("client-overrides", ignoreCase = true)) return@forEach
+        if (child.name.equals("server", ignoreCase = true)) return@forEach
         if (child.name.equals("manifest.json", ignoreCase = true)) return@forEach
         if (child.name.equals("modrinth.index.json", ignoreCase = true)) return@forEach
         copyFileOrDirectory(child, targetDir.resolve(child.name), skipModsDirectories)
+    }
+    val overridesDir = sourceDir.resolve("overrides")
+    if (overridesDir.exists() && overridesDir.isDirectory) {
+        copyDirectoryContent(overridesDir, targetDir, skipModsDirectories)
+    }
+    if (includeClientOverrides) {
+        val clientOverridesDir = sourceDir.resolve("client-overrides")
+        if (clientOverridesDir.exists() && clientOverridesDir.isDirectory) {
+            copyDirectoryContent(clientOverridesDir, targetDir, skipModsDirectories)
+        }
     }
 }
 
@@ -665,6 +690,29 @@ private fun stageSourceModFiles(
     }
 }
 
+private fun stageClientOverrideModFiles(
+    modsDir: File,
+    sourceDir: File,
+    mods: List<Mod>,
+    includeMod: (Mod) -> Boolean,
+): Set<String> {
+    val sourceModsDir = sourceDir.resolve("client-overrides/mods")
+    if (!sourceModsDir.exists() || !sourceModsDir.isDirectory) return emptySet()
+    val targetNames = linkedSetOf<String>()
+    sourceModsDir.listFiles()
+        ?.asSequence()
+        ?.filter { it.isFile && it.extension.equals("jar", ignoreCase = true) }
+        ?.filterNot(::isClientOnlyMarkedModFile)
+        ?.forEach { source ->
+            val matchedMod = findMatchedSourceMod(source, mods)
+            if (matchedMod != null && !includeMod(matchedMod)) return@forEach
+            val targetName = matchedMod?.fileName ?: source.name
+            stageModFile(source, modsDir.resolve(targetName), replaceExisting = true)
+            targetNames += targetName
+        }
+    return targetNames
+}
+
 private fun stageSourceModDirectories(modsDir: File, sourceDir: File) {
     listOf(sourceDir.resolve("mods"), sourceDir.resolve("overrides/mods")).forEach { sourceModsDir ->
         if (!sourceModsDir.exists() || !sourceModsDir.isDirectory) return@forEach
@@ -673,6 +721,15 @@ private fun stageSourceModDirectories(modsDir: File, sourceDir: File) {
             ?.filter(File::isDirectory)
             ?.forEach { copyFileOrDirectory(it, modsDir.resolve(it.name)) }
     }
+}
+
+private fun stageClientOverrideModDirectories(modsDir: File, sourceDir: File) {
+    val sourceModsDir = sourceDir.resolve("client-overrides/mods")
+    if (!sourceModsDir.exists() || !sourceModsDir.isDirectory) return
+    sourceModsDir.listFiles()
+        ?.asSequence()
+        ?.filter(File::isDirectory)
+        ?.forEach { copyFileOrDirectory(it, modsDir.resolve(it.name)) }
 }
 
 private fun findMatchedSourceMod(source: File, mods: List<Mod>): Mod? {
@@ -687,6 +744,7 @@ private fun stageDownloadedMods(
     modsDir: File,
     modSourceDir: File,
     mods: List<Mod>,
+    preserveExistingNames: Set<String> = emptySet(),
     includeMod: (Mod) -> Boolean,
 ) {
     mods.asSequence().filter(includeMod).forEach { mod ->
@@ -694,14 +752,19 @@ private fun stageDownloadedMods(
             .map(modSourceDir::resolve)
             .firstOrNull(File::isFile)
             ?: return@forEach
+        if (mod.fileName in preserveExistingNames) return@forEach
         stageModFile(source, modsDir.resolve(mod.fileName))
     }
 }
 
-private fun stageModFile(source: File, target: File) {
+private fun stageModFile(source: File, target: File, replaceExisting: Boolean = false) {
     check(source.isFile) { "源Mod文件不存在: ${source.absolutePath}" }
     target.parentFile?.mkdirs()
     val targetPath = target.toPath()
+    if (replaceExisting && Files.exists(targetPath)) {
+        Files.copy(source.toPath(), targetPath, StandardCopyOption.REPLACE_EXISTING)
+        return
+    }
     if (!Files.exists(targetPath)) {
         hardLinkFile(source, target).getOrThrow()
         return

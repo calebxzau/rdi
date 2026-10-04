@@ -24,6 +24,72 @@ import kotlin.test.assertTrue
 
 class ModpackClientExtrasInstallTest {
     @Test
+    fun `raw client replacement suppresses common downloaded mod during upload install`() = runBlocking {
+        val root = Files.createTempDirectory("client-raw-replacement").toFile()
+        try {
+            val bytes = "custom-client-mod".toByteArray()
+            val archive = writeZip(root.resolve("full.zip"), "client-overrides/mods/example.jar" to bytes)
+            val common = calebxzhou.rdi.common.model.Mod(
+                "mr", "example", "loot-beams-refork", "common-file", "a".repeat(40),
+                clientOverrideReplaced = true,
+            )
+            val target = root.resolve("instance")
+            val tasks = ModpackService.createInstallClientZipTasks2(
+                mcVersion = calebxzhou.rdi.common.model.McVersion.V201,
+                modLoader = calebxzhou.rdi.common.model.ModLoader.forge,
+                modpackId = org.bson.types.ObjectId(),
+                verName = "test",
+                mods = listOf(common),
+                clientPackProvider = { archive },
+                clientPackLayered = true,
+                versionDir = target,
+                contentStore = ClientContentStore(root.resolve("cache").apply { mkdirs() }.toPath()),
+            )
+            tasks.forEach { (it as Task2.Leaf).action(Task2Context(emitProgress = {})) }
+            assertContentEquals(bytes, target.resolve("mods/example.jar").readBytes())
+            assertFalse(target.resolve("mods/${common.fileName}").exists())
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `built layered client pack applies client overlay regardless of archive order`() = runBlocking {
+        val root = Files.createTempDirectory("client-layered-pack").toFile()
+        try {
+            val archive = writeZip(
+                root.resolve("client.zip"),
+                "client-overrides/config/shared.txt" to "client".toByteArray(),
+                "manifest.json" to "manifest".toByteArray(),
+                "server/server.properties" to "server".toByteArray(),
+                "overrides/config/shared.txt" to "common".toByteArray(),
+                "config/direct.txt" to "direct".toByteArray(),
+            )
+            val target = root.resolve("instance")
+            val tasks = ModpackService.createInstallClientZipTasks2(
+                mcVersion = calebxzhou.rdi.common.model.McVersion.V201,
+                modLoader = calebxzhou.rdi.common.model.ModLoader.forge,
+                modpackId = org.bson.types.ObjectId(),
+                verName = "test",
+                mods = emptyList(),
+                clientPackProvider = { archive },
+                clientPackLayered = true,
+                versionDir = target,
+                contentStore = ClientContentStore(root.resolve("cache").apply { mkdirs() }.toPath()),
+            )
+
+            tasks.forEach { task -> (task as Task2.Leaf).action(Task2Context(emitProgress = {})) }
+
+            assertContentEquals("client".toByteArray(), target.resolve("config/shared.txt").readBytes())
+            assertFalse(target.resolve("config/direct.txt").exists())
+            assertFalse(target.resolve("manifest.json").exists())
+            assertFalse(target.resolve("server/server.properties").exists())
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
     fun `built install extracts before extras and keeps local override`() = runBlocking {
         val root = Files.createTempDirectory("client-extras-built").toFile()
         try {
@@ -46,6 +112,7 @@ class ModpackClientExtrasInstallTest {
                 mods = emptyList(),
                 clientExtras = listOf(same, resource, shaderExtra),
                 clientPackProvider = { archive },
+                clientPackLayered = true,
                 versionDir = target,
                 contentStore = store,
             )
@@ -68,7 +135,7 @@ class ModpackClientExtrasInstallTest {
     fun `normal install resolves archive from cache and places extras at roots`() = runBlocking {
         val root = Files.createTempDirectory("client-extras-normal").toFile()
         try {
-            val archive = writeZip(root.resolve("client.zip"), "overrides/config/test.txt" to byteArrayOf(1))
+            val archive = writeZip(root.resolve("client.zip"), "config/test.txt" to byteArrayOf(1))
             val archiveHash = archive.readBytes().sha1
             val cache = root.resolve("cache").apply { mkdirs() }
             Files.copy(archive.toPath(), cache.resolve("$archiveHash.sha1").toPath())
@@ -102,10 +169,14 @@ class ModpackClientExtrasInstallTest {
     }
 
     @Test
-    fun `install with empty client extras keeps base archive without supplemental files`(): Unit = runBlocking {
+    fun `flat client artifact preserves literal nested overrides paths`(): Unit = runBlocking {
         val root = Files.createTempDirectory("client-extras-empty").toFile()
         try {
-            val archive = writeZip(root.resolve("client.zip"), "overrides/config/test.txt" to byteArrayOf(1))
+            val archive = writeZip(
+                root.resolve("client.zip"),
+                "overrides/config/example.txt" to "nested-override".toByteArray(),
+                "configother/test.txt" to "neighbor".toByteArray(),
+            )
             val target = root.resolve("instance")
             val tasks = ModpackService.createInstallClientZipTasks2(
                 mcVersion = calebxzhou.rdi.common.model.McVersion.V201,
@@ -121,7 +192,8 @@ class ModpackClientExtrasInstallTest {
 
             tasks.forEach { task -> (task as Task2.Leaf).action(Task2Context(emitProgress = {})) }
 
-            assertContentEquals(byteArrayOf(1), target.resolve("config/test.txt").readBytes())
+            assertContentEquals("nested-override".toByteArray(), target.resolve("overrides/config/example.txt").readBytes())
+            assertContentEquals("neighbor".toByteArray(), target.resolve("configother/test.txt").readBytes())
             assertFalse(target.resolve("resourcepacks").exists())
             assertFalse(target.resolve("shaderpacks").exists())
         } finally {

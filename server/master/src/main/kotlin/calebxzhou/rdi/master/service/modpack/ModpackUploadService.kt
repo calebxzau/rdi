@@ -7,6 +7,7 @@ import calebxzhou.rdi.common.DEBUG
 import calebxzhou.rdi.common.VALID_NAME_REGEX
 import calebxzhou.rdi.common.archive.PackArchiveFormat
 import calebxzhou.rdi.common.archive.detectArchiveFormat
+import calebxzhou.rdi.common.archive.validateModpackArchive
 import calebxzhou.rdi.common.exception.RequestError
 import calebxzhou.rdi.common.model.*
 import calebxzhou.rdi.common.service.ModpackModProcessor
@@ -32,6 +33,8 @@ import java.security.MessageDigest
 import java.util.Locale
 import java.util.regex.Pattern
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -557,7 +560,7 @@ object ModpackUploadService {
         return paths.markerFile
     }
 
-    private fun prepareVersionUpload(
+    private suspend fun prepareVersionUpload(
         modpack: Modpack,
         verName: String,
         uploadFile: File,
@@ -566,6 +569,14 @@ object ModpackUploadService {
         uploaderId: org.bson.types.ObjectId,
         stageArchive: Boolean = true,
     ): PreparedVersionUpload {
+        try {
+            withContext(Dispatchers.IO) { validateModpackArchive(uploadFile) { coroutineContext.ensureActive() } }
+        } catch (error: Exception) {
+            if (error is CancellationException) throw error
+            if (error is RequestError) throw error
+            lgr.error(error) { "整合包归档预检失败: ${uploadFile.absolutePath}" }
+            throw RequestError("整合包归档无效或超出解压限制: ${error.message ?: "请检查文件后重试"}")
+        }
         mods.sortBy { it.slug.lowercase() }
         val version = Modpack.Version(
             modpackId = modpack._id,

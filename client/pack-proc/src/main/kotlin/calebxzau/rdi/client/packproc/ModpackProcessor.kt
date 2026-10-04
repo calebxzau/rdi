@@ -12,6 +12,8 @@ import calebxzau.rdi.mediaproc.OggCodecDetector
 import calebxzau.rdi.mediaproc.OggTranscodeResult
 import calebxzau.rdi.mediaproc.OggTranscoder
 import calebxzhou.rdi.common.archive.TarZstArchiveWriter
+import calebxzhou.rdi.common.archive.ClientPackEntryPath
+import calebxzhou.rdi.common.archive.resolveClientPackEntryPath
 import calebxzhou.rdi.common.archive.extractArchiveToDir
 import calebxzhou.rdi.common.archive.listArchiveEntries
 import calebxzhou.rdi.common.deser
@@ -82,7 +84,65 @@ internal fun mapCurseForgeExtraCandidate(
 }
 
 private fun normalizeEffectiveClientExtraPath(path: String): String =
-    path.replace('\\', '/').trimStart('/').removePrefix("overrides/").lowercase()
+    resolveClientPackEntryPath(path, allowUnprefixed = true)?.relativePath?.lowercase()
+        ?: path.replace('\\', '/').trimStart('/').lowercase()
+
+internal fun embeddedModUploadSide(mod: Mod, isClientOverride: Boolean): Mod =
+    if (isClientOverride) mod.copy(side = Mod.Side.CLIENT, clientOnlyOverride = true) else mod
+
+internal fun markRawManifestModReplacements(
+    mods: List<Mod>,
+    entries: List<ModrinthModpackIndex.FileEntry>,
+    replacementPaths: Set<String>,
+): List<Mod> {
+    val replacedEntries = entries.filter {
+        it.path.replace('\\', '/').trimStart('/').lowercase() in replacementPaths
+    }
+    return mods.map { mod ->
+        val replaced = replacedEntries.any { entry ->
+            (mod.platform == "mr" && mod.hash.equals(entry.hashes.sha1, ignoreCase = true)) ||
+                entry.downloads.any { it in mod.downloadUrls }
+        }
+        if (replaced) mod.copy(clientOverrideReplaced = true) else mod
+    }
+}
+
+internal fun isClientOverrideEmbeddedModPath(path: String): Boolean =
+    resolveClientPackEntryPath(path)?.priority == 2
+
+internal fun distinctUploadMods(mods: List<Mod>): MutableList<Mod> {
+    val merged = linkedMapOf<String, Mod>()
+    mods.forEach { mod ->
+        val key = "${mod.platform}:${mod.projectId}:${mod.fileId}:${mod.hash}"
+        val previous = merged[key]
+        if (previous == null) {
+            merged[key] = mod
+        } else {
+            val side = when {
+                previous.side == mod.side -> previous.side
+                previous.side == Mod.Side.UNKNOWN -> mod.side
+                mod.side == Mod.Side.UNKNOWN -> previous.side
+                else -> Mod.Side.BOTH
+            }
+            merged[key] = previous.copy(
+                side = side,
+                clientOnlyOverride = previous.clientOnlyOverride && mod.clientOnlyOverride,
+                clientOverrideReplaced = previous.clientOverrideReplaced || mod.clientOverrideReplaced,
+            )
+        }
+    }
+    return merged.values.toMutableList()
+}
+
+internal fun selectEmbeddedModPathWinners(
+    candidates: List<Pair<File, ClientPackEntryPath>>,
+): List<Pair<File, ClientPackEntryPath>> {
+    val selectedPaths = candidates.groupBy { it.second.relativePath.lowercase() to (it.second.priority == 2) }
+        .values
+        .map { samePath -> samePath.maxBy { it.second.priority } }
+        .toSet()
+    return candidates.filter { it in selectedPaths }
+}
 
 /**
  * Stages a matched local extra only after rechecking the bytes against the
@@ -269,7 +329,24 @@ class ModpackProcessor(
             onProgress(LoadProgress.Phase("发现包内内置mods${embeddedMods.size}个"))
         }
         val embeddedMatches = matchLocalModFiles(embeddedMods, onProgress)
-        val resolvedEmbeddedMods = embeddedMatches.mods.map { it.withLocalFabricSide(payload.modloader) }
+        val clientOverrideMods = embeddedMods.filter { isClientOverrideMod(it, sourceDir) }.toSet()
+        val rawClientReplacementPaths = embeddedMatches.unmatchedFiles
+            .filter { it in clientOverrideMods }
+            .mapNotNull { resolveClientPackEntryPath(it.relativeTo(sourceDir).invariantSeparatorsPath)?.relativePath?.lowercase() }
+            .toSet()
+        val resolvedEmbeddedMods = embeddedMatches.mods.map { match ->
+            val localMatch = match.withLocalFabricSide(payload.modloader)
+            if (localMatch.file in clientOverrideMods) {
+                localMatch.copy(mod = embeddedModUploadSide(localMatch.mod, isClientOverride = true),
+                    card = localMatch.card?.copy(side = Mod.Side.CLIENT))
+            } else {
+                val gamePath = localMatch.file?.relativeTo(sourceDir)?.invariantSeparatorsPath
+                    ?.let { resolveClientPackEntryPath(it, allowUnprefixed = true)?.relativePath?.lowercase() }
+                if (gamePath in rawClientReplacementPaths) {
+                    localMatch.copy(mod = localMatch.mod.copy(clientOverrideReplaced = true))
+                } else localMatch
+            }
+        }
         if (embeddedMatches.mods.isNotEmpty()) {
             onProgress(LoadProgress.Phase("已识别内置mods${embeddedMatches.mods.size}个"))
         }
@@ -291,8 +368,10 @@ class ModpackProcessor(
                     }.toMap()
                 }.getOrThrow()
                 payload.clientExtras = loaded.clientExtras.toMutableList()
-                (loaded.mods + resolvedEmbeddedMods.map { it.toMod() })
-                    .distinctBy { "${it.platform}:${it.projectId}:${it.fileId}:${it.hash}" }
+                distinctUploadMods(
+                    markRawManifestModReplacements(loaded.mods, parsedIndex.index.files, rawClientReplacementPaths) +
+                        resolvedEmbeddedMods.map { it.toMod() }
+                )
                     .toMutableList()
             }
 
@@ -302,8 +381,7 @@ class ModpackProcessor(
                 val baseMods = CurseForgeService.mapManifestEntriesToMods(modpackData.manifest.files)
                 payload.clientExtras = CurseForgeService.mapManifestEntriesToContents(modpackData.manifest.files)
                     .toMutableList()
-                (baseMods + resolvedEmbeddedMods.map { it.toMod() })
-                    .distinctBy { "${it.platform}:${it.projectId}:${it.fileId}:${it.hash}" }
+                distinctUploadMods(baseMods + resolvedEmbeddedMods.map { it.toMod() })
                     .toMutableList()
             }
         }
@@ -374,17 +452,19 @@ class ModpackProcessor(
     private fun collectAllLocalExtraCandidates(rootDir: File): List<ExtraCandidate> =
         clientExtraRoots(rootDir).flatMap { (directory, gameRoot, priority) ->
             if (!directory.isDirectory) return@flatMap emptyList()
-            val prefix = if (directory.relativeTo(rootDir).invariantSeparatorsPath
-                    .startsWith("overrides/", ignoreCase = true)
-            ) "overrides/" else ""
             directory.listFiles().orEmpty().filter { child ->
                 child.isDirectory || (child.isFile && child.extension.equals("zip", true))
-            }.map { child ->
+            }.mapNotNull { child ->
+                val sourceRelativePath = child.relativeTo(rootDir).invariantSeparatorsPath
+                val mapped = resolveClientPackEntryPath(sourceRelativePath, allowUnprefixed = true)
+                    ?: return@mapNotNull null
+                val expectedPrefix = "$gameRoot/"
+                if (!mapped.relativePath.startsWith(expectedPrefix, ignoreCase = true)) return@mapNotNull null
                 ExtraCandidate(
                     file = child,
-                    sourceRelativePath = "$prefix$gameRoot/${child.name}",
-                    gamePath = "$gameRoot/${child.name}",
-                    priority = priority,
+                    sourceRelativePath = sourceRelativePath,
+                    gamePath = mapped.relativePath,
+                    priority = mapped.priority,
                 )
             }
         }
@@ -398,6 +478,8 @@ class ModpackProcessor(
         Triple(rootDir.resolve("shaderpacks"), "shaderpacks", 0),
         Triple(rootDir.resolve("overrides/resourcepacks"), "resourcepacks", 1),
         Triple(rootDir.resolve("overrides/shaderpacks"), "shaderpacks", 1),
+        Triple(rootDir.resolve("client-overrides/resourcepacks"), "resourcepacks", 2),
+        Triple(rootDir.resolve("client-overrides/shaderpacks"), "shaderpacks", 2),
     )
 
     suspend fun loadServerPack(
@@ -846,7 +928,7 @@ class ModpackProcessor(
                 throw ModpackError("找不到此包的概要文件(manifest.json/modrinth.index.json)")
             }
             val hasOverrides = archiveEntryNames?.let { hasOverridesDir(it, packType) } ?: hasOverridesDir(input)
-            if (!hasOverrides) {
+            if (packType == PackType.CURSEFORGE && !hasOverrides) {
                 throw ModpackError("找不到包中overrides目录")
             }
             PackStructurePreflight(packType)
@@ -994,10 +1076,21 @@ class ModpackProcessor(
     private fun collectEmbeddedModFiles(rootDir: File): List<File> {
         val modFiles = rootDir.walkTopDown()
             .filter { it.isFile && it.extension.equals("jar", ignoreCase = true) }
-            .filter { it.invariantSeparatorsPath.contains("/mods/") }
+            .mapNotNull { file ->
+                val relative = file.relativeTo(rootDir).invariantSeparatorsPath
+                val mapped = resolveClientPackEntryPath(relative, allowUnprefixed = true) ?: return@mapNotNull null
+                if (!mapped.relativePath.startsWith("mods/", ignoreCase = true)) return@mapNotNull null
+                file to mapped
+            }
             .toList()
-        return selectPreferredModFiles(modFiles).selected
+        return selectEmbeddedModPathWinners(modFiles)
+            .groupBy { it.second.priority }
+            .values
+            .flatMap { scoped -> selectPreferredModFiles(scoped.map { it.first }).selected }
     }
+
+    private fun isClientOverrideMod(file: File, rootDir: File): Boolean =
+        isClientOverrideEmbeddedModPath(file.relativeTo(rootDir).invariantSeparatorsPath)
 
     private fun collectServerPackModFiles(rootDir: File): ModFileSelection {
         val modsDir = rootDir.resolve("mods")
@@ -1339,17 +1432,23 @@ class ModpackProcessor(
             val effectiveLocalExtras = collectEffectiveLocalExtraCandidates(rootDir)
             val effectiveSources = effectiveLocalExtras.mapTo(mutableSetOf()) { it.sourceRelativePath }
             val overrideShaderConfigs = fileEntries.asSequence().filter(File::isFile)
-                .map { it.relativeTo(rootDir).invariantSeparatorsPath.lowercase() }
-                .filter { it.startsWith("overrides/shaderpacks/") && it.endsWith(".zip.txt") }
-                .map { it.removePrefix("overrides/") }
-                .toSet()
+                .mapNotNull { file ->
+                    val relative = file.relativeTo(rootDir).invariantSeparatorsPath
+                    if (!relative.endsWith(".zip.txt", ignoreCase = true)) return@mapNotNull null
+                    val mapped = resolveClientPackEntryPath(relative) ?: return@mapNotNull null
+                    mapped.relativePath.lowercase() to mapped.priority
+                }
+                .groupBy({ it.first }, { it.second })
+                .mapValues { (_, priorities) -> priorities.maxOrNull() ?: 0 }
             val shadowedLocalSources = collectAllLocalExtraCandidates(rootDir)
                 .map { it.sourceRelativePath }
                 .filterNot { it in effectiveSources }
                 .toSet() + fileEntries.mapNotNull { file ->
                     val relative = file.relativeTo(rootDir).invariantSeparatorsPath
+                    val mapped = resolveClientPackEntryPath(relative) ?: return@mapNotNull null
                     relative.takeIf {
-                        file.isFile && it.lowercase() in overrideShaderConfigs
+                        file.isFile && relative.endsWith(".zip.txt", ignoreCase = true) &&
+                            mapped.priority < (overrideShaderConfigs[mapped.relativePath.lowercase()] ?: 0)
                     }
                 }
             val excludedSourcePaths = excludedClientExtras.map { it.sourceRelativePath }.toSet() + shadowedLocalSources
@@ -1359,7 +1458,9 @@ class ModpackProcessor(
                     .map { "${it.targetRelativePath}.txt" } +
                     excludedClientExtras.filter { it.content.type == ContentType.ShaderPack }
                         .map { "${it.sourceRelativePath}.txt" }
-                ).toSet()
+                ).mapNotNull { path ->
+                    resolveClientPackEntryPath(path, allowUnprefixed = true)?.relativePath?.lowercase()
+                }.toSet()
             onProgress.phase("正在预处理整合包资源文件")
             val processedAssets = preprocessAssetInputsInParallel(
                 inputs = walkEntries.asSequence()
@@ -1417,7 +1518,9 @@ class ModpackProcessor(
                         continue
                     }
                     val relativeLower = relative.lowercase()
-                    val topLevel = relative.substringBefore('/', relative)
+                    val effectiveRelative = resolveClientPackEntryPath(relative, allowUnprefixed = true)
+                        ?.relativePath ?: relative
+                    val topLevel = effectiveRelative.substringBefore('/', effectiveRelative)
                     writeProcessedEntry(
                         relative = relative,
                         relativeLower = relativeLower,
@@ -1432,7 +1535,7 @@ class ModpackProcessor(
                             {
                                 processNestedZip(
                                     file,
-                                    preserveResourcepackEntries = topLevel.equals("resourcepacks", ignoreCase = true)
+                                    preserveResourcepackEntries = effectiveRelative.startsWith("resourcepacks/", ignoreCase = true)
                                 )
                             }
                         } else null,
@@ -1562,7 +1665,8 @@ class ModpackProcessor(
         if (containsCacheDirectory(relative, isDirectory = false)) return true
         if (excludedSourcePaths.any { relative == it || relative.startsWith("$it/") }) return true
         if (oversizedUnpackedResourcepacks.any { relative == it || relative.startsWith("$it/") }) return true
-        val normalized = relative.replace('\\', '/').trimStart('/').removePrefix("overrides/")
+        val normalized = resolveClientPackEntryPath(relative, allowUnprefixed = true)?.relativePath
+            ?: relative.replace('\\', '/').trimStart('/')
         return normalized.startsWith("shaderpacks/", ignoreCase = true)
     }
 
@@ -1649,9 +1753,11 @@ class ModpackProcessor(
         skipCacheDirectory: Boolean = true,
         retainedShaderConfigPaths: Set<String> = emptySet(),
     ): Boolean {
-        val relativeLower = rawRelativeLower.replace("overrides/", "")
+        val relativeLower = resolveClientPackEntryPath(rawRelativeLower, allowUnprefixed = true)
+            ?.relativePath?.lowercase()
+            ?: rawRelativeLower.replace('\\', '/').trimStart('/').lowercase()
         val retainedConfig = retainedShaderConfigPaths.any {
-            relativeLower == it.lowercase().replace('\\', '/').removePrefix("overrides/")
+            relativeLower == it.lowercase().replace('\\', '/')
         }
         if (disallowedClientPathPrefixes.any { relativeLower.startsWith(it) } && !retainedConfig) return true
         if (skipCacheDirectory && containsCacheDirectory(relativeLower, isDirectory)) return true
@@ -1663,7 +1769,8 @@ class ModpackProcessor(
     }
 
     private fun isResourcepackZipPath(relative: String): Boolean {
-        val normalized = relative.replace('\\', '/').trimStart('/').removePrefix("overrides/")
+        val normalized = resolveClientPackEntryPath(relative, allowUnprefixed = true)?.relativePath
+            ?: relative.replace('\\', '/').trimStart('/')
         if (!normalized.startsWith("resourcepacks/", ignoreCase = true)) return false
         val packName = normalized.removePrefix("resourcepacks/").substringBefore('/')
         return packName.endsWith(".zip", ignoreCase = true)
@@ -1673,6 +1780,7 @@ class ModpackProcessor(
         val roots = listOf(
             rootDir.resolve("resourcepacks"),
             rootDir.resolve("overrides/resourcepacks"),
+            rootDir.resolve("client-overrides/resourcepacks"),
         )
         return roots.flatMap { resourceRoot ->
             if (!resourceRoot.isDirectory) return@flatMap emptyList()
@@ -1749,7 +1857,8 @@ class ModpackProcessor(
             return
         }
 
-        val effectiveRelativeLower = relativeLower.removePrefix("overrides/")
+        val effectiveRelativeLower = resolveClientPackEntryPath(relative, allowUnprefixed = true)
+            ?.relativePath?.lowercase() ?: relativeLower
         if (effectiveRelativeLower == "resourcepacks" ||
             effectiveRelativeLower.startsWith("resourcepacks/", ignoreCase = true)
         ) {

@@ -13,6 +13,9 @@ data class Mod(
     val hash: String,
     var side: Side= Side.BOTH,
     val downloadUrls: List<String> = emptyList(),
+    val clientOnlyOverride: Boolean = false,
+    /** The common source is shadowed by a client override whose bytes have no platform match. */
+    val clientOverrideReplaced: Boolean = false,
 ) {
     val fileSlug
         get() = slug.toModFileSlugAlias()

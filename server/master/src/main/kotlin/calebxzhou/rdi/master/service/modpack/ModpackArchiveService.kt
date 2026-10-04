@@ -19,7 +19,9 @@ import calebxzhou.rdi.master.service.zstdPack
 import java.io.File
 import java.nio.file.Files
 import java.nio.file.Path
+import java.nio.file.StandardCopyOption
 import java.nio.file.StandardOpenOption
+import java.util.Locale
 import java.util.jar.JarFile
 
 /** Archive format/path safety, extraction, client-pack generation and migration. */
@@ -49,19 +51,20 @@ object ModpackArchiveService {
     ) {
         val archiveRoot = resolveServerInstallArchiveRoot(archiveFile)
         val versionDirPath = targetDir.toPath()
-        forEachArchiveEntry(archiveFile) { entry ->
-            val relativePath = extractServerInstallRelativePath(entry.path, archiveRoot) ?: return@forEachArchiveEntry
+        forEachArchiveEntryStreaming(archiveFile, MODPACK_ARCHIVE_READ_LIMITS) { entry, input ->
+            val safePath = normalizeSafeArchivePath(entry.path)
+            val relativePath = extractServerInstallRelativePath(safePath, archiveRoot) ?: return@forEachArchiveEntryStreaming
             if (skipRootWorld && shouldSkipRootWorld(relativePath)) {
-                return@forEachArchiveEntry
+                return@forEachArchiveEntryStreaming
             }
             if (!includeClientOnlyMarkedMods && isClientOnlyMarkedModPath(relativePath)) {
-                return@forEachArchiveEntry
+                return@forEachArchiveEntryStreaming
             }
             if (shouldSkipHostClientOnlyJar(relativePath)) {
-                return@forEachArchiveEntry
+                return@forEachArchiveEntryStreaming
             }
             if (skipHostAssetFiles && shouldSkipHostAssetFile(relativePath)) {
-                return@forEachArchiveEntry
+                return@forEachArchiveEntryStreaming
             }
             val resolvedPath = versionDirPath.resolve(relativePath).normalize()
             if (!resolvedPath.startsWith(versionDirPath)) {
@@ -77,7 +80,7 @@ object ModpackArchiveService {
                     StandardOpenOption.CREATE,
                     StandardOpenOption.TRUNCATE_EXISTING
                 ).use { output ->
-                    output.write(entry.bytes ?: byteArrayOf())
+                    input.copyTo(output)
                 }
             }
         }
@@ -149,58 +152,85 @@ object ModpackArchiveService {
         if (!sourceArchive.exists()) return
         val clientArchive = version.clientZstdPack
         clientArchive.parentFile?.mkdirs()
-        if (clientArchive.exists()) clientArchive.delete()
-        if (version.clientZip.exists()) version.clientZip.delete()
-
         var entriesCopied = 0
         val retainedShaderConfigs = version.clientExtras
             .filter { it.type == ContentType.ShaderPack }
             .map { "${it.targetRelativePath}.txt".lowercase() }
             .toSet()
-        val overrideClientExtraPaths = mutableSetOf<String>()
-        forEachArchiveEntry(sourceArchive) { entry ->
-            val overridePath = extractOverridesRelativePath(entry.path)?.lowercase() ?: return@forEachArchiveEntry
-            if (overridePath.startsWith("resourcepacks/") || overridePath.startsWith("shaderpacks/")) {
-                overrideClientExtraPaths += overridePath
+        data class SelectedEntry(val archivePath: String, val priority: Int, val isDirectory: Boolean)
+        val selectedEntries = mutableMapOf<String, SelectedEntry>()
+        forEachArchiveEntryStreaming(sourceArchive, MODPACK_ARCHIVE_READ_LIMITS) { entry, _ ->
+            val path = resolveClientPackEntryPath(entry.path) ?: return@forEachArchiveEntryStreaming
+            val relativeLower = path.relativePath.lowercase(Locale.ROOT)
+            val previous = selectedEntries[relativeLower]
+            if (previous == null || path.priority > previous.priority) {
+                selectedEntries[relativeLower] = SelectedEntry(entry.path, path.priority, entry.isDirectory)
+            } else if (path.priority == previous.priority) {
+                if (!entry.isDirectory || !previous.isDirectory) {
+                    throw RequestError("客户端整合包包含重复文件路径: ${path.relativePath}")
+                }
+            }
+        }
+        selectedEntries.forEach { (path, entry) ->
+            var parent = path.substringBeforeLast('/', "")
+            while (parent.isNotEmpty()) {
+                val parentEntry = selectedEntries[parent]
+                if (parentEntry != null && !parentEntry.isDirectory) {
+                    throw RequestError("客户端整合包文件与目录路径冲突: $path")
+                }
+                parent = parent.substringBeforeLast('/', "")
             }
         }
 
-        TarZstArchiveWriter(clientArchive).use { output ->
-            val addedDirs = mutableSetOf<String>()
-            forEachArchiveEntry(sourceArchive) { entry ->
-                val relative = extractClientPackRelativePath(entry.path) ?: return@forEachArchiveEntry
-                val relativeLower = relative.lowercase()
-                if ((relativeLower.startsWith("resourcepacks/") || relativeLower.startsWith("shaderpacks/")) &&
-                    !entry.path.replace('\\', '/').trim('/').lowercase().startsWith("overrides/") &&
-                    relativeLower in overrideClientExtraPaths
-                ) return@forEachArchiveEntry
-                if (disallowedClientPaths.any { relativeLower.startsWith(it) }) {
-                    // The upload processor has already removed every shader
-                    // archive and directory.  A surviving .zip.txt is the
-                    // companion of a shader that was matched and retained;
-                    // preserving it keeps shader options usable without
-                    // reintroducing an unmatched shader binary.
-                    if (!relativeLower.endsWith(".zip.txt") || relativeLower !in retainedShaderConfigs) {
-                        return@forEachArchiveEntry
+        val tempClientArchive = File.createTempFile(".${clientArchive.name}.", ".tmp", clientArchive.parentFile)
+        try {
+            TarZstArchiveWriter(tempClientArchive).use { output ->
+                val addedDirs = mutableSetOf<String>()
+                forEachArchiveEntryStreaming(sourceArchive, MODPACK_ARCHIVE_READ_LIMITS) { entry, input ->
+                    val clientPath = resolveClientPackEntryPath(entry.path) ?: return@forEachArchiveEntryStreaming
+                    val relative = clientPath.relativePath
+                    val relativeLower = relative.lowercase(Locale.ROOT)
+                    val selected = selectedEntries[relativeLower]
+                    if (selected == null || selected.archivePath != entry.path || selected.priority != clientPath.priority) {
+                        return@forEachArchiveEntryStreaming
                     }
-                }
-                if (relativeLower.endsWith(".mca")) {
-                    return@forEachArchiveEntry
-                }
-                if (entry.isDirectory) {
-                    if (addDirectoryEntry(relative, output, addedDirs)) {
-                        entriesCopied++
+                    if (disallowedClientPaths.any { relativeLower.startsWith(it) }) {
+                        // The upload processor has already removed every shader
+                        // archive and directory.  A surviving .zip.txt is the
+                        // companion of a shader that was matched and retained;
+                        // preserving it keeps shader options usable without
+                        // reintroducing an unmatched shader binary.
+                        if (!relativeLower.endsWith(".zip.txt") || relativeLower !in retainedShaderConfigs) {
+                            return@forEachArchiveEntryStreaming
+                        }
                     }
-                    return@forEachArchiveEntry
+                    if (relativeLower.endsWith(".mca")) {
+                        return@forEachArchiveEntryStreaming
+                    }
+                    if (entry.isDirectory) {
+                        if (addDirectoryEntry(relative, output, addedDirs)) {
+                            entriesCopied++
+                        }
+                        return@forEachArchiveEntryStreaming
+                    }
+                    ensureArchiveParents(relative, output, addedDirs)
+                    output.addFileStreaming(relative, input, entry.size, entry.time)
+                    entriesCopied++
                 }
-                ensureArchiveParents(relative, output, addedDirs)
-                output.addFile(relative, entry.bytes ?: byteArrayOf(), entry.time)
-                entriesCopied++
             }
-        }
 
-        if (entriesCopied == 0) {
-            clientArchive.delete()
+            if (entriesCopied == 0) {
+                Files.deleteIfExists(clientArchive.toPath())
+            } else {
+                try {
+                    Files.move(tempClientArchive.toPath(), clientArchive.toPath(), StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
+                } catch (_: java.nio.file.AtomicMoveNotSupportedException) {
+                    Files.move(tempClientArchive.toPath(), clientArchive.toPath(), StandardCopyOption.REPLACE_EXISTING)
+                }
+            }
+            Files.deleteIfExists(version.clientZip.toPath())
+        } finally {
+            Files.deleteIfExists(tempClientArchive.toPath())
         }
     }
 
@@ -213,26 +243,32 @@ object ModpackArchiveService {
         val sourceZip = version.zip
         if (!sourceZip.exists() || version.zstdPack.exists()) return
         version.zstdPack.parentFile?.mkdirs()
-        val tempArchive = version.storageDir.resolve("${version.name}.tar.zst.tmp")
-        if (tempArchive.exists()) tempArchive.delete()
-        TarZstArchiveWriter(tempArchive).use { output ->
-            val addedDirs = mutableSetOf<String>()
-            forEachArchiveEntry(sourceZip) { entry ->
-                if (entry.isDirectory) {
-                    addDirectoryEntry(entry.path, output, addedDirs)
-                } else {
-                    ensureArchiveParents(entry.path, output, addedDirs)
-                    output.addFile(entry.path, entry.bytes ?: byteArrayOf(), entry.time)
+        val tempArchive = Files.createTempFile(version.storageDir.toPath(), ".${version.name}.migration-", ".tar.zst").toFile()
+        try {
+            TarZstArchiveWriter(tempArchive).use { output ->
+                val addedDirs = mutableSetOf<String>()
+                forEachArchiveEntryStreaming(sourceZip, MODPACK_ARCHIVE_READ_LIMITS) { entry, input ->
+                    val safePath = normalizeSafeArchivePath(entry.path)
+                    if (entry.isDirectory) {
+                        addDirectoryEntry(safePath, output, addedDirs)
+                    } else {
+                        ensureArchiveParents(safePath, output, addedDirs)
+                        output.addFileStreaming(safePath, input, entry.size, entry.time)
+                    }
                 }
             }
+            if (tempArchive.length() <= 0L) {
+                throw RequestError("迁移整合包归档失败")
+            }
+            try {
+                Files.move(tempArchive.toPath(), version.zstdPack.toPath(), StandardCopyOption.ATOMIC_MOVE)
+            } catch (_: java.nio.file.AtomicMoveNotSupportedException) {
+                Files.move(tempArchive.toPath(), version.zstdPack.toPath())
+            }
+            sourceZip.delete()
+        } finally {
+            Files.deleteIfExists(tempArchive.toPath())
         }
-        if (!tempArchive.exists() || tempArchive.length() <= 0L) {
-            tempArchive.delete()
-            throw RequestError("迁移整合包归档失败")
-        }
-        if (version.zstdPack.exists()) version.zstdPack.delete()
-        tempArchive.renameTo(version.zstdPack)
-        sourceZip.delete()
     }
 
     internal fun upgradeFullPackArchiveForTest(version: Modpack.Version) = upgradeFullPackArchive(version)
@@ -270,7 +306,11 @@ object ModpackArchiveService {
 
 
     private fun resolveServerInstallArchiveRoot(archiveFile: File): BuildArchiveRoot {
-        return resolveServerInstallArchiveRoot(listArchiveEntries(archiveFile).map { it.path })
+        val entryPaths = mutableListOf<String>()
+        forEachArchiveEntryStreaming(archiveFile, MODPACK_ARCHIVE_READ_LIMITS) { entry, _ ->
+            entryPaths += normalizeSafeArchivePath(entry.path)
+        }
+        return resolveServerInstallArchiveRoot(entryPaths)
     }
 
     internal fun resolveServerInstallArchiveRootForBuild(entryPaths: List<String>): BuildArchiveRoot {
@@ -328,15 +368,7 @@ object ModpackArchiveService {
     }
 
     private fun extractClientPackRelativePath(entryName: String): String? {
-        extractOverridesRelativePath(entryName)?.let { return it }
-        if (entryName.isBlank()) return null
-        val normalized = entryName.replace('\\', '/').trim('/')
-        if (normalized.isEmpty()) return null
-        return normalized.takeIf {
-            it.equals("gtnh", ignoreCase = true) || it.startsWith("gtnh/", ignoreCase = true) ||
-                it.equals("resourcepacks", ignoreCase = true) || it.startsWith("resourcepacks/", ignoreCase = true) ||
-                it.equals("shaderpacks", ignoreCase = true) || it.startsWith("shaderpacks/", ignoreCase = true)
-        }
+        return resolveClientPackEntryPath(entryName)?.relativePath
     }
 
     internal fun extractClientPackRelativePathForTest(entryName: String): String? =

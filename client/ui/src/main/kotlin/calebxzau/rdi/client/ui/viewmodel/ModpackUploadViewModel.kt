@@ -1592,7 +1592,7 @@ internal suspend fun readInstalledModIdsForTest(
     store: ClientContentStore,
 ): Map<String, String?> = readInstalledModIds(mods, store)
 
-private suspend fun mergeClientAndServerMods(
+internal suspend fun mergeClientAndServerMods(
     clientMods: List<UiMod>,
     serverMods: List<UiMod>,
     loader: ModLoader = ModLoader.forge,
@@ -1621,6 +1621,12 @@ private suspend fun mergeClientAndServerMods(
             ?.let { serverByUniqueSlugKey[it] }
             ?.takeIf { it !in matchedServerEntries }
         val serverMatch = strictMatch ?: slugMatch
+        if (clientEntry.mod.clientOnlyOverride && serverMatch != null && !sameModContent(
+                clientEntry.mod, clientEntry.uiMod.file, serverMatch.mod, serverMatch.uiMod.file,
+            )) {
+            merged += clientEntry.uiMod.withSide(Mod.Side.CLIENT)
+            return@forEach
+        }
         if (serverMatch != null) {
             if (strictMatch == null) {
                 lgr.info {
@@ -1644,10 +1650,14 @@ private suspend fun mergeClientAndServerMods(
             merged += if (loader == ModLoader.Fabric) serverEntry.uiMod else serverEntry.uiMod.withSide(Mod.Side.SERVER)
         }
     }
+    val clientOverrideKeys = merged.filter { it.mod.clientOnlyOverride }
+        .mapTo(mutableSetOf()) { strictModMergeKey(it.mod, installedModIds) }
     val distinctMerged = buildList {
         val seenKeys = mutableSetOf<String>()
         merged.forEach { uiMod ->
-            val key = strictModMergeKey(uiMod.mod, installedModIds)
+            val strictKey = strictModMergeKey(uiMod.mod, installedModIds)
+            val hasClientOverride = strictKey in clientOverrideKeys
+            val key = if (hasClientOverride) "$strictKey:${modStableKey(uiMod.mod)}" else strictKey
             if (seenKeys.add(key)) add(uiMod)
         }
     }
@@ -1680,7 +1690,11 @@ internal suspend fun mergeAsBoth(
         Mod.Side.BOTH
     }
     return clientMod.copy(
-        mod = clientMod.mod.copy(side = mergedSide, downloadUrls = mergedDownloadUrls),
+        mod = clientMod.mod.copy(
+            side = mergedSide,
+            downloadUrls = mergedDownloadUrls,
+            clientOnlyOverride = clientMod.mod.clientOnlyOverride && !sameContent,
+        ),
         card = (clientMod.card ?: serverMod.card)?.copy(side = mergedSide),
         file = mergedFile,
         fabricEnvironmentSide = if (sameContent) explicitFabricSide ?: clientMod.fabricEnvironmentSide else clientMod.fabricEnvironmentSide,

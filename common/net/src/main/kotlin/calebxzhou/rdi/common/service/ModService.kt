@@ -1009,6 +1009,10 @@ object ModService {
         forEach { mod ->
             val slug = mod.slug.trim().lowercase()
             when {
+                mod.clientOnlyOverride -> mod.side = Mod.Side.CLIENT
+                mod.clientOverrideReplaced -> {
+                    if (mod.side == Mod.Side.BOTH) mod.side = Mod.Side.SERVER
+                }
                 slug.startsWith("ftb") -> mod.side = Mod.Side.BOTH
                 slug in forceBoth -> mod.side = Mod.Side.BOTH
                 slug in forceClient -> mod.side = Mod.Side.CLIENT

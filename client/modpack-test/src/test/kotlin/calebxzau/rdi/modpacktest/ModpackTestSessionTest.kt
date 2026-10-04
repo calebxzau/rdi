@@ -270,6 +270,64 @@ class ModpackTestSessionTest {
             fixture.close()
         }
     }
+
+    @Test
+    fun `client test applies client overrides while server test keeps them out`() = runBlocking {
+        val mod = Mod(
+            platform = "mr",
+            projectId = "overlay-mod",
+            slug = "overlay-mod",
+            fileId = "overlay-mod-file",
+            hash = "overlay-mod-hash",
+            side = Mod.Side.BOTH,
+        )
+        val commonConfig = "common-config".encodeToByteArray()
+        val clientConfig = "client-config".encodeToByteArray()
+        val commonMod = "common-mod".encodeToByteArray()
+        val clientMod = "client-mod".encodeToByteArray()
+        val downloadedMod = "downloaded-mod".encodeToByteArray()
+
+        val clientFixture = TestFixture(clientLine = CLIENT_TEST_SUCCESS_MARKER)
+        clientFixture.addSourceFile("manifest.json", "manifest".encodeToByteArray())
+        clientFixture.addSourceFile("overrides/config/shared.txt", commonConfig)
+        clientFixture.addSourceFile("client-overrides/config/shared.txt", clientConfig)
+        clientFixture.addSourceFile("overrides/mods/${mod.fileName}", commonMod)
+        clientFixture.addSourceFile("client-overrides/mods/${mod.fileName}", clientMod)
+        clientFixture.addDownloadedMod(mod.fileName, downloadedMod)
+        val clientSession = clientFixture.session(ModpackTestTarget.CLIENT, listOf(mod))
+        try {
+            clientSession.start(listOf(mod)).getOrThrow()
+            awaitStatus(clientSession, ModpackTestStatus.PASSED)
+
+            val clientDir = checkNotNull(clientFixture.launcher.clientVersionDir)
+            assertContentEquals(clientConfig, clientDir.resolve("config/shared.txt").readBytes())
+            assertContentEquals(clientMod, clientDir.resolve("mods/${mod.fileName}").readBytes())
+            assertFalse(clientDir.resolve("manifest.json").exists())
+        } finally {
+            clientSession.close()
+            clientFixture.close()
+        }
+
+        val serverFixture = TestFixture(serverLine = "Done (1.0s)! For help")
+        serverFixture.addSourceFile("manifest.json", "manifest".encodeToByteArray())
+        serverFixture.addSourceFile("overrides/config/shared.txt", commonConfig)
+        serverFixture.addSourceFile("client-overrides/config/shared.txt", clientConfig)
+        serverFixture.addSourceFile("overrides/mods/${mod.fileName}", commonMod)
+        serverFixture.addSourceFile("client-overrides/mods/${mod.fileName}", clientMod)
+        val serverSession = serverFixture.session(ModpackTestTarget.SERVER, listOf(mod))
+        try {
+            serverSession.start(listOf(mod)).getOrThrow()
+            awaitStatus(serverSession, ModpackTestStatus.PASSED)
+
+            val serverDir = checkNotNull(serverFixture.launcher.serverWorkDir)
+            assertContentEquals(commonConfig, serverDir.resolve("config/shared.txt").readBytes())
+            assertContentEquals(commonMod, serverDir.resolve("mods/${mod.fileName}").readBytes())
+            assertFalse(serverDir.resolve("manifest.json").exists())
+        } finally {
+            serverSession.close()
+            serverFixture.close()
+        }
+    }
 }
 
 private suspend fun awaitStatus(session: ModpackTestSession, status: ModpackTestStatus): ModpackTestState =
@@ -347,7 +405,11 @@ private class TestFixture(
     )
 
     fun addSourceMod(name: String, bytes: ByteArray): File {
-        val file = sourceDir.resolve("mods/$name")
+        return addSourceFile("mods/$name", bytes)
+    }
+
+    fun addSourceFile(relativePath: String, bytes: ByteArray): File {
+        val file = sourceDir.resolve(relativePath)
         file.parentFile.mkdirs()
         Files.write(file.toPath(), bytes)
         return file
