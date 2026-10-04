@@ -25,6 +25,8 @@ import org.junit.jupiter.api.io.TempDir
 import java.nio.file.Files
 import java.nio.file.Path
 import java.io.IOException
+import java.util.Collections
+import java.util.concurrent.TimeUnit
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -94,6 +96,73 @@ class ClientChunkDeltaStoreTest {
             assertIs<ClientChunkDeltaStore.ReplayEvent.Block>(combined.replay[3]) // same-block state/property packet
             val second = assertIs<ClientChunkDeltaStore.ReplayEvent.BlockEntity>(combined.replay[4])
             assertEquals(2, second.tag.getInt("partB"))
+        }
+    }
+
+    @Test
+    fun nullBlockEntityTagsPreservePriorDataAndLaterUpdatesAcrossReopen(): Unit {
+        val key = key()
+        val position = BlockPos.asLong(1, 0, 2)
+        ClientChunkDeltaStore(directory).use { store ->
+            store.accept(write(key, 1, base = base(key, 1, position)))
+            store.accept(write(key, 2, updates = listOf(
+                ClientChunkCacheWrite.BlockEntityChange(position, "minecraft:chest", CompoundTag().apply { putInt("before", 1) }),
+            )))
+            store.accept(write(key, 3, updates = listOf(
+                ClientChunkCacheWrite.BlockEntityChange(position, "minecraft:chest", null),
+            )))
+            store.accept(write(key, 4, updates = listOf(
+                ClientChunkCacheWrite.BlockChange(position, Block.getId(Blocks.CHEST.defaultBlockState()), true),
+                ClientChunkCacheWrite.BlockEntityChange(position, "minecraft:chest", null),
+                ClientChunkCacheWrite.BlockEntityChange(position, "minecraft:chest", CompoundTag().apply { putInt("after", 2) }),
+                ClientChunkCacheWrite.BlockEntityChange(position, "minecraft:chest", CompoundTag()),
+            )))
+            store.accept(write(key, 5, updates = listOf(
+                ClientChunkCacheWrite.BlockChange(position, Block.getId(Blocks.AIR.defaultBlockState()), false),
+            )))
+            store.flush()
+        }
+
+        ClientChunkDeltaStore(directory).use { reopened ->
+            val combined = assertNotNull(reopened.read(key))
+            assertEquals(5, combined.replay.size)
+            assertEquals(1, assertIs<ClientChunkDeltaStore.ReplayEvent.BlockEntity>(combined.replay[0]).tag.getInt("before"))
+            assertIs<ClientChunkDeltaStore.ReplayEvent.Block>(combined.replay[1])
+            assertEquals(2, assertIs<ClientChunkDeltaStore.ReplayEvent.BlockEntity>(combined.replay[2]).tag.getInt("after"))
+            assertTrue(assertIs<ClientChunkDeltaStore.ReplayEvent.BlockEntity>(combined.replay[3]).tag.isEmpty)
+            assertEquals(Block.getId(Blocks.AIR.defaultBlockState()),
+                assertIs<ClientChunkDeltaStore.ReplayEvent.Block>(combined.replay[4]).stateId)
+            assertEquals(Block.getId(Blocks.AIR.defaultBlockState()), combined.blockStates.getValue(position).stateId)
+        }
+    }
+
+    @Test
+    fun nullBlockEntityTagDoesNotStopWriterOrSubsequentTerrainReads(): Unit {
+        val key = key()
+        val position = BlockPos.asLong(1, 0, 2)
+        val failures = Collections.synchronizedList(mutableListOf<Throwable>())
+        val writer = ClientChunkDeltaWriter(directory, failures::add, 8, 4096)
+        try {
+            assertTrue(writer.submit(write(key, 1, base = base(key, 1))))
+            assertTrue(writer.submit(write(key, 2, updates = listOf(
+                ClientChunkCacheWrite.BlockEntityChange(position, "minecraft:chest", null),
+            ))))
+            assertNotNull(writer.readTerrain(key).get(5, TimeUnit.SECONDS))
+            assertTrue(writer.stats().accepting)
+            assertTrue(writer.submit(write(key, 3, updates = listOf(
+                ClientChunkCacheWrite.BlockChange(position, Block.getId(Blocks.STONE.defaultBlockState()), false),
+            ))))
+            val terrain = assertNotNull(writer.readTerrain(key).get(5, TimeUnit.SECONDS))
+            assertEquals(Block.getId(Blocks.STONE.defaultBlockState()), terrain.blockStates.getValue(position).stateId)
+        } finally {
+            writer.closeAsync()
+            assertTrue(writer.awaitClosed(5_000))
+        }
+        assertTrue(failures.isEmpty(), failures.toString())
+        assertEquals(3L, writer.stats().processed)
+        ClientChunkDeltaStore(directory).use { reopened ->
+            val terrain = assertNotNull(reopened.readTerrain(key))
+            assertEquals(Block.getId(Blocks.STONE.defaultBlockState()), terrain.blockStates.getValue(position).stateId)
         }
     }
 

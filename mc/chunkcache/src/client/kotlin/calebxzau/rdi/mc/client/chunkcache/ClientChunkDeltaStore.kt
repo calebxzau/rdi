@@ -176,7 +176,9 @@ class ClientChunkDeltaStore(root: Path) : AutoCloseable {
                             net.minecraft.resources.ResourceLocation.tryParse(type)) == null) {
                         throw IOException("Invalid block entity type")
                     }
-                    val tag = update.tag()?.copy() ?: throw IOException("Block entity update has no NBT tag")
+                    // 1.20.1 encodes an empty block-entity update tag as null. There is no
+                    // NBT to replay; keep prior data and continue the rest of this ordered batch.
+                    val tag = update.tag()?.copy() ?: continue
                     checkTag(tag)
                     if (update.position() !in overlay.trackedBlockEntities) {
                         overlay.blocks[update.position()]?.let { prior ->
