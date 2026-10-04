@@ -112,6 +112,39 @@ object ZstdCompressionPipeline {
         return true
     }
 
+    /**
+     * Starts outbound packet references, or restarts them with an empty table.
+     *
+     * Only call this after the peer announced the extension and prepared its decoder; the slot count
+     * and entry limit are clamped to the range every peer accepts.
+     */
+    @JvmStatic
+    @JvmOverloads
+    fun setOutboundPacketRefs(
+        channel: Channel,
+        slots: Int = PacketRefFormat.DEFAULT_SLOTS,
+        maxEntryBytes: Int = PacketRefFormat.DEFAULT_MAX_ENTRY_BYTES,
+    ) {
+        (channel.pipeline().get(COMPRESS_HANDLER_NAME) as? ZstdCompressionEncoder)
+            ?.requestPacketRefs(slots, maxEntryBytes)
+    }
+
+    @JvmStatic
+    fun isOutboundPacketRefsEnabled(channel: Channel): Boolean =
+        (channel.pipeline().get(COMPRESS_HANDLER_NAME) as? ZstdCompressionEncoder)?.isPacketRefsEnabled() ?: false
+
+    /** Prepares the RDI decoder for the server's START; returns false when that decoder is absent. */
+    @JvmStatic
+    fun setInboundPacketRefsIfAvailable(channel: Channel, ready: Boolean): Boolean {
+        val decoder = channel.pipeline().get(DECOMPRESS_HANDLER_NAME) as? ZstdCompressionDecoder ?: return false
+        decoder.requestPacketRefsReady(ready)
+        return true
+    }
+
+    /** Returns whether this channel has any compression encoder, RDI or not. */
+    @JvmStatic
+    fun hasCompressionEncoder(channel: Channel): Boolean = channel.pipeline().get(COMPRESS_HANDLER_NAME) != null
+
     /** Returns whether this channel currently uses the RDI outbound compression encoder. */
     @JvmStatic
     fun hasOutboundEncoder(channel: Channel): Boolean =

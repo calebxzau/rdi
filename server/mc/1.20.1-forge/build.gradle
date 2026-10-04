@@ -108,6 +108,7 @@ legacyForge {
             server()
             systemProperty("rdi.ihq.url", "127.0.0.1:65231")
             systemProperty("rdi.debug", "true")
+            systemProperty("rdi.pktref.enabled", "true")
             systemProperty("rdi.host.id", "695f9e5ad05510e77c09ea1a")
             systemProperty("mixin.hotSwap", "true")
             programArguments = [

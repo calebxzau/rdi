@@ -56,6 +56,14 @@ These settings control network batching separately from automatic content captur
 | --- | --- | --- |
 | `rdi.batch.enabled` | `true` | Batch packets for compatible clients; false uses the legacy per-packet path. |
 | `rdi.batch.longWindow` | `false` | Permit verified messages to wait four ticks instead of one. |
+| `rdi.pktref.enabled` | `false` | Replace repeated server-to-client packets with references; see [packet-ref-dedup.md](packet-ref-dedup.md). |
+| `rdi.pktref.slots` | `256` | Packet reference table slots, clamped to 1-1024. |
+| `rdi.pktref.maxEntryBytes` | `1024` | Largest packet the reference table records, clamped to 8-2048. |
+
+In `packet_batch_frame_totals`, `frame_kind = 'Ref'` rows count packet references.
+For them, `sum_replaced_frame_bytes` holds the legacy frames they replaced, so
+`sum_replaced_frame_bytes - sum_frame_bytes - sum_outer_prefix_bytes` is the frame
+bytes saved. The column is 0 for every other frame kind.
 
 The existing synthetic codec replay tests remain useful for packet-byte and
 batching-policy correctness. The new content log omits replay-only events and is

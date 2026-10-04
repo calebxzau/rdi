@@ -1,6 +1,7 @@
 package calebxzhou.rdi.mc.client.mixin;
 
 import calebxzhou.rdi.mc.client.network.RClientBatching;
+import calebxzhou.rdi.mc.client.network.RClientPacketRefs;
 import io.netty.channel.ChannelHandlerContext;
 import net.minecraft.network.Connection;
 import net.minecraft.network.protocol.Packet;
@@ -20,6 +21,7 @@ class mClientBatchingLogin {
     ) {
         if (packet instanceof ClientboundLoginPacket) {
             RClientBatching.INSTANCE.onLoginPacket((Connection)(Object)this);
+            RClientPacketRefs.INSTANCE.onLoginPacket((Connection)(Object)this);
         }
     }
 }

@@ -38,6 +38,11 @@ internal class ZstdCompressionEncoder(
     private var observer: ZstdBatchObserver? = null
     private var failed: Throwable? = null
 
+    /** The server table of the packet reference extension; non-null once START has been written. */
+    private var packetRefs: PacketRefCache? = null
+    @Volatile
+    private var packetRefsEnabled = false
+
     private data class BufferedRecord(
         val sending: ZstdSendingRecord,
         val promise: ChannelPromise,
@@ -152,13 +157,31 @@ internal class ZstdCompressionEncoder(
         flushBuffered(context, ZstdBatchFlushReason.SHUTDOWN)
         if (buffered.isNotEmpty()) discardBuffered(failed ?: ClosedChannelException())
         compressionContext.close()
+        packetRefs = null
+        packetRefsEnabled = false
         handlerContext = null
         super.handlerRemoved(context)
     }
 
     fun updateThreshold(threshold: Int) = onEventLoop { context ->
         flushBuffered(context, ZstdBatchFlushReason.BARRIER)
+        if (threshold != this.threshold) packetRefs?.clearBaselines()
         this.threshold = threshold
+    }
+
+    fun isPacketRefsEnabled(): Boolean = packetRefsEnabled
+
+    /** Test view of the server table; call it on the event loop. */
+    internal fun packetRefSnapshot(): List<PacketRefCache.Entry>? = packetRefs?.snapshot()
+
+    /**
+     * Starts packet references, or restarts them with an empty table when they already run.
+     *
+     * Buffered records leave first, then START, and the table starts empty right after it, which is
+     * exactly where the peer resets its own table. There is no way back short of the connection ending.
+     */
+    fun requestPacketRefs(slots: Int, maxEntryBytes: Int) = onEventLoop { context ->
+        startPacketRefs(context, slots, maxEntryBytes)
     }
 
     fun isBatchingEnabled(): Boolean = batchingEnabled
@@ -202,6 +225,61 @@ internal class ZstdCompressionEncoder(
         if (context.executor().inEventLoop()) task.run() else context.executor().execute(task)
     }
 
+    private fun startPacketRefs(context: ChannelHandlerContext, slots: Int, maxEntryBytes: Int) {
+        if (failed != null) return
+        flushBuffered(context, ZstdBatchFlushReason.BARRIER)
+        if (failed != null) return
+
+        val acceptedSlots = slots.coerceIn(PacketRefFormat.MINIMUM_SLOTS, PacketRefFormat.MAXIMUM_SLOTS)
+        val acceptedEntryBytes = maxEntryBytes.coerceIn(
+            PacketRefFormat.MINIMUM_ENTRY_BYTES,
+            PacketRefFormat.MAXIMUM_ENTRY_BYTES,
+        )
+        val table: PacketRefCache
+        val frame: ByteBuf
+        try {
+            table = PacketRefCache(acceptedSlots, acceptedEntryBytes)
+            frame = encodeStartFrame(context, acceptedSlots, acceptedEntryBytes)
+        } catch (error: Throwable) {
+            failConnection(context, error)
+            return
+        }
+        val downstream = context.newPromise()
+        downstream.addListener { future ->
+            if (!future.isSuccess) failConnection(context, future.cause() ?: ClosedChannelException())
+        }
+        context.write(frame, downstream)
+        // A write that failed at once has already run the listener; never enable after a failed START.
+        if (failed != null) return
+
+        // The flush completes earlier writes, whose listeners may send right away; those packets follow
+        // START on the wire, so they must already meet the new table.
+        packetRefs = table
+        packetRefsEnabled = true
+        context.flush()
+        if (failed != null) {
+            packetRefs = null
+            packetRefsEnabled = false
+        }
+    }
+
+    private fun encodeStartFrame(context: ChannelHandlerContext, slots: Int, maxEntryBytes: Int): ByteBuf {
+        val frameBytes = PacketRefFormat.startFrameBytes(slots, maxEntryBytes)
+        val frame = context.alloc().buffer(frameBytes, frameBytes)
+        var written = false
+        try {
+            varIntCodec.write(frame, PacketRefFormat.CONTROL_MARKER)
+            frame.writeByte(PacketRefFormat.OPCODE_START)
+            varIntCodec.write(frame, PacketRefFormat.VERSION)
+            varIntCodec.write(frame, slots)
+            varIntCodec.write(frame, maxEntryBytes)
+            written = true
+            return frame
+        } finally {
+            if (!written) frame.release()
+        }
+    }
+
     private fun scheduleDeadline(context: ChannelHandlerContext) {
         cancelFlushTimeout()
         val first = buffered.minOfOrNull { it.timeDeadlineNanos } ?: return
@@ -239,6 +317,8 @@ internal class ZstdCompressionEncoder(
         bufferedPayloadBytes = 0
 
         try {
+            // Every buffered record enters the table once, in wire order, whichever frames carry it.
+            packetRefs?.let { refs -> records.forEach { refs.record(it.content) } }
             val startedNanos = nanoTime()
             val frames = buildFrames(context, records, payloadBytes)
             records.forEach { it.sending.release() }
@@ -449,6 +529,7 @@ internal class ZstdCompressionEncoder(
                     ZstdBatchFormat.varIntSize(payloadBytes) + ZstdBatchFormat.varIntSize(recordCount)
                 headerBytes + payloadBytes
             }
+            ZstdBatchFrameKind.Ref -> throw IllegalStateException("Reference frames build their own sample")
         }
         val uncompressedBytes = uncompressedInnerBytes + outerPrefix
         return ZstdBatchSample(
@@ -475,15 +556,27 @@ internal class ZstdCompressionEncoder(
     private fun writeLegacy(context: ChannelHandlerContext, sending: ZstdSendingRecord, promise: ChannelPromise) {
         val recordBytes = sending.content.readableBytes()
         val started = nanoTime()
+        val refs = packetRefs
+        val refResult = try {
+            refs?.record(sending.content) ?: PacketRefCache.SKIPPED
+        } catch (error: Throwable) {
+            failDirect(context, sending, promise, error)
+            return
+        }
+        if (refs != null && PacketRefCache.isMatch(refResult) && isReferenceSmaller(refResult, recordBytes)) {
+            writeReference(context, sending, promise, refs, refResult, started)
+            return
+        }
         val frame: EncodedFrame
         try {
             frame = encodeLegacyFrame(context, sending.content)
         } catch (error: Throwable) {
-            sending.release()
-            promise.tryFailure(error)
-            notifyEncodingFailed(1)
-            failConnection(context, error)
+            failDirect(context, sending, promise, error)
             return
+        }
+        if (refs != null && PacketRefCache.isInserted(refResult) && !frame.raw) {
+            val frameBytes = PacketRefFormat.withOuterPrefix(frame.buffer.readableBytes())
+            refs.setBaseline(PacketRefCache.insertedSlot(refResult), frameBytes)
         }
         sending.release()
         val sample = sample(
@@ -506,12 +599,120 @@ internal class ZstdCompressionEncoder(
         if (batchingEnabled) context.flush()
     }
 
+    /**
+     * A hit may still leave as plain bytes: the peer applies a matching plain packet exactly like a
+     * reference, so only the frame size decides. A compressed envelope is never smaller than a reference.
+     */
+    private fun isReferenceSmaller(slot: Int, recordBytes: Int): Boolean {
+        if (recordBytes >= threshold) return true
+        val referenceBytes = PacketRefFormat.withOuterPrefix(PacketRefFormat.referenceFrameBytes(slot))
+        return referenceBytes < PacketRefFormat.rawLegacyFrameBytes(recordBytes)
+    }
+
+    private fun writeReference(
+        context: ChannelHandlerContext,
+        sending: ZstdSendingRecord,
+        promise: ChannelPromise,
+        refs: PacketRefCache,
+        slot: Int,
+        started: Long,
+    ) {
+        val recordBytes = sending.content.readableBytes()
+        val frameBytes = PacketRefFormat.referenceFrameBytes(slot)
+        val frame = try {
+            encodeReferenceFrame(context, slot, refs.checkAt(slot))
+        } catch (error: Throwable) {
+            failDirect(context, sending, promise, error)
+            return
+        }
+        val lookupNanos = (nanoTime() - started).coerceAtLeast(0L)
+        val replacedBytes = if (observer != null) replacedFrameBytes(context, refs, slot, sending.content) else 0
+        sending.release()
+        val sample = ZstdBatchSample(
+            recordCount = 1,
+            payloadBytes = recordBytes,
+            blockBytes = frameBytes,
+            raw = true,
+            flushReason = ZstdBatchFlushReason.BARRIER,
+            waitNanos = 0,
+            compressionNanos = lookupNanos,
+            frameKind = ZstdBatchFrameKind.Ref,
+            outerPrefixBytes = ZstdBatchFormat.varIntSize(frameBytes),
+            replacedFrameBytes = replacedBytes,
+        )
+        val downstream = context.newPromise()
+        downstream.addListener { future ->
+            if (future.isSuccess) promise.trySuccess() else promise.tryFailure(future.cause() ?: ClosedChannelException())
+            observe { it.writeCompleted(sample, future.isSuccess) }
+            if (!future.isSuccess) failConnection(context, future.cause() ?: ClosedChannelException())
+        }
+        observe { it.batchFlushed(sample) }
+        context.write(frame, downstream)
+        if (batchingEnabled) context.flush()
+    }
+
+    private fun encodeReferenceFrame(context: ChannelHandlerContext, slot: Int, check: Int): ByteBuf {
+        val frameBytes = PacketRefFormat.referenceFrameBytes(slot)
+        val frame = context.alloc().buffer(frameBytes, frameBytes)
+        var written = false
+        try {
+            varIntCodec.write(frame, PacketRefFormat.REFERENCE_MARKER)
+            varIntCodec.write(frame, slot)
+            frame.writeInt(check)
+            written = true
+            return frame
+        } finally {
+            if (!written) frame.release()
+        }
+    }
+
+    /** Fails one direct-path packet; the table may already hold it, so the connection closes as well. */
+    private fun failDirect(context: ChannelHandlerContext, sending: ZstdSendingRecord, promise: ChannelPromise, error: Throwable) {
+        sending.release()
+        promise.tryFailure(error)
+        notifyEncodingFailed(1)
+        failConnection(context, error)
+    }
+
+    /**
+     * Telemetry only: the legacy frame this reference replaced. A compressed size is computed at most
+     * once per entry and kept until the entry is evicted or the threshold changes. A failed measurement
+     * is kept as the reference's own size, so the entry counts as no saving.
+     */
+    private fun replacedFrameBytes(
+        context: ChannelHandlerContext,
+        refs: PacketRefCache,
+        slot: Int,
+        content: ByteBuf,
+    ): Int {
+        val recordBytes = content.readableBytes()
+        if (recordBytes < threshold) return PacketRefFormat.rawLegacyFrameBytes(recordBytes)
+        val cached = refs.baselineAt(slot)
+        if (cached != PacketRefCache.UNKNOWN_BASELINE) return cached
+        return runCatching {
+            val legacy = encodeLegacyFrame(context, content)
+            try {
+                PacketRefFormat.withOuterPrefix(legacy.buffer.readableBytes())
+            } finally {
+                legacy.buffer.release()
+            }
+        }.getOrElse { error ->
+            LOGGER.log(
+                System.Logger.Level.ERROR,
+                "Failed to measure the frame a packet reference replaced; counting slot $slot as no saving",
+                error,
+            )
+            PacketRefFormat.withOuterPrefix(PacketRefFormat.referenceFrameBytes(slot))
+        }.also { refs.setBaseline(slot, it) }
+    }
+
     private fun encodeLegacyFrame(context: ChannelHandlerContext, input: ByteBuf): EncodedFrame {
         val size = input.readableBytes()
         if (size > ZstdCompressionPipeline.MAXIMUM_UNCOMPRESSED_LENGTH) {
             throw EncoderException("Packet too big (is $size, should be less than or equal to ${ZstdCompressionPipeline.MAXIMUM_UNCOMPRESSED_LENGTH})")
         }
-        if (size == 0 || size < threshold) {
+        // From START onwards a compressed envelope must not declare the reference marker as its size.
+        if (size == 0 || size < threshold || (packetRefs != null && size == PacketRefFormat.REFERENCE_MARKER)) {
             val raw = context.alloc().directBuffer(size + 1, size + 1)
             var written = false
             try {

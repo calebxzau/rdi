@@ -37,6 +37,9 @@ internal enum class ZstdBatchFrameKind {
     Legacy,
     RawBatch,
     ZstdBatch,
+
+    /** A packet reference that replaced a legacy envelope; see [PacketRefFormat]. */
+    Ref,
 }
 
 /** One encoded frame handed to the downstream pipeline. Byte counts exclude the outer prefix except where named. */
@@ -56,6 +59,8 @@ internal class ZstdBatchSample(
     val fallbackBytes: Int = 0,
     val bufferedFlush: Boolean = false,
     val firstFrameOfFlush: Boolean = false,
+    /** For [ZstdBatchFrameKind.Ref]: the legacy frame it replaced, including that frame's outer prefix. */
+    val replacedFrameBytes: Int = 0,
 )
 
 /**

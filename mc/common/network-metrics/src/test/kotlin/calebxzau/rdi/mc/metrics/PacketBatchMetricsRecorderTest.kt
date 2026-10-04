@@ -214,9 +214,38 @@ class PacketBatchMetricsRecorderTest {
 
         DriverManager.getConnection("jdbc:sqlite:$database").use { connection ->
             connection.createStatement().use { statement ->
-                statement.executeQuery("SELECT buffered_flushes, barrier_interruptions, sum_wait_nanos FROM packet_batch_frame_totals").use { result ->
+                statement.executeQuery("SELECT buffered_flushes, barrier_interruptions, sum_wait_nanos, sum_replaced_frame_bytes FROM packet_batch_frame_totals").use { result ->
                     assertTrue(result.next())
-                    assertEquals(listOf(1L, 1L, 20L), (1..3).map(result::getLong))
+                    assertEquals(listOf(1L, 1L, 20L, 0L), (1..4).map(result::getLong))
+                }
+            }
+        }
+    }
+
+    @Test
+    fun `reference frames persist the legacy frame bytes they replaced`() {
+        val database = tempDir.resolve("reference-metrics.sqlite")
+        PacketBatchMetricsRecorder(database, flushIntervalMs = 10).apply {
+            offerFrame(PacketBatchFrameSample("Ref", 1, 300, 10, 1, "BARRIER", 0, 5, false, replacedFrameBytes = 120))
+            offerFrame(PacketBatchFrameSample("Ref", 1, 20, 11, 1, "BARRIER", 0, 3, false, replacedFrameBytes = 22))
+            offerFrame(PacketBatchFrameSample("Ref", 1, 20, 10, 1, "BARRIER", 0, 0, false, replacedFrameBytes = -1))
+            close()
+        }
+
+        DriverManager.getConnection("jdbc:sqlite:$database").use { connection ->
+            connection.createStatement().use { statement ->
+                statement.executeQuery(
+                    """SELECT frame_count, sum_payload_bytes, sum_replaced_frame_bytes,
+                       sum_replaced_frame_bytes - sum_frame_bytes - sum_outer_prefix_bytes
+                       FROM packet_batch_frame_totals WHERE frame_kind = 'Ref'""",
+                ).use { result ->
+                    assertTrue(result.next())
+                    assertEquals(listOf(2L, 320L, 142L, 119L), (1..4).map(result::getLong))
+                    assertEquals(false, result.next())
+                }
+                statement.executeQuery("SELECT dropped_samples FROM packet_batch_windows").use { result ->
+                    assertTrue(result.next())
+                    assertEquals(1L, result.getLong(1))
                 }
             }
         }

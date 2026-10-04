@@ -2,11 +2,13 @@ package calebxzhou.rdi.mc.client
 
 import calebxzau.rdi.mc.zstdcodec.ZstdCompressionPipeline
 import calebxzau.mc.common2021.RdiBatchChannel
+import calebxzau.mc.common2021.RdiPacketRefChannel
 import calebxzau.rdi.mc.v20.client.RoomJoinUi20
 // import calebxzhou.rdi.mc.client.chunkcache.RdiChunkCacheClient
 // import calebxzhou.rdi.mc.client.chunkcache.RdiChunkCacheClientHandler
 import calebxzhou.rdi.mc.client.network.RClientNetwork
 import calebxzhou.rdi.mc.client.network.RClientBatching
+import calebxzhou.rdi.mc.client.network.RClientPacketRefs
 import calebxzau.rdi.mc.v20.client.GlobalPlayerListState
 import calebxzhou.rdi.mc.client.mcp.standard.StandardMcpServer
 import calebxzhou.rdi.mc.client.mcpimpl.McpGameImpl
@@ -32,6 +34,7 @@ class RDIMain {
     init {
         RClientNetwork.register()
         RdiBatchChannel.register()
+        RdiPacketRefChannel.register()
         calebxzau.rdi.mc.v20.forge.l2.L2NameChannel.register()
         calebxzau.rdi.mc.client.chunkcache.ChunkCacheClientNetwork.register()
         McpNetwork.register()
@@ -56,6 +59,7 @@ class RDIMain {
         fun onClientJoinServer(event: ClientPlayerNetworkEvent.LoggingIn) {
             GlobalPlayerListState.beginSession(event.connection)
             RClientBatching.onJoin(event.connection)
+            RClientPacketRefs.onJoin(event.connection)
             /* RdiChunkCacheClientHandler.clearDeferredPackets()
             RdiChunkCacheClient.open(
                 Minecraft.getInstance().gameDirectory.toPath(),
@@ -73,6 +77,7 @@ class RDIMain {
             calebxzau.rdi.mc.client.l2.RClientL2Names.clear()
             GlobalPlayerListState.endSession(event.connection)
             RClientBatching.onLeave(event.connection)
+            RClientPacketRefs.onLeave(event.connection)
             StandardMcpServer.stop()
             /* RdiChunkCacheClientHandler.clearDeferredPackets()
             RdiChunkCacheClient.close() */

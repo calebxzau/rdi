@@ -85,6 +85,7 @@ object PacketMetrics20 {
             singleRecordFallback = sample.singleRecordFallback,
             bufferedFlush = sample.bufferedFlush,
             firstFrameOfFlush = sample.firstFrameOfFlush,
+            replacedFrameBytes = sample.replacedFrameBytes,
         ),
     )
 

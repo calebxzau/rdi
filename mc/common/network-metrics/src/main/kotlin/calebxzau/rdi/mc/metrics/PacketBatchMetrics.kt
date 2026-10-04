@@ -27,6 +27,8 @@ data class PacketBatchFrameSample(
     val bufferedFlush: Boolean = false,
     /** True only on the first emitted frame for this buffered flush. */
     val firstFrameOfFlush: Boolean = false,
+    /** For packet references: the legacy frame the reference replaced, including its outer prefix. */
+    val replacedFrameBytes: Int = 0,
 )
 
 /** Independent v4 measurements. The legacy [PacketMetrics] recorder and its callers are unchanged. */
@@ -102,6 +104,7 @@ private data class BatchFrameTotal(
     var fallbackCount: Long = 0,
     var bufferedFlushes: Long = 0,
     var barrierInterruptions: Long = 0,
+    var replacedFrameBytes: Long = 0,
 )
 
 /** Bounded asynchronous ingress. Only its writer thread owns SQLite and aggregation state. */
@@ -180,6 +183,7 @@ internal class PacketBatchMetricsRecorder(
                         single_record_fallbacks INTEGER NOT NULL,
                         buffered_flushes INTEGER NOT NULL DEFAULT 0,
                         barrier_interruptions INTEGER NOT NULL DEFAULT 0,
+                        sum_replaced_frame_bytes INTEGER NOT NULL DEFAULT 0,
                         PRIMARY KEY (window_id, frame_kind, flush_reason)
                     )""".trimIndent(),
                 )
@@ -250,7 +254,8 @@ internal class PacketBatchMetricsRecorder(
     fun offerFrame(sample: PacketBatchFrameSample) {
         submit {
             if (sample.recordCount < 0 || sample.payloadBytes < 0 || sample.frameBytes < 0 ||
-                sample.outerPrefixBytes < 0 || sample.waitNanos < 0 || sample.compressionNanos < 0
+                sample.outerPrefixBytes < 0 || sample.waitNanos < 0 || sample.compressionNanos < 0 ||
+                sample.replacedFrameBytes < 0
             ) {
                 dropped.incrementAndGet()
                 null
@@ -321,6 +326,9 @@ internal class PacketBatchMetricsRecorder(
         }
         if ("barrier_interruptions" !in columns) {
             statement.execute("ALTER TABLE packet_batch_frame_totals ADD COLUMN barrier_interruptions INTEGER NOT NULL DEFAULT 0")
+        }
+        if ("sum_replaced_frame_bytes" !in columns) {
+            statement.execute("ALTER TABLE packet_batch_frame_totals ADD COLUMN sum_replaced_frame_bytes INTEGER NOT NULL DEFAULT 0")
         }
     }
 
@@ -460,6 +468,7 @@ internal class PacketBatchMetricsRecorder(
                 total.frameBytes += sample.frameBytes
                 total.outerPrefixBytes += sample.outerPrefixBytes
                 total.compressionNanos += sample.compressionNanos
+                total.replacedFrameBytes += sample.replacedFrameBytes
                 if (sample.singleRecordFallback) total.fallbackCount++
                 if (sample.bufferedFlush && sample.firstFrameOfFlush) {
                     total.bufferedFlushes++
@@ -571,14 +580,15 @@ internal class PacketBatchMetricsRecorder(
             """INSERT INTO packet_batch_frame_totals(
                    window_id, frame_kind, flush_reason, frame_count, record_count, sum_payload_bytes,
                    sum_frame_bytes, sum_outer_prefix_bytes, sum_wait_nanos, sum_compression_nanos,
-                   single_record_fallbacks, buffered_flushes, barrier_interruptions
-               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                   single_record_fallbacks, buffered_flushes, barrier_interruptions, sum_replaced_frame_bytes
+               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                ON CONFLICT(window_id, frame_kind, flush_reason) DO UPDATE SET
                frame_count=excluded.frame_count, record_count=excluded.record_count,
                sum_payload_bytes=excluded.sum_payload_bytes, sum_frame_bytes=excluded.sum_frame_bytes,
                sum_outer_prefix_bytes=excluded.sum_outer_prefix_bytes, sum_wait_nanos=excluded.sum_wait_nanos,
                sum_compression_nanos=excluded.sum_compression_nanos, single_record_fallbacks=excluded.single_record_fallbacks,
-               buffered_flushes=excluded.buffered_flushes, barrier_interruptions=excluded.barrier_interruptions""".trimIndent(),
+               buffered_flushes=excluded.buffered_flushes, barrier_interruptions=excluded.barrier_interruptions,
+               sum_replaced_frame_bytes=excluded.sum_replaced_frame_bytes""".trimIndent(),
         ).use { statement ->
             totals.forEach { (key, value) ->
                 statement.setLong(1, windowId)
@@ -594,6 +604,7 @@ internal class PacketBatchMetricsRecorder(
                 statement.setLong(11, value.fallbackCount)
                 statement.setLong(12, value.bufferedFlushes)
                 statement.setLong(13, value.barrierInterruptions)
+                statement.setLong(14, value.replacedFrameBytes)
                 statement.addBatch()
             }
             statement.executeBatch()
