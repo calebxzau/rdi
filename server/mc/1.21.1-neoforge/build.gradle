@@ -104,6 +104,8 @@ neoForge {
 sourceSets.named('main') {
     kotlin.srcDir '../../../mc/chunkcache/src/main/kotlin'
     kotlin.srcDir '../../../mc/chunkcache/src/21/kotlin'
+    java.srcDir '../../../mc/chunkcache/src/server/java'
+    kotlin.srcDir '../../../mc/chunkcache/src/server/kotlin'
     java.srcDir '../../../mc/common/2021/src/main/java'
     kotlin.srcDir '../../../mc/common/2021/src/main/kotlin'
     java.srcDir '../../../mc/common/codec/src/server/java'
@@ -120,6 +122,7 @@ sourceSets.named('main') {
 sourceSets.named('test') {
     kotlin.srcDir '../../../mc/chunkcache/src/test/kotlin'
     kotlin.srcDir '../../../mc/chunkcache/src/21Test/kotlin'
+    kotlin.srcDir '../../../mc/chunkcache/src/serverTest/kotlin'
     kotlin.srcDir '../../../mc/common/codec/src/serverTest/kotlin'
     kotlin.srcDir '../../../mc/common/codec/src/test/kotlin'
     kotlin.srcDir '../../../mc/common/network-metrics/src/test/kotlin'

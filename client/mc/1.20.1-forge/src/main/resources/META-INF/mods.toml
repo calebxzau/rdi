@@ -14,3 +14,5 @@ config = "rdi.mixins.json"
 config = "rdi.v20.client.mixins.json"
 [[mixins]]
 config = "rdi.l2.client.mixins.json"
+[[mixins]]
+config = "rdi.chunkcache.client.mixins.json"

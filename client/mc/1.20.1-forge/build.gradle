@@ -100,6 +100,9 @@ kotlin {
 }
 sourceSets.test {
     kotlin.srcDir '../../../mc/20/src/test/kotlin'
+    kotlin.srcDir '../../../mc/chunkcache/src/test/kotlin'
+    kotlin.srcDir '../../../mc/chunkcache/src/clientTest/kotlin'
+    kotlin.srcDir '../../../mc/chunkcache/src/20Test/kotlin'
     // ModDev adds Minecraft to main only; these shared tests exercise its resource API.
     compileClasspath += sourceSets.main.compileClasspath
     runtimeClasspath += sourceSets.main.compileClasspath
@@ -110,7 +113,11 @@ tasks.named('test', Test).configure {
 }
 
 sourceSets.main {
-    // java.srcDir '../../../mc/chunkcache/1.20.1/src/main/java'
+    kotlin.srcDir '../../../mc/chunkcache/src/main/kotlin'
+    kotlin.srcDir '../../../mc/chunkcache/src/20/kotlin'
+    java.srcDir '../../../mc/chunkcache/src/client/java'
+    kotlin.srcDir '../../../mc/chunkcache/src/client/kotlin'
+    java.srcDir '../../../mc/common/codec/src/server/java'
     kotlin.srcDir '../../../mc/common/codec/src/main/kotlin'
     kotlin.srcDir '../../../mc/common/2021/src/main/kotlin'
     java.srcDir '../../../mc/20/src/client/java'
@@ -166,6 +173,7 @@ mixin {
     config "rdi.mixins.json"
     config "rdi.v20.client.mixins.json"
     config "rdi.l2.client.mixins.json"
+    config "rdi.chunkcache.client.mixins.json"
 }
 
 repositories {
@@ -280,6 +288,7 @@ legacyForge {
                     "-mixin.config=rdi.mixins.json",
                     "-mixin.config=rdi.v20.client.mixins.json",
                     "-mixin.config=rdi.l2.client.mixins.json",
+                    "-mixin.config=rdi.chunkcache.client.mixins.json",
                     "--width",
                     "2560",
                     "--height",
@@ -561,7 +570,7 @@ jar {
                 "Implementation-Version"  : version,
                 "Implementation-Vendor"   : mod_authors,
                 "Implementation-Timestamp": new Date().format("yyyy-MM-dd'T'HH:mm:ssZ"),
-                "MixinConfigs": "rdi.mixins.json,rdi.v20.client.mixins.json,rdi.l2.client.mixins.json"
+                "MixinConfigs": "rdi.mixins.json,rdi.v20.client.mixins.json,rdi.l2.client.mixins.json,rdi.chunkcache.client.mixins.json"
         ])
     }
 }

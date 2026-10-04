@@ -101,7 +101,11 @@ class ChunkTerrainCodecTest {
         assertEquals(Blocks.STONE.defaultBlockState(), decoded.single().getBlockState(3, 4, 5))
         assertEquals(false, decoded.single().hasOnlyAir())
         assertFailsWith<java.io.IOException> { ChunkTerrainCodec.decode(prepared.sections.copyOf(prepared.sections.size - 1), 1, biomes) }
-        assertFailsWith<java.io.IOException> { ChunkTerrainCodec.decode(prepared.sections + byteArrayOf(0), 1, biomes) }
+        assertFailsWith<java.io.IOException> { ChunkTerrainCodec.decode(prepared.sections + byteArrayOf(1), 1, biomes) }
+        assertFailsWith<java.io.IOException> { ChunkTerrainCodec.decode(prepared.sections + ByteArray(3), 1, biomes) }
+        // 1.20.1 vanilla chunk data carries zero padding after single-value containers.
+        assertEquals(Blocks.STONE.defaultBlockState(),
+            ChunkTerrainCodec.decode(prepared.sections + ByteArray(2), 1, biomes).single().getBlockState(3, 4, 5))
     }
 
     @Test

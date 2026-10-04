@@ -25,6 +25,10 @@ public final class RMixinPlugin implements IMixinConfigPlugin {
             "calebxzhou.rdi.mc.client.mixin.mDcSharpLocator";
     private static final String DC_SHARP_LOCATOR_TARGET =
             "dcsharp.transformer.DCSharpLocator";
+    private static final String HOLLOW_FLOW_PROFILE_MIXIN =
+            "calebxzhou.rdi.mc.client.mixin.HollowFlowProfileMixin";
+    private static final String HOLLOW_FLOW_PROFILE_TARGET =
+            "com.kurome.ageofmythology.infinite_dimension.hollow.HollowFlowProfile";
 
     @Override
     public void onLoad(String mixinPackage) {
@@ -48,6 +52,9 @@ public final class RMixinPlugin implements IMixinConfigPlugin {
         }
         if (DC_SHARP_LOCATOR_MIXIN.equals(mixinClassName)) {
             return classExists(DC_SHARP_LOCATOR_TARGET);
+        }
+        if (HOLLOW_FLOW_PROFILE_MIXIN.equals(mixinClassName)) {
+            return classExists(HOLLOW_FLOW_PROFILE_TARGET);
         }
         return true;
     }

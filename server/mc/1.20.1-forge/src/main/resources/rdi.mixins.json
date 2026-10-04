@@ -11,8 +11,6 @@
     "AChunkMap",
     "AServerEntity",
     "mAttributeDedup",
-    // "mChunkCache",
-    // "mDelayedChunkCache",
     "mHandshakeDiagnostics",
     "mNetworkRegistryDiagnostics",
     "mPackListener",

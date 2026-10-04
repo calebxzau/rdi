@@ -22,7 +22,10 @@ version = "5-mc-server-1.20.1-forge"
 group = "calebxzhou.rdi"
 sourceSets.main {
     ext["refMap"] = "rdi.mixins.refmap.json"
-    // java.srcDir '../../../mc/chunkcache/1.20.1/src/main/java'
+    kotlin.srcDir '../../../mc/chunkcache/src/main/kotlin'
+    kotlin.srcDir '../../../mc/chunkcache/src/20/kotlin'
+    java.srcDir '../../../mc/chunkcache/src/server/java'
+    kotlin.srcDir '../../../mc/chunkcache/src/server/kotlin'
     java.srcDir '../../../mc/20/src/server/java'
     java.srcDir '../../../mc/common/2021/src/main/java'
     kotlin.srcDir '../../../mc/20/src/server/kotlin'
@@ -41,6 +44,9 @@ sourceSets.create('zstdTest') {
     kotlin.srcDir '../../../mc/common/codec/src/test/kotlin'
 }
 sourceSets.test.kotlin.srcDir '../../../mc/20/src/serverTest/kotlin'
+sourceSets.test.kotlin.srcDir '../../../mc/chunkcache/src/test/kotlin'
+sourceSets.test.kotlin.srcDir '../../../mc/chunkcache/src/serverTest/kotlin'
+sourceSets.test.kotlin.srcDir '../../../mc/chunkcache/src/20Test/kotlin'
 sourceSets.test.kotlin.srcDir '../../../mc/20/src/test/kotlin/calebxzau/rdi/mc/v20/l2'
 sourceSets.test.kotlin.srcDir '../../../mc/common/codec/src/serverTest/kotlin'
 sourceSets.test.kotlin.srcDir '../../../mc/common/network-metrics/src/test/kotlin'
@@ -49,6 +55,7 @@ mixin {
     config "rdi.mixins.json"
     config "rdi.v20.server.mixins.json"
     config "rdi.l2.server.mixins.json"
+    config "rdi.chunkcache.server.mixins.json"
 }
 
 repositories {
@@ -108,6 +115,7 @@ legacyForge {
                 "-mixin.config=rdi.mixins.json",
                 "-mixin.config=rdi.v20.server.mixins.json",
                 "-mixin.config=rdi.l2.server.mixins.json",
+                "-mixin.config=rdi.chunkcache.server.mixins.json",
             ]
         }
 
@@ -289,7 +297,7 @@ jar {
                 "Implementation-Version"  : version,
                 "Implementation-Vendor"   : mod_authors,
                 "Implementation-Timestamp": new Date().format("yyyy-MM-dd'T'HH:mm:ssZ"),
-                "MixinConfigs": "rdi.mixins.json,rdi.v20.server.mixins.json,rdi.l2.server.mixins.json"
+                "MixinConfigs": "rdi.mixins.json,rdi.v20.server.mixins.json,rdi.l2.server.mixins.json,rdi.chunkcache.server.mixins.json"
         ])
     }
 }

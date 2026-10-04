@@ -397,8 +397,10 @@ internal class PacketBatchMetricsRecorder(
                     apply(first, logical, inbound, frames, { writeSuccesses++ }, { writeFailures++ }, { successfulRecords += it }, { failedRecords += it }, { encodingFailures++; encodingFailureRecords += it })
                     dirty = true
                 }
-                repeat(MAX_DRAIN_BATCH - if (first == null) 0 else 1) {
-                    val event = queue.poll() ?: return@repeat
+                // Stop at the first empty poll; each poll takes the queue lock shared with producers.
+                var remaining = MAX_DRAIN_BATCH - if (first == null) 0 else 1
+                while (remaining-- > 0) {
+                    val event = queue.poll() ?: break
                     apply(event, logical, inbound, frames, { writeSuccesses++ }, { writeFailures++ }, { successfulRecords += it }, { failedRecords += it }, { encodingFailures++; encodingFailureRecords += it })
                     dirty = true
                 }

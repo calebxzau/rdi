@@ -1,8 +1,8 @@
 # mc21客户端区块缓存
 
-所有多人服务器连接（RDI加入按钮、服务器列表、直接连接和LAN加入）自动保存服务器发来的完整区块和后续方块、方块实体、生物群系更新；单人游戏不启用。所有服务器统一使用固定hostId`shared`，不按服务器地址或房间ID分目录。两端支持区块缓存协议时，客户端提前准备本地地形并上报SHA-1；服务器确认地形相同后省略方块及生物群系数据，仍发送当前高度图、方块实体同步NBT和光照。缓存不持有活跃LevelChunk或方块实体；恢复后的标准区块包仍交给原版处理器。
+所有多人服务器连接（RDI加入按钮、服务器列表、直接连接和LAN加入）自动保存服务器发来的完整区块和后续方块、方块实体、生物群系更新；单人游戏不启用。缓存根目录为`rdi/hosts/<hostId>/world`：通过RDI房间加入时hostId为启动参数`rdi.host.id`（房间ID），没有该参数的其他多人连接统一使用`shared`。不按服务器地址分目录。两端支持区块缓存协议时，客户端提前准备本地地形并上报SHA-1；服务器确认地形相同后省略方块及生物群系数据，仍发送当前高度图、方块实体同步NBT和光照。缓存不持有活跃LevelChunk或方块实体；恢复后的标准区块包仍交给原版处理器。
 
-基础区块位于`rdi/shared/world/dimensions/<命名空间>/<维度路径>/r.x.z.mca`，增量位于并列的`rdi/shared/world/deltas/<命名空间>/<维度路径>/r.x.z.mca`。例如`minecraft:overworld`使用`dimensions/minecraft/overworld/`和`deltas/minecraft/overworld/`。分离根目录避免自定义维度路径和增量目录冲突。不同服务器的相同维度、相同区块坐标会覆盖缓存；缓存地形只有在服务器确认hash一致后才会复用。原来按hostId划分的目录不读取、不迁移，也不删除。
+基础区块位于`<缓存根目录>/dimensions/<命名空间>/<维度路径>/r.x.z.mca`，增量位于并列的`<缓存根目录>/deltas/<命名空间>/<维度路径>/r.x.z.mca`。例如`minecraft:overworld`使用`dimensions/minecraft/overworld/`和`deltas/minecraft/overworld/`。分离根目录避免自定义维度路径和增量目录冲突。同一缓存根目录下，不同服务器的相同维度、相同区块坐标会覆盖缓存；缓存地形只有在服务器确认hash一致后才会复用。共享客户端代码位于`mc/chunkcache/src/client`，1.20.1移植见[docs/chunk-cache-1.20.1.md](../../../docs/chunk-cache-1.20.1.md)。
 
 两类区域文件均使用MCA/ID8、Zstd等级7、校验和及共享流式压缩池；超大压缩记录沿用`.mcc`。新基础记录是`RDCB`版本1封套，包含UUIDv7会话标识、基础序号和原`RDCH`版本1载荷；增量记录使用`RDCD`版本1。它们不是原版ChunkSerializer存档。读取新格式不会迁移旧RDCH裸记录。
 
