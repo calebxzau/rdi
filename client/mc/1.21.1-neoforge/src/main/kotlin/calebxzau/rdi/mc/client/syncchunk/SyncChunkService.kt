@@ -3,6 +3,7 @@ import calebxzau.rdi.mc.syncchunk.SyncChunkKey
 
 import calebxzau.rdi.mc.client.dm.DmConfig
 import calebxzau.rdi.mc.client.dm.DmHttpClient
+import calebxzau.rdi.mc.syncchunk.SyncChunkList
 import calebxzau.rdi.mc.syncchunk.network.RSyncChunksPayload
 import net.minecraft.client.server.IntegratedServer
 import net.minecraft.core.BlockPos
@@ -12,6 +13,7 @@ import net.minecraft.server.level.ServerLevel
 import net.minecraft.server.level.ServerPlayer
 import net.minecraft.world.level.ChunkPos
 import net.neoforged.neoforge.network.PacketDistributor
+import org.slf4j.LoggerFactory
 import java.util.UUID
 import java.util.concurrent.Executors
 import java.util.concurrent.ScheduledExecutorService
@@ -19,6 +21,7 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicLong
 
 object SyncChunkService {
+    private val logger = LoggerFactory.getLogger(SyncChunkService::class.java)
     private val executor = Executors.newVirtualThreadPerTaskExecutor()
     private val scheduler: ScheduledExecutorService = Executors.newSingleThreadScheduledExecutor { task ->
         Thread(task, "rdi-dm-sync-chunk-retry").apply { isDaemon = true }
@@ -131,7 +134,8 @@ object SyncChunkService {
     }
 
     fun sendSyncChunksTo(player: ServerPlayer) {
-        if (player.server is IntegratedServer) PacketDistributor.sendToPlayer(player, payload(player.server))
+        if (player.server !is IntegratedServer) return
+        payload(entries(player.server))?.let { PacketDistributor.sendToPlayer(player, it) }
     }
 
     private fun request(player: ServerPlayer, kind: DmSyncChunkOperationKind, key: SyncChunkKey): Boolean {
@@ -176,11 +180,16 @@ object SyncChunkService {
         return SyncChunkKey(level.dimension().location().toString(), chunk.x, chunk.z)
     }
 
-    private fun payload(server: MinecraftServer) = RSyncChunksPayload(entries(server).map { RSyncChunksPayload.Entry(it.key.dimensionId, it.key.chunkX, it.key.chunkZ) })
+    /** Null when the DM list breaks the shared list rules; the failure is logged and nothing is sent. */
+    private fun payload(entries: List<DmSyncChunkEntry>): RSyncChunksPayload? =
+        runCatching { RSyncChunksPayload.of(SyncChunkList(entries.map { it.key })) }.getOrElse { exception ->
+            logger.error("Failed to prepare the DM sync chunk list", exception)
+            null
+        }
 
     private fun sendPayload(server: MinecraftServer, entries: List<DmSyncChunkEntry>) {
         if (server !is IntegratedServer) return
-        val payload = RSyncChunksPayload(entries.map { RSyncChunksPayload.Entry(it.key.dimensionId, it.key.chunkX, it.key.chunkZ) })
+        val payload = payload(entries) ?: return
         server.playerList.players.forEach { PacketDistributor.sendToPlayer(it, payload) }
     }
 

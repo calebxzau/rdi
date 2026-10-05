@@ -234,6 +234,9 @@ sourceSets.named('main') {
     java.srcDir '../../../mc/chunkcache/src/client/java'
     kotlin.srcDir '../../../mc/chunkcache/src/client/kotlin'
     kotlin.srcDir '../../../mc/syncchunk/src/main/kotlin'
+    kotlin.srcDir '../../../mc/syncchunk/src/2021/kotlin'
+    java.srcDir '../../../mc/syncchunk/src/2021Client/java'
+    kotlin.srcDir '../../../mc/syncchunk/src/2021Client/kotlin'
     kotlin.srcDir '../../../mc/syncchunk/src/21/kotlin'
     kotlin.srcDir '../../../mc/common/codec/src/main/kotlin'
     java.srcDir '../../../mc/common/codec/src/server/java'
@@ -251,6 +254,7 @@ sourceSets.named('test') {
     kotlin.srcDir '../../../mc/chunkcache/src/21Test/kotlin'
     kotlin.srcDir '../../../mc/chunkcache/src/clientTest/kotlin'
     kotlin.srcDir '../../../mc/syncchunk/src/test/kotlin'
+    kotlin.srcDir '../../../mc/syncchunk/src/2021Test/kotlin'
     kotlin.srcDir '../../../mc/common/codec/src/test/kotlin'
 }
 

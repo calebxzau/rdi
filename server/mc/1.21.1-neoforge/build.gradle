@@ -113,6 +113,7 @@ sourceSets.named('main') {
     kotlin.srcDir '../../../mc/common/network-metrics/src/main/kotlin'
     kotlin.srcDir '../../../mc/common/all/src/main/kotlin'
     kotlin.srcDir '../../../mc/syncchunk/src/main/kotlin'
+    kotlin.srcDir '../../../mc/syncchunk/src/2021/kotlin'
     kotlin.srcDir '../../../mc/syncchunk/src/21/kotlin'
     kotlin.srcDir '../../../mc/rcmd/src/main/kotlin'
     kotlin.srcDir '../../../mc/rmcp/server/src/main/kotlin'
@@ -126,6 +127,8 @@ sourceSets.named('test') {
     kotlin.srcDir '../../../mc/common/codec/src/serverTest/kotlin'
     kotlin.srcDir '../../../mc/common/codec/src/test/kotlin'
     kotlin.srcDir '../../../mc/common/network-metrics/src/test/kotlin'
+    kotlin.srcDir '../../../mc/syncchunk/src/test/kotlin'
+    kotlin.srcDir '../../../mc/syncchunk/src/2021Test/kotlin'
 }
 
 def localRuntimeConfiguration = configurations.maybeCreate('localRuntime')

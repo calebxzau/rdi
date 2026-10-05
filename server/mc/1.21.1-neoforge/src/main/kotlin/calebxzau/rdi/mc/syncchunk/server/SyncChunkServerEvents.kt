@@ -7,13 +7,11 @@ import net.neoforged.neoforge.event.entity.player.PlayerEvent
 
 @EventBusSubscriber(modid = "rdi")
 object SyncChunkServerEvents {
+    /** Failures are logged by the service; joining stays available. */
     @JvmStatic
     @SubscribeEvent
     fun onPlayerJoin(event: PlayerEvent.PlayerLoggedInEvent) {
         val player = event.entity as? ServerPlayer ?: return
-        SyncChunkService.sendTo(player).fold(
-            onSuccess = {},
-            onFailure = { /* The service logs the failure; joining remains available. */ },
-        )
+        SyncChunkService.sendTo(player)
     }
 }

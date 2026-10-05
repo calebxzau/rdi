@@ -4,6 +4,7 @@ import calebxzau.rdi.mc.syncchunk.SyncChunkAddResult
 import calebxzau.rdi.mc.syncchunk.SyncChunkEntry
 import calebxzau.rdi.mc.syncchunk.SyncChunkKey
 import calebxzau.rdi.mc.syncchunk.SyncChunkRemoveResult
+import calebxzau.rdi.mc.syncchunk.SyncChunkStorage
 import net.minecraft.SharedConstants
 import net.minecraft.nbt.CompoundTag
 import net.minecraft.core.RegistryAccess
@@ -58,21 +59,21 @@ class SyncChunkSavedDataTest {
         val directory = Files.createTempDirectory("syncchunk-storage-test")
         try {
             val dataDirectory = Files.createDirectory(directory.resolve("data"))
-            val dataFile = dataDirectory.resolve("${SyncChunkSavedData.FILE_ID}.dat")
+            val dataFile = dataDirectory.resolve("${SyncChunkStorage.FILE_ID}.dat")
             val originalBytes = byteArrayOf(0x13, 0x37, 0x01, 0x02)
             Files.write(dataFile, originalBytes)
             val corruptStorage = DimensionDataStorage(dataDirectory.toFile(), null, null)
 
-            assertEquals(null, corruptStorage.get(SyncChunkSavedData.factory(), SyncChunkSavedData.FILE_ID))
+            assertEquals(null, corruptStorage.get(SyncChunkSavedData.factory(), SyncChunkStorage.FILE_ID))
             assertFailsWith<IllegalStateException> {
                 SyncChunkService.getOrCreate(corruptStorage, dataFile)
             }
-            assertEquals(null, corruptStorage.get(SyncChunkSavedData.factory(), SyncChunkSavedData.FILE_ID))
+            assertEquals(null, corruptStorage.get(SyncChunkSavedData.factory(), SyncChunkStorage.FILE_ID))
             corruptStorage.save()
             assertContentEquals(originalBytes, Files.readAllBytes(dataFile))
 
             val missingDirectory = Files.createDirectory(directory.resolve("missing-data"))
-            val missingFile = missingDirectory.resolve("${SyncChunkSavedData.FILE_ID}.dat")
+            val missingFile = missingDirectory.resolve("${SyncChunkStorage.FILE_ID}.dat")
             val missingStorage = DimensionDataStorage(missingDirectory.toFile(), null, null)
             val created = SyncChunkService.getOrCreate(missingStorage, missingFile)
             assertTrue(created.snapshot().isEmpty())

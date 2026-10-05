@@ -46,19 +46,6 @@ class DmClientEvents {
                         if (result.isSuccess) 1 else 0
                     })
             val command = Commands.literal("dm").then(snapshotCommand)
-                .then(
-                    Commands.literal("chunk")
-                        .then(Commands.literal("shownow").executes { context ->
-                            val enabled = toggleShowNow()
-                            context.source.sendSuccess({ Component.literal("当前区块边界显示已${if (enabled) "开启" else "关闭"}") }, false)
-                            1
-                        })
-                        .then(Commands.literal("showset").executes { context ->
-                            val enabled = toggleShowSet()
-                            context.source.sendSuccess({ Component.literal("同步区块边界显示已${if (enabled) "开启" else "关闭"}") }, false)
-                            1
-                        })
-                )
             if (config != null) {
                 command
                     .then(
@@ -88,16 +75,6 @@ class DmClientEvents {
             result.onFailure { source.sendFailure(Component.literal(it.message ?: "无法创建DM房间")) }
             result.onSuccess { source.sendSuccess({ Component.literal("DM房间创建中") }, false) }
             return if (result.isSuccess) 1 else 0
-        }
-
-        private fun toggleShowNow(): Boolean {
-            calebxzhou.rdi.mc.common.RDI.SHOW_NOW_SYNC_CHUNK = !calebxzhou.rdi.mc.common.RDI.SHOW_NOW_SYNC_CHUNK
-            return calebxzhou.rdi.mc.common.RDI.SHOW_NOW_SYNC_CHUNK
-        }
-
-        private fun toggleShowSet(): Boolean {
-            calebxzhou.rdi.mc.common.RDI.SHOW_SET_SYNC_CHUNKS = !calebxzhou.rdi.mc.common.RDI.SHOW_SET_SYNC_CHUNKS
-            return calebxzhou.rdi.mc.common.RDI.SHOW_SET_SYNC_CHUNKS
         }
 
         @SubscribeEvent
