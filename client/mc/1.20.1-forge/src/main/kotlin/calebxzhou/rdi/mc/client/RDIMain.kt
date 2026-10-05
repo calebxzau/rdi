@@ -37,6 +37,7 @@ class RDIMain {
         RdiPacketRefChannel.register()
         calebxzau.rdi.mc.v20.forge.l2.L2NameChannel.register()
         calebxzau.rdi.mc.client.chunkcache.ChunkCacheClientNetwork.register()
+        calebxzau.rdi.mc.client.syncchunk.SyncChunkForgeClient.register()
         McpNetwork.register()
         LogManager.getLogger("rdi").info("❄❄❄❄❄❄❄❄RDI客户端核心模块已加载❄❄❄❄❄❄❄❄")
     }

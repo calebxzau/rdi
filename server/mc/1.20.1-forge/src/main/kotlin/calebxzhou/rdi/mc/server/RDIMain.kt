@@ -57,6 +57,7 @@ class RDIMain {
         RdiPacketRefChannel.register()
         calebxzau.rdi.mc.v20.forge.l2.L2NameChannel.register()
         calebxzau.rdi.mc.server.chunkcache.ChunkCacheServerNetwork.register()
+        calebxzau.rdi.mc.server.syncchunk.SyncChunkForgeNetwork.register()
         McpNetwork.register()
     }
 

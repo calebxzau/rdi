@@ -10,12 +10,15 @@ import calebxzau.rdi.mc.v20.protocol.FabricRoomWire20
 import calebxzau.rdi.mc.v20.protocol.EncodedPlayerList20
 import calebxzau.rdi.mc.v20.server.network.PacketMetrics20
 import calebxzau.rdi.mc.v20.server.rcmd.RcmdServerRuntime20
+import calebxzau.rdi.mc.syncchunk.SyncChunkCommands
+import calebxzau.rdi.mc.v20.server.syncchunk.SyncChunkSavedData20
 import calebxzau.rdi.mc.zstdcodec.ZstdCompressionPipeline
 import calebxzau.rdi.mc.v20.server.region.RegionZstdCodec
 import com.google.gson.Gson
 import com.google.gson.GsonBuilder
 import com.google.gson.JsonElement
 import net.fabricmc.api.DedicatedServerModInitializer
+import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback
 import net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents
 import net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents
@@ -32,6 +35,9 @@ class RDIFabricServer : DedicatedServerModInitializer {
         val nativeMagic = ZstdCompressionPipeline.verifyNativeLoaded()
         logger.info("RDI Fabric server initialized (Zstd magic {})", nativeMagic)
 
+        CommandRegistrationCallback.EVENT.register { dispatcher, _, _ ->
+            SyncChunkCommands.register(dispatcher, SyncChunkSavedData20::of)
+        }
         ServerPlayConnectionEvents.JOIN.register { handler, _, _ ->
             currentSession?.takeIf { it.active.get() }?.let { sendPlayers(handler.player, it.playerList) }
             rcmdAdapter?.onPlayerJoin(handler.player)

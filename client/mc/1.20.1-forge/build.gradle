@@ -103,6 +103,8 @@ sourceSets.test {
     kotlin.srcDir '../../../mc/chunkcache/src/test/kotlin'
     kotlin.srcDir '../../../mc/chunkcache/src/clientTest/kotlin'
     kotlin.srcDir '../../../mc/chunkcache/src/20Test/kotlin'
+    kotlin.srcDir '../../../mc/syncchunk/src/test/kotlin'
+    kotlin.srcDir '../../../mc/syncchunk/src/2021Test/kotlin'
     // ModDev adds Minecraft to main only; these shared tests exercise its resource API.
     compileClasspath += sourceSets.main.compileClasspath
     runtimeClasspath += sourceSets.main.compileClasspath
@@ -124,6 +126,10 @@ sourceSets.main {
     kotlin.srcDir '../../../mc/20/src/client/kotlin'
     kotlin.srcDir '../../../mc/20/src/main/kotlin'
     kotlin.srcDir '../../../mc/20/forge/src/main/kotlin'
+    kotlin.srcDir '../../../mc/syncchunk/src/main/kotlin'
+    kotlin.srcDir '../../../mc/syncchunk/src/2021/kotlin'
+    java.srcDir '../../../mc/syncchunk/src/2021Client/java'
+    kotlin.srcDir '../../../mc/syncchunk/src/2021Client/kotlin'
     kotlin.srcDir '../../../mc/rcmd/src/main/kotlin'
     java.exclude(
             'calebxzhou/rdi/mc/client/mixin/mChat.java',
