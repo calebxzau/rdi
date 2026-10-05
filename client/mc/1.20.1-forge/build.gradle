@@ -416,6 +416,7 @@ dependencies {
     }
     compileOnly "dev.ftb.mods:ftb-chunks-forge:2001.3.8"
     testImplementation 'org.jetbrains.kotlin:kotlin-test-junit5:2.4.10'
+    testRuntimeOnly 'org.bytedeco:ffmpeg:8.0.1-1.5.13:windows-x86_64-gpl'
     testRuntimeOnly 'org.junit.jupiter:junit-jupiter-engine:6.1.1'
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher:6.1.1'
     // Match Minecraft's logging API instead of the older shared-library test dependency.

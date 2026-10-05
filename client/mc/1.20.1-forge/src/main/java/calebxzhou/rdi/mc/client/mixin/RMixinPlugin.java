@@ -29,6 +29,10 @@ public final class RMixinPlugin implements IMixinConfigPlugin {
             "calebxzhou.rdi.mc.client.mixin.HollowFlowProfileMixin";
     private static final String HOLLOW_FLOW_PROFILE_TARGET =
             "com.kurome.ageofmythology.infinite_dimension.hollow.HollowFlowProfile";
+    private static final String EFFEK_AVIF_TEXTURE_MIXIN =
+            "calebxzhou.rdi.mc.client.mixin.EffekAvifTextureMixin";
+    private static final String EFFEK_EFFECT_TARGET =
+            "mod.chloeprime.aaaparticles.api.client.effekseer.EffekseerEffect";
 
     @Override
     public void onLoad(String mixinPackage) {
@@ -55,6 +59,9 @@ public final class RMixinPlugin implements IMixinConfigPlugin {
         }
         if (HOLLOW_FLOW_PROFILE_MIXIN.equals(mixinClassName)) {
             return classExists(HOLLOW_FLOW_PROFILE_TARGET);
+        }
+        if (EFFEK_AVIF_TEXTURE_MIXIN.equals(mixinClassName)) {
+            return classExists(EFFEK_EFFECT_TARGET);
         }
         return true;
     }
