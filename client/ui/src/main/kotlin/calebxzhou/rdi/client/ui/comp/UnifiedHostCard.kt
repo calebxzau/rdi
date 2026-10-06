@@ -48,6 +48,7 @@ fun UnifiedHostCard(
     onPlay: ((UnifiedHostBrief) -> Unit)? = null,
     onOpenMembers: ((HostTarget) -> Unit)? = null,
     onOpenMods: ((HostTarget) -> Unit)? = null,
+    onOpenWorld: ((HostTarget) -> Unit)? = null,
     onOpenFiles: ((HostTarget) -> Unit)? = null,
     onOpenBackend: ((HostTarget) -> Unit)? = null,
     onOpenSettings: ((HostTarget) -> Unit)? = null,
@@ -89,6 +90,9 @@ fun UnifiedHostCard(
                     }
                     onOpenMods?.let {
                         RDropdownMenuItem("模组", "\uDB85\uDCD3", onClick = { menuExpanded = false; it(host.target) })
+                    }
+                    onOpenWorld?.let {
+                        RDropdownMenuItem("存档", "\uDB85\uDC5B", onClick = { menuExpanded = false; it(host.target) })
                     }
                 }
                 if (canManage) {

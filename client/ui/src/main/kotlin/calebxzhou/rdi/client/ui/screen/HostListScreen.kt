@@ -65,6 +65,7 @@ fun HostListScreen(
     onOpenHostInfo: (HostTarget, Boolean) -> Unit,
     onOpenHostMembers: (HostTarget, Boolean) -> Unit,
     onOpenHostMods: (HostTarget, Boolean) -> Unit,
+    onOpenHostWorld: (HostTarget, Boolean) -> Unit,
     onOpenHostFiles: (HostTarget, Boolean) -> Unit,
     onOpenHostBackend: (HostTarget, Boolean) -> Unit,
     onOpenHostSettings: (HostTarget, Boolean) -> Unit,
@@ -102,6 +103,7 @@ fun HostListScreen(
                 val onOpenHostInfo1 = { it: HostTarget -> onOpenHostInfo(it, false) }
                 val onOpenHostMembers1 = { it: HostTarget -> onOpenHostMembers(it, false) }
                 val onOpenHostMods1 = { it: HostTarget -> onOpenHostMods(it, false) }
+                val onOpenHostWorld1 = { it: HostTarget -> onOpenHostWorld(it, false) }
                 val onOpenHostFiles1 = { it: HostTarget -> onOpenHostFiles(it, false) }
                 val onOpenHostBackend1 = { it: HostTarget -> onOpenHostBackend(it, false) }
                 val onOpenHostSettings1 = { it: HostTarget -> onOpenHostSettings(it, false) }
@@ -153,6 +155,7 @@ fun HostListScreen(
                                 onPlay = viewModel::startHost,
                                 onOpenMembers = onOpenHostMembers1,
                                 onOpenMods = onOpenHostMods1,
+                                onOpenWorld = onOpenHostWorld1,
                                 onOpenFiles = onOpenHostFiles1,
                                 onOpenBackend = onOpenHostBackend1,
                                 onOpenSettings = onOpenHostSettings1,

@@ -251,6 +251,9 @@ fun AppNavigation(
                 onOpenHostMods = { target, fromAllHosts ->
                     navController.navigate(HostModsRoute(target.id, fromAllHosts, target.kind.name))
                 },
+                onOpenHostWorld = { target, fromAllHosts ->
+                    navController.navigate(HostWorldRoute(target.id, fromAllHosts, target.kind.name))
+                },
                 onOpenHostFiles = { target, fromAllHosts ->
                     navController.navigate(HostFilesRoute(target.id, fromAllHosts, target.kind.name))
                 },
@@ -343,6 +346,9 @@ fun AppNavigation(
                     onOpenTask(runId)
                 }
             )
+        }
+        composable<HostWorldRoute> {
+            HostWorldScreen(onBack = returnToHostList)
         }
         composable<HostFilesRoute> {
             val route = it.toRoute<HostFilesRoute>()

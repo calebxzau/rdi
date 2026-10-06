@@ -208,6 +208,8 @@ data class HostMembersRoute(val hostId: String, val fromAllHosts: Boolean = fals
 @Serializable
 data class HostModsRoute(val hostId: String, val fromAllHosts: Boolean = false, val kind: String = HostKind.Legacy.name)
 @Serializable
+data class HostWorldRoute(val hostId: String, val fromAllHosts: Boolean = false, val kind: String = HostKind.Legacy.name)
+@Serializable
 data class HostFilesRoute(val hostId: String, val fromAllHosts: Boolean = false, val kind: String = HostKind.Legacy.name)
 @Serializable
 data class HostBackendRoute(val hostId: String, val fromAllHosts: Boolean = false, val kind: String = HostKind.Legacy.name)
