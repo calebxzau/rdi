@@ -23,67 +23,7 @@ Only read-only Git operations are allowed.
 * Do not stage, commit, amend, stash, restore, checkout, switch, reset, clean,
   merge, rebase, cherry-pick, fetch, pull, push, or create/delete branches or tags.
 * Judge commands by their actual effects and arguments. Report any required Git
-  write operation to the parent agent or user instead of executing it.
-
-## Subagents
-
-Use English for subagent tasks and reports.
-
-The main agent owns implementation design, scope, and final decisions. Handle
-ordinary localized work directly; delegate when independent context, substantial
-investigation, or parallel execution justifies the handoff. There is no mandatory
-exploration/implementation/review pipeline.
-
-* Use `code_explorer` for substantial investigation or unclear execution paths.
-  Skip it when the relevant repository behavior is already understood.
-* Use `code_worker` for a bounded implementation task that can be executed
-  independently from a concrete specification.
-* Use `reviewer` for independent review when the change introduces material
-  security, concurrency, data-integrity, compatibility, or lifecycle/recovery
-  risk. Do not require review solely because several files changed.
-* Explorers and reviewers do not edit files or implement fixes.
-
-### Delegation
-
-Give workers a compact specification covering:
-
-1. Goal: the required behavior and relevant current behavior.
-2. Scope: owned files/symbols, integration points, and changes to avoid.
-3. Constraints: behavior contracts, key implementation decisions, and invariants.
-4. Validation: acceptance criteria and relevant checks.
-
-Include an `Applicable instructions` section with the exact paths of checked
-`AGENTS.md` files and the constraints relevant to the task. Add state transitions,
-ordering, failure recovery, or pseudocode only when the task needs them. Reuse
-established findings instead of repeating broad exploration or generic rules.
-
-Workers may decide local function decomposition, helper reuse, syntax, and test
-organization within the specification. Changes to behavior contracts, scope,
-architecture, or risk require the parent agent's decision. If the specification
-conflicts with repository evidence, report the conflict and minimum adjustment;
-continue only work that is clearly safe within the approved scope.
-
-### Shared workspace and validation
-
-* Preserve edits made by the user and other agents.
-* Assign non-overlapping file ownership to parallel workers; coordinate before
-  editing a shared file.
-* Serialize Gradle runs for the same module and across modules that share build
-  outputs. Do not terminate another agent's build.
-* Report changes, validation results, deviations, and unresolved issues concisely.
-  Distinguish implementation failures, pre-existing failures, and checks not run.
-
-### Tool failures
-
-Verify that the parent has workspace access before delegation. Each new subagent
-should verify the tools needed for its task through its first normal read or
-command; a separate repetitive preflight is unnecessary.
-
-If a subagent lacks required tools, do not repeatedly respawn it in the same
-session. The main agent may take over already authorized work using available
-tools. Report remaining tool or validation limitations. If independent review
-cannot run, report that gap explicitly; the main agent's self-review does not
-count as independent approval.
+  write operation to the user instead of executing it.
 
 ## 1. Agent Workflow
 
@@ -97,10 +37,10 @@ Before making code changes:
 2. Explain the proposed changes and provide a concrete implementation plan.
 3. Obtain the user's approval before implementing the plan.
 
-Approval covers delegated implementation, necessary validation, and fixes within
-the approved scope. Do not ask again merely because work moves to a subagent or
-validation finds an implementation error. Ask again only when the plan materially
-expands scope or changes behavior the user has already confirmed.
+Approval covers implementation, necessary validation, and fixes within the
+approved scope. Do not ask again merely because validation finds an implementation
+error. Ask again only when the plan materially expands scope or changes behavior
+the user has already confirmed.
 
 
 ### Project-Specific Instructions
@@ -499,5 +439,5 @@ When implementing a feature that touches multiple modules, generally use this or
 
 Adjust the order when dependencies make another sequence more appropriate.
 
-Follow the approval and delegation rules above. Execute and validate within the
+Follow the approval rules above. Execute and validate within the
 approved scope; revisit the plan only when new evidence requires a material change.
