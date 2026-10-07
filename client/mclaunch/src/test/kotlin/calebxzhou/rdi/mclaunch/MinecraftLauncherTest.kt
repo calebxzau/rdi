@@ -180,6 +180,25 @@ class MinecraftLauncherTest {
     }
 
     @Test
+    fun extraGameArgsFollowTheStandardArgsAndAccountIsSubstituted() {
+        val root = Files.createTempDirectory("mclaunch-extra-game-args").toFile()
+        try {
+            val command = captureLaunchCommand(
+                root = root,
+                currentJavaMajor = 25,
+                vanillaArguments = MojangArguments(game = listOf("--uuid", "\${auth_uuid}", "--username", "\${auth_player_name}").map(::JsonPrimitive)),
+                account = MinecraftAccount("房主", "00000000-0000-300c-9be5-0017dec2993d", "placeholder"),
+                extraGameArgs = listOf("--quickPlaySingleplayer", "新的世界-RDI导入"),
+            )
+            assertEquals(listOf("--quickPlaySingleplayer", "新的世界-RDI导入"), command.takeLast(2))
+            assertEquals("000000000000300c9be50017dec2993d", command[command.indexOf("--uuid") + 1])
+            assertEquals("房主", command[command.indexOf("--username") + 1])
+        } finally {
+            root.deleteRecursivelyNoSymlink()
+        }
+    }
+
+    @Test
     fun launchOverridesUsePackJavaAndMaxMemory() {
         val root = Files.createTempDirectory("mclaunch-pack-options").toFile()
         try {
@@ -352,6 +371,8 @@ class MinecraftLauncherTest {
         manifestId: String = "1.7.10",
         loaderManifestOverride: MojangVersionManifest? = null,
         vanillaArguments: MojangArguments = MojangArguments(),
+        account: MinecraftAccount = MinecraftAccount("player", "00000000-0000-0000-0000-000000000000", "token"),
+        extraGameArgs: List<String> = emptyList(),
     ): List<String> {
         var command: List<String>? = null
         val launcher = launcher(
@@ -366,7 +387,10 @@ class MinecraftLauncherTest {
             vanillaArguments = vanillaArguments,
             onCommand = { command = it },
         )
-        launcher.launch(request(root, mcVersion = mcVersion, loader = loader, launchOverrides = launchOverrides), onLine = {}).getOrThrow()
+        launcher.launch(
+            request(root, mcVersion = mcVersion, loader = loader, launchOverrides = launchOverrides, account = account, extraGameArgs = extraGameArgs),
+            onLine = {},
+        ).getOrThrow()
         return command ?: error("未捕获Minecraft启动命令")
     }
 
@@ -454,14 +478,17 @@ class MinecraftLauncherTest {
         mcVersion: McVersion = McVersion.V201,
         loader: ModLoader = ModLoader.Fabric,
         launchOverrides: MinecraftLaunchOverrides = MinecraftLaunchOverrides(),
+        account: MinecraftAccount = MinecraftAccount("player", "00000000-0000-0000-0000-000000000000", "token"),
+        extraGameArgs: List<String> = emptyList(),
     ): MinecraftLaunchRequest = MinecraftLaunchRequest(
         mcVersion = mcVersion,
         loader = loader,
         versionId = "test-version",
         versionDir = root.resolve("versions/test-version"),
-        account = MinecraftAccount("player", "00000000-0000-0000-0000-000000000000", "token"),
+        account = account,
         windowSize = MinecraftWindowSize(854, 480),
         launchOverrides = launchOverrides,
+        extraGameArgs = extraGameArgs,
     )
 
     private class FakeProcess : Process() {

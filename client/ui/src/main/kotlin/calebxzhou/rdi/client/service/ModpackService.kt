@@ -404,7 +404,11 @@ data class ModpackLocalDir(
     val modLoader get() = requireNotNull(vo).modloader
 }
 
-suspend fun Host.DetailVo.startPlay(): StartPlayResult {
+/**
+ * Prepares playing this host. With [startHost] false the host is not started and no play is counted;
+ * the save import marking mode uses that to open a local save with the host's modpack.
+ */
+suspend fun Host.DetailVo.startPlay(startHost: Boolean = true): StartPlayResult {
     NodeRefreshCoordinator.refreshCurrent()
         .onFailure { lgr.warn(it) { "启动游戏前刷新节点失败，继续使用当前节点" } }
 
@@ -438,9 +442,11 @@ suspend fun Host.DetailVo.startPlay(): StartPlayResult {
         )
     }
 
-    val startResp = server.makeRequest<Unit>("host/${_id}/start", HttpMethod.Post)
-    if (!startResp.ok) {
-        throw RequestError("启动房间失败: ${startResp.msg}")
+    if (startHost) {
+        val startResp = server.makeRequest<Unit>("host/${_id}/start", HttpMethod.Post)
+        if (!startResp.ok) {
+            throw RequestError("启动房间失败: ${startResp.msg}")
+        }
     }
 
     val gameAddr = "127.0.0.1:55667"
@@ -452,8 +458,10 @@ suspend fun Host.DetailVo.startPlay(): StartPlayResult {
             "${loggedAccount.uuid}\n" +
             loggedAccount.name
     lgr.info { "play arg: $playArg" }
-    runCatching {
-        server.makeRequest<Unit>("modpack/${modpack.id}/play", HttpMethod.Post)
+    if (startHost) {
+        runCatching {
+            server.makeRequest<Unit>("modpack/${modpack.id}/play", HttpMethod.Post)
+        }
     }
 
     return StartPlayResult.Ready(

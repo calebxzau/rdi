@@ -146,6 +146,17 @@ tasks.register<Test>("baseWorldTest") {
     useJUnitPlatform()
 }
 
+tasks.register<Test>("hostWorldImportTest") {
+    group = "verification"
+    description = "Runs focused host world import tests."
+    dependsOn(tasks.named("testClasses"))
+    testClassesDirs = sourceSets["test"].output.classesDirs
+    classpath = sourceSets["test"].runtimeClasspath
+    include("**/calebxzau/rdi/server/service/hostworldimport/*Test.class")
+    include("**/calebxzau/rdi/server/service/player/*Test.class")
+    useJUnitPlatform()
+}
+
 tasks.register<Test>("gameStatusTest") {
     group = "verification"
     description = "Runs focused Minecraft server status listener tests."

@@ -17,6 +17,7 @@ import calebxzau.rdi.client.modcatalog.CatalogMod
 import calebxzau.rdi.client.ui.screen.PlayerInfoScreen
 import calebxzau.rdi.client.ui.screen.BaseWorldListScreen
 import calebxzau.rdi.client.ui.screen.BaseWorldUploadScreen
+import calebxzau.rdi.client.ui.screen.HostSaveImportScreen
 import calebxzhou.rdi.client.auth.AccountSessionStore
 import calebxzau.rdi.client.modcatalog.ModCatalog
 import calebxzau.rdi.client.ui.screen.ModpackVersionInfoScreen
@@ -348,7 +349,20 @@ fun AppNavigation(
             )
         }
         composable<HostWorldRoute> {
-            HostWorldScreen(onBack = returnToHostList)
+            val route = it.toRoute<HostWorldRoute>()
+            HostWorldScreen(
+                onBack = returnToHostList,
+                onImportSave = { navController.navigate(HostSaveImportRoute(route.hostId)) },
+            )
+        }
+        composable<HostSaveImportRoute> {
+            val route = it.toRoute<HostSaveImportRoute>()
+            HostSaveImportScreen(
+                hostId = route.hostId,
+                onBack = { navController.popBackStack() },
+                onOpenMcPlay = { args -> openMcPlay(args) { navController.popBackStack() } },
+                onOpenTask = onOpenTask,
+            )
         }
         composable<HostFilesRoute> {
             val route = it.toRoute<HostFilesRoute>()

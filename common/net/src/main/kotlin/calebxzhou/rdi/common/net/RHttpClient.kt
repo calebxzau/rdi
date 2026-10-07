@@ -21,6 +21,7 @@ import okhttp3.Cache
 import okhttp3.Dispatcher
 import okhttp3.OkHttpClient
 import okhttp3.MediaType
+import okhttp3.Protocol
 import okhttp3.Request
 import okhttp3.RequestBody
 import okhttp3.Response
@@ -87,6 +88,48 @@ val ktorClient by lazy {
         }
     }
 }
+
+/**
+ * Client for chunked upload part requests only.
+ *
+ * HTTP/1.1 gives every parallel part its own TCP connection. Over HTTP/2 all parts
+ * share one connection and the server's default 64KiB flow-control window caps the
+ * combined upload speed. A separate dispatcher also keeps uploads from occupying the
+ * per-host request slots of [ktorClient].
+ */
+val ktorUploadClient by lazy {
+    HttpClient(OkHttp) {
+        expectSuccess = false
+        engine {
+            config {
+                protocols(listOf(Protocol.HTTP_1_1))
+                followRedirects(true)
+                connectTimeout(10, TimeUnit.SECONDS)
+                readTimeout(0, TimeUnit.SECONDS)
+                writeTimeout(0, TimeUnit.SECONDS)
+                proxySelector(DynamicProxySelector())
+                dispatcher(Dispatcher().apply {
+                    maxRequests = UPLOAD_MAX_CONNECTIONS
+                    maxRequestsPerHost = UPLOAD_MAX_CONNECTIONS
+                })
+                configureDebugRequestLogging()
+                configureDebugTlsForSelfSigned()
+            }
+        }
+        BrowserUserAgent()
+        install(ContentNegotiation) {
+            json(serdesJson)
+        }
+        install(HttpTimeout) {
+            requestTimeoutMillis = HttpTimeoutConfig.INFINITE_TIMEOUT_MS
+            connectTimeoutMillis = 10_000
+            socketTimeoutMillis = 60_000
+        }
+    }
+}
+
+private const val UPLOAD_MAX_CONNECTIONS = 8
+
 internal fun OkHttpClient.Builder.configureDebugRequestLogging() {
     if (!DEBUG) return
     addInterceptor { chain ->

@@ -79,6 +79,8 @@ import calebxzhou.rdi.client.ui.McPlayArgs
 import calebxzhou.rdi.common.isExcludedConfigPath
 import calebxzhou.rdi.common.model.Modpack
 import calebxzhou.rdi.common.model.Host
+import calebxzau.rdi.client.lgr
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -137,6 +139,7 @@ fun ModpackLocalListScreen(
     var legacyPacks by remember { mutableStateOf<List<ModpackLocalDir>>(emptyList()) }
     var reloadToken by remember { mutableStateOf(0) }
     var actionError by remember { mutableStateOf<String?>(null) }
+    var importPreparing by remember { mutableStateOf(false) }
     var packActionMessage by remember { mutableStateOf<String?>(null) }
     var deleteConfirmPack by remember { mutableStateOf<ModpackLocalDir?>(null) }
     var reinstallConfirmPack by remember { mutableStateOf<ModpackLocalDir?>(null) }
@@ -325,83 +328,115 @@ fun ModpackLocalListScreen(
             ContentBody {
                 Column(modifier = modifier.fillMaxSize().padding(16.dp)) {
 
-                    packActionMessage?.let {
-                        Text(
-                            it,
-                            color = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.padding(bottom = 8.dp),
-                        )
-                    }
-                    if (isLoading) {
-                        Text("正在读取整合包…")
-                    } else if (items.isEmpty()) {
-                        Column(
-                            modifier = Modifier.fillMaxSize(),
-                            verticalArrangement = Arrangement.Center,
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                        ) {
-                            Text("还没有整合包")
+                    Column(Modifier.fillMaxWidth().weight(1f)) {
+                        packActionMessage?.let {
+                            Text(
+                                it,
+                                color = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.padding(bottom = 8.dp),
+                            )
                         }
-                    } else {
-                        FlowRowV(
-                            modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()),
-                            horizontalArrangement = Arrangement.spacedBy(10.dp),
-                            verticalArrangement = Arrangement.spacedBy(10.dp),
-                        ) {
-                            items.forEach { item ->
-                                Box(
-                                    modifier = Modifier
-                                        .width(IntrinsicSize.Max)
-                                        .widthIn(max = 350.dp),
-                                ) {
-                                    when (item) {
-                                        is InstalledResourceItem.Legacy -> InstalledCard(
-                                            pack = item.pack,
-                                            onOpenPlay = {
-                                                onOpenPlay(item.pack.toPlayArgs())
-                                            },
-                                            isRunning = McPlayStore.aliveCount(item.pack.versionId) > 0,
-                                            onOpenContent = { type -> onOpenContent(item.pack, type) },
-                                            onOpenConfig = {
-                                                resetLocalConfigEditorState()
-                                                configEditorPack = item.pack
-                                                loadLocalConfigFiles(item.pack)
-                                            },
-                                            onOpenOptions = { onOpenOptions(item.pack) },
-                                            onOpenCopyData = {
-                                                copyDataSourcePack = item.pack
-                                                copyDataTargetVersionId = legacyPacks.firstOrNull {
-                                                    it.versionId != item.pack.versionId
-                                                }?.versionId
-                                                copyDataSelectedKeys = personalDataCopyEntries.map { it.key }.toSet()
-                                            },
-                                            onOpenFolder = {
-                                                openPackFolder(item.pack.dir, actionErrorSetter = { actionError = it })
-                                            },
-                                            onReinstall = { reinstallConfirmPack = item.pack },
-                                            onExport = {
-                                                scope.launch {
-                                                    runCatching {
-                                                        val prepared = withContext(Dispatchers.IO) {
-                                                            exportRdiModpack2(item.pack)
-                                                        }.getOrThrow() ?: return@runCatching
-                                                        onOpenTask(ClientTaskManager.submit(prepared.task, prepared.dedupeKey))
-                                                    }.onFailure { actionError = it.message ?: "导出失败" }
-                                                }
-                                            },
-                                            onExportLogs = {
-                                                scope.launch {
-                                                    exportLogsPack(item.pack)
-                                                        .onFailure { actionError = it.message ?: "导出日志失败" }
-                                                }
-                                            },
-                                            onDelete = { deleteConfirmPack = item.pack },
-                                        )
+                        if (isLoading) {
+                            Text("正在读取整合包…")
+                        } else if (items.isEmpty()) {
+                            Column(
+                                modifier = Modifier.fillMaxSize(),
+                                verticalArrangement = Arrangement.Center,
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                            ) {
+                                Text("还没有整合包")
+                            }
+                        } else {
+                            FlowRowV(
+                                modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()),
+                                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                verticalArrangement = Arrangement.spacedBy(10.dp),
+                            ) {
+                                items.forEach { item ->
+                                    Box(
+                                        modifier = Modifier
+                                            .width(IntrinsicSize.Max)
+                                            .widthIn(max = 350.dp),
+                                    ) {
+                                        when (item) {
+                                            is InstalledResourceItem.Legacy -> InstalledCard(
+                                                pack = item.pack,
+                                                onOpenPlay = {
+                                                    onOpenPlay(item.pack.toPlayArgs())
+                                                },
+                                                isRunning = McPlayStore.aliveCount(item.pack.versionId) > 0,
+                                                onOpenContent = { type -> onOpenContent(item.pack, type) },
+                                                onOpenConfig = {
+                                                    resetLocalConfigEditorState()
+                                                    configEditorPack = item.pack
+                                                    loadLocalConfigFiles(item.pack)
+                                                },
+                                                onOpenOptions = { onOpenOptions(item.pack) },
+                                                onOpenCopyData = {
+                                                    copyDataSourcePack = item.pack
+                                                    copyDataTargetVersionId = legacyPacks.firstOrNull {
+                                                        it.versionId != item.pack.versionId
+                                                    }?.versionId
+                                                    copyDataSelectedKeys = personalDataCopyEntries.map { it.key }.toSet()
+                                                },
+                                                onOpenFolder = {
+                                                    openPackFolder(item.pack.dir, actionErrorSetter = { actionError = it })
+                                                },
+                                                onReinstall = { reinstallConfirmPack = item.pack },
+                                                onExport = {
+                                                    scope.launch {
+                                                        runCatching {
+                                                            val prepared = withContext(Dispatchers.IO) {
+                                                                exportRdiModpack2(item.pack)
+                                                            }.getOrThrow() ?: return@runCatching
+                                                            onOpenTask(ClientTaskManager.submit(prepared.task, prepared.dedupeKey))
+                                                        }.onFailure { actionError = it.message ?: "导出失败" }
+                                                    }
+                                                },
+                                                onExportLogs = {
+                                                    scope.launch {
+                                                        exportLogsPack(item.pack)
+                                                            .onFailure { actionError = it.message ?: "导出日志失败" }
+                                                    }
+                                                },
+                                                onDelete = { deleteConfirmPack = item.pack },
+                                            )
 
+                                        }
                                     }
                                 }
                             }
                         }
+                    }
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(top = 16.dp),
+                        horizontalArrangement = Arrangement.End,
+                    ) {
+                        CircleIconButton(
+                            icon = "\uF019",
+                            label = "导入rdipack2",
+                            enabled = !importPreparing,
+                            onClick = {
+                                if (!importPreparing) {
+                                    importPreparing = true
+                                    actionError = null
+                                    scope.launch {
+                                        try {
+                                            val prepared = prepareRdiPack2ImportFromPicker() ?: return@launch
+                                            val runId = ClientTaskManager.submit(prepared.task, prepared.dedupeKey)
+                                            onOpenTask(runId)
+                                        } catch (cancelled: CancellationException) {
+                                            throw cancelled
+                                        } catch (exception: Exception) {
+                                            lgr.error(exception) { "导入rdipack2失败" }
+                                            actionError = exception.message ?: "导入整合包失败"
+                                        } finally {
+                                            importPreparing = false
+                                        }
+                                    }
+                                }
+                            },
+                        )
                     }
                 }
             }

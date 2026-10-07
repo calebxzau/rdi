@@ -52,6 +52,7 @@ sourceSets.main {
     kotlin.srcDir '../../../mc/rcmd/src/main/kotlin'
     kotlin.srcDir '../../../mc/syncchunk/src/main/kotlin'
     kotlin.srcDir '../../../mc/syncchunk/src/2021/kotlin'
+    kotlin.srcDir '../../../mc/syncchunk/src/20/kotlin'
 }
 
 sourceSets.test.kotlin.srcDir '../../../mc/20/src/serverTest/kotlin'

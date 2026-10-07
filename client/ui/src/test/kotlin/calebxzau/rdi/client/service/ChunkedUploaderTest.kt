@@ -5,10 +5,15 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
-import calebxzhou.rdi.common.net.ktorClient
+import calebxzhou.rdi.common.exception.ChunkedUploadErrorCodes
+import calebxzhou.rdi.common.exception.RequestError
+import calebxzhou.rdi.common.model.Task2CancelledException
+import calebxzhou.rdi.common.net.ktorUploadClient
 import calebxzhou.rdi.common.util.sha1
 import io.ktor.client.request.put
 import io.ktor.client.request.setBody
@@ -31,6 +36,7 @@ import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class ChunkedUploaderTest {
@@ -48,7 +54,7 @@ class ChunkedUploaderTest {
                 file = file,
                 descriptor = descriptor(source, partSize = 3),
                 parallelism = 8,
-                uploadPart = { index, bytes, sha1 ->
+                uploadPart = { index, bytes, sha1, _ ->
                     val current = active.incrementAndGet()
                     maximum.updateAndGet { old -> maxOf(old, current) }
                     try {
@@ -86,7 +92,7 @@ class ChunkedUploaderTest {
                 file = file,
                 descriptor = descriptor(source, partSize = 1),
                 parallelism = 8,
-                uploadPart = { index, _, _ ->
+                uploadPart = { index, _, _, _ ->
                     started += index
                     if (started.size == 8) eightStarted.complete(Unit)
                     if (started.size <= 8) release.await()
@@ -111,7 +117,7 @@ class ChunkedUploaderTest {
                 file = file,
                 descriptor = descriptor(source, partSize = 2, uploadedParts = listOf(0, 0, 2)),
                 parallelism = 8,
-                uploadPart = { index, _, _ -> uploaded += index },
+                uploadPart = { index, _, _, _ -> uploaded += index },
                 onProgress = { bytes, parts -> progress += bytes to parts },
             ).upload()
 
@@ -133,7 +139,7 @@ class ChunkedUploaderTest {
                 maxPartRetries = 1,
                 retryDelayMillis = 0,
                 parallelism = 1,
-                uploadPart = { _, bytes, _ ->
+                uploadPart = { _, bytes, _, _ ->
                     calls += bytes.copyOf()
                     if (attempts++ == 0) throw IOException("transient")
                 },
@@ -148,6 +154,93 @@ class ChunkedUploaderTest {
     }
 
     @Test
+    fun `reports bytes sent by in-flight parts before they complete`() = runBlocking {
+        val source = ByteArray(8) { it.toByte() }
+        withTempFile(source) { file ->
+            val progress = mutableListOf<Pair<Long, Int>>()
+            ChunkedUploader(
+                file = file,
+                descriptor = descriptor(source, partSize = 4),
+                parallelism = 1,
+                progressIntervalMillis = 0,
+                uploadPart = { _, bytes, _, onBytesSent ->
+                    onBytesSent(1)
+                    onBytesSent(3)
+                    onBytesSent(bytes.size.toLong())
+                },
+                onProgress = { bytes, parts -> progress += bytes to parts },
+            ).upload()
+
+            assertEquals(
+                listOf(0L to 0, 1L to 0, 3L to 0, 4L to 0, 4L to 1, 5L to 1, 7L to 1, 8L to 1, 8L to 2),
+                progress,
+            )
+        }
+    }
+
+    @Test
+    fun `failed attempt drops its sent bytes and ignores its late callbacks`() = runBlocking {
+        val source = ByteArray(4) { it.toByte() }
+        withTempFile(source) { file ->
+            val progress = mutableListOf<Pair<Long, Int>>()
+            var failedAttemptCallback: ((Long) -> Unit)? = null
+            ChunkedUploader(
+                file = file,
+                descriptor = descriptor(source, partSize = 4),
+                maxPartRetries = 1,
+                retryDelayMillis = 0,
+                parallelism = 1,
+                progressIntervalMillis = 0,
+                uploadPart = { _, _, _, onBytesSent ->
+                    val stale = failedAttemptCallback
+                    if (stale == null) {
+                        failedAttemptCallback = onBytesSent
+                        onBytesSent(3)
+                        throw IOException("connection reset")
+                    }
+                    stale(4)
+                    onBytesSent(2)
+                },
+                onProgress = { bytes, parts -> progress += bytes to parts },
+            ).upload()
+
+            assertEquals(listOf(0L to 0, 3L to 0, 0L to 0, 2L to 0, 4L to 1), progress)
+        }
+    }
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    @Test
+    fun `retry delays double up to the maximum`() = runTest {
+        val source = byteArrayOf(1)
+        withTempFile(source) { file ->
+            val attemptTimes = mutableListOf<Long>()
+            ChunkedUploader(
+                file = file,
+                descriptor = descriptor(source, partSize = 1),
+                maxPartRetries = 4,
+                retryDelayMillis = 1_000,
+                maxRetryDelayMillis = 3_000,
+                parallelism = 1,
+                uploadPart = { _, _, _, _ ->
+                    attemptTimes += testScheduler.currentTime
+                    if (attemptTimes.size < 5) throw IOException("transient")
+                },
+            ).upload()
+
+            assertEquals(listOf(0L, 1_000L, 3_000L, 6_000L, 9_000L), attemptTimes)
+        }
+    }
+
+    @Test
+    fun `only server rejections marked retryable are retried`() {
+        assertTrue(isRetryableChunkedUploadError(RequestError("超时", errorCode = ChunkedUploadErrorCodes.PART_RETRYABLE)))
+        assertTrue(isRetryableChunkedUploadError(IOException("connection reset")))
+        assertFalse(isRetryableChunkedUploadError(RequestError("分片长度不正确")))
+        assertFalse(isRetryableChunkedUploadError(kotlinx.coroutines.CancellationException("canceled")))
+        assertFalse(isRetryableChunkedUploadError(Task2CancelledException()))
+    }
+
+    @Test
     fun `failure cancels and joins blocked sibling workers`() = runBlocking {
         val source = ByteArray(2)
         withTempFile(source) { file ->
@@ -159,7 +252,7 @@ class ChunkedUploaderTest {
                     descriptor = descriptor(source, partSize = 1),
                     parallelism = 2,
                     maxPartRetries = 0,
-                    uploadPart = { index, _, _ ->
+                    uploadPart = { index, _, _, _ ->
                         if (index == 0) {
                             siblingStarted.await()
                             throw IllegalStateException("part failed")
@@ -187,7 +280,7 @@ class ChunkedUploaderTest {
                 ChunkedUploader(
                     file = file,
                     descriptor = descriptor(source, partSize = 1),
-                    uploadPart = { _, _, _ ->
+                    uploadPart = { _, _, _, _ ->
                         started.complete(Unit)
                         awaitCancellation()
                     },
@@ -200,7 +293,7 @@ class ChunkedUploaderTest {
     }
 
     @Test
-    fun `shared HTTP client reaches eight loopback handlers concurrently`() = runBlocking {
+    fun `upload HTTP client reaches eight loopback handlers concurrently`() = runBlocking {
         val source = ByteArray(8) { (it + 1).toByte() }
         withTempFile(source) { file ->
             val entered = CountDownLatch(8)
@@ -225,8 +318,8 @@ class ChunkedUploaderTest {
                     file = file,
                     descriptor = descriptor(source, partSize = 1),
                     parallelism = 8,
-                    uploadPart = { _, bytes, _ ->
-                        ktorClient.put("http://127.0.0.1:${server.address.port}/part") {
+                    uploadPart = { _, bytes, _, _ ->
+                        ktorUploadClient.put("http://127.0.0.1:${server.address.port}/part") {
                             contentType(ContentType.Application.OctetStream)
                             setBody(bytes)
                         }.bodyAsText()
@@ -260,7 +353,7 @@ class ChunkedUploaderTest {
                     file = file,
                     descriptor = descriptor(source, partSize = 1),
                     parallelism = 2,
-                    uploadPart = { index, _, _ ->
+                    uploadPart = { index, _, _, _ ->
                         if (index == 0) {
                             siblingStarted.await()
                             throw kotlinx.coroutines.CancellationException("part canceled")

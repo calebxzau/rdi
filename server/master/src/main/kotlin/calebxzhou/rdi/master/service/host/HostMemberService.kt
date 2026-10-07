@@ -4,6 +4,7 @@ import calebxzhou.rdi.common.exception.RequestError
 import calebxzhou.rdi.common.model.Host
 import calebxzhou.rdi.master.service.PlayerService
 import calebxzhou.rdi.model.Role
+import com.mongodb.client.model.Filters.and
 import com.mongodb.client.model.Filters.eq
 import com.mongodb.client.model.UpdateOptions
 import com.mongodb.client.model.Updates
@@ -12,6 +13,7 @@ import com.mongodb.client.model.Updates.set
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import org.bson.Document
+import org.bson.types.ObjectId
 import java.util.concurrent.ConcurrentHashMap
 
 object HostMemberService {
@@ -46,31 +48,84 @@ object HostMemberService {
         )
     }
 
+    /**
+     * Runs under the host lifecycle lock and the host member lock, so it cannot interleave with an
+     * import commit or another member change. Only the two members' roles and `ownerId` are updated,
+     * guarded by the expected owner and recipient, so concurrent member changes are never overwritten.
+     */
     suspend fun HostContext.transferOwnership() {
+        HostLifecycleLock.withLock(host._id) {
+            withMemberMutationLocks("host:${host._id}") { transferOwnershipLocked() }
+        }
+    }
+
+    private suspend fun HostContext.transferOwnershipLocked() {
         val current = HostQueryService.getById(host._id) ?: throw RequestError("无此房间")
+        if (current.ownerId != player._id) throw RequestError("只有房间拥有者可以转移")
         val recipient = targetMember
         if (current.ownerId == recipient.id) throw RequestError("不能转给自己")
         val previousOwner = current.members.find { it.id == current.ownerId }
             ?: throw RequestError("当前拥有者不在成员列表")
-        val hasRecipient = current.members.any { it.id == recipient.id }
-        if (!hasRecipient) throw RequestError("目标成员不在主机成员列表中")
+        if (current.members.none { it.id == recipient.id }) throw RequestError("目标成员不在主机成员列表中")
 
-        val updatedMembers = current.members.map { member ->
-            when (member.id) {
-                previousOwner.id -> member.copy(role = Role.ADMIN)
-                recipient.id -> member.copy(role = Role.OWNER)
-                else -> member
-            }
-        }
-
-        dbcl.updateOne(
-            eq("_id", current._id),
+        val result = dbcl.updateOne(
+            and(
+                eq("_id", current._id),
+                eq(Host::ownerId.name, previousOwner.id),
+                eq("${Host::members.name}.${Host.Member::id.name}", recipient.id),
+            ),
             combine(
                 set(Host::ownerId.name, recipient.id),
-                set(Host::members.name, updatedMembers)
-            )
+                set("${Host::members.name}.$[prev].${Host.Member::role.name}", Role.ADMIN),
+                set("${Host::members.name}.$[rcpt].${Host.Member::role.name}", Role.OWNER),
+            ),
+            UpdateOptions().arrayFilters(
+                listOf(
+                    Document("prev.id", previousOwner.id),
+                    Document("rcpt.id", recipient.id),
+                ),
+            ),
         )
+        if (result.matchedCount == 0L) throw RequestError("房间成员已变化，请重试")
     }
+
+    /**
+     * Adds [playerId] as a member, with the same limits as [addMember]. A player who is already a
+     * member is skipped. Failures carry a player-facing reason.
+     */
+    suspend fun addMemberById(hostId: ObjectId, playerId: ObjectId): Result<Unit> = try {
+        withMemberMutationLocks("host:${hostId}", "player:${playerId}") {
+            val current = HostQueryService.getById(hostId) ?: throw RequestError("无此房间")
+            if (current.members.any { it.id == playerId }) return@withMemberMutationLocks
+            memberAddProblem(current, playerId, current.members.size)?.let { throw RequestError(it) }
+            dbcl.updateOne(eq("_id", current._id), Updates.push(Host::members.name, Host.Member(playerId, Role.MEMBER)))
+        }
+        Result.success(Unit)
+    } catch (cancelled: kotlinx.coroutines.CancellationException) {
+        throw cancelled
+    } catch (error: Exception) {
+        Result.failure(error)
+    }
+
+    /** Why each of [playerIds] could not be added to [host] now, for players that are not members yet. */
+    suspend fun previewMemberAdds(host: Host, playerIds: List<ObjectId>): List<Pair<ObjectId, String>> {
+        var size = host.members.size
+        return playerIds.distinct().filter { id -> host.members.none { it.id == id } }.mapNotNull { id ->
+            val problem = memberAddProblem(host, id, size)
+            if (problem == null) size++
+            problem?.let { id to it }
+        }
+    }
+
+    private suspend fun memberAddProblem(host: Host, playerId: ObjectId, memberCount: Int): String? {
+        if (memberCount >= MAX_MEMBERS) return "该房间最多只能有${MAX_MEMBERS}名成员"
+        val joinedCount = dbcl.countDocuments(eq("${Host::members.name}.${Host.Member::id.name}", playerId))
+        if (joinedCount >= MAX_JOINED_HOSTS) return "该玩家加入的房间已达上限"
+        return null
+    }
+
+    private const val MAX_MEMBERS = 10
+    private const val MAX_JOINED_HOSTS = 10
 
     suspend fun HostContext.addMember(qq: String) {
         val target = PlayerService.getByQQ(qq) ?: throw RequestError("无此账号")

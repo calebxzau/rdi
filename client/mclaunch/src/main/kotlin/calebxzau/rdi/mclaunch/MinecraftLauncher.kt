@@ -223,6 +223,7 @@ class MinecraftLauncher(
                 add(request.windowSize.width.toString())
                 add("--height")
                 add(request.windowSize.height.toString())
+                addAll(request.extraGameArgs)
             }
 
         val resolvedJvmArgs = manifest.resolveJvmArgumentList() + loaderManifest.resolveJvmArgumentList()

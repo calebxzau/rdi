@@ -438,7 +438,14 @@ private class RecordingApi(
 
     override suspend fun uploadStatus(worldId: UUID, uploadId: UUID): BaseWorldUploadSessionVo = error("unused")
 
-    override suspend fun uploadPart(worldId: UUID, uploadId: UUID, index: Int, bytes: ByteArray, sha1: String) {
+    override suspend fun uploadPart(
+        worldId: UUID,
+        uploadId: UUID,
+        index: Int,
+        bytes: ByteArray,
+        sha1: String,
+        onBytesSent: (Long) -> Unit,
+    ) {
         val shouldFail = synchronized(partStateLock) {
             partCalls.getOrPut(index) { mutableListOf() } += bytes.copyOf()
             val shouldFail = failPartAlways ||

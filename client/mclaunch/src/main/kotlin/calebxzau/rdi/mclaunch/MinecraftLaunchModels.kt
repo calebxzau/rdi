@@ -95,6 +95,8 @@ data class MinecraftLaunchRequest(
     val windowSize: MinecraftWindowSize,
     val launchOverrides: MinecraftLaunchOverrides = MinecraftLaunchOverrides(),
     val extraJvmArgs: List<String> = emptyList(),
+    /** Appended after the standard game arguments, e.g. `--quickPlaySingleplayer <world>`. */
+    val extraGameArgs: List<String> = emptyList(),
 )
 
 data class MinecraftLaunchOverrides(

@@ -1,5 +1,8 @@
 package calebxzhou.rdi.master.service
 
+import calebxzau.rdi.server.service.upload.ChunkedUploadService
+import calebxzhou.rdi.common.exception.ChunkedUploadErrorCodes
+import calebxzhou.rdi.common.exception.RequestError
 import calebxzhou.rdi.common.model.ModpackUploadSessionCreateDto
 import calebxzhou.rdi.common.model.ModpackUploadSessionVo
 import calebxzhou.rdi.common.util.sha1
@@ -21,6 +24,7 @@ import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertIs
 import kotlin.test.assertTrue
 
 class ModpackParallelUploadServiceTest {
@@ -202,16 +206,16 @@ class ModpackParallelUploadServiceTest {
                 }
             }
             receiving.forEach { withTimeout(5_000) { it.await() } }
-            assertTrue(
-                service.uploadPart(
-                    ownerId,
-                    session.id,
-                    8,
-                    1,
-                    byteArrayOf(content[8]).sha1,
-                    ByteReadChannel(byteArrayOf(content[8])),
-                ).isFailure,
-            )
+            val ninth = service.uploadPart(
+                ownerId,
+                session.id,
+                8,
+                1,
+                byteArrayOf(content[8]).sha1,
+                ByteReadChannel(byteArrayOf(content[8])),
+            ).exceptionOrNull()
+            assertIs<RequestError>(ninth)
+            assertEquals(ChunkedUploadErrorCodes.PART_RETRYABLE, ninth.errorCode)
 
             uploads[0].cancel()
             uploads[0].join()
@@ -232,6 +236,78 @@ class ModpackParallelUploadServiceTest {
                 channel.close()
             }
             assertTrue(uploads.drop(1).all { it.await().isSuccess })
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `retried part takes over a stalled request which can no longer commit`() = runBlocking {
+        val root = createTempDirectory("modpack-parallel-takeover-test").toFile()
+        try {
+            val ownerId = ObjectId()
+            val content = byteArrayOf(1, 2)
+            val service = service(root, partSize = 1)
+            val session = service.create(
+                ownerId,
+                ModpackUploadSessionCreateDto("pack.zip", content.size.toLong(), content.sha1)
+            ).getOrThrow()
+            val stalledChannel = ByteChannel(autoFlush = true)
+            val receiving = CompletableDeferred<Unit>()
+            val stalled = async(start = CoroutineStart.UNDISPATCHED) {
+                service.uploadPart(
+                    ownerId,
+                    session.id,
+                    0,
+                    1,
+                    byteArrayOf(content[0]).sha1,
+                    blockedChannel(stalledChannel, receiving),
+                )
+            }
+            withTimeout(5_000) { receiving.await() }
+
+            service.uploadPart(ownerId, session.id, 0, 1, byteArrayOf(content[0]).sha1, ByteReadChannel(byteArrayOf(content[0])))
+                .getOrThrow()
+            stalledChannel.writeFully(byteArrayOf(content[0]))
+            stalledChannel.close()
+            assertEquals("该分片已由新的请求接管", stalled.await().exceptionOrNull()?.message)
+
+            service.uploadPart(ownerId, session.id, 1, 1, byteArrayOf(content[1]).sha1, ByteReadChannel(byteArrayOf(content[1])))
+                .getOrThrow()
+            assertTrue(service.complete(ownerId, session.id).getOrThrow().ready)
+            assertContentEquals(content, session.dir(root).resolve("upload.data").readBytes())
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `stalled receive times out as retryable and releases the part`() = runBlocking {
+        val root = createTempDirectory("modpack-parallel-idle-test").toFile()
+        try {
+            val ownerId = ObjectId()
+            val content = byteArrayOf(1)
+            val service = ModpackParallelUploadService(
+                sessionsDir = root,
+                maxFileSize = 1024,
+                clock = Clock.fixed(Instant.parse("2026-08-11T00:00:00Z"), ZoneOffset.UTC),
+                partSize = 1,
+                chunkedUploadService = ChunkedUploadService(idleTimeoutMillis = 100),
+            )
+            val session = service.create(
+                ownerId,
+                ModpackUploadSessionCreateDto("pack.zip", content.size.toLong(), content.sha1)
+            ).getOrThrow()
+
+            val failure = withTimeout(5_000) {
+                service.uploadPart(ownerId, session.id, 0, 1, content.sha1, ByteChannel(autoFlush = true))
+            }.exceptionOrNull()
+            assertIs<RequestError>(failure)
+            assertEquals(ChunkedUploadErrorCodes.PART_RETRYABLE, failure.errorCode)
+            assertEquals("分片数据接收超时", failure.message)
+
+            service.cancel(ownerId, session.id).getOrThrow()
+            assertFalse(session.dir(root).exists())
         } finally {
             root.deleteRecursively()
         }

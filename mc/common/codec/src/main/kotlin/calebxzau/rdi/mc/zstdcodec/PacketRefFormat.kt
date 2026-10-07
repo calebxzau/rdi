@@ -8,6 +8,7 @@ package calebxzau.rdi.mc.zstdcodec
  *   Reference frame  VarInt 1, VarInt slot, Int check
  *   Control frame    VarInt -3, Byte opcode
  *     START (1)      VarInt version, VarInt slots, VarInt maxEntryBytes
+ *     (2)            STREAM_START of the Zstd stream extension; see [ZstdStreamFormat]
  *
  * A legacy envelope never declares a negative size, so -3 is free. Its compressed form never declares
  * a size below the threshold, so the one-byte marker 1 is free whenever the threshold is at least 2.

@@ -10,9 +10,12 @@ import calebxzhou.rdi.common.model.ModpackUploadSessionCreateDto
 import calebxzhou.rdi.common.model.ModpackUploadSessionVo
 import calebxzhou.rdi.common.model.ModpackVersionCreateFromUploadDto
 import calebxzhou.rdi.common.net.ktorClient
+import calebxzhou.rdi.common.net.ktorUploadClient
 import calebxzhou.rdi.common.serdesJson
 import calebxzhou.rdi.common.util.urlEncoded
 import io.ktor.client.HttpClient
+import io.ktor.client.plugins.HttpTimeoutConfig
+import io.ktor.client.plugins.onUpload
 import io.ktor.client.request.HttpRequestBuilder
 import io.ktor.client.request.header
 import io.ktor.client.request.request
@@ -30,7 +33,13 @@ import java.util.UUID
 interface ModpackUploadApi {
     suspend fun createSession(request: ModpackUploadSessionCreateDto): ModpackUploadSessionVo
 
-    suspend fun uploadPart(uploadId: UUID, index: Int, bytes: ByteArray, sha1: String)
+    suspend fun uploadPart(
+        uploadId: UUID,
+        index: Int,
+        bytes: ByteArray,
+        sha1: String,
+        onBytesSent: (Long) -> Unit = {},
+    )
 
     suspend fun completeSession(uploadId: UUID): ModpackUploadSessionVo
 
@@ -47,28 +56,40 @@ interface ModpackUploadApi {
     suspend fun listMy(): List<Modpack>
 }
 
-fun currentModpackUploadApi(httpClient: HttpClient = ktorClient): ModpackUploadApi {
+/** [partHttpClient] sends part bodies only; see [ktorUploadClient]. */
+fun currentModpackUploadApi(
+    httpClient: HttpClient = ktorClient,
+    partHttpClient: HttpClient = ktorUploadClient,
+): ModpackUploadApi {
     val token = loggedAccount.jwt?.trim()?.takeIf(String::isNotEmpty)
         ?: error("必须登录后才能上传整合包")
-    return HttpModpackUploadApi(httpClient, server.hqUrl.trimEnd('/'), token)
+    return HttpModpackUploadApi(httpClient, partHttpClient, server.hqUrl.trimEnd('/'), token)
 }
 
 private class HttpModpackUploadApi(
     private val httpClient: HttpClient,
+    private val partHttpClient: HttpClient,
     private val baseUrl: String,
     private val token: String,
 ) : ModpackUploadApi {
     override suspend fun createSession(dto: ModpackUploadSessionCreateDto): ModpackUploadSessionVo =
         request(HttpMethod.Post, "/modpack/upload-sessions", serdesJson.encodeToString(dto))
 
-    override suspend fun uploadPart(uploadId: UUID, index: Int, bytes: ByteArray, sha1: String) {
-        request<Unit>(HttpMethod.Put, "/modpack/upload-sessions/$uploadId/parts/$index") {
+    override suspend fun uploadPart(
+        uploadId: UUID,
+        index: Int,
+        bytes: ByteArray,
+        sha1: String,
+        onBytesSent: (Long) -> Unit,
+    ) {
+        request<Unit>(HttpMethod.Put, "/modpack/upload-sessions/$uploadId/parts/$index", client = partHttpClient) {
             header("X-Part-SHA1", sha1)
             contentType(ContentType.Application.OctetStream)
             setBody(bytes)
+            onUpload { sent, _ -> onBytesSent(sent) }
             timeout {
-                requestTimeoutMillis = PART_TIMEOUT_MILLIS
-                socketTimeoutMillis = PART_TIMEOUT_MILLIS
+                requestTimeoutMillis = HttpTimeoutConfig.INFINITE_TIMEOUT_MS
+                socketTimeoutMillis = CHUNKED_UPLOAD_PART_IDLE_TIMEOUT_MILLIS
             }
         }
     }
@@ -117,9 +138,10 @@ private class HttpModpackUploadApi(
         path: String,
         body: String? = null,
         timeoutMillis: Long? = null,
+        client: HttpClient = httpClient,
         crossinline configure: HttpRequestBuilder.() -> Unit = {},
     ): T {
-        val response = httpClient.request("$baseUrl$path") {
+        val response = client.request("$baseUrl$path") {
             this.method = method
             header(HttpHeaders.Authorization, "Bearer $token")
             if (body != null) {
@@ -149,7 +171,6 @@ private class HttpModpackUploadApi(
     }
 
     private companion object {
-        const val PART_TIMEOUT_MILLIS = 10 * 60 * 1000L
         const val PUBLISH_TIMEOUT_MILLIS = 60 * 60 * 1000L
         const val CANCEL_TIMEOUT_MILLIS = 10_000L
     }

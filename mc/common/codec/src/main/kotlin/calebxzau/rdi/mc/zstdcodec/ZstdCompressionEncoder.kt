@@ -1,5 +1,6 @@
 package calebxzau.rdi.mc.zstdcodec
 
+import com.github.luben.zstd.EndDirective
 import com.github.luben.zstd.Zstd
 import com.github.luben.zstd.ZstdCompressCtx
 import io.netty.buffer.ByteBuf
@@ -9,6 +10,7 @@ import io.netty.channel.ChannelPromise
 import io.netty.handler.codec.EncoderException
 import io.netty.util.ReferenceCountUtil
 import io.netty.util.concurrent.ScheduledFuture
+import java.nio.ByteBuffer
 import java.nio.channels.ClosedChannelException
 import java.util.ArrayDeque
 import java.util.concurrent.TimeUnit
@@ -42,6 +44,14 @@ internal class ZstdCompressionEncoder(
     private var packetRefs: PacketRefCache? = null
     @Volatile
     private var packetRefsEnabled = false
+
+    /**
+     * The connection's Zstd stream; non-null once STREAM_START has been written. Every compressed payload
+     * from then on must reach the wire in the order it was compressed, see [ZstdStreamFormat].
+     */
+    private var streamContext: ZstdCompressCtx? = null
+    @Volatile
+    private var streamEnabled = false
 
     private data class BufferedRecord(
         val sending: ZstdSendingRecord,
@@ -157,6 +167,7 @@ internal class ZstdCompressionEncoder(
         flushBuffered(context, ZstdBatchFlushReason.SHUTDOWN)
         if (buffered.isNotEmpty()) discardBuffered(failed ?: ClosedChannelException())
         compressionContext.close()
+        closeStream()
         packetRefs = null
         packetRefsEnabled = false
         handlerContext = null
@@ -182,6 +193,18 @@ internal class ZstdCompressionEncoder(
      */
     fun requestPacketRefs(slots: Int, maxEntryBytes: Int) = onEventLoop { context ->
         startPacketRefs(context, slots, maxEntryBytes)
+    }
+
+    fun isStreamEnabled(): Boolean = streamEnabled
+
+    /**
+     * Starts the connection's Zstd stream once; later requests are no-ops.
+     *
+     * Buffered records leave first as independent frames, then STREAM_START, and every compressed payload
+     * after it continues the stream. There is no way back short of the connection ending.
+     */
+    fun requestStream(windowLog: Int) = onEventLoop { context ->
+        startStream(context, windowLog)
     }
 
     fun isBatchingEnabled(): Boolean = batchingEnabled
@@ -260,6 +283,74 @@ internal class ZstdCompressionEncoder(
         if (failed != null) {
             packetRefs = null
             packetRefsEnabled = false
+        }
+    }
+
+    private fun startStream(context: ChannelHandlerContext, windowLog: Int) {
+        if (failed != null || streamContext != null) return
+        flushBuffered(context, ZstdBatchFlushReason.BARRIER)
+        if (failed != null) return
+
+        val acceptedWindowLog = windowLog.coerceIn(ZstdStreamFormat.MINIMUM_WINDOW_LOG, ZstdStreamFormat.MAXIMUM_WINDOW_LOG)
+        val stream: ZstdCompressCtx
+        try {
+            stream = ZstdCompressCtx()
+            stream.setLevel(COMPRESSION_LEVEL)
+                .setMagicless(true)
+                .setChecksum(false)
+                .setDictID(false)
+                .setContentSize(false)
+                .setWindowLog(acceptedWindowLog)
+        } catch (error: Throwable) {
+            failConnection(context, error)
+            return
+        }
+        val frame: ByteBuf
+        try {
+            frame = encodeStreamStartFrame(context, acceptedWindowLog)
+        } catch (error: Throwable) {
+            stream.close()
+            failConnection(context, error)
+            return
+        }
+        val downstream = context.newPromise()
+        downstream.addListener { future ->
+            if (!future.isSuccess) failConnection(context, future.cause() ?: ClosedChannelException())
+        }
+        context.write(frame, downstream)
+        // A write that failed at once has already run the listener; never enable after a failed STREAM_START.
+        if (failed != null) {
+            stream.close()
+            return
+        }
+
+        // The flush completes earlier writes, whose listeners may send right away; those packets follow
+        // STREAM_START on the wire, so they must already continue the stream.
+        streamContext = stream
+        streamEnabled = true
+        context.flush()
+        if (failed != null) closeStream()
+    }
+
+    private fun closeStream() {
+        streamEnabled = false
+        streamContext?.close()
+        streamContext = null
+    }
+
+    private fun encodeStreamStartFrame(context: ChannelHandlerContext, windowLog: Int): ByteBuf {
+        val frameBytes = ZstdStreamFormat.startFrameBytes(windowLog)
+        val frame = context.alloc().buffer(frameBytes, frameBytes)
+        var written = false
+        try {
+            varIntCodec.write(frame, PacketRefFormat.CONTROL_MARKER)
+            frame.writeByte(ZstdStreamFormat.OPCODE_STREAM_START)
+            varIntCodec.write(frame, ZstdStreamFormat.VERSION)
+            varIntCodec.write(frame, windowLog)
+            written = true
+            return frame
+        } finally {
+            if (!written) frame.release()
         }
     }
 
@@ -344,7 +435,8 @@ internal class ZstdCompressionEncoder(
             return listOf(encodeLegacyFrame(context, records.single().content))
         }
 
-        if (payloadBytes < threshold && rawBatchEncodedCost(records, payloadBytes) >= legacyRawEncodedCost(records)) {
+        val floor = compressionFloor()
+        if (payloadBytes < floor && rawBatchEncodedCost(records, payloadBytes) >= legacyRawEncodedCost(records)) {
             val frames = ArrayList<EncodedFrame>(records.size)
             try {
                 records.forEach { record ->
@@ -359,7 +451,7 @@ internal class ZstdCompressionEncoder(
             }
         }
 
-        return listOf(buildBatchFrame(context, records, payloadBytes, raw = payloadBytes < threshold))
+        return listOf(buildBatchFrame(context, records, payloadBytes, raw = payloadBytes < floor))
     }
 
     private fun rawBatchEncodedCost(records: List<BufferedRecord>, payloadBytes: Int): Int {
@@ -395,13 +487,20 @@ internal class ZstdCompressionEncoder(
                 varIntCodec.write(header, payloadBytes)
                 varIntCodec.write(header, records.size)
                 val headerBytes = header.readableBytes()
+                val stream = if (raw) null else streamContext
                 val capacity = headerBytes + if (raw) payloadBytes else Zstd.compressBound(payloadBytes.toLong()).toInt()
-                val block = context.alloc().directBuffer(capacity, capacity)
+                val block = if (stream == null) {
+                    context.alloc().directBuffer(capacity, capacity)
+                } else {
+                    context.alloc().directBuffer(capacity + STREAM_SEGMENT_SLACK_BYTES)
+                }
                 var written = false
                 try {
                     block.writeBytes(header, header.readerIndex(), headerBytes)
                     if (raw) {
                         block.writeBytes(payload, payload.readerIndex(), payloadBytes)
+                    } else if (stream != null) {
+                        appendStreamSegment(stream, block, payload.nioBuffer(payload.readerIndex(), payloadBytes))
                     } else {
                         val destination = block.nioBuffer(block.writerIndex(), capacity - block.writerIndex())
                         val source = payload.nioBuffer(payload.readerIndex(), payloadBytes)
@@ -604,7 +703,7 @@ internal class ZstdCompressionEncoder(
      * reference, so only the frame size decides. A compressed envelope is never smaller than a reference.
      */
     private fun isReferenceSmaller(slot: Int, recordBytes: Int): Boolean {
-        if (recordBytes >= threshold) return true
+        if (recordBytes >= compressionFloor()) return true
         val referenceBytes = PacketRefFormat.withOuterPrefix(PacketRefFormat.referenceFrameBytes(slot))
         return referenceBytes < PacketRefFormat.rawLegacyFrameBytes(recordBytes)
     }
@@ -678,6 +777,9 @@ internal class ZstdCompressionEncoder(
      * Telemetry only: the legacy frame this reference replaced. A compressed size is computed at most
      * once per entry and kept until the entry is evicted or the threshold changes. A failed measurement
      * is kept as the reference's own size, so the entry counts as no saving.
+     *
+     * The measurement never touches the Zstd stream: a frame that never reaches the wire would advance
+     * this end's history alone. A size measured here on a stream is the independent frame, an upper bound.
      */
     private fun replacedFrameBytes(
         context: ChannelHandlerContext,
@@ -690,7 +792,7 @@ internal class ZstdCompressionEncoder(
         val cached = refs.baselineAt(slot)
         if (cached != PacketRefCache.UNKNOWN_BASELINE) return cached
         return runCatching {
-            val legacy = encodeLegacyFrame(context, content)
+            val legacy = encodeLegacyFrame(context, content, independent = true)
             try {
                 PacketRefFormat.withOuterPrefix(legacy.buffer.readableBytes())
             } finally {
@@ -706,13 +808,15 @@ internal class ZstdCompressionEncoder(
         }.also { refs.setBaseline(slot, it) }
     }
 
-    private fun encodeLegacyFrame(context: ChannelHandlerContext, input: ByteBuf): EncodedFrame {
+    /** [independent] compresses into a standalone Zstd frame even on a stream; only telemetry may use it. */
+    private fun encodeLegacyFrame(context: ChannelHandlerContext, input: ByteBuf, independent: Boolean = false): EncodedFrame {
         val size = input.readableBytes()
         if (size > ZstdCompressionPipeline.MAXIMUM_UNCOMPRESSED_LENGTH) {
             throw EncoderException("Packet too big (is $size, should be less than or equal to ${ZstdCompressionPipeline.MAXIMUM_UNCOMPRESSED_LENGTH})")
         }
+        val stream = if (independent) null else streamContext
         // From START onwards a compressed envelope must not declare the reference marker as its size.
-        if (size == 0 || size < threshold || (packetRefs != null && size == PacketRefFormat.REFERENCE_MARKER)) {
+        if (size == 0 || size < compressionFloor(stream) || (packetRefs != null && size == PacketRefFormat.REFERENCE_MARKER)) {
             val raw = context.alloc().directBuffer(size + 1, size + 1)
             var written = false
             try {
@@ -724,13 +828,24 @@ internal class ZstdCompressionEncoder(
                 if (!written) raw.release()
             }
         }
-        return EncodedFrame(compressLegacy(context, input, size), ZstdBatchFrameKind.Legacy, raw = false)
+        return EncodedFrame(compressLegacy(context, input, size, stream), ZstdBatchFrameKind.Legacy, raw = false)
     }
 
-    private fun compressLegacy(context: ChannelHandlerContext, input: ByteBuf, size: Int): ByteBuf {
+    /**
+     * Smallest payload that leaves compressed. On a stream a repeat compresses to a few bytes, so payloads
+     * from [ZstdStreamFormat.MINIMUM_SEGMENT_BYTES] up are compressed even below the threshold.
+     */
+    private fun compressionFloor(stream: ZstdCompressCtx? = streamContext): Int =
+        if (stream == null) threshold else minOf(threshold, ZstdStreamFormat.MINIMUM_SEGMENT_BYTES)
+
+    private fun compressLegacy(context: ChannelHandlerContext, input: ByteBuf, size: Int, stream: ZstdCompressCtx?): ByteBuf {
         val compressedCapacity = Zstd.compressBound(size.toLong()).toInt()
         val capacity = ZstdBatchFormat.varIntSize(size) + compressedCapacity
-        val output = context.alloc().directBuffer(capacity, capacity)
+        val output = if (stream == null) {
+            context.alloc().directBuffer(capacity, capacity)
+        } else {
+            context.alloc().directBuffer(capacity + STREAM_SEGMENT_SLACK_BYTES)
+        }
         var written = false
         var scratch: ByteBuf? = null
         try {
@@ -738,16 +853,40 @@ internal class ZstdCompressionEncoder(
             varIntCodec.write(output, size)
             scratch?.writeBytes(input, input.readerIndex(), size)
             val source = scratch?.nioBuffer(scratch.readerIndex(), size) ?: input.nioBuffer(input.readerIndex(), size)
-            val destination = output.nioBuffer(output.writerIndex(), compressedCapacity)
-            val compressedSize = compressionContext.compressDirectByteBuffer(
-                destination, destination.position(), destination.remaining(), source, source.position(), size,
-            )
-            output.writerIndex(output.writerIndex() + compressedSize)
+            if (stream != null) {
+                appendStreamSegment(stream, output, source)
+            } else {
+                val destination = output.nioBuffer(output.writerIndex(), compressedCapacity)
+                val compressedSize = compressionContext.compressDirectByteBuffer(
+                    destination, destination.position(), destination.remaining(), source, source.position(), size,
+                )
+                output.writerIndex(output.writerIndex() + compressedSize)
+            }
             written = true
             return output
         } finally {
             scratch?.release()
             if (!written) output.release()
+        }
+    }
+
+    /**
+     * Appends the next segment of the connection's Zstd stream to [output]. The flush ends the segment on
+     * a block boundary, so the peer restores every byte of [source] from this frame and the earlier ones.
+     */
+    private fun appendStreamSegment(stream: ZstdCompressCtx, output: ByteBuf, source: ByteBuffer) {
+        while (true) {
+            output.ensureWritable(Zstd.compressBound(source.remaining().toLong()).toInt() + STREAM_SEGMENT_SLACK_BYTES)
+            val destination = output.nioBuffer(output.writerIndex(), output.writableBytes())
+            val destinationStart = destination.position()
+            val sourceStart = source.position()
+            val flushed = stream.compressDirectByteBufferStream(destination, source, EndDirective.FLUSH)
+            val produced = destination.position() - destinationStart
+            output.writerIndex(output.writerIndex() + produced)
+            if (flushed) return
+            if (produced == 0 && source.position() == sourceStart) {
+                throw EncoderException("Zstd stream made no progress with ${source.remaining()} bytes left to compress")
+            }
         }
     }
 
@@ -793,5 +932,8 @@ internal class ZstdCompressionEncoder(
         private val LOGGER: System.Logger = System.getLogger(ZstdCompressionEncoder::class.java.name)
         private const val COMPRESSION_LEVEL = 3
         private const val MAXIMUM_BATCHED_RECORD_BYTES = ZstdCompressionPipeline.MAXIMUM_UNCOMPRESSED_LENGTH - 5
+
+        /** Room beyond compressBound for the stream's frame header and block headers at buffer wraps. */
+        private const val STREAM_SEGMENT_SLACK_BYTES = 64
     }
 }

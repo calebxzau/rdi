@@ -18,6 +18,7 @@ import calebxzhou.rdi.common.serdesJson
 import calebxzhou.rdi.common.util.urlEncoded
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
+import io.ktor.client.engine.mock.MockRequestHandler
 import io.ktor.client.engine.mock.respond
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.http.ContentType
@@ -25,8 +26,8 @@ import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpMethod
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.content.OutgoingContent
-import io.ktor.http.content.TextContent
 import io.ktor.serialization.kotlinx.json.json
+import io.ktor.utils.io.toByteArray
 import kotlinx.coroutines.runBlocking
 import org.bson.types.ObjectId
 import java.io.IOException
@@ -54,6 +55,8 @@ class ModpackUploadApiTest {
             maxParallelParts = 8,
         )
         val requests = mutableListOf<io.ktor.client.request.HttpRequestData>()
+        val bodies = mutableListOf<ByteArray>()
+        val partRequests = mutableListOf<io.ktor.client.request.HttpRequestData>()
         val responses = ArrayDeque<String>(
             listOf(
                 jsonResponse(Response(code = 0, msg = "", data = session)),
@@ -65,11 +68,18 @@ class ModpackUploadApiTest {
                 jsonResponse(Response<Unit>(code = 0, msg = "")),
             ),
         )
-        val engine = MockEngine { request ->
+        val handler: MockRequestHandler = { request ->
             requests += request
+            bodies += request.body.readBytes()
             respond(responses.removeFirst(), HttpStatusCode.OK, jsonHeaders())
         }
-        val client = client(engine)
+        val client = client(MockEngine(handler))
+        val partClient = client(
+            MockEngine { request ->
+                partRequests += request
+                handler(this, request)
+            },
+        )
         val previousAccount = loggedAccount
         val selectedServer = server
         val previousIp = selectedServer.ip
@@ -78,12 +88,13 @@ class ModpackUploadApiTest {
         selectedServer.ip = "snapshot-host"
         selectedServer.noHttps = true
         try {
-            val api = currentModpackUploadApi(client)
+            val api = currentModpackUploadApi(client, partClient)
             loggedAccount = previousAccount.copy().also { it.jwt = "changed-token" }
             selectedServer.ip = "changed-host"
 
             assertEquals(session, api.createSession(ModpackUploadSessionCreateDto("pack.zip", 3, "a".repeat(40))))
-            api.uploadPart(uploadId, 1, byteArrayOf(1, 2), "b".repeat(40))
+            val sent = mutableListOf<Long>()
+            api.uploadPart(uploadId, 1, byteArrayOf(1, 2), "b".repeat(40)) { sent += it }
             assertEquals(session.copy(ready = true, uploadedParts = listOf(0, 1)), api.completeSession(uploadId))
             val create = createDto()
             api.publishNew(ModpackCreateFromUploadDto(uploadId, create))
@@ -103,26 +114,28 @@ class ModpackUploadApiTest {
             assertEquals("/modpack/upload-sessions", requests[0].url.encodedPath)
             assertEquals(
                 ModpackUploadSessionCreateDto("pack.zip", 3, "a".repeat(40)),
-                serdesJson.decodeFromString(requests[0].body.asText()),
+                serdesJson.decodeFromString(bodies[0].decodeToString()),
             )
             assertEquals("/modpack/upload-sessions/$uploadId/parts/1", requests[1].url.encodedPath)
             assertEquals("b".repeat(40), requests[1].headers["X-Part-SHA1"])
-            assertContentEquals(byteArrayOf(1, 2), requests[1].body.asBytes())
+            assertContentEquals(byteArrayOf(1, 2), bodies[1])
+            assertEquals(listOf(requests[1]), partRequests)
+            assertEquals(2L, sent.last())
             assertEquals(
                 uploadId,
-                serdesJson.decodeFromString<ModpackCreateFromUploadDto>(requests[3].body.asText()).uploadId,
+                serdesJson.decodeFromString<ModpackCreateFromUploadDto>(bodies[3].decodeToString()).uploadId,
             )
             assertEquals(
                 uploadId,
-                serdesJson.decodeFromString<ModpackVersionCreateFromUploadDto>(requests[4].body.asText()).uploadId,
+                serdesJson.decodeFromString<ModpackVersionCreateFromUploadDto>(bodies[4].decodeToString()).uploadId,
             )
             assertEquals(
                 create.clientExtras,
-                serdesJson.decodeFromString<ModpackCreateFromUploadDto>(requests[3].body.asText()).modpack.clientExtras,
+                serdesJson.decodeFromString<ModpackCreateFromUploadDto>(bodies[3].decodeToString()).modpack.clientExtras,
             )
             assertEquals(
                 version.clientExtras,
-                serdesJson.decodeFromString<ModpackVersionCreateFromUploadDto>(requests[4].body.asText()).clientExtras,
+                serdesJson.decodeFromString<ModpackVersionCreateFromUploadDto>(bodies[4].decodeToString()).clientExtras,
             )
             assertEquals("/modpack/${modpackId.toHexString()}/version/${"release candidate".urlEncoded}/from-upload", requests[4].url.encodedPath)
         } finally {
@@ -130,6 +143,7 @@ class ModpackUploadApiTest {
             selectedServer.ip = previousIp
             selectedServer.noHttps = previousNoHttps
             client.close()
+            partClient.close()
         }
     }
 
@@ -140,7 +154,7 @@ class ModpackUploadApiTest {
         val previousAccount = loggedAccount
         loggedAccount = previousAccount.copy().also { it.jwt = "token" }
         try {
-            val api = currentModpackUploadApi(serverErrorClient)
+            val api = currentModpackUploadApi(serverErrorClient, serverErrorClient)
             assertFailsWith<IOException> { api.uploadPart(UUID.randomUUID(), 0, bytes, "a".repeat(40)) }
         } finally {
             serverErrorClient.close()
@@ -196,14 +210,10 @@ class ModpackUploadApiTest {
 
 private inline fun <reified T> jsonResponse(value: Response<T>): String = serdesJson.encodeToString(value)
 
-private fun OutgoingContent.asBytes(): ByteArray = when (this) {
+/** Reads a request body inside the engine handler, which also drives upload progress listeners. */
+private suspend fun OutgoingContent.readBytes(): ByteArray = when (this) {
     is OutgoingContent.ByteArrayContent -> bytes()
-    is TextContent -> text.toByteArray()
-    else -> error("unexpected request body: ${this::class.simpleName}")
-}
-
-private fun OutgoingContent.asText(): String = when (this) {
-    is TextContent -> text
-    is OutgoingContent.ByteArrayContent -> bytes().decodeToString()
+    is OutgoingContent.ReadChannelContent -> readFrom().toByteArray()
+    is OutgoingContent.NoContent -> ByteArray(0)
     else -> error("unexpected request body: ${this::class.simpleName}")
 }

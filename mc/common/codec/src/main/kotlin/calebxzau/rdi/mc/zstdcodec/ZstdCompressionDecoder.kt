@@ -6,6 +6,7 @@ import io.netty.buffer.ByteBuf
 import io.netty.channel.ChannelHandlerContext
 import io.netty.handler.codec.ByteToMessageDecoder
 import io.netty.handler.codec.DecoderException
+import java.nio.ByteBuffer
 
 /**
  * RDI's Zstd replacement for Minecraft's compression decoder.
@@ -16,6 +17,9 @@ import io.netty.handler.codec.DecoderException
  *
  * With the packet reference extension the handler also restores referenced packets. It accepts
  * START only after the client prepared for it, and records every plain packet from START onwards.
+ *
+ * With the Zstd stream extension it likewise accepts STREAM_START only after the client prepared for
+ * it, and from then on decodes every compressed payload as the next segment of one stream.
  */
 internal class ZstdCompressionDecoder(
     private var threshold: Int,
@@ -26,12 +30,17 @@ internal class ZstdCompressionDecoder(
     private var handlerContext: ChannelHandlerContext? = null
     @Volatile
     private var batchingEnabled = false
-    private var packetRefState = PacketRefState.Idle
+    private var packetRefState = ExtensionState.Idle
 
-    /** The client table of the packet reference extension; non-null exactly in [PacketRefState.Active]. */
+    /** The client table of the packet reference extension; non-null exactly in [ExtensionState.Active]. */
     private var packetRefs: PacketRefCache? = null
 
-    private enum class PacketRefState { Idle, Ready, Active }
+    private var streamState = ExtensionState.Idle
+
+    /** The connection's Zstd stream; non-null exactly in [ExtensionState.Active], see [ZstdStreamFormat]. */
+    private var streamContext: ZstdDecompressCtx? = null
+
+    private enum class ExtensionState { Idle, Ready, Active }
 
     override fun handlerAdded(context: ChannelHandlerContext) {
         handlerContext = context
@@ -49,7 +58,7 @@ internal class ZstdCompressionDecoder(
         }
         // Below threshold 2 the marker is also a legal compressed size until START arrives.
         if (declaredSize == PacketRefFormat.REFERENCE_MARKER &&
-            (packetRefState == PacketRefState.Active || threshold > PacketRefFormat.REFERENCE_MARKER)
+            (packetRefState == ExtensionState.Active || threshold > PacketRefFormat.REFERENCE_MARKER)
         ) {
             consumeOnFailure(input) { decodeReference(context, input, output) }
             return
@@ -73,7 +82,8 @@ internal class ZstdCompressionDecoder(
         if (declaredSize < 0) {
             throw DecoderException("Negative uncompressed packet size: $declaredSize")
         }
-        if (validateDecompressed && declaredSize < threshold) {
+        // A stream compresses payloads below the threshold as well, see ZstdStreamFormat.MINIMUM_SEGMENT_BYTES.
+        if (validateDecompressed && streamState != ExtensionState.Active && declaredSize < threshold) {
             throw DecoderException(
                 "Badly compressed packet - size of $declaredSize is below server threshold of $threshold"
             )
@@ -107,9 +117,9 @@ internal class ZstdCompressionDecoder(
     }
 
     /** A rejected extension frame drops its rest; ByteToMessageDecoder would parse it as the next frame. */
-    private inline fun consumeOnFailure(input: ByteBuf, decode: () -> Unit) {
+    private inline fun <T> consumeOnFailure(input: ByteBuf, decode: () -> T): T {
         try {
-            decode()
+            return decode()
         } catch (error: Throwable) {
             input.skipBytes(input.readableBytes())
             throw error
@@ -139,10 +149,10 @@ internal class ZstdCompressionDecoder(
         val context = handlerContext ?: return
         val task = Runnable {
             if (!ready) {
-                packetRefState = PacketRefState.Idle
+                packetRefState = ExtensionState.Idle
                 packetRefs = null
-            } else if (packetRefState == PacketRefState.Idle) {
-                packetRefState = PacketRefState.Ready
+            } else if (packetRefState == ExtensionState.Idle) {
+                packetRefState = ExtensionState.Ready
             }
         }
         if (context.executor().inEventLoop()) task.run() else context.executor().execute(task)
@@ -151,9 +161,35 @@ internal class ZstdCompressionDecoder(
     /** Test view of the client table; call it on the event loop. */
     internal fun packetRefSnapshot(): List<PacketRefCache.Entry>? = packetRefs?.snapshot()
 
+    /**
+     * Prepares for the server's STREAM_START, or forgets the stream when [ready] is false.
+     *
+     * Preparing again is a no-op, so a late fallback never disturbs a stream that already runs.
+     */
+    fun requestStreamReady(ready: Boolean) {
+        val context = handlerContext ?: return
+        val task = Runnable {
+            if (!ready) {
+                streamState = ExtensionState.Idle
+                closeStream()
+            } else if (streamState == ExtensionState.Idle) {
+                streamState = ExtensionState.Ready
+            }
+        }
+        if (context.executor().inEventLoop()) task.run() else context.executor().execute(task)
+    }
+
+    /** Test view: whether compressed payloads decode as stream segments; call it on the event loop. */
+    internal fun isStreamActive(): Boolean = streamState == ExtensionState.Active
+
+    private fun closeStream() {
+        streamContext?.close()
+        streamContext = null
+    }
+
     private fun decodeReference(context: ChannelHandlerContext, input: ByteBuf, output: MutableList<Any>) {
         val refs = packetRefs ?: throw DecoderException(
-            if (packetRefState == PacketRefState.Idle) {
+            if (packetRefState == ExtensionState.Idle) {
                 "Received a packet reference on a connection that did not negotiate packet references"
             } else {
                 "Received a packet reference before START"
@@ -180,11 +216,44 @@ internal class ZstdCompressionDecoder(
 
     private fun decodeControl(input: ByteBuf) {
         if (!input.isReadable) throw DecoderException("Control frame ended before its opcode")
-        val opcode = input.readUnsignedByte().toInt()
-        if (opcode != PacketRefFormat.OPCODE_START) {
-            throw DecoderException("Unsupported control frame opcode: $opcode")
+        when (val opcode = input.readUnsignedByte().toInt()) {
+            PacketRefFormat.OPCODE_START -> decodePacketRefStart(input)
+            ZstdStreamFormat.OPCODE_STREAM_START -> decodeStreamStart(input)
+            else -> throw DecoderException("Unsupported control frame opcode: $opcode")
         }
-        if (packetRefState == PacketRefState.Idle) {
+    }
+
+    private fun decodeStreamStart(input: ByteBuf) {
+        when (streamState) {
+            ExtensionState.Idle ->
+                throw DecoderException("Received STREAM_START on a connection that did not negotiate the Zstd stream")
+            ExtensionState.Active -> throw DecoderException("Received a second STREAM_START")
+            ExtensionState.Ready -> Unit
+        }
+        val version = readRefVarInt(input, "version", STREAM_EXTENSION)
+        if (version != ZstdStreamFormat.VERSION) {
+            throw DecoderException("Unsupported Zstd stream version: $version")
+        }
+        val windowLog = readRefVarInt(input, "window log", STREAM_EXTENSION)
+        if (!ZstdStreamFormat.isWindowLogAccepted(windowLog)) {
+            throw DecoderException("STREAM_START window log of $windowLog is outside the accepted range")
+        }
+        if (input.isReadable) {
+            throw DecoderException("STREAM_START carries ${input.readableBytes()} trailing bytes")
+        }
+        val stream = ZstdDecompressCtx()
+        try {
+            stream.setMagicless(true)
+        } catch (error: Throwable) {
+            stream.close()
+            throw error
+        }
+        streamContext = stream
+        streamState = ExtensionState.Active
+    }
+
+    private fun decodePacketRefStart(input: ByteBuf) {
+        if (packetRefState == ExtensionState.Idle) {
             throw DecoderException("Received START on a connection that did not negotiate packet references")
         }
         val version = readRefVarInt(input, "version")
@@ -203,16 +272,18 @@ internal class ZstdCompressionDecoder(
             throw DecoderException("START carries ${input.readableBytes()} trailing bytes")
         }
         packetRefs = PacketRefCache(slots, maxEntryBytes)
-        packetRefState = PacketRefState.Active
+        packetRefState = ExtensionState.Active
     }
 
     /** Reads one extension VarInt; a truncated or overlong value fails the frame with its name. */
-    private fun readRefVarInt(input: ByteBuf, field: String): Int {
-        if (!input.isReadable) throw DecoderException("Packet reference frame ended before its $field")
+    private fun readRefVarInt(input: ByteBuf, field: String, extension: String = REF_EXTENSION): Int {
+        if (!input.isReadable) {
+            throw DecoderException("${extension.replaceFirstChar { it.uppercase() }} frame ended before its $field")
+        }
         return try {
             varIntCodec.read(input)
         } catch (error: Exception) {
-            throw DecoderException("Malformed packet reference $field", error)
+            throw DecoderException("Malformed $extension $field", error)
         }
     }
 
@@ -316,6 +387,11 @@ internal class ZstdCompressionDecoder(
             sourceBuffer?.writeBytes(input, input.readerIndex(), compressedSize)
             val source = sourceBuffer?.nioBuffer(sourceBuffer.readerIndex(), compressedSize)
                 ?: input.nioBuffer(input.readerIndex(), compressedSize)
+            if (streamState == ExtensionState.Active) {
+                val decoded = consumeOnFailure(input) { decompressSegment(context, source, compressedSize, declaredSize) }
+                input.skipBytes(compressedSize)
+                return decoded
+            }
             val frameSize = Zstd.findFrameCompressedSize(source)
             if (frameSize != compressedSize.toLong()) {
                 throw DecoderException(
@@ -351,11 +427,60 @@ internal class ZstdCompressionDecoder(
         }
     }
 
+    /**
+     * Decodes the next segment of the connection's Zstd stream. The spare destination byte exposes a
+     * segment that inflates past its declared size. Any failure leaves the two ends without a shared
+     * history, so the stream is dropped and every later compressed payload fails as well.
+     */
+    private fun decompressSegment(
+        context: ChannelHandlerContext,
+        source: ByteBuffer,
+        compressedSize: Int,
+        declaredSize: Int,
+    ): ByteBuf {
+        val stream = streamContext ?: throw DecoderException("The Zstd stream of this connection already failed")
+        val decoded = context.alloc().directBuffer(declaredSize + 1, declaredSize + 1)
+        try {
+            val destination = decoded.nioBuffer(0, declaredSize + 1)
+            val destinationStart = destination.position()
+            while (source.hasRemaining() && destination.hasRemaining()) {
+                val sourceBefore = source.position()
+                val destinationBefore = destination.position()
+                stream.decompressDirectByteBufferStream(destination, source)
+                if (source.position() == sourceBefore && destination.position() == destinationBefore) break
+            }
+            // A segment ends on a flushed block, so its last bytes may still wait in the stream's buffer.
+            if (!source.hasRemaining() && destination.position() - destinationStart < declaredSize) {
+                stream.decompressDirectByteBufferStream(destination, source)
+            }
+            val decodedSize = destination.position() - destinationStart
+            if (source.hasRemaining() || decodedSize != declaredSize) {
+                throw DecoderException(
+                    "Badly compressed packet - stream segment of $compressedSize bytes left ${source.remaining()} " +
+                        "bytes unread and decoded $decodedSize bytes, declared $declaredSize; the Zstd stream is out of sync"
+                )
+            }
+            decoded.writerIndex(decodedSize)
+            return decoded
+        } catch (exception: Throwable) {
+            decoded.release()
+            closeStream()
+            throw exception
+        }
+    }
+
     override fun handlerRemoved0(context: ChannelHandlerContext) {
         decompressionContext.close()
+        closeStream()
+        streamState = ExtensionState.Idle
         packetRefs = null
-        packetRefState = PacketRefState.Idle
+        packetRefState = ExtensionState.Idle
         handlerContext = null
         super.handlerRemoved0(context)
+    }
+
+    private companion object {
+        const val REF_EXTENSION = "packet reference"
+        const val STREAM_EXTENSION = "Zstd stream"
     }
 }

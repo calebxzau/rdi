@@ -139,8 +139,20 @@ fun Route.playerRoutes() {
                 ok()
             }
         }
+
+        authenticate("auth-jwt") {
+            get("/by-qq/{qq}") {
+                response(data = PlayerService.lookups.byQq(uid, param("qq")))
+            }
+            post("/msid-match") {
+                response(data = PlayerService.lookups.msidMatch(call.receive<List<String>>().map { it.toUuidParam() }))
+            }
+        }
     }
 }
+
+private fun String.toUuidParam(): java.util.UUID =
+    runCatching { java.util.UUID.fromString(this) }.getOrElse { throw ParamError("UUID格式不正确") }
 
 suspend fun ApplicationCall.player(): RAccount = PlayerService.getById(uid) ?: throw RequestError("用户不存在")
 
@@ -159,6 +171,14 @@ object PlayerService {
     suspend fun getByQQ(qq: String): RAccount? = accountCol.find(eq("qq", qq)).firstOrNull()
     suspend fun getByName(name: String): RAccount? = accountCol.find(eq("name", name)).firstOrNull()
     suspend fun getByMsid(msid: java.util.UUID): RAccount? = accountCol.find(eq("msid", msid)).firstOrNull()
+
+    suspend fun getByMsids(msids: Collection<java.util.UUID>): List<RAccount> {
+        if (msids.isEmpty()) return emptyList()
+        return accountCol.find(`in`("msid", msids.toList())).toList()
+    }
+
+    /** Account lookups for save imports (`/player/by-qq`, `/player/msid-match`). */
+    val lookups = calebxzau.rdi.server.service.player.PlayerLookupService(::getByQQ, ::getByMsids)
 
     suspend fun get(usr: String): RAccount? {
         if (ObjectId.isValid(usr)) {

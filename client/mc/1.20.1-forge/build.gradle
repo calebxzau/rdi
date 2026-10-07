@@ -128,6 +128,7 @@ sourceSets.main {
     kotlin.srcDir '../../../mc/20/forge/src/main/kotlin'
     kotlin.srcDir '../../../mc/syncchunk/src/main/kotlin'
     kotlin.srcDir '../../../mc/syncchunk/src/2021/kotlin'
+    kotlin.srcDir '../../../mc/syncchunk/src/20/kotlin'
     java.srcDir '../../../mc/syncchunk/src/2021Client/java'
     kotlin.srcDir '../../../mc/syncchunk/src/2021Client/kotlin'
     kotlin.srcDir '../../../mc/rcmd/src/main/kotlin'

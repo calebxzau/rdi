@@ -4,6 +4,7 @@ import calebxzau.rdi.mc.zstdcodec.ZstdCompressionPipeline
 import calebxzau.rdi.mc.v20.server.region.RegionZstdCodec
 import calebxzau.mc.common2021.RdiBatchChannel
 import calebxzau.mc.common2021.RdiPacketRefChannel
+import calebxzau.mc.common2021.RdiZstdStreamChannel
 import calebxzau.mc.common2021.RdiLoggingConfiguration
 import calebxzhou.rdi.mc.common.RDI
 import calebxzhou.rdi.mc.common.WebSocketClient
@@ -16,6 +17,7 @@ import calebxzhou.rdi.mc.server.network.RServerNetwork
 import calebxzhou.rdi.mc.server.network.RServerBatching
 import calebxzhou.rdi.mc.server.network.RServerPacketRefs
 import calebxzhou.rdi.mc.server.network.RServerPacketCapture
+import calebxzhou.rdi.mc.server.network.RServerZstdStream
 import calebxzhou.rdi.mc.server.rcmd.PlayerNbtChatRangeStore
 import calebxzhou.rdi.mc.server.rcmd.RcmdForgeServerAdapter
 import calebxzau.rdi.mc.v20.server.network.PacketMetrics20
@@ -55,6 +57,7 @@ class RDIMain {
         RServerNetwork.register()
         RdiBatchChannel.register()
         RdiPacketRefChannel.register()
+        RdiZstdStreamChannel.register()
         calebxzau.rdi.mc.v20.forge.l2.L2NameChannel.register()
         calebxzau.rdi.mc.server.chunkcache.ChunkCacheServerNetwork.register()
         calebxzau.rdi.mc.server.syncchunk.SyncChunkForgeNetwork.register()
@@ -149,6 +152,7 @@ class RDIMain {
             }
             RServerNetwork.sendLastTo(player)
             RServerBatching.onPlayerJoined(player)
+            RServerZstdStream.onPlayerJoined(player)
             RServerPacketRefs.onPlayerJoined(player)
             sendJoinSubtitle(player)
         }

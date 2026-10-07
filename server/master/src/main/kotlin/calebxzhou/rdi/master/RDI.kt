@@ -24,6 +24,7 @@ import calebxzhou.rdi.master.service.modpack.ModpackBuildService
 import calebxzau.rdi.server.infra.configurePostgresServices
 import calebxzau.rdi.server.infra.mongoClientSettings
 import calebxzau.rdi.server.service.baseworld.baseWorldRoutes
+import calebxzau.rdi.server.service.hostworldimport.hostWorldImportAdminRoutes
 import calebxzhou.rdi.common.service.McServerPlayers
 import calebxzhou.rdi.common.service.McServerPlayerSample
 import calebxzhou.rdi.common.util.toUUID
@@ -416,6 +417,7 @@ private fun Application.configureServer() {
             modFileRoutes()
             mailRoutes()
             baseWorldRoutes()
+            hostWorldImportAdminRoutes()
         }
     }
 

@@ -50,6 +50,7 @@ import calebxzhou.rdi.master.service.host.HostQueryService.getBriefHost
 import calebxzhou.rdi.master.service.host.HostQueryService.toDetailVo
 import calebxzhou.rdi.master.service.player
 import calebxzau.rdi.server.service.baseworld.BaseWorldService
+import calebxzau.rdi.server.service.hostworldimport.hostWorldImportRoutes
 import calebxzhou.rdi.model.Role
 import com.github.dockerjava.api.exception.NotFoundException
 import io.ktor.server.request.receive
@@ -101,6 +102,7 @@ fun Route.hostRoutes() = route("/host") {
 
     }
     route("/{hostId}") {
+        hostWorldImportRoutes()
         get("/status") {
             call.hostContext().host.status.let { response(data = it) }
         }

@@ -86,6 +86,8 @@ internal suspend fun McInstall.prepareDesktopLaunch(
     versionId: String,
     launchOverrides: MinecraftLaunchOverrides,
     vararg jvmArgs: String,
+    account: calebxzau.rdi.mclaunch.MinecraftAccount? = null,
+    extraGameArgs: List<String> = emptyList(),
 ): Result<PreparedMinecraftLaunch> = createMinecraftLauncher().prepareLaunch(
     minecraftLaunchRequest(
         mcVersion = mcVer,
@@ -94,6 +96,8 @@ internal suspend fun McInstall.prepareDesktopLaunch(
         versionDir = versionListDir.resolve(versionId),
         launchOverrides = launchOverrides,
         extraJvmArgs = jvmArgs.toList(),
+        account = account,
+        extraGameArgs = extraGameArgs,
     ),
 )
 

@@ -13,7 +13,7 @@ import calebxzau.rdi.client.ui.ScreenContentSurface
 import calebxzau.rdi.client.ui.TitleRow
 
 @Composable
-fun HostWorldScreen(onBack: () -> Unit) {
+fun HostWorldScreen(onBack: () -> Unit, onImportSave: () -> Unit) {
     MaxBox {
         ScreenContentSurface(size = ScreenContentSize.SMALL) {
             TitleRow(title = "房间存档管理", onBack = onBack)
@@ -28,7 +28,7 @@ fun HostWorldScreen(onBack: () -> Unit) {
                     CircleIconButton(
                         icon = "\ueac3",
                         label = "上传自己的存档",
-                        onClick = {},
+                        onClick = onImportSave,
                     )
                     CircleIconButton(
                         icon = "\ueac2",

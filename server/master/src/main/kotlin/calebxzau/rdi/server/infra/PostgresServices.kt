@@ -4,6 +4,7 @@ import calebxzau.rdi.server.account.AccountMirrorService
 import calebxzau.rdi.server.account.PgAccountRepo
 import calebxzau.rdi.server.service.baseworld.BaseWorldService
 import calebxzau.rdi.server.service.baseworld.PgBaseWorldRepo
+import calebxzau.rdi.server.service.hostworldimport.HostWorldImportService
 import calebxzhou.rdi.master.CONF
 import calebxzhou.rdi.master.lgr
 import calebxzhou.rdi.master.infra.postgres.DatabaseProvider
@@ -31,6 +32,7 @@ fun Application.configurePostgresServices() {
     val koin = getKoin()
     val accountMirrorService = koin.get<AccountMirrorService>()
     val baseWorldService = koin.get<BaseWorldService>()
+    val hostWorldImportService = koin.get<HostWorldImportService>()
     PlayerService.configureAccountMirror(accountMirrorService)
     launch(Dispatchers.IO) {
         accountMirrorService.scan(PlayerService.accountCol.find())
@@ -46,9 +48,13 @@ fun Application.configurePostgresServices() {
             }
     }
     baseWorldService.startRecovery()
+    hostWorldImportService.startRecovery()
 
     monitor.subscribe(ApplicationStopping) {
-        runBlocking { baseWorldService.shutdown() }
+        runBlocking {
+            baseWorldService.shutdown()
+            hostWorldImportService.shutdown()
+        }
         databaseProvider.close()
     }
 }
@@ -59,4 +65,5 @@ private fun postgresModule(databaseProvider: DatabaseProvider) = module {
     single { PgBaseWorldRepo() }
     single { BaseWorldService(get(), get(), accounts = get()) }
     single { AccountMirrorService(get(), get()) }
+    single { HostWorldImportService() }
 }

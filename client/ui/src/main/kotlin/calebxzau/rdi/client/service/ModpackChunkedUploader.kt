@@ -36,13 +36,15 @@ data class ModpackChunkedUploadProgress(
 
 class ModpackChunkedUploader(
     private val api: ModpackUploadApi,
-    private val maxPartRetries: Int = 3,
-    private val retryDelayMillis: Long = 500L,
+    private val maxPartRetries: Int = DEFAULT_CHUNKED_UPLOAD_PART_RETRIES,
+    private val retryDelayMillis: Long = DEFAULT_CHUNKED_UPLOAD_RETRY_DELAY_MILLIS,
+    private val maxRetryDelayMillis: Long = DEFAULT_CHUNKED_UPLOAD_MAX_RETRY_DELAY_MILLIS,
     private val parallelism: Int = DEFAULT_CHUNKED_UPLOAD_PARALLELISM,
 ) {
     init {
         require(maxPartRetries >= 0) { "分片重试次数不能为负数" }
         require(retryDelayMillis >= 0) { "分片重试间隔不能为负数" }
+        require(maxRetryDelayMillis >= 0) { "分片最长重试间隔不能为负数" }
         require(parallelism in 1..DEFAULT_CHUNKED_UPLOAD_PARALLELISM) { "分片并发数必须在1到8之间" }
     }
 
@@ -85,11 +87,13 @@ class ModpackChunkedUploader(
                         ),
                         maxPartRetries = maxPartRetries,
                         retryDelayMillis = retryDelayMillis,
+                        maxRetryDelayMillis = maxRetryDelayMillis,
                         parallelism = minOf(parallelism, session.maxParallelParts),
-                        uploadPart = { index, bytes, sha1 -> api.uploadPart(session.id, index, bytes, sha1) },
+                        uploadPart = { index, bytes, sha1, onBytesSent ->
+                            api.uploadPart(session.id, index, bytes, sha1, onBytesSent)
+                        },
                         ensureActive = ensureActive,
                         onProgress = emitter::emit,
-                        isRetryable = ::isRetryable,
                     ).upload()
                     ensureCurrentActive(ensureActive)
                     api.completeSession(session.id).also {
@@ -121,9 +125,6 @@ class ModpackChunkedUploader(
             throw cause
         }
     }
-
-    private fun isRetryable(cause: Throwable): Boolean =
-        cause !is CancellationException && cause !is Task2CancelledException && cause !is calebxzhou.rdi.common.exception.RequestError
 
     private suspend fun ensureCurrentActive(ensureActive: () -> Unit) {
         currentCoroutineContext().ensureActive()

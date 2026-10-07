@@ -381,7 +381,7 @@ class ZstdPacketRefTest {
             Case("START before negotiation", ClientState.Idle, start(1, 256, 1024)),
             Case("reference before START", ClientState.Ready, reference(0, entryCheck)),
             Case("control without opcode", ClientState.Ready, frame { it.writeVarInt(PacketRefFormat.CONTROL_MARKER) }),
-            Case("unknown opcode", ClientState.Ready, frame { it.writeVarInt(PacketRefFormat.CONTROL_MARKER); it.writeByte(2) }),
+            Case("unknown opcode", ClientState.Ready, frame { it.writeVarInt(PacketRefFormat.CONTROL_MARKER); it.writeByte(3) }),
             Case("unknown version", ClientState.Ready, start(2, 256, 1024)),
             Case("zero slots", ClientState.Ready, start(1, 0, 1024)),
             Case("too many slots", ClientState.Ready, start(1, 1025, 1024)),

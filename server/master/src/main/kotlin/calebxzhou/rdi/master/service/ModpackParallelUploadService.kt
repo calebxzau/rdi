@@ -1,6 +1,7 @@
 package calebxzhou.rdi.master.service
 
 import calebxzhou.rdi.common.util.sha1
+import calebxzhou.rdi.common.exception.ChunkedUploadErrorCodes
 import calebxzhou.rdi.common.exception.RequestError
 import calebxzhou.rdi.common.model.ModpackUploadSessionCreateDto
 import calebxzhou.rdi.common.model.ModpackUploadSessionVo
@@ -34,11 +35,11 @@ internal class ModpackParallelUploadService(
     private val sessionsDir: File,
     private val maxFileSize: Long,
     private val clock: Clock = Clock.systemUTC(),
-    private val partSize: Int = DEFAULT_PART_SIZE
+    private val partSize: Int = DEFAULT_PART_SIZE,
+    private val chunkedUploadService: ChunkedUploadService = ChunkedUploadService()
 ) {
     private val sessions = ConcurrentHashMap<UUID, SessionState>()
     private val sessionsMutex = Mutex()
-    private val chunkedUploadService = ChunkedUploadService()
 
     init {
         require(partSize > 0) { "分片大小必须大于0" }
@@ -101,29 +102,32 @@ internal class ModpackParallelUploadService(
         val partSha1 = expectedSha1.normalizedSha1()
         val expectedLength = state.expectedPartLength(index)
         requestCheck(declaredLength == null || declaredLength == expectedLength.toLong(), "分片长度不正确")
-        var reserved = false
-        try {
-            val shouldUpload = state.mutex.withLock {
-                requestCheck(!state.metadata.ready, "上传会话已经完成")
-                requestCheck(index !in state.activeParts, "该分片正在上传")
-                val committedSha1 = state.metadata.uploadedParts[index]
-                if (committedSha1 != null) {
-                    requestCheck(committedSha1 == partSha1, "该分片已上传，校验值不一致")
-                    false
-                } else {
-                    requestCheck(state.activeParts.size < MAX_CONNECTIONS, "同一上传会话最多允许8个并发连接")
-                    state.activeParts += index
-                    reserved = true
-                    true
+        val reservation = state.mutex.withLock {
+            requestCheck(!state.metadata.ready, "上传会话已经完成")
+            val committedSha1 = state.metadata.uploadedParts[index]
+            if (committedSha1 != null) {
+                requestCheck(committedSha1 == partSha1, "该分片已上传，校验值不一致")
+                null
+            } else {
+                // A client retries a part only after abandoning the previous request, whose
+                // connection may never report closing, so the newest request takes the part over.
+                if (index !in state.activeParts) {
+                    requestCheck(
+                        state.activeParts.size < MAX_CONNECTIONS,
+                        "同一上传会话最多允许8个并发连接",
+                        ChunkedUploadErrorCodes.PART_RETRYABLE
+                    )
                 }
+                (++state.lastReservation).also { state.activeParts[index] = it }
             }
-            if (!shouldUpload) return@resultOf
+        } ?: return@resultOf
+        try {
             withContext(Dispatchers.IO) {
                 val temporary = Files.createTempFile(state.dir.toPath(), ".part-upload-", ".tmp").toFile()
                 var failure: Throwable? = null
                 try {
                     chunkedUploadService.receive(source, temporary, expectedLength.toLong(), partSha1)
-                    commitPart(state, index, partSha1, temporary)
+                    commitPart(state, index, reservation, partSha1, temporary)
                 } catch (error: Throwable) {
                     failure = error
                     throw error
@@ -135,10 +139,8 @@ internal class ModpackParallelUploadService(
                 }
             }
         } finally {
-            if (reserved) {
-                withContext(NonCancellable) {
-                    state.mutex.withLock { state.activeParts -= index }
-                }
+            withContext(NonCancellable) {
+                state.mutex.withLock { state.activeParts.remove(index, reservation) }
             }
         }
     }
@@ -229,12 +231,13 @@ internal class ModpackParallelUploadService(
     private suspend fun commitPart(
         state: SessionState,
         index: Int,
+        reservation: Long,
         expectedSha1: String,
         temporary: File,
     ) = state.mutex.withLock {
         requestCheck(!state.metadata.ready, "上传会话已经完成")
         requestCheck(!state.finalizing, "上传文件正在使用")
-        requestCheck(index in state.activeParts, "该分片未被当前请求保留")
+        requestCheck(state.activeParts[index] == reservation, "该分片已由新的请求接管")
         val committedSha1 = state.metadata.uploadedParts[index]
         if (committedSha1 != null) {
             requestCheck(committedSha1 == expectedSha1, "该分片已上传，校验值不一致")
@@ -345,8 +348,8 @@ internal class ModpackParallelUploadService(
         return normalized
     }
 
-    private fun requestCheck(condition: Boolean, message: String) {
-        if (!condition) throw RequestError(message)
+    private fun requestCheck(condition: Boolean, message: String, errorCode: String? = null) {
+        if (!condition) throw RequestError(message, errorCode = errorCode)
     }
 
     private data class SessionState(
@@ -355,7 +358,9 @@ internal class ModpackParallelUploadService(
         val dataFile: File,
         var metadata: SessionMetadata,
         val mutex: Mutex = Mutex(),
-        val activeParts: MutableSet<Int> = mutableSetOf(),
+        /** Part index to the reservation of the request currently allowed to commit it. */
+        val activeParts: MutableMap<Int, Long> = mutableMapOf(),
+        var lastReservation: Long = 0L,
         var finalizing: Boolean = false
     ) {
         val partCount: Int

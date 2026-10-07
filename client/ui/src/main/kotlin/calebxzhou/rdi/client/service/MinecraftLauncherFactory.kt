@@ -60,12 +60,14 @@ internal fun minecraftLaunchRequest(
     versionDir: File,
     launchOverrides: MinecraftLaunchOverrides = MinecraftLaunchOverrides(),
     extraJvmArgs: List<String> = emptyList(),
+    account: MinecraftAccount? = null,
+    extraGameArgs: List<String> = emptyList(),
 ): MinecraftLaunchRequest = MinecraftLaunchRequest(
     mcVersion = mcVersion,
     loader = loader,
     versionId = versionId,
     versionDir = versionDir,
-    account = MinecraftAccount(
+    account = account ?: MinecraftAccount(
         name = loggedAccount.name,
         uuid = loggedAccount.uuid.toString(),
         accessToken = loggedAccount.jwt.orEmpty(),
@@ -73,6 +75,7 @@ internal fun minecraftLaunchRequest(
     windowSize = resolveMinecraftWindowSize(),
     launchOverrides = launchOverrides,
     extraJvmArgs = extraJvmArgs,
+    extraGameArgs = extraGameArgs,
 )
 
 private fun resolveMinecraftWindowSize(): MinecraftWindowSize {

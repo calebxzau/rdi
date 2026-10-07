@@ -8,7 +8,6 @@ import calebxzhou.rdi.client.service.ClientDirs
 import calebxzhou.rdi.common.archive.TarZstArchiveWriter
 import calebxzhou.rdi.common.exception.RequestError
 import calebxzhou.rdi.common.model.Task2
-import calebxzhou.rdi.common.model.Task2CancelledException
 import calebxzhou.rdi.common.model.Task2Context
 import calebxzhou.rdi.common.model.Task2Progress
 import calebxzhou.rdi.common.util.deleteRecursivelyNoSymlink
@@ -16,7 +15,6 @@ import calebxzhou.rdi.common.util.digestHex
 import calebxzhou.rdi.common.util.humanFileSize
 import calebxzhou.rdi.common.util.sha1dig
 import calebxzhou.rdi.common.util.validateModpackName
-import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.currentCoroutineContext
@@ -33,8 +31,6 @@ import java.nio.file.attribute.BasicFileAttributes
 import java.nio.charset.StandardCharsets
 
 private const val MAX_ENTRIES = 100_000
-private const val DEFAULT_PART_RETRIES = 3
-private const val DEFAULT_RETRY_DELAY_MILLIS = 100L
 private val BASE_WORLD_LEVEL_TYPE_PATTERN = Regex("^[a-z0-9_.-]+:[a-z0-9/._-]+$")
 
 fun validateBaseWorldLevelType(value: String): Result<Unit> = runCatching {
@@ -57,8 +53,8 @@ fun validateBaseWorldName(value: String): Result<Unit> =
     )
 
 data class BaseWorldUploadTaskConfig(
-    val maxPartRetries: Int = DEFAULT_PART_RETRIES,
-    val retryDelayMillis: Long = DEFAULT_RETRY_DELAY_MILLIS,
+    val maxPartRetries: Int = DEFAULT_CHUNKED_UPLOAD_PART_RETRIES,
+    val retryDelayMillis: Long = DEFAULT_CHUNKED_UPLOAD_RETRY_DELAY_MILLIS,
     val parallelism: Int = DEFAULT_CHUNKED_UPLOAD_PARALLELISM,
 )
 
@@ -227,8 +223,8 @@ class BaseWorldUploadService(
             maxPartRetries = config.maxPartRetries,
             retryDelayMillis = config.retryDelayMillis,
             parallelism = config.parallelism,
-            uploadPart = { index, bytes, partSha1 ->
-                api.uploadPart(worldId, session.id, index, bytes, partSha1)
+            uploadPart = { index, bytes, partSha1, onBytesSent ->
+                api.uploadPart(worldId, session.id, index, bytes, partSha1, onBytesSent)
             },
             ensureActive = context::ensureActive,
             onProgress = { completedBytes, completedParts ->
@@ -243,7 +239,6 @@ class BaseWorldUploadService(
                     ),
                 )
             },
-            isRetryable = ::isRetryable,
         ).upload()
     }
 
@@ -366,9 +361,6 @@ class BaseWorldUploadService(
         }
         return digest.digestHex()
     }
-
-    private fun isRetryable(cause: Throwable): Boolean =
-        cause !is CancellationException && cause !is Task2CancelledException && cause !is RequestError
 }
 
 private data class SourceSnapshot(

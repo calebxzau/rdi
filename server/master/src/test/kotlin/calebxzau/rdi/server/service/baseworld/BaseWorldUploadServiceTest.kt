@@ -1,5 +1,6 @@
 package calebxzau.rdi.server.service.baseworld
 
+import calebxzhou.rdi.common.model.RAccount
 import calebxzau.rdi.common.model.BaseWorld
 import calebxzau.rdi.common.model.BaseWorldUploadSessionCreateDto
 import calebxzau.rdi.common.model.BaseWorldUploadStatus
@@ -610,20 +611,20 @@ class BaseWorldUploadServiceTest {
             val fixture = fixture(root, initial)
             fixture.worlds.clear()
 
-            val zero = fixture.service.create(initial.ownerId, "zero", "normal", null, 0,).getOrThrow()
-            val maximum = fixture.service.create(initial.ownerId, "maximum", "normal", null, BaseWorld.MaxSize,).getOrThrow()
+            val zero = fixture.service.create(initial.ownerId, "zero", "normal", null, 0, owner = RAccount.DEFAULT).getOrThrow()
+            val maximum = fixture.service.create(initial.ownerId, "maximum", "normal", null, BaseWorld.MaxSize, owner = RAccount.DEFAULT).getOrThrow()
             assertEquals(0, zero.size)
             assertEquals(BaseWorld.MaxSize, maximum.size)
             assertEquals(setOf(0L, BaseWorld.MaxSize), fixture.worlds.values.map { it.size }.toSet())
 
-            assertTrue(fixture.service.create(initial.ownerId, "negative", "normal", null, -1,).isFailure)
+            assertTrue(fixture.service.create(initial.ownerId, "negative", "normal", null, -1, owner = RAccount.DEFAULT).isFailure)
             assertTrue(
                 fixture.service.create(
                     initial.ownerId,
                     "large",
                     "normal",
                     null,
-                    BaseWorld.MaxSize + 1,,
+                    BaseWorld.MaxSize + 1, owner = RAccount.DEFAULT,
                 ).isFailure
             )
             assertEquals(2, fixture.worlds.size)

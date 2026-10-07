@@ -1,5 +1,6 @@
 package calebxzhou.rdi.master.service.host
 
+import calebxzau.rdi.server.service.hostworldimport.HostWorldImportGuard
 import calebxzau.rdi.common.logging.Loggers
 import calebxzhou.rdi.common.DL_MOD_DIR
 import calebxzhou.rdi.common.DEBUG
@@ -116,6 +117,7 @@ object HostControlService {
 
     private suspend fun HostContext.startLocked() {
         val current = host
+        HostWorldImportGuard.check(current._id)
         val isMember = member.role != Role.GUEST
         if (current.whitelist && !isMember && !player.isDav) {
             throw RequestError("私有房间仅成员可启动")
@@ -174,6 +176,7 @@ object HostControlService {
     }
 
     private suspend fun HostContext.restartLocked() {
+        HostWorldImportGuard.check(host._id)
         val modpack = calebxzhou.rdi.master.service.modpack.ModpackQueryService.getById(host.modpackId)
             ?: throw RequestError("无此整合包")
         if (modpack.modloader == ModLoader.Fabric) {

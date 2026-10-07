@@ -1,5 +1,6 @@
 package calebxzau.rdi.server.service.baseworld
 
+import calebxzhou.rdi.common.model.RAccount
 import calebxzhou.rdi.master.PostgresConfig
 import calebxzhou.rdi.master.infra.postgres.DatabaseProvider
 import calebxzau.rdi.server.account.AccountRecord
@@ -56,7 +57,7 @@ class BaseWorldServiceIntegrationTest {
             "Skyblock",
             "skyblockbuilder:skyblock",
             generatorSettings = null,
-            size = 1234,,
+            size = 1234, owner = RAccount.DEFAULT,
         ).getOrThrow()
 
         assertEquals(7, created.id.version())
@@ -72,7 +73,7 @@ class BaseWorldServiceIntegrationTest {
             "Configured",
             "custom",
             generatorSettings = "{\"seed\":123}",
-            size = 5,,
+            size = 5, owner = RAccount.DEFAULT,
         ).getOrThrow()
         assertEquals("{\"seed\":123}", configured.generatorSettings)
         assertEquals(configured, service.findById(ownerId, configured.id).getOrThrow())
@@ -89,9 +90,9 @@ class BaseWorldServiceIntegrationTest {
     fun `find list and delete remain owner scoped`() = runTest {
         val ownerId = createAccount()
         val otherOwnerId = createAccount()
-        val first = service.create(ownerId, "First", "normal", null, 1,).getOrThrow()
-        val second = service.create(ownerId, "Second", "flat", "", 2,).getOrThrow()
-        val other = service.create(otherOwnerId, "Other", "normal", null, 3,).getOrThrow()
+        val first = service.create(ownerId, "First", "normal", null, 1, owner = RAccount.DEFAULT).getOrThrow()
+        val second = service.create(ownerId, "Second", "flat", "", 2, owner = RAccount.DEFAULT).getOrThrow()
+        val other = service.create(otherOwnerId, "Other", "normal", null, 3, owner = RAccount.DEFAULT).getOrThrow()
 
         assertNull(service.findById(otherOwnerId, first.id).getOrThrow())
         val worlds = service.listByOwner(ownerId).getOrThrow()
@@ -113,27 +114,27 @@ class BaseWorldServiceIntegrationTest {
         assertTrue(service.listByOwner(ownerId).getOrThrow().isEmpty())
 
         assertTrue(
-            service.create(UUID.randomUUID(), "Missing owner", "normal", null, 1,).isFailure
+            service.create(UUID.randomUUID(), "Missing owner", "normal", null, 1, owner = RAccount.DEFAULT).isFailure
         )
-        assertTrue(service.create(ownerId, "Negative", "normal", null, -1,).isFailure)
+        assertTrue(service.create(ownerId, "Negative", "normal", null, -1, owner = RAccount.DEFAULT).isFailure)
     }
 
     @Test
     fun `owner quota is transactional across service instances and deletion frees a slot`() = runTest {
         val ownerId = createAccount()
-        service.create(ownerId, "One", "normal", null, 1,).getOrThrow()
-        service.create(ownerId, "Two", "normal", null, 1,).getOrThrow()
+        service.create(ownerId, "One", "normal", null, 1, owner = RAccount.DEFAULT).getOrThrow()
+        service.create(ownerId, "Two", "normal", null, 1, owner = RAccount.DEFAULT).getOrThrow()
         val secondService = BaseWorldService(database, repository, accounts = accounts)
         val results = listOf(service, secondService).mapIndexed { index, instance ->
-            async(Dispatchers.IO) { instance.create(ownerId, "Concurrent$index", "normal", null, 1,) }
+            async(Dispatchers.IO) { instance.create(ownerId, "Concurrent$index", "normal", null, 1, owner = RAccount.DEFAULT) }
         }.awaitAll()
         assertEquals(1, results.count { it.isSuccess })
         assertEquals(3, service.listByOwner(ownerId).getOrThrow().size)
 
         val deleted = service.listByOwner(ownerId).getOrThrow().first()
         assertTrue(service.delete(ownerId, deleted.id).getOrThrow())
-        assertTrue(service.create(ownerId, "AfterDelete", "normal", null, 1,).isSuccess)
-        assertTrue(service.create(createAccount(), "OtherOwner", "normal", null, 1,).isSuccess)
+        assertTrue(service.create(ownerId, "AfterDelete", "normal", null, 1, owner = RAccount.DEFAULT).isSuccess)
+        assertTrue(service.create(createAccount(), "OtherOwner", "normal", null, 1, owner = RAccount.DEFAULT).isSuccess)
     }
 
     private suspend fun createAccount(): UUID {

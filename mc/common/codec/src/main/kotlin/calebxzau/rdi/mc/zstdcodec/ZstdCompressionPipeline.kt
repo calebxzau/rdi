@@ -141,6 +141,32 @@ object ZstdCompressionPipeline {
         return true
     }
 
+    /**
+     * Starts the connection's Zstd stream, see [ZstdStreamFormat].
+     *
+     * Only call this after the peer announced the extension and prepared its decoder; the window is
+     * clamped to the range every peer accepts. The stream runs until the connection ends, so a second
+     * call is a no-op.
+     */
+    @JvmStatic
+    @JvmOverloads
+    fun setOutboundStream(channel: Channel, windowLog: Int = ZstdStreamFormat.DEFAULT_WINDOW_LOG) {
+        (channel.pipeline().get(COMPRESS_HANDLER_NAME) as? ZstdCompressionEncoder)
+            ?.requestStream(windowLog)
+    }
+
+    @JvmStatic
+    fun isOutboundStreamEnabled(channel: Channel): Boolean =
+        (channel.pipeline().get(COMPRESS_HANDLER_NAME) as? ZstdCompressionEncoder)?.isStreamEnabled() ?: false
+
+    /** Prepares the RDI decoder for the server's STREAM_START; returns false when that decoder is absent. */
+    @JvmStatic
+    fun setInboundStreamIfAvailable(channel: Channel, ready: Boolean): Boolean {
+        val decoder = channel.pipeline().get(DECOMPRESS_HANDLER_NAME) as? ZstdCompressionDecoder ?: return false
+        decoder.requestStreamReady(ready)
+        return true
+    }
+
     /** Returns whether this channel has any compression encoder, RDI or not. */
     @JvmStatic
     fun hasCompressionEncoder(channel: Channel): Boolean = channel.pipeline().get(COMPRESS_HANDLER_NAME) != null

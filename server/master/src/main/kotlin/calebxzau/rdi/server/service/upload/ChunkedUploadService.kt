@@ -2,17 +2,30 @@ package calebxzau.rdi.server.service.upload
 
 import calebxzhou.rdi.common.util.digestHex
 import calebxzhou.rdi.common.util.sha1dig
+import calebxzhou.rdi.common.exception.ChunkedUploadErrorCodes
 import calebxzhou.rdi.common.exception.RequestError
 import io.ktor.utils.io.ByteReadChannel
 import io.ktor.utils.io.readAvailable
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import java.io.File
 import kotlin.coroutines.coroutineContext
 
-/** Format-agnostic byte receiving and assembly for disk-backed chunked uploads. */
-class ChunkedUploadService {
+/**
+ * Format-agnostic byte receiving and assembly for disk-backed chunked uploads.
+ *
+ * [idleTimeoutMillis] bounds how long [receive] waits for the next bytes, so a part
+ * whose connection silently died is released instead of being held indefinitely.
+ */
+class ChunkedUploadService(
+    private val idleTimeoutMillis: Long = DEFAULT_IDLE_TIMEOUT_MILLIS,
+) {
+    init {
+        require(idleTimeoutMillis > 0) { "分片接收空闲超时必须大于0" }
+    }
+
     suspend fun receive(
         source: ByteReadChannel,
         destination: File,
@@ -26,7 +39,9 @@ class ChunkedUploadService {
             destination.outputStream().use { output ->
                 while (true) {
                     coroutineContext.ensureActive()
-                    val read = source.readAvailable(buffer, 0, buffer.size)
+                    val read = withTimeoutOrNull(idleTimeoutMillis) {
+                        source.readAvailable(buffer, 0, buffer.size)
+                    } ?: throw RequestError("分片数据接收超时", errorCode = ChunkedUploadErrorCodes.PART_RETRYABLE)
                     if (read == -1) break
                     if (read == 0) continue
                     received += read
@@ -35,8 +50,8 @@ class ChunkedUploadService {
                     output.write(buffer, 0, read)
                 }
             }
-            checkUpload(received == expectedLength, "分片数据不完整")
-            checkUpload(digest.digestHex() == expectedSha1, "分片SHA-1校验失败")
+            checkUpload(received == expectedLength, "分片数据不完整", ChunkedUploadErrorCodes.PART_RETRYABLE)
+            checkUpload(digest.digestHex() == expectedSha1, "分片SHA-1校验失败", ChunkedUploadErrorCodes.PART_RETRYABLE)
         } catch (error: Throwable) {
             deleteQuietly(destination, error)
             throw error
@@ -80,11 +95,12 @@ class ChunkedUploadService {
 
     private companion object {
         const val BUFFER_SIZE = 128 * 1024
+        const val DEFAULT_IDLE_TIMEOUT_MILLIS = 120_000L
     }
 }
 
-private fun checkUpload(condition: Boolean, message: String) {
-    if (!condition) throw RequestError(message)
+private fun checkUpload(condition: Boolean, message: String, errorCode: String? = null) {
+    if (!condition) throw RequestError(message, errorCode = errorCode)
 }
 
 private fun deleteQuietly(file: File, failure: Throwable) {

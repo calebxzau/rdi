@@ -3,12 +3,14 @@ package calebxzhou.rdi.mc.client
 import calebxzau.rdi.mc.zstdcodec.ZstdCompressionPipeline
 import calebxzau.mc.common2021.RdiBatchChannel
 import calebxzau.mc.common2021.RdiPacketRefChannel
+import calebxzau.mc.common2021.RdiZstdStreamChannel
 import calebxzau.rdi.mc.v20.client.RoomJoinUi20
 // import calebxzhou.rdi.mc.client.chunkcache.RdiChunkCacheClient
 // import calebxzhou.rdi.mc.client.chunkcache.RdiChunkCacheClientHandler
 import calebxzhou.rdi.mc.client.network.RClientNetwork
 import calebxzhou.rdi.mc.client.network.RClientBatching
 import calebxzhou.rdi.mc.client.network.RClientPacketRefs
+import calebxzhou.rdi.mc.client.network.RClientZstdStream
 import calebxzau.rdi.mc.v20.client.GlobalPlayerListState
 import calebxzhou.rdi.mc.client.mcp.standard.StandardMcpServer
 import calebxzhou.rdi.mc.client.mcpimpl.McpGameImpl
@@ -32,12 +34,17 @@ import org.apache.logging.log4j.LogManager
 @Mod.EventBusSubscriber(modid = "rdi", value = [Dist.CLIENT])
 class RDIMain {
     init {
+        // Register region compression ID8 (zstd) before any world loads: saves downloaded from RDI hosts
+        // use it, and an unknown ID makes the integrated server regenerate and overwrite those chunks.
+        calebxzau.rdi.mc.client.chunkcache.ClientRegionZstd.version()
         RClientNetwork.register()
         RdiBatchChannel.register()
         RdiPacketRefChannel.register()
+        RdiZstdStreamChannel.register()
         calebxzau.rdi.mc.v20.forge.l2.L2NameChannel.register()
         calebxzau.rdi.mc.client.chunkcache.ChunkCacheClientNetwork.register()
         calebxzau.rdi.mc.client.syncchunk.SyncChunkForgeClient.register()
+        calebxzau.rdi.mc.client.syncchunk.SyncChunkIntegratedForge.register()
         McpNetwork.register()
         LogManager.getLogger("rdi").info("❄❄❄❄❄❄❄❄RDI客户端核心模块已加载❄❄❄❄❄❄❄❄")
     }
@@ -61,6 +68,7 @@ class RDIMain {
             GlobalPlayerListState.beginSession(event.connection)
             RClientBatching.onJoin(event.connection)
             RClientPacketRefs.onJoin(event.connection)
+            RClientZstdStream.onJoin(event.connection)
             /* RdiChunkCacheClientHandler.clearDeferredPackets()
             RdiChunkCacheClient.open(
                 Minecraft.getInstance().gameDirectory.toPath(),
@@ -79,6 +87,7 @@ class RDIMain {
             GlobalPlayerListState.endSession(event.connection)
             RClientBatching.onLeave(event.connection)
             RClientPacketRefs.onLeave(event.connection)
+            RClientZstdStream.onLeave(event.connection)
             StandardMcpServer.stop()
             /* RdiChunkCacheClientHandler.clearDeferredPackets()
             RdiChunkCacheClient.close() */

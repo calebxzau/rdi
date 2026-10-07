@@ -277,7 +277,13 @@ private class RecordingModpackUploadApi(
         return session
     }
 
-    override suspend fun uploadPart(uploadId: UUID, index: Int, bytes: ByteArray, sha1: String) {
+    override suspend fun uploadPart(
+        uploadId: UUID,
+        index: Int,
+        bytes: ByteArray,
+        sha1: String,
+        onBytesSent: (Long) -> Unit,
+    ) {
         partIndexes += index
         partCalls.computeIfAbsent(index) { Collections.synchronizedList(mutableListOf()) }.add(bytes.copyOf())
         val current = active.incrementAndGet()

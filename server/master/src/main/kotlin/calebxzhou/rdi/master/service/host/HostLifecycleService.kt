@@ -1,5 +1,6 @@
 package calebxzhou.rdi.master.service.host
 
+import calebxzau.rdi.server.service.hostworldimport.HostWorldImportGuard
 import calebxzhou.rdi.common.util.deleteRecursivelyNoSymlink
 import calebxzhou.rdi.common.exception.RequestError
 import calebxzhou.rdi.common.model.Host
@@ -55,6 +56,7 @@ object HostLifecycleService {
 
     private suspend fun HostContext.deleteLocked(payload: Host.DeleteDto) {
         val current = host
+        HostWorldImportGuard.check(current._id)
         if (current.status != HostStatus.STOPPED) {
             throw RequestError("请先去后台停止房间后 再删除")
         }
@@ -90,6 +92,8 @@ object HostLifecycleService {
             }
         }
         HostService.skipWorldSizeUpdate.remove(current._id)
+        runCatching { HostWorldImportGuard.onHostDeleted(current._id) }
+            .onFailure { error -> HostService.lgr.error(error) { "清理已删除房间的存档导入任务失败: ${current._id}" } }
         worldIdToDelete?.let { WorldService.delete(player._id, it) }
         if (Files.exists(isolated.toPath(), LinkOption.NOFOLLOW_LINKS)) {
             ioScope.launch {
@@ -105,6 +109,7 @@ object HostLifecycleService {
 
     private suspend fun HostContext.resetWorldLocked(baseWorldService: BaseWorldService) {
         val current = host
+        HostWorldImportGuard.check(current._id)
         if (current.realVersion != 2) throw RequestError("仅v2房间支持重置世界")
         if (current.worldId != null) throw RequestError("v2房间存档数据无效")
         if (current.status != HostStatus.STOPPED) throw RequestError("请先去后台停止房间后 再重置存档")
@@ -157,6 +162,7 @@ object HostLifecycleService {
     }
 
     private suspend fun HostContext.changeVersionLocked(packVer: String?) {
+        HostWorldImportGuard.check(host._id)
         if (host.status != HostStatus.STOPPED) {
             throw RequestError("请先停止主机")
         }
@@ -196,6 +202,9 @@ object HostLifecycleService {
     }
 
     private suspend fun HostContext.changeOptionsLocked(payload: Host.OptionsDto) {
+        // An import replaces the world and clears game-rule overrides; any version change is blocked too,
+        // including the modpackId + packVer form that skips changeVersionLocked.
+        if (payload.gameRules != null || payload.packVer != null) HostWorldImportGuard.check(host._id)
         if (payload.packVer != null && payload.modpackId == null) {
             changeVersionLocked(payload.packVer)
         }

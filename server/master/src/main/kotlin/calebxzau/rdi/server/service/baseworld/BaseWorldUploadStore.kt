@@ -3,19 +3,17 @@ package calebxzau.rdi.server.service.baseworld
 import calebxzau.rdi.common.model.BaseWorld
 import calebxzau.rdi.common.model.BaseWorldUploadSessionVo
 import calebxzau.rdi.common.model.BaseWorldUploadStatus
-import calebxzhou.rdi.common.archive.forEachTarZstEntryStreaming
 import calebxzhou.rdi.common.exception.RequestError
 import calebxzhou.rdi.common.serdesJson
 import calebxzhou.rdi.common.util.humanFileSize
 import calebxzau.rdi.common.util.uuid7j
 import calebxzau.rdi.server.service.upload.ChunkedUploadService
+import calebxzau.rdi.server.service.worldarchive.WorldArchiveExtractor
 import io.ktor.utils.io.ByteReadChannel
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import java.io.File
-import java.io.InputStream
 import java.nio.file.Files
 import java.nio.file.LinkOption
 import java.nio.file.StandardCopyOption
@@ -32,6 +30,7 @@ class BaseWorldUploadStore(
     private val partSize: Int = PART_SIZE,
 ) {
     private val chunkedUploadService = ChunkedUploadService()
+    private val archiveExtractor = WorldArchiveExtractor(maxExtractedSize)
 
     init {
         require(maxArchiveSize >= 0)
@@ -295,8 +294,8 @@ class BaseWorldUploadStore(
         val context = coroutineContext
         var stage: File? = null
         try {
-            val extractedSize = scanArchive(prepared.archive, ensureTaskActive) { _, entry, input, context ->
-                consumeEntry(input, entry.size, context, ensureTaskActive)
+            val extractedSize = archiveExtractor.scan(prepared.archive, ensureTaskActive) { _, entry, input, context ->
+                WorldArchiveExtractor.consumeEntry(input, entry.size, context, ensureTaskActive)
             }
             val stageDir = Files.createTempDirectory(root.toPath(), ".base-world-stage-").toFile()
             stage = stageDir
@@ -313,89 +312,7 @@ class BaseWorldUploadStore(
         archive: File,
         targetDir: File,
         ensureTaskActive: () -> Unit = {},
-    ): Long = withContext(Dispatchers.IO) {
-        if (targetDir.exists()) {
-            requestCheck(Files.isDirectory(targetDir.toPath(), LinkOption.NOFOLLOW_LINKS), "世界目录已存在")
-            requestCheck(targetDir.listFiles()?.isEmpty() == true, "世界目录已存在")
-        } else {
-            check(targetDir.mkdirs()) { "无法创建世界目录" }
-        }
-        try {
-            scanArchive(archive, ensureTaskActive) { path, entry, input, context ->
-                val target = targetDir.toPath().resolve(path).normalize()
-                requestCheck(target.startsWith(targetDir.toPath()), "非法文件路径: $path")
-                ensureSafeExtractionPath(targetDir, target)
-                if (entry.isDirectory) {
-                    Files.createDirectories(target)
-                } else {
-                    Files.createDirectories(target.parent)
-                    Files.newOutputStream(
-                        target,
-                        java.nio.file.StandardOpenOption.CREATE_NEW,
-                        java.nio.file.StandardOpenOption.WRITE,
-                    ).use { output -> copyEntry(input, output, entry.size, context, ensureTaskActive) }
-                }
-            }
-        } catch (error: Throwable) {
-            targetDir.deleteRecursively()
-            throw error
-        }
-    }
-
-    private suspend fun scanArchive(
-        archive: File,
-        ensureTaskActive: () -> Unit,
-        onFile: (path: String, entry: calebxzhou.rdi.common.archive.StreamingTarEntry, input: InputStream, context: kotlin.coroutines.CoroutineContext) -> Unit,
-    ): Long = withContext(Dispatchers.IO) {
-        val context = coroutineContext
-        val files = HashSet<String>()
-        val directories = HashSet<String>()
-        val explicitDirectories = HashSet<String>()
-        var extractedSize = 0L
-        var levelDatFound = false
-        var entryCount = 0
-        forEachTarZstEntryStreaming(archive) { entry, input ->
-            ensureTaskActive()
-            entryCount++
-            requestCheck(entryCount <= MAX_ENTRIES, "世界文件数量过多")
-            val path = normalizeEntryPath(entry.path)
-            if (path.isEmpty()) {
-                requestCheck(entry.isDirectory && entry.size == 0L, "压缩包根目录不正确")
-                return@forEachTarZstEntryStreaming
-            }
-            requestCheck(!entry.isSymbolicLink && !entry.isHardLink && !entry.isSpecial && !entry.isSparse, "世界压缩包包含不支持的文件类型")
-            if (entry.isDirectory) {
-                requestCheck(entry.size == 0L, "目录条目大小不正确")
-                val key = path.lowercase()
-                requestCheck(key !in files && explicitDirectories.add(key), "世界压缩包包含重复路径")
-                ensureParentsAreDirectories(path, files)
-                directories.add(key)
-                addParentDirectories(path, directories)
-                onFile(path, entry, input, context)
-                return@forEachTarZstEntryStreaming
-            }
-            requestCheck(entry.size >= 0L && entry.size <= maxExtractedSize, "解压后的世界超过${maxExtractedSize.humanFileSize}限制")
-            val key = path.lowercase()
-            requestCheck(files.add(key) && key !in directories, "世界压缩包包含重复路径")
-            ensureParentsAreDirectories(path, files)
-            addParentDirectories(path, directories)
-            extractedSize = Math.addExact(extractedSize, entry.size)
-            requestCheck(extractedSize <= maxExtractedSize, "解压后的世界超过${maxExtractedSize.humanFileSize}限制")
-            onFile(path, entry, input, context)
-            if (path == "level.dat") levelDatFound = entry.size > 0
-        }
-        requestCheck(levelDatFound, "世界压缩包缺少level.dat")
-        extractedSize
-    }
-
-    private fun ensureSafeExtractionPath(root: File, target: java.nio.file.Path) {
-        var current = root.toPath()
-        val relative = root.toPath().relativize(target)
-        for (part in relative) {
-            current = current.resolve(part)
-            requestCheck(!Files.isSymbolicLink(current), "世界压缩包目标路径包含符号链接")
-        }
-    }
+    ): Long = archiveExtractor.extractToDir(archive, targetDir, ensureTaskActive)
 
     internal suspend fun sessions(): List<SessionSnapshot> = withContext(Dispatchers.IO) {
         if (!root.resolve(".uploads").isDirectory) return@withContext emptyList()
@@ -548,73 +465,6 @@ class BaseWorldUploadStore(
         requestCheck(SHA1_PATTERN.matches(it), "SHA-1格式不正确")
     }
 
-    private fun normalizeEntryPath(raw: String): String {
-        requestCheck('\\' !in raw, "压缩包包含非法文件路径")
-        val path = raw.replace('\\', '/').trimEnd('/')
-        if (path.isEmpty() || path == ".") return ""
-        requestCheck(!path.startsWith('/') && !path.startsWith("//"), "压缩包包含非法文件路径")
-        requestCheck(!Regex("^[A-Za-z]:").containsMatchIn(path) && ':' !in path, "压缩包包含非法文件路径")
-        val segments = path.split('/')
-        requestCheck(segments.none { it.isEmpty() || it == "." || it == ".." }, "压缩包包含非法文件路径")
-        return segments.joinToString("/")
-    }
-
-    private fun ensureParentsAreDirectories(path: String, files: Set<String>) {
-        var parent = path.substringBeforeLast('/', "")
-        while (parent.isNotEmpty()) {
-            requestCheck(parent.lowercase() !in files, "世界压缩包包含文件目录冲突")
-            parent = parent.substringBeforeLast('/', "")
-        }
-    }
-
-    private fun addParentDirectories(path: String, directories: MutableSet<String>) {
-        var parent = path.substringBeforeLast('/', "")
-        while (parent.isNotEmpty()) {
-            directories += parent.lowercase()
-            parent = parent.substringBeforeLast('/', "")
-        }
-    }
-
-    private fun copyEntry(
-        input: InputStream,
-        output: java.io.OutputStream,
-        expected: Long,
-        context: kotlin.coroutines.CoroutineContext,
-        ensureTaskActive: () -> Unit = {},
-    ) {
-        val buffer = ByteArray(BUFFER_SIZE)
-        var copied = 0L
-        while (copied < expected) {
-            ensureTaskActive()
-            context.ensureActive()
-            val read = input.read(buffer, 0, minOf(buffer.size.toLong(), expected - copied).toInt())
-            requestCheck(read >= 0, "压缩包文件内容不完整")
-            if (read == 0) continue
-            copied += read
-            output.write(buffer, 0, read)
-        }
-        requestCheck(input.read() == -1, "压缩包文件大小不正确")
-    }
-
-    private fun consumeEntry(
-        input: InputStream,
-        expected: Long,
-        context: kotlin.coroutines.CoroutineContext,
-        ensureTaskActive: () -> Unit = {},
-    ) {
-        requestCheck(expected >= 0L, "压缩包文件大小不正确")
-        val buffer = ByteArray(BUFFER_SIZE)
-        var copied = 0L
-        while (copied < expected) {
-            ensureTaskActive()
-            context.ensureActive()
-            val read = input.read(buffer, 0, minOf(buffer.size.toLong(), expected - copied).toInt())
-            requestCheck(read >= 0, "压缩包文件内容不完整")
-            if (read > 0) copied += read
-        }
-        requestCheck(input.read() == -1, "压缩包文件大小不正确")
-    }
-
     data class PreparedUpload internal constructor(
         internal val state: SessionState,
         internal val archive: File,
@@ -681,8 +531,6 @@ class BaseWorldUploadStore(
 
     private companion object {
         const val PART_SIZE = BASE_WORLD_PART_SIZE
-        const val BUFFER_SIZE = 128 * 1024
-        const val MAX_ENTRIES = 100_000
         const val SESSION_TTL_MILLIS = 24 * 60 * 60 * 1000L
         const val METADATA_FILE_NAME = "session.json"
         val SHA1_PATTERN = Regex("^[0-9a-f]{40}$")

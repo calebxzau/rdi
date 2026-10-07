@@ -72,10 +72,10 @@ class BaseWorldRouteTest {
             size = 7,
         )
         coEvery {
-            service.create(ownerUuid, "Skyblock", "custom", "{}", 7,)
+            service.create(ownerUuid, "Skyblock", "custom", "{}", 7, owner = account)
         } returns Result.success(world)
         coEvery {
-            service.create(ownerUuid, "Normal", "normal", null, 0,)
+            service.create(ownerUuid, "Normal", "normal", null, 0, owner = account)
         } returns Result.success(world.copy(name = "Normal", generatorSettings = null, size = 0))
         coEvery { service.listByOwner(ownerUuid) } returns Result.success(listOf(world))
         application { installBaseWorldTestApp(service) }
@@ -99,8 +99,8 @@ class BaseWorldRouteTest {
         val listResponse = client.get("/baseworld?myOnly=true") { bearerAuth(token) }
         assertEquals(HttpStatusCode.OK, listResponse.status)
         assertTrue(listResponse.bodyAsText().contains(world.id.toString()))
-        coVerify(exactly = 1) { service.create(ownerUuid, "Skyblock", "custom", "{}", 7,) }
-        coVerify(exactly = 1) { service.create(ownerUuid, "Normal", "normal", null, 0,) }
+        coVerify(exactly = 1) { service.create(ownerUuid, "Skyblock", "custom", "{}", 7, owner = account) }
+        coVerify(exactly = 1) { service.create(ownerUuid, "Normal", "normal", null, 0, owner = account) }
         coVerify(exactly = 1) { service.listByOwner(ownerUuid) }
     }
 

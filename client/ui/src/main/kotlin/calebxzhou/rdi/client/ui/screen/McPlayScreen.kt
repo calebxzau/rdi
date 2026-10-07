@@ -157,6 +157,7 @@ fun McPlayScreen(
                 val launchJvmArgs = buildList {
                     addAll(launchSnapshot.customJvmArgs)
                     addAll(extraJvmArgs.filterNot { it.startsWith("-Drdi.play=") })
+                    addAll(args.extraJvmArgs.filterNot { it.startsWith("-Drdi.play=") })
                     launchSnapshot.jdwpJvmArg?.let{
                         add("-Xlog:os+exit=trace")
                         add(it)
@@ -182,7 +183,9 @@ fun McPlayScreen(
                         javaPath = launchSnapshot.javaPath,
                         maxMemoryMb = launchSnapshot.maxMemoryMb,
                     ),
-                    *launchJvmArgs.toTypedArray()
+                    *launchJvmArgs.toTypedArray(),
+                    account = args.account,
+                    extraGameArgs = args.extraGameArgs,
                 ).getOrThrow()
                 if (session.stopRequested) return@launchSessionTask
 

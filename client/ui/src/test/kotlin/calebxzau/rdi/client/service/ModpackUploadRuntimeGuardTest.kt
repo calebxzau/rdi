@@ -60,7 +60,13 @@ private object NoCallUploadApi : ModpackUploadApi {
     override suspend fun createSession(request: ModpackUploadSessionCreateDto): ModpackUploadSessionVo =
         error("upload API must not be called")
 
-    override suspend fun uploadPart(uploadId: UUID, index: Int, bytes: ByteArray, sha1: String) =
+    override suspend fun uploadPart(
+        uploadId: UUID,
+        index: Int,
+        bytes: ByteArray,
+        sha1: String,
+        onBytesSent: (Long) -> Unit,
+    ) =
         error("upload API must not be called")
 
     override suspend fun completeSession(uploadId: UUID): ModpackUploadSessionVo =

@@ -7,8 +7,11 @@ import calebxzau.rdi.common.model.BaseWorld
 import calebxzau.rdi.common.model.BaseWorldUploadSessionCreateDto
 import calebxzau.rdi.common.model.BaseWorldUploadSessionVo
 import calebxzhou.rdi.common.net.ktorClient
+import calebxzhou.rdi.common.net.ktorUploadClient
 import calebxzhou.rdi.common.serdesJson
 import io.ktor.client.HttpClient
+import io.ktor.client.plugins.HttpTimeoutConfig
+import io.ktor.client.plugins.onUpload
 import io.ktor.client.request.HttpRequestBuilder
 import io.ktor.client.request.header
 import io.ktor.client.request.request
@@ -37,7 +40,14 @@ interface BaseWorldApi {
     suspend fun create(dto: BaseWorld.CreateDto): BaseWorld
     suspend fun createUpload(worldId: UUID, dto: BaseWorldUploadSessionCreateDto): BaseWorldUploadSessionVo
     suspend fun uploadStatus(worldId: UUID, uploadId: UUID): BaseWorldUploadSessionVo
-    suspend fun uploadPart(worldId: UUID, uploadId: UUID, index: Int, bytes: ByteArray, sha1: String)
+    suspend fun uploadPart(
+        worldId: UUID,
+        uploadId: UUID,
+        index: Int,
+        bytes: ByteArray,
+        sha1: String,
+        onBytesSent: (Long) -> Unit = {},
+    )
     suspend fun completeUpload(worldId: UUID, uploadId: UUID): BaseWorldUploadSessionVo
     suspend fun cancelUpload(worldId: UUID, uploadId: UUID)
     suspend fun rename(worldId: UUID, dto: BaseWorld.NameUpdateDto): BaseWorld =
@@ -49,15 +59,20 @@ interface BaseWorldApi {
  * Creates an API client with a snapshot of the selected server and account.
  * Upload tasks can therefore continue against their original account even if
  * the active account or route changes while the task is running.
+ * [partHttpClient] sends part bodies only; see [ktorUploadClient].
  */
-fun currentBaseWorldApi(httpClient: HttpClient = ktorClient): BaseWorldApi {
+fun currentBaseWorldApi(
+    httpClient: HttpClient = ktorClient,
+    partHttpClient: HttpClient = ktorUploadClient,
+): BaseWorldApi {
     val token = loggedAccount.jwt?.trim()?.takeIf(String::isNotEmpty)
         ?: error("必须登录后才能上传地图模板")
-    return HttpBaseWorldApi(httpClient, server.hqUrl.trimEnd('/'), token)
+    return HttpBaseWorldApi(httpClient, partHttpClient, server.hqUrl.trimEnd('/'), token)
 }
 
 private class HttpBaseWorldApi(
     private val httpClient: HttpClient,
+    private val partHttpClient: HttpClient,
     private val baseUrl: String,
     private val token: String,
 ) : BaseWorldApi {
@@ -88,14 +103,16 @@ private class HttpBaseWorldApi(
         index: Int,
         bytes: ByteArray,
         sha1: String,
+        onBytesSent: (Long) -> Unit,
     ) {
-        request<Unit>(HttpMethod.Put, "/baseworld/$worldId/upload/$uploadId/parts/$index") {
+        request<Unit>(HttpMethod.Put, "/baseworld/$worldId/upload/$uploadId/parts/$index", client = partHttpClient) {
             header("X-Part-SHA1", sha1)
             contentType(ContentType.Application.OctetStream)
             setBody(bytes)
+            onUpload { sent, _ -> onBytesSent(sent) }
             timeout {
-                requestTimeoutMillis = UPLOAD_TIMEOUT_MILLIS
-                socketTimeoutMillis = UPLOAD_TIMEOUT_MILLIS
+                requestTimeoutMillis = HttpTimeoutConfig.INFINITE_TIMEOUT_MS
+                socketTimeoutMillis = CHUNKED_UPLOAD_PART_IDLE_TIMEOUT_MILLIS
             }
         }
     }
@@ -118,9 +135,10 @@ private class HttpBaseWorldApi(
         method: HttpMethod,
         path: String,
         body: String? = null,
+        client: HttpClient = httpClient,
         crossinline configure: HttpRequestBuilder.() -> Unit = {},
     ): T {
-        val response = httpClient.request("$baseUrl$path") {
+        val response = client.request("$baseUrl$path") {
             this.method = method
             header(HttpHeaders.Authorization, "Bearer $token")
             if (body != null) {
@@ -157,5 +175,3 @@ private class HttpBaseWorldApi(
             else error("服务器响应缺少地图模板数据")
     }
 }
-
-private const val UPLOAD_TIMEOUT_MILLIS = 10 * 60 * 1000L

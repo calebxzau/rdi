@@ -33,8 +33,13 @@ data class McPlayArgs(
     val extraMods: List<Mod> = emptyList(),
     val manageHostExtraMods: Boolean = false,
     val startupWarnings: List<String> = emptyList(),
+    /** Runs once when the session ends, including a failed start. */
     val cleanup: (() -> Unit)? = null,
     val hostId: String? = null,
+    /** Plays as this identity instead of the logged-in account (save import marking mode). */
+    val account: calebxzau.rdi.mclaunch.MinecraftAccount? = null,
+    val extraJvmArgs: List<String> = emptyList(),
+    val extraGameArgs: List<String> = emptyList(),
 )
 
 class McGameSession(

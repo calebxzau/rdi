@@ -19,6 +19,7 @@ import io.ktor.http.HttpStatusCode
 import io.ktor.http.content.OutgoingContent
 import io.ktor.http.content.TextContent
 import io.ktor.serialization.kotlinx.json.json
+import io.ktor.utils.io.toByteArray
 import java.util.UUID
 import java.io.IOException
 import kotlin.test.Test
@@ -166,7 +167,7 @@ class BaseWorldApiTest {
         }
         try {
             val error = runCatching {
-                currentBaseWorldApi(client).uploadPart(
+                currentBaseWorldApi(client, client).uploadPart(
                     UUID.randomUUID(),
                     UUID.randomUUID(),
                     0,
@@ -184,8 +185,10 @@ class BaseWorldApiTest {
     @Test
     fun `part request preserves raw bytes and part digest header`() = runBlocking {
         var requestData: io.ktor.client.request.HttpRequestData? = null
+        var requestBody: ByteArray? = null
         val engine = MockEngine { request ->
             requestData = request
+            requestBody = request.body.readBytes()
             respond(
                 content = "{\"code\":0,\"msg\":\"\"}",
                 status = HttpStatusCode.OK,
@@ -196,6 +199,7 @@ class BaseWorldApiTest {
             expectSuccess = false
             install(ContentNegotiation) { json(serdesJson) }
         }
+        val mainClient = HttpClient(MockEngine { error("parts must use the upload client") })
         val previous = loggedAccount
         loggedAccount = RAccount(ObjectId("68b314bbadaf52ddab96b5ed"), "test", "pwd", "qq").also {
             it.jwt = "token"
@@ -204,21 +208,24 @@ class BaseWorldApiTest {
             val bytes = byteArrayOf(1, 2, 3)
             val worldId = UUID.randomUUID()
             val uploadId = UUID.randomUUID()
-            currentBaseWorldApi(client).uploadPart(
+            val sent = mutableListOf<Long>()
+            currentBaseWorldApi(mainClient, client).uploadPart(
                 worldId,
                 uploadId,
                 7,
                 bytes,
                 "a".repeat(40),
-            )
+            ) { sent += it }
             val actual = requireNotNull(requestData)
             assertEquals(HttpMethod.Put, actual.method)
             assertEquals("/baseworld/$worldId/upload/$uploadId/parts/7", actual.url.encodedPath)
             assertEquals("a".repeat(40), actual.headers["X-Part-SHA1"])
-            assertEquals(bytes.toList(), actual.body.asBytes().toList())
+            assertEquals(bytes.toList(), requireNotNull(requestBody).toList())
+            assertEquals(3L, sent.last())
         } finally {
             loggedAccount = previous
             client.close()
+            mainClient.close()
         }
     }
 
@@ -255,8 +262,9 @@ private fun OutgoingContent.asText(): String = when (this) {
     else -> error("unexpected request body: ${this::class.simpleName}")
 }
 
-private fun OutgoingContent.asBytes(): ByteArray = when (this) {
+/** Reads a request body inside the engine handler, which also drives upload progress listeners. */
+private suspend fun OutgoingContent.readBytes(): ByteArray = when (this) {
     is OutgoingContent.ByteArrayContent -> bytes()
-    is TextContent -> text.toByteArray()
+    is OutgoingContent.ReadChannelContent -> readFrom().toByteArray()
     else -> error("unexpected request body: ${this::class.simpleName}")
 }
