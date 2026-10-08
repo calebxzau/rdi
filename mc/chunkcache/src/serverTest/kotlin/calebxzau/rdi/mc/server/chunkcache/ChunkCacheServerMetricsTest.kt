@@ -12,6 +12,7 @@ class ChunkCacheServerMetricsTest {
 
         metrics.recordNormalChunkAttempt()
         metrics.recordNoOfferFullSend()
+        metrics.recordNoOfferRevisitFullSend()
         metrics.recordCandidateFallbackFullSend()
         metrics.recordForcedRepairFullSend()
         metrics.recordMismatch()
@@ -28,6 +29,7 @@ class ChunkCacheServerMetricsTest {
         assertTrue(metrics.hasWindowActivity())
         assertEquals(1L, metrics.normalChunkAttempts)
         assertEquals(1L, metrics.noOfferFullSends)
+        assertEquals(1L, metrics.noOfferRevisitFullSends)
         assertEquals(1L, metrics.candidateFallbackFullSends)
         assertEquals(1L, metrics.reuseSent)
         assertEquals(1L, metrics.reuseConfirmed)
@@ -38,6 +40,7 @@ class ChunkCacheServerMetricsTest {
 
         assertFalse(metrics.hasWindowActivity())
         assertEquals(0L, metrics.normalChunkAttempts)
+        assertEquals(0L, metrics.noOfferRevisitFullSends)
         assertEquals(0L, metrics.reuseSent)
         assertEquals(0L, metrics.reuseConfirmed)
         assertEquals(0L, metrics.rawSectionPayloadBytes)

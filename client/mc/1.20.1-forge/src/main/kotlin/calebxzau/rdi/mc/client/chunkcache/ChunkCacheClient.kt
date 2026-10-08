@@ -13,6 +13,7 @@ import calebxzau.rdi.mc.chunkcache.network.ChunkCachePayload
 import calebxzau.rdi.mc.chunkcache.network.ChunkCacheResultPayload
 import calebxzau.rdi.mc.chunkcache.network.ChunkCacheRetirePayload
 import calebxzau.rdi.mc.chunkcache.network.ChunkCacheReusePayload
+import calebxzau.rdi.mc.client.chunkcache.mixin.AChunkCacheServerChunkRadius
 import com.mojang.logging.LogUtils
 import it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap
 import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap
@@ -64,7 +65,7 @@ object ChunkCacheClient {
         val candidates = ChunkCacheCandidateScan()
         var centerX = Int.MIN_VALUE
         var centerZ = Int.MIN_VALUE
-        var radius = -1
+        var viewDistance = -1
         var applyingReuse = false
         @Volatile var closed = false
         var hits = 0L
@@ -204,12 +205,15 @@ object ChunkCacheClient {
         val minecraft = Minecraft.getInstance()
         val player = minecraft.player ?: return false
         val center = player.chunkPosition()
-        val radius = minecraft.options.effectiveRenderDistance.coerceIn(2, 32) + 2
-        if (center.x != state.centerX || center.z != state.centerZ || radius != state.radius) {
+        // Not the render distance: a 1.20.1 server sends its whole view distance to every client.
+        val viewDistance = ChunkCacheViewRange.viewDistance(
+            (state.listener as AChunkCacheServerChunkRadius).`rdi$serverChunkRadius`(),
+        )
+        if (center.x != state.centerX || center.z != state.centerZ || viewDistance != state.viewDistance) {
             state.centerX = center.x
             state.centerZ = center.z
-            state.radius = radius
-            state.candidates.update(center.x, center.z, radius)
+            state.viewDistance = viewDistance
+            state.candidates.update(center.x, center.z, ChunkCacheViewRange.scanRadius(viewDistance))
             val retries = state.retryAfter.keys.iterator()
             while (retries.hasNext()) {
                 if (!near(state, retries.nextLong())) retries.remove()
@@ -228,7 +232,7 @@ object ChunkCacheClient {
             val position = state.candidates.next()
             val x = ChunkPos.getX(position)
             val z = ChunkPos.getZ(position)
-            if (state.level.chunkSource.hasChunk(x, z) || state.pins.contains(position) ||
+            if (!near(state, position) || state.level.chunkSource.hasChunk(x, z) || state.pins.contains(position) ||
                 state.preparing.contains(position) || state.repairs.containsKey(position) ||
                 state.retryAfter.get(position) > now) continue
             prepare(state, position, now)
@@ -381,9 +385,9 @@ object ChunkCacheClient {
         return current === state && !state.closed && minecraft.connection === state.listener && minecraft.level === state.level
     }
 
+    /** The server's offer admission range, so corner candidates are not prepared only to be rejected. */
     private fun near(state: State, position: Long): Boolean =
-        kotlin.math.abs(ChunkPos.getX(position).toLong() - state.centerX) <= state.radius &&
-            kotlin.math.abs(ChunkPos.getZ(position).toLong() - state.centerZ) <= state.radius
+        ChunkCacheViewRange.admits(ChunkPos.getX(position), ChunkPos.getZ(position), state.centerX, state.centerZ, state.viewDistance)
 
     private fun cancel(state: State, ids: List<Long>) {
         ids.chunked(ChunkCacheLimits.MAX_OFFERS).forEach { send(state, ChunkCacheCancelPayload(state.epoch, it)) }

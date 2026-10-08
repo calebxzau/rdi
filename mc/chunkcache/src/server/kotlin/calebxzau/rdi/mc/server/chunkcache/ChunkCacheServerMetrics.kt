@@ -6,6 +6,9 @@ internal class ChunkCacheServerMetrics {
         private set
     var noOfferFullSends = 0L
         private set
+    /** Subset of [noOfferFullSends] for chunks this player already received earlier in this server run. */
+    var noOfferRevisitFullSends = 0L
+        private set
     var candidateFallbackFullSends = 0L
         private set
     var forcedRepairFullSends = 0L
@@ -66,6 +69,7 @@ internal class ChunkCacheServerMetrics {
 
     fun recordNormalChunkAttempt() { normalChunkAttempts++ }
     fun recordNoOfferFullSend() { noOfferFullSends++ }
+    fun recordNoOfferRevisitFullSend() { noOfferRevisitFullSends++ }
     fun recordCandidateFallbackFullSend() { candidateFallbackFullSends++ }
     fun recordForcedRepairFullSend() { forcedRepairFullSends++ }
     fun recordMismatch() { mismatches++ }
@@ -122,6 +126,7 @@ internal class ChunkCacheServerMetrics {
     fun resetWindow() {
         normalChunkAttempts = 0
         noOfferFullSends = 0
+        noOfferRevisitFullSends = 0
         candidateFallbackFullSends = 0
         forcedRepairFullSends = 0
         mismatches = 0
