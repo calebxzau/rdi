@@ -15,6 +15,7 @@ import androidx.compose.ui.input.key.*
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import calebxzau.rdi.client.RDIClient
+import calebxzau.rdi.client.lgr
 import calebxzau.rdi.client.ui.*
 import calebxzau.rdi.mcinstall.McLaunchPreparationRequest
 import calebxzau.rdi.mclaunch.MinecraftLaunchOverrides
@@ -29,7 +30,9 @@ import calebxzhou.rdi.common.model.Task2Progress
 import calebxzhou.rdi.common.model.compactText
 import calebxzhou.rdi.common.util.encodeBase64
 import java.nio.file.Paths
+import kotlinx.coroutines.CancellationException
 
+private val gameWindowService = GameWindowService()
 
 @Composable
 fun McPlayScreen(
@@ -154,10 +157,24 @@ fun McPlayScreen(
                     },
                 )
 
+                val windowJvmArgs = gameWindowService.prepareJvmArgs(
+                    versionDir = versionDir,
+                    modpackName = args.modpackName,
+                    versionName = args.versionName,
+                    hostName = args.hostName,
+                    iconUrl = args.modpackIconUrl,
+                    onIconFailure = { error ->
+                        lgr.warn(error) { "整合包图标准备失败：${args.versionId}" }
+                        session.appendLog("[RDI] 整合包图标准备失败，将使用游戏默认图标")
+                    },
+                )
+                if (session.stopRequested) return@launchSessionTask
+
                 val launchJvmArgs = buildList {
-                    addAll(launchSnapshot.customJvmArgs)
-                    addAll(extraJvmArgs.filterNot { it.startsWith("-Drdi.play=") })
-                    addAll(args.extraJvmArgs.filterNot { it.startsWith("-Drdi.play=") })
+                    addAll(launchSnapshot.customJvmArgs.filterNot(::isGameWindowJvmArg))
+                    addAll(extraJvmArgs.filterNot { it.startsWith("-Drdi.play=") || isGameWindowJvmArg(it) })
+                    addAll(args.extraJvmArgs.filterNot { it.startsWith("-Drdi.play=") || isGameWindowJvmArg(it) })
+                    addAll(windowJvmArgs)
                     launchSnapshot.jdwpJvmArg?.let{
                         add("-Xlog:os+exit=trace")
                         add(it)
@@ -199,6 +216,9 @@ fun McPlayScreen(
                 }.getOrThrow()
                 session.process = started
                 session.preparing = false
+            } catch (e: CancellationException) {
+                markSessionExited(session, "启动已取消")
+                throw e
             } catch (e: Exception) {
                 session.appendLog("[RDI] 启动前检查失败: ${e.message ?: "unknown"}")
                 markSessionExited(session, e.message)

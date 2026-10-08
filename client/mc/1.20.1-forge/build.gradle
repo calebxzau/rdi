@@ -115,6 +115,7 @@ tasks.named('test', Test).configure {
 }
 
 sourceSets.main {
+    kotlin.srcDir '../common/src/client/kotlin'
     kotlin.srcDir '../../../mc/chunkcache/src/main/kotlin'
     kotlin.srcDir '../../../mc/chunkcache/src/20/kotlin'
     java.srcDir '../../../mc/chunkcache/src/client/java'

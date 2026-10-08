@@ -1,5 +1,6 @@
 package calebxzhou.rdi.mc.client.mixin;
 
+import calebxzhou.rdi.mc.common.RdiWindow;
 import calebxzau.rdi.mediaproc.FfmpegPcmDecoder;
 import net.minecraft.Util;
 import net.minecraft.client.Minecraft;
@@ -12,6 +13,7 @@ import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
+import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 import java.util.concurrent.CompletableFuture;
@@ -38,5 +40,18 @@ public class mGame {
                     );
                     minecraft.getSoundManager().play(SimpleSoundInstance.forUI(sound, 1.0F, 1.0F));
                 }));
+    }
+
+    @Inject(method = "onGameLoadFinished", at = @At("TAIL"))
+    private void rdi$applyWindowProperties(CallbackInfo ci) {
+        RdiWindow.apply(((Minecraft) (Object) this).getWindow(), !Minecraft.ON_OSX);
+    }
+
+    @Inject(method = "createTitle", at = @At("HEAD"), cancellable = true)
+    private void rdi$customWindowTitle(CallbackInfoReturnable<String> cir) {
+        String title = RdiWindow.getTitle();
+        if (title != null) {
+            cir.setReturnValue(title);
+        }
     }
 }

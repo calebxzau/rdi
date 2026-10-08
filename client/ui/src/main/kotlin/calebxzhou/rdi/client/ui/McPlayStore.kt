@@ -4,6 +4,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import calebxzau.rdi.mclaunch.MinecraftAccount
 import calebxzhou.rdi.client.ui.comp.ConsoleState
 import calebxzhou.rdi.client.service.ModpackLifecycleCoordinator
 import calebxzhou.rdi.common.model.McVersion
@@ -37,9 +38,12 @@ data class McPlayArgs(
     val cleanup: (() -> Unit)? = null,
     val hostId: String? = null,
     /** Plays as this identity instead of the logged-in account (save import marking mode). */
-    val account: calebxzau.rdi.mclaunch.MinecraftAccount? = null,
+    val account: MinecraftAccount? = null,
     val extraJvmArgs: List<String> = emptyList(),
     val extraGameArgs: List<String> = emptyList(),
+    val hostName: String? = null,
+    val modpackIconUrl: String? = null,
+    val versionName: String,
 )
 
 class McGameSession(

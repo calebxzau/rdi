@@ -1,5 +1,7 @@
 package calebxzhou.rdi.mc.client.mixin;
 
+import calebxzhou.rdi.mc.common.RdiWindow;
+import org.lwjgl.glfw.GLFW;
 import calebxzhou.rdi.mc.client.RMcSessionService;
 import calebxzau.rdi.mc.client.preview.ItemPreviewExporter;
 import com.mojang.authlib.minecraft.MinecraftSessionService;
@@ -99,5 +101,20 @@ public class mGame {
     @Inject(method = "close", at = @At("HEAD"))
     private void RDI$shutdownPreview(CallbackInfo ci) {
         ItemPreviewExporter.INSTANCE.shutdown();
+    }
+
+    @Inject(method = "onGameLoadFinished", at = @At("TAIL"))
+    private void rdi$applyWindowProperties(CallbackInfo ci) {
+        int platform = GLFW.glfwGetPlatform();
+        RdiWindow.apply(((Minecraft) (Object) this).getWindow(),
+                platform == GLFW.GLFW_PLATFORM_WIN32 || platform == GLFW.GLFW_PLATFORM_X11);
+    }
+
+    @Inject(method = "createTitle", at = @At("HEAD"), cancellable = true)
+    private void rdi$customWindowTitle(CallbackInfoReturnable<String> cir) {
+        String title = RdiWindow.getTitle();
+        if (title != null) {
+            cir.setReturnValue(title);
+        }
     }
 }

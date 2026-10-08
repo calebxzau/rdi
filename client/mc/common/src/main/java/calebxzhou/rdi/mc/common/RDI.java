@@ -1,7 +1,13 @@
 package calebxzhou.rdi.mc.common;
 
+import javax.imageio.ImageIO;
+import java.awt.image.BufferedImage;
+import java.io.File;
+import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
+import java.util.function.BiConsumer;
+import java.util.function.Consumer;
 
 /**
  * calebxzhou @ 2026-01-06 19:34
@@ -40,5 +46,47 @@ public class RDI {
 
     public static String getTextureQueryUrl(UUID profileId, String authlibVer) {
         return IHQ_URL + "/mc-profile/" + profileId + "/clothes?authlibVer=" + authlibVer;
+    }
+
+    /** Called on the client thread after game loading. Window APIs stay in the client adapter. */
+    public static void applyWindowProperties(
+            Consumer<BufferedImage> setIcon,
+            Consumer<String> setTitle,
+            BiConsumer<String, Throwable> logError
+    ) {
+        String iconPath = System.getProperty("rdi.window.icon");
+        if (iconPath != null) {
+            BufferedImage icon = readWindowIcon(iconPath, logError);
+            if (icon != null) {
+                try {
+                    setIcon.accept(icon);
+                } finally {
+                    icon.flush();
+                }
+            }
+        }
+
+        String title = System.getProperty("rdi.window.title");
+        if (title != null) {
+            if (title.isEmpty() || title.length() > 64) {
+                logError.accept("忽略无效的rdi.window.title：标题长度必须为1至64个字符",
+                        new IllegalArgumentException("Window title length: " + title.length()));
+            } else {
+                setTitle.accept(title+" @ rdi多人房间");
+            }
+        }
+    }
+
+    private static BufferedImage readWindowIcon(String path, BiConsumer<String, Throwable> logError) {
+        try {
+            BufferedImage image = ImageIO.read(new File(path));
+            if (image == null) {
+                throw new IOException("Unsupported or undecodable window icon image");
+            }
+            return image;
+        } catch (IOException | RuntimeException exception) {
+            logError.accept("无法读取或解码rdi.window.icon图标：" + path, exception);
+            return null;
+        }
     }
 }

@@ -12,7 +12,6 @@ import calebxzhou.rdi.client.service.content.ContentDigestAlgorithm
 import calebxzhou.rdi.client.service.content.ContentRequest
 import calebxzhou.rdi.client.service.content.ContentSource
 import calebxzhou.rdi.client.service.content.toClientContentRequests
-import calebxzhou.rdi.client.service.content.toClientContentRequest
 import calebxzhou.rdi.client.service.ModpackService.startInstallTask2
 import calebxzhou.rdi.client.ui.McPlayArgs
 import calebxzau.rdi.client.ui.moveToOsTrash
@@ -470,9 +469,12 @@ suspend fun Host.DetailVo.startPlay(startHost: Boolean = true): StartPlayResult 
             mcVer = modpack.mcVer,
             modLoader = modpack.modloader,
             versionId = versionId,
+            versionName = version.name,
             playArg = playArg,
             hostId = _id.toHexString(),
             modpackName = modpack.name,
+            hostName = name,
+            modpackIconUrl = modpack.icon,
             versionDir = ModpackService.getVersionDir(version.modpackId, version.name).absolutePath,
             activeBaseMods = activeBaseMods,
             disabledBaseMods = disabledMods,

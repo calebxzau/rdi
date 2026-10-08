@@ -924,6 +924,8 @@ private fun ModpackLocalDir.toPlayArgs(): McPlayArgs = McPlayArgs(
     playArg = "${server.hqUrl}\n127.0.0.1:55667\ntest\n55555\n${loggedAccount.uuid}\n${loggedAccount.name}",
     modpackName = vo?.name.orEmpty(),
     versionDir = dir.absolutePath,
+    modpackIconUrl = iconUrl,
+    versionName = verName,
 )
 
 /* @Composable

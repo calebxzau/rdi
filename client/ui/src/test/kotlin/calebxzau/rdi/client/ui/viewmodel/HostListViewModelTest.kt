@@ -445,5 +445,6 @@ class HostListViewModelTest {
         modLoader = ModLoader.neoforge,
         versionId = "test-version",
         playArg = "test-arg",
+        versionName = "1.0",
     )
 }

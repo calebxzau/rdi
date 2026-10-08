@@ -1,7 +1,5 @@
 package calebxzhou.rdi.client.ui.window
 
-import calebxzau.rdi.client.ui.window.activeMcSessions
-import calebxzhou.rdi.client.ui.McGameSession
 import calebxzhou.rdi.client.ui.McPlayArgs
 import calebxzhou.rdi.common.model.McVersion
 import calebxzhou.rdi.common.model.ModLoader
@@ -10,7 +8,6 @@ import java.io.ByteArrayOutputStream
 import java.io.InputStream
 import java.io.OutputStream
 import kotlin.test.Test
-import kotlin.test.assertEquals
 
 class WindowChromeTest {
     @Test
@@ -32,7 +29,8 @@ class WindowChromeTest {
         mcVer = McVersion.V211,
         modLoader = ModLoader.neoforge,
         versionId = "test-version",
-        playArg = ""
+        versionName = "1.0",
+        playArg = "",
     )
 
     private object AliveProcess : Process() {

@@ -277,7 +277,15 @@ class HostSaveImportViewModelTest {
         )
         override suspend fun markingLaunch(host: Host.DetailVo, record: SaveImportMarkingRecord, onExit: () -> Unit) =
             if (failLaunch) throw RequestError("无法启动") else
-                McPlayArgs(title = "标记", mcVer = McVersion.V201, modLoader = ModLoader.forge, versionId = "v", playArg = "", cleanup = onExit)
+                McPlayArgs(
+                    title = "标记",
+                    mcVer = McVersion.V201,
+                    modLoader = ModLoader.forge,
+                    versionId = "v",
+                    versionName = "1.0",
+                    playArg = "",
+                    cleanup = onExit,
+                )
         override fun submit(plan: SaveImportPlan): String {
             submitted += plan
             return "run-${submitted.size}"
