@@ -65,6 +65,14 @@ object ZstdCompressionPipeline {
         varIntCodec: MinecraftVarIntCodec,
     ) {
         val pipeline = channel.pipeline()
+        val guard = ZstdTransportGuard.existing(channel)
+        if (guard?.error != null) return
+        if (guard?.isArmed == true && (threshold < 0 ||
+                (guard.inboundArmed && pipeline.get(DECOMPRESS_HANDLER_NAME) !is ZstdCompressionDecoder) ||
+                (guard.outboundArmed && pipeline.get(COMPRESS_HANDLER_NAME) !is ZstdCompressionEncoder))) {
+            guard.fail(IllegalStateException("Compression changed after an RDI extension was armed"))
+            return
+        }
         if (channel is LocalChannel || channel is LocalServerChannel) {
             removeOwnedHandlers(pipeline)
             return
@@ -83,13 +91,19 @@ object ZstdCompressionPipeline {
      * Enables or disables outbound batching for one connection.
      *
      * Only enable this after the peer confirmed that it decodes the batch block; an older peer would
-     * fail on an envelope it does not know.
+     * fail on an envelope it does not know. With [delayUnassociated] false, a bare buffer that no adapter
+     * classified is sent immediately instead of waiting one tick.
      */
     @JvmStatic
     @JvmOverloads
-    fun setOutboundBatching(channel: Channel, enabled: Boolean, targetBytes: Int = DEFAULT_BATCH_TARGET_BYTES) {
+    fun setOutboundBatching(
+        channel: Channel,
+        enabled: Boolean,
+        targetBytes: Int = DEFAULT_BATCH_TARGET_BYTES,
+        delayUnassociated: Boolean = true,
+    ) {
         (channel.pipeline().get(COMPRESS_HANDLER_NAME) as? ZstdCompressionEncoder)
-            ?.requestBatching(enabled, targetBytes)
+            ?.requestBatching(enabled, targetBytes, delayUnassociated)
     }
 
     /** Accepts or rejects inbound batch blocks on one connection. */

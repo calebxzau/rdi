@@ -8,8 +8,8 @@ import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class ChunkCacheSentChunksTest {
-    private val overworld = ResourceLocation("minecraft", "overworld")
-    private val nether = ResourceLocation("minecraft", "the_nether")
+    private val overworld = ResourceLocation.fromNamespaceAndPath("minecraft", "overworld")
+    private val nether = ResourceLocation.fromNamespaceAndPath("minecraft", "the_nether")
     private val player = UUID(1, 1)
 
     @Test

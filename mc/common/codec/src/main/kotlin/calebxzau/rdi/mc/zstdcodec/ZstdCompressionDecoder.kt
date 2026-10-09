@@ -47,6 +47,7 @@ internal class ZstdCompressionDecoder(
     }
 
     override fun decode(context: ChannelHandlerContext, input: ByteBuf, output: MutableList<Any>) {
+        ZstdTransportGuard.existing(context.channel())?.checkHealthy()
         if (!input.isReadable) {
             return
         }
@@ -113,7 +114,13 @@ internal class ZstdCompressionDecoder(
             record.release()
             throw error
         }
-        output.add(record)
+        try {
+            handlerContext?.let { ZstdTransportGuard.existing(it.channel())?.decoded(it, record) }
+            output.add(record)
+        } catch (error: Throwable) {
+            record.release()
+            throw error
+        }
     }
 
     /** A rejected extension frame drops its rest; ByteToMessageDecoder would parse it as the next frame. */
@@ -136,7 +143,10 @@ internal class ZstdCompressionDecoder(
     /** Enables or disables acceptance of inbound batch blocks on the connection's event loop. */
     fun requestBatching(enabled: Boolean) {
         val context = handlerContext ?: return
-        val task = Runnable { batchingEnabled = enabled }
+        val task = Runnable {
+            if (enabled) ZstdTransportGuard.get(context.channel()).armInbound(context)
+            batchingEnabled = enabled
+        }
         if (context.executor().inEventLoop()) task.run() else context.executor().execute(task)
     }
 
@@ -152,6 +162,7 @@ internal class ZstdCompressionDecoder(
                 packetRefState = ExtensionState.Idle
                 packetRefs = null
             } else if (packetRefState == ExtensionState.Idle) {
+                ZstdTransportGuard.get(context.channel()).armInbound(context)
                 packetRefState = ExtensionState.Ready
             }
         }
@@ -173,6 +184,7 @@ internal class ZstdCompressionDecoder(
                 streamState = ExtensionState.Idle
                 closeStream()
             } else if (streamState == ExtensionState.Idle) {
+                ZstdTransportGuard.get(context.channel()).armInbound(context)
                 streamState = ExtensionState.Ready
             }
         }
@@ -211,7 +223,13 @@ internal class ZstdCompressionDecoder(
         refs.touch(slot)
         val record = context.alloc().buffer(content.size, content.size)
         record.writeBytes(content)
-        output.add(record)
+        try {
+            handlerContext?.let { ZstdTransportGuard.existing(it.channel())?.decoded(it, record) }
+            output.add(record)
+        } catch (error: Throwable) {
+            record.release()
+            throw error
+        }
     }
 
     private fun decodeControl(input: ByteBuf) {
@@ -277,6 +295,7 @@ internal class ZstdCompressionDecoder(
 
     /** Reads one extension VarInt; a truncated or overlong value fails the frame with its name. */
     private fun readRefVarInt(input: ByteBuf, field: String, extension: String = REF_EXTENSION): Int {
+        handlerContext?.let { ZstdTransportGuard.existing(it.channel())?.checkHealthy() }
         if (!input.isReadable) {
             throw DecoderException("${extension.replaceFirstChar { it.uppercase() }} frame ended before its $field")
         }
@@ -470,6 +489,7 @@ internal class ZstdCompressionDecoder(
     }
 
     override fun handlerRemoved0(context: ChannelHandlerContext) {
+        ZstdTransportGuard.existing(context.channel())?.removed(context, true)
         decompressionContext.close()
         closeStream()
         streamState = ExtensionState.Idle

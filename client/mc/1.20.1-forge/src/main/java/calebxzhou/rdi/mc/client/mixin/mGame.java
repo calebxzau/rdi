@@ -1,6 +1,6 @@
 package calebxzhou.rdi.mc.client.mixin;
 
-import calebxzhou.rdi.mc.common.RdiWindow;
+import calebxzau.mc.common2021.RdiWindow;
 import calebxzau.rdi.mediaproc.FfmpegPcmDecoder;
 import net.minecraft.Util;
 import net.minecraft.client.Minecraft;

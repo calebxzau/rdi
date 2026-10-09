@@ -78,7 +78,7 @@ class PacketMetricsPipeline20Test {
         DataInputStream(ZstdInputStream(Files.newInputStream(files.single()))).use { input ->
             assertEquals(1, input.readUnsignedByte())
             assertEquals(0x52445043, input.readInt())
-            assertEquals(1, input.readUnsignedShort())
+            assertEquals(2, input.readUnsignedShort())
             input.skipNBytes(16 + 8 + 4L)
             while (true) {
                 when (val kind = input.readUnsignedByte()) {
@@ -87,6 +87,7 @@ class PacketMetricsPipeline20Test {
                         assertEquals(player, UUID(input.readLong(), input.readLong()))
                         val connection = input.readLong()
                         val sequence = input.readLong()
+                        assertEquals(0, input.readUnsignedByte()) // v2: 1.20 always records Play.
                         val type = ByteArray(input.readUnsignedShort()).also(input::readFully).toString(Charsets.UTF_8)
                         types += type.substringAfterLast('.')
                         channels += ByteArray(input.readUnsignedShort()).also(input::readFully).toString(Charsets.UTF_8)

@@ -21,6 +21,7 @@ object RClientNetwork {
     @SubscribeEvent
     @JvmStatic
     fun registerPayloads(event: RegisterPayloadHandlersEvent) {
+        calebxzau.rdi.mc.zstdcodec.v21.RdiExtensionChannels21.register(event, client = true)
         event.registrar("1")
             .optional()
             .playToClient(

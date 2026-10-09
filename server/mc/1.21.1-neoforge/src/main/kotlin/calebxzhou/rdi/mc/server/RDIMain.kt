@@ -10,6 +10,9 @@ import calebxzau.mc.common2021.sendMessage
 import calebxzhou.rdi.mc.rcmd.chat.PlayerChatRangeState
 import calebxzhou.rdi.mc.rcmd.tpa.TpaService
 import calebxzhou.rdi.mc.server.network.RServerNetwork
+import calebxzhou.rdi.mc.server.network.RServerPacketCapture
+import net.neoforged.neoforge.network.event.RegisterConfigurationTasksEvent
+import net.minecraft.server.network.ServerCommonPacketListenerImpl
 import calebxzhou.rdi.mc.server.network.PacketMetrics
 import calebxzhou.rdi.mc.server.rcmd.PlayerNbtChatRangeStore
 import net.minecraft.ChatFormatting
@@ -26,6 +29,7 @@ import net.neoforged.neoforge.event.entity.player.PlayerEvent
 import net.neoforged.neoforge.event.server.ServerStartedEvent
 import net.neoforged.neoforge.event.server.ServerStartingEvent
 import net.neoforged.neoforge.event.server.ServerStoppedEvent
+import net.neoforged.neoforge.event.tick.ServerTickEvent
 import org.apache.logging.log4j.LogManager
 import org.apache.logging.log4j.Logger
 import java.util.concurrent.CompletableFuture
@@ -49,6 +53,11 @@ class RDIMain {
         val lgr: Logger = LogManager.getLogger("rdi")
 
 
+        @SubscribeEvent @JvmStatic
+        fun onServerTickEnd(e: ServerTickEvent.Post) {
+            calebxzhou.rdi.mc.server.network.RServerBatching.flushAtTickEnd(e.server)
+        }
+
         @SubscribeEvent
         @JvmStatic
         fun started(e: ServerStartedEvent) {
@@ -57,6 +66,7 @@ class RDIMain {
 
         @SubscribeEvent @JvmStatic
         fun stopped(e: ServerStoppedEvent) {
+            RServerPacketCapture.stop()
             PacketMetrics.stop()
             RegionZstdCodec.closeAll()
             PlayerChatRangeState.clear()
@@ -68,7 +78,9 @@ class RDIMain {
         fun starting(e: ServerStartingEvent) {
             val server = e.getServer() as DedicatedServer
             mcs = server
-            PacketMetrics.start(server.serverDirectory.resolve("rdi").resolve("packet-traffic_v3.db"))
+            // v4 replaces v3 for new runs; an existing packet-traffic_v3.db is left untouched.
+            PacketMetrics.startBatchMetrics(server.serverDirectory.resolve("rdi").resolve("packet-traffic_v4.db"))
+            RServerPacketCapture.start(server)
             GameRules.visitGameRuleTypes(object : GameRules.GameRuleTypeVisitor {
                 override fun <T : GameRules.Value<T>> visit(key: GameRules.Key<T>, type: GameRules.Type<T>) {
                     val gameRuleEnv = System.getenv("GAME_RULE_" + key.getId())
@@ -91,6 +103,10 @@ class RDIMain {
         @SubscribeEvent @JvmStatic
         fun onPlayerJoin(e: PlayerEvent.PlayerLoggedInEvent) {
             val player = e.entity as ServerPlayer
+            RServerPacketCapture.onPlayerJoined(player)
+            calebxzhou.rdi.mc.server.network.RServerZstdStream.onPlayerJoined(player)
+            calebxzhou.rdi.mc.server.network.RServerBatching.onPlayerJoined(player)
+            calebxzhou.rdi.mc.server.network.RServerPacketRefs.onPlayerJoined(player)
             PlayerChatRangeState.restore(player.uuid, PlayerNbtChatRangeStore(player))
             if (RDI.isAllOp()) {
                 player.server.playerList.op(player.gameProfile)
@@ -107,6 +123,16 @@ class RDIMain {
             }
             //------
             RServerNetwork.sendLastTo(player)
+        }
+
+        @SubscribeEvent @JvmStatic
+        fun onConfigurationTasks(e: RegisterConfigurationTasksEvent) {
+            val listener = e.listener
+            if (listener is ServerCommonPacketListenerImpl) {
+                RServerPacketCapture.onConfigurationStarted(listener)
+            } else {
+                lgr.warn("Packet capture unavailable for configuration listener {}", listener.javaClass.name)
+            }
         }
 
         private fun sendJoinMessages(player: ServerPlayer) {

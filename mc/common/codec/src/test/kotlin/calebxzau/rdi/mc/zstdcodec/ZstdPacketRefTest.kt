@@ -491,6 +491,9 @@ class ZstdPacketRefTest {
             repeat(3) { pair.server.writeOutbound(Unpooled.wrappedBuffer(large)) }
             pair.transfer()
 
+            // The START frame is reported once as a record-free control frame.
+            assertEquals(1, samples.count { it.frameKind == ZstdBatchFrameKind.Control })
+            samples.removeIf { it.frameKind == ZstdBatchFrameKind.Control }
             val legacyLarge = samples[2]
             assertEquals(ZstdBatchFrameKind.Legacy, legacyLarge.frameKind)
             val largeFrameBytes = legacyLarge.blockBytes + legacyLarge.outerPrefixBytes

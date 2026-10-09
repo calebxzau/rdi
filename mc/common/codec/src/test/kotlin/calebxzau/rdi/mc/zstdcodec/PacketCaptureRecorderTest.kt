@@ -27,7 +27,7 @@ class PacketCaptureRecorderTest {
             writerIndex(4)
         }
         try {
-            first.record(source, ZstdPacketIdentity("demo:state", "demo", "state"))
+            first.record(source, ZstdPacketIdentity("demo:state", "demo", "state"), PacketCapturePhase.Configuration)
             first.record(source, null)
             val second = recorder.connection(player)
             second.record(source, ZstdPacketIdentity("demo:other"))
@@ -42,6 +42,8 @@ class PacketCaptureRecorderTest {
             assertEquals(recorder.runId, decoded.runId)
             assertEquals(3, decoded.records.size)
             assertEquals(listOf(1L, 2L), decoded.records.take(2).map { it.sequence })
+            assertEquals(listOf(1, 0, 0), decoded.records.map { it.phase })
+            assertEquals(1, source.refCnt())
             assertEquals(first.connectionId, decoded.records[0].connectionId)
             assertEquals(first.connectionId, decoded.records[1].connectionId)
             assertTrue(second.connectionId > first.connectionId)
@@ -153,6 +155,7 @@ class PacketCaptureRecorderTest {
                 assertEquals(player, UUID(input.readLong(), input.readLong()))
                 input.readLong()
                 assertEquals(1L, input.readLong())
+                assertEquals(0, input.readUnsignedByte())
                 assertEquals("test:idle", input.readString())
                 assertEquals("", input.readString())
                 assertEquals(3, input.readInt())
@@ -247,6 +250,7 @@ class PacketCaptureRecorderTest {
                   "connection_id": 1,
                   "sequence": 1,
                   "packet_type": "minecraft:fixture",
+                  "phase": "play",
                   "channel": "fixture:sample",
                   "payload_hex": "${payload.joinToString("") { "%02x".format(it) }}",
                   "part": "${part.fileName}"
@@ -264,6 +268,7 @@ class PacketCaptureRecorderTest {
         val playerId: UUID,
         val connectionId: Long,
         val sequence: Long,
+        val phase: Int,
         val packetType: String,
         val channel: String,
         val payload: ByteArray,
@@ -283,7 +288,7 @@ class PacketCaptureRecorderTest {
         DataInputStream(decoded.inputStream()).use { input ->
             assertEquals(1, input.readUnsignedByte())
             assertContentEquals(byteArrayOf('R'.code.toByte(), 'D'.code.toByte(), 'P'.code.toByte(), 'C'.code.toByte()), ByteArray(4).also(input::readFully))
-            assertEquals(1, input.readUnsignedShort())
+            assertEquals(2, input.readUnsignedShort())
             val runId = UUID(input.readLong(), input.readLong())
             input.readLong() // Run start epoch millis.
             val partNumber = input.readInt()
@@ -297,10 +302,12 @@ class PacketCaptureRecorderTest {
                             val player = UUID(input.readLong(), input.readLong())
                             val connection = input.readLong()
                             val sequence = input.readLong()
+                            val phase = input.readUnsignedByte()
+                            assertTrue(phase in 0..1)
                             val packetType = input.readString()
                             val channel = input.readString()
                             val payloadSize = input.readInt()
-                            records += CapturedRecord(player, connection, sequence, packetType, channel, ByteArray(payloadSize).also(input::readFully))
+                            records += CapturedRecord(player, connection, sequence, phase, packetType, channel, ByteArray(payloadSize).also(input::readFully))
                         }
                     }
                     3 -> {

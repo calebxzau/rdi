@@ -1,6 +1,6 @@
 package calebxzhou.rdi.mc.client.mixin;
 
-import calebxzhou.rdi.mc.common.RdiWindow;
+import calebxzau.mc.common2021.RdiWindow;
 import org.lwjgl.glfw.GLFW;
 import calebxzhou.rdi.mc.client.RMcSessionService;
 import calebxzau.rdi.mc.client.preview.ItemPreviewExporter;

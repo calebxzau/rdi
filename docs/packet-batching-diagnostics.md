@@ -68,3 +68,44 @@ bytes saved. The column is 0 for every other frame kind.
 The existing synthetic codec replay tests remain useful for packet-byte and
 batching-policy correctness. The new content log omits replay-only events and is
 an analysis input, not a same-stream compression benchmark.
+
+
+## 1.21.1 NeoForge packet-content capture
+
+Capture is enabled by default. Disable it with `-Drdi.capture.enabled=false`.
+It writes custom payload and attribute-update packets for all remote players to
+`rdi/packbatch`, independently of batch/stream negotiation and metrics. Recording
+starts at the `RegisterConfigurationTasksEvent` callback, before subsequent task
+sends, and continues into Play. Initial negotiation and brand packets sent before
+that callback are excluded. The loader routes this `IModBusEvent` to the mod bus
+from the existing subscriber annotation; no `bus` argument is used.
+
+The shared writer now emits RDPC v2 with a phase byte; 1.20 emits Play and the
+Python reader remains compatible with v1. Parts are at most 128,000,000 bytes.
+There is no run-total or directory quota and no automatic retention. The writer
+uses the existing global 16MiB/32768-record admission limits and reports drops.
+An open part uses `.partial`; clean close/rotation writes a footer and renames it.
+The sidecar is created at startup; the first part may appear when the first data
+frame is flushed (or on shutdown of an empty run), not necessarily at startup.
+
+```text
+python packbatch.py summary rdi/packbatch
+python packbatch.py dump rdi/packbatch --phase configuration --limit 20
+python packbatch.py analyze rdi/packbatch --top 20 --json
+```
+
+The analysis models only the captured subset. Neither compression simulation is
+actual transport cost or a guaranteed bound; other packets, negotiated thresholds,
+flush boundaries and batching may change results. Raw and reassembled views must
+not be summed. See the [reader guide](../mc/common/codec/tools/packbatch/README.md)
+for limits, incomplete-data handling and simulation assumptions.
+
+
+## 1.21.1 pktref default
+
+As of2026-10-09, the NeoForge1.21.1 server enables packet references by default for
+clients that negotiated `rdi:pktref`. Use `-Drdi.pktref.enabled=false` and reconnect
+(or restart) to disable it. Default table settings are256 slots and1024 bytes per
+entry, configured by `rdi.pktref.slots` and `rdi.pktref.maxEntryBytes`. Unsupported
+peers keep plain packets; the shared compression/batching protocol is unchanged.
+START is sent once per connection. This setting does not change packet capture.

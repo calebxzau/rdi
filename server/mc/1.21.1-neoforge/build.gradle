@@ -74,6 +74,7 @@ neoForge {
             //要兼顾ws和http 所以这里没有开头的ws
             systemProperty("rdi.ihq.url", "127.0.0.1:65231")
             systemProperty("rdi.host.id", "6970b4b685846053425d0529")
+            systemProperty("rdi.batch.enabled", "true")
             jvmArgument '-Xmx4G'
             programArgument '--nogui'
             systemProperty 'rdi.debug', 'true'
@@ -110,6 +111,7 @@ sourceSets.named('main') {
     kotlin.srcDir '../../../mc/common/2021/src/main/kotlin'
     java.srcDir '../../../mc/common/codec/src/server/java'
     kotlin.srcDir '../../../mc/common/codec/src/main/kotlin'
+    kotlin.srcDir '../../../mc/common/codec/src/21/kotlin'
     kotlin.srcDir '../../../mc/common/network-metrics/src/main/kotlin'
     kotlin.srcDir '../../../mc/common/all/src/main/kotlin'
     kotlin.srcDir '../../../mc/syncchunk/src/main/kotlin'
@@ -126,6 +128,7 @@ sourceSets.named('test') {
     kotlin.srcDir '../../../mc/chunkcache/src/serverTest/kotlin'
     kotlin.srcDir '../../../mc/common/codec/src/serverTest/kotlin'
     kotlin.srcDir '../../../mc/common/codec/src/test/kotlin'
+    kotlin.srcDir '../../../mc/common/codec/src/21Test/kotlin'
     kotlin.srcDir '../../../mc/common/network-metrics/src/test/kotlin'
     kotlin.srcDir '../../../mc/syncchunk/src/test/kotlin'
     kotlin.srcDir '../../../mc/syncchunk/src/2021Test/kotlin'
@@ -266,6 +269,9 @@ tasks.withType(JavaCompile).configureEach {
 }
 
 tasks.withType(Test).configureEach {
+    providers.systemProperty('rdi.packbatch.fixtureDir').orNull?.with { fixtureDir ->
+        systemProperty 'rdi.packbatch.fixtureDir', fixtureDir
+    }
     useJUnitPlatform()
 }
 

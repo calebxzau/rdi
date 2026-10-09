@@ -53,7 +53,7 @@ internal class PacketCaptureRecorder @JvmOverloads constructor(
     fun connection(playerId: UUID): PacketCaptureConnection =
         PacketCaptureConnection(this, playerId, nextPositiveId(nextConnectionId))
 
-    internal fun accept(playerId: UUID, connectionId: Long, sequence: Long, bytes: ByteBuf, identity: ZstdPacketIdentity?) {
+    internal fun accept(playerId: UUID, connectionId: Long, sequence: Long, bytes: ByteBuf, identity: ZstdPacketIdentity?, phase: PacketCapturePhase) {
         val readableBytes = try {
             bytes.readableBytes()
         } catch (error: Throwable) {
@@ -107,7 +107,7 @@ internal class PacketCaptureRecorder @JvmOverloads constructor(
             if (failure == null) {
                 queue.addLast(
                     PacketCaptureRecord(
-                        elapsedNanos(), playerId, connectionId, sequence,
+                        elapsedNanos(), playerId, connectionId, sequence, phase,
                         packetType, channel, payload, encodedBytes,
                     ),
                 )
@@ -256,7 +256,8 @@ internal class PacketCaptureRecorder @JvmOverloads constructor(
         const val DEFAULT_MAX_PENDING_BYTES: Long = 16L * 1024 * 1024
         const val DEFAULT_MAX_EVENTS: Int = 32768
         const val TARGET_FRAME_BYTES: Int = 1024 * 1024
-        internal const val RECORD_FIXED_BYTES = 48L
+        const val FORMAT_VERSION = 2
+        internal const val RECORD_FIXED_BYTES = 49L
         private const val UNKNOWN_PACKET_TYPE = ":unknown-encoded"
         private const val NANOS_PER_MILLI = 1_000_000L
 
@@ -301,6 +302,7 @@ private data class PacketCaptureRecord(
     val playerId: UUID,
     val connectionId: Long,
     val sequence: Long,
+    val phase: PacketCapturePhase,
     val packetType: String,
     val channel: String,
     val payload: ByteArray,
@@ -335,6 +337,8 @@ internal data class PacketCaptureLimits(
     }
 }
 
+internal enum class PacketCapturePhase(val wire: Int) { Play(0), Configuration(1) }
+
 internal class PacketCaptureConnection internal constructor(
     private val recorder: PacketCaptureRecorder,
     private val playerId: UUID,
@@ -342,10 +346,10 @@ internal class PacketCaptureConnection internal constructor(
 ) {
     private val sequence = AtomicLong(0)
 
-    fun record(bytes: ByteBuf, identity: ZstdPacketIdentity?) {
+    fun record(bytes: ByteBuf, identity: ZstdPacketIdentity?, phase: PacketCapturePhase = PacketCapturePhase.Play) {
         val currentSequence = sequence.incrementAndGet()
         if (currentSequence <= 0) return
-        recorder.accept(playerId, connectionId, currentSequence, bytes, identity)
+        recorder.accept(playerId, connectionId, currentSequence, bytes, identity, phase)
     }
 }
 
@@ -529,7 +533,7 @@ private class PacketCaptureFileWriter(
     private fun encodeHeader(part: Int): ByteArray = frameBody { output ->
         output.writeByte(HEADER_KIND)
         output.write(byteArrayOf('R'.code.toByte(), 'D'.code.toByte(), 'P'.code.toByte(), 'C'.code.toByte()))
-        output.writeShort(FORMAT_VERSION)
+        output.writeShort(PacketCaptureRecorder.FORMAT_VERSION)
         output.writeUuid(runId)
         output.writeLong(startedEpochMillis)
         output.writeInt(part)
@@ -551,6 +555,7 @@ private class PacketCaptureFileWriter(
             output.writeUuid(record.playerId)
             output.writeLong(record.connectionId)
             output.writeLong(record.sequence)
+            output.writeByte(record.phase.wire)
             output.writeString(record.packetType)
             output.writeString(record.channel)
             output.writeInt(record.payload.size)
@@ -584,7 +589,6 @@ private class PacketCaptureFileWriter(
         private const val HEADER_KIND = 1
         private const val DATA_KIND = 2
         private const val FOOTER_KIND = 3
-        private const val FORMAT_VERSION = 1
         private const val DATA_PREFIX_BYTES = 5
         private const val FOOTER_BODY_BYTES = 26
     }

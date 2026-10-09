@@ -18,9 +18,28 @@ import net.minecraft.network.protocol.common.ServerboundKeepAlivePacket
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFails
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class PacketMetricsPipelineTest {
+    @Test
+    fun `stream start is excluded and segments retain packet attribution`() {
+        val harness = Harness(threshold = 32)
+        try {
+            ZstdCompressionPipeline.setOutboundStream(harness.channel, 20)
+            assertTrue(harness.samples.isEmpty())
+            val start = harness.channel.readOutbound<ByteBuf>()
+            assertTrue(start != null)
+            start.release()
+            harness.encoder.bodySize = 2048
+            val frame = harness.writePacket(99)
+            assertEquals(99L, packetId(harness.samples.single().packet))
+            assertEquals(innerFrameSize(frame), harness.samples.single().bytes)
+        } finally {
+            harness.close()
+        }
+    }
+
     @Test
     fun `records compressed inner frame bytes in both directions`() {
         val harness = Harness(threshold = 32)
@@ -163,7 +182,7 @@ class PacketMetricsPipelineTest {
         }
     }
 
-    //@Test
+    @Test
     fun `codec failures do not attribute stale bytes or packets to the next frame`() {
         val harness = Harness(threshold = 16)
         try {
@@ -172,10 +191,6 @@ class PacketMetricsPipelineTest {
             assertFails { harness.writePacket(30) }
             assertTrue(harness.samples.isEmpty())
 
-            harness.encoder.bodySize = ZstdCompressionPipeline.MAXIMUM_UNCOMPRESSED_LENGTH + 1
-            assertFails { harness.writePacket(31) }
-            assertTrue(harness.samples.isEmpty())
-            harness.encoder.bodySize = 1024
             harness.writePacket(31)
             assertEquals(listOf(31L), harness.samples.map { packetId(it.packet) })
             assertEquals(PacketDirection.S2C, harness.samples.single().direction)
@@ -188,6 +203,33 @@ class PacketMetricsPipelineTest {
             harness.channel.writeInbound(Unpooled.wrappedBuffer(goodWireFrame))
             assertEquals(listOf(32L), harness.samples.map { packetId(it.packet) })
             assertEquals(PacketDirection.C2S, harness.samples.single().direction)
+        } finally {
+            harness.close()
+        }
+    }
+
+    @Test
+    fun `batching connections leave outbound frames unattributed`() {
+        val harness = Harness(threshold = 16)
+        try {
+            ZstdCompressionPipeline.setOutboundBatching(harness.channel, true, delayUnassociated = false)
+            harness.encoder.bodySize = 1024
+            val frame = harness.writePacket(50)
+            assertTrue(frame.isNotEmpty())
+            assertTrue(harness.samples.isEmpty())
+        } finally {
+            harness.close()
+        }
+    }
+
+    @Test
+    fun `an oversized packet closes the connection without recording a sample`() {
+        val harness = Harness(threshold = 16)
+        try {
+            harness.encoder.bodySize = ZstdCompressionPipeline.MAXIMUM_UNCOMPRESSED_LENGTH + 1
+            assertFails { harness.writePacket(33) }
+            assertTrue(harness.samples.isEmpty())
+            assertFalse(harness.channel.isActive)
         } finally {
             harness.close()
         }

@@ -19,7 +19,7 @@ except ImportError as exc:  # pragma: no cover - exercised by command-line users
     raise SystemExit("Missing dependency: install requirements.txt (zstandard)") from exc
 
 
-VERSION = 1
+VERSION = 2
 MAX_FILE_SIZE = 128_000_000
 MAX_COMPRESSED_FRAME = 10 * 1024 * 1024
 MAX_DECOMPRESSED_FRAME = 9 * 1024 * 1024
@@ -62,6 +62,7 @@ class Header:
     run_id: str
     started_ms: int
     part: int
+    version: int = 1
 
 
 @dataclass
@@ -190,7 +191,7 @@ def parse_header(data: bytes) -> Header:
     if kind != 1 or cursor.take(4) != b"RDPC":
         raise CaptureError("first frame is not an RDPC header")
     (version,) = cursor.unpack(">H")
-    if version != VERSION:
+    if version not in (1, VERSION):
         raise CaptureError(f"unsupported capture version {version}")
     run_id = str(uuid.UUID(bytes=cursor.take(16)))
     (started_ms,) = cursor.unpack(">q")
@@ -199,7 +200,7 @@ def parse_header(data: bytes) -> Header:
         raise CaptureError("part number must start at 1")
     if cursor.offset != len(data):
         raise CaptureError("trailing bytes after header")
-    return Header(run_id, started_ms, part)
+    return Header(run_id, started_ms, part, version)
 
 
 def parse_record(cursor: Cursor, header: Header) -> dict:
@@ -210,6 +211,9 @@ def parse_record(cursor: Cursor, header: Header) -> dict:
     (connection_id, sequence) = cursor.unpack(">QQ")
     if connection_id < 1 or sequence < 1:
         raise CaptureError("connection ID and sequence must be positive")
+    phase = cursor.unpack(">B")[0] if header.version >= 2 else 0
+    if phase not in (0, 1):
+        raise CaptureError(f"unknown protocol phase {phase}")
     packet_type = cursor.string()
     channel = cursor.string()
     (payload_size,) = cursor.unpack(">I")
@@ -224,6 +228,7 @@ def parse_record(cursor: Cursor, header: Header) -> dict:
         "player": player,
         "connection_id": connection_id,
         "sequence": sequence,
+        "phase": "configuration" if phase else "play",
         "type": packet_type,
         "channel": channel,
         "payload_length": payload_size,
@@ -429,21 +434,21 @@ def run_summary(files: list[tuple[Path, Header | None]], max_groups: int) -> tup
     file_results = []
     dropped_by_run: dict[str, int] = {}
     sequence_tracker = SequenceTracker()
-    overflow_key = ("<overflow>", "<overflow>", "<overflow>")
+    overflow_key = ("<overflow>",) * 4
     for path, supplied_header in files:
         local_diags: list[Diagnostic] = []
         file_info: list[FileInfo] = []
         for record in read_file(path, local_diags, file_info):
             sequence_tracker.observe(record, path)
-            key = (record["player"], record["type"], record["channel"])
+            key = (record["player"], record["phase"], record["type"], record["channel"])
             named_group_limit = max_groups - 1
             if key not in groups and (key == overflow_key or len(groups) >= named_group_limit):
                 key = overflow_key
                 if key not in groups:
-                    groups[key] = {"player": "<overflow>", "type": "<overflow>", "channel": "<overflow>",
+                    groups[key] = {"player": "<overflow>", "phase": "<overflow>", "type": "<overflow>", "channel": "<overflow>",
                                    "count": 0, "raw_bytes": 0,
                                    "first_timestamp_ms": None, "last_timestamp_ms": None}
-            group = groups.setdefault(key, {"player": key[0], "type": key[1], "channel": key[2],
+            group = groups.setdefault(key, {"player": key[0], "phase": key[1], "type": key[2], "channel": key[3],
                                              "count": 0, "raw_bytes": 0,
                                              "first_timestamp_ms": None, "last_timestamp_ms": None})
             group["count"] += 1
@@ -467,7 +472,7 @@ def run_summary(files: list[tuple[Path, Header | None]], max_groups: int) -> tup
                 )
         file_results.append(summary)
     diagnostics.extend(sequence_tracker.diagnostics())
-    result = {"files": file_results, "groups": sorted(groups.values(), key=lambda row: (row["player"], row["type"], row["channel"])),
+    result = {"files": file_results, "groups": sorted(groups.values(), key=lambda row: (row["player"], row["phase"], row["type"], row["channel"])),
               "dropped_records_by_run": dropped_by_run}
     return result, diagnostics
 
@@ -481,6 +486,8 @@ def run_dump(files: list[tuple[Path, Header | None]], args) -> tuple[list[Diagno
         local_diags: list[Diagnostic] = []
         for record in read_file(path, local_diags):
             sequence_tracker.observe(record, path)
+            if getattr(args, "phase", None) and record["phase"] != args.phase:
+                continue
             if args.player and record["player"].lower() != args.player.lower():
                 continue
             if args.channel is not None and record["channel"] != args.channel:
@@ -515,12 +522,15 @@ def build_parser() -> argparse.ArgumentParser:
     dump = subparsers.add_parser("dump", help="write filtered packet records as JSON Lines")
     dump.add_argument("paths", nargs="+", help="capture files or directories")
     dump.add_argument("--player")
+    dump.add_argument("--phase", choices=("play", "configuration"))
     dump.add_argument("--channel")
     dump.add_argument("--type")
     dump.add_argument("--since", type=parse_time_arg, help="inclusive elapsed nanoseconds since run start")
     dump.add_argument("--until", type=parse_time_arg, help="inclusive elapsed nanoseconds since run start")
     dump.add_argument("--limit", type=int, default=100)
     dump.add_argument("--payload", choices=("none", "hex", "base64"), default="none")
+    from packbatch_analyze import add_parser
+    add_parser(subparsers)
     return parser
 
 
@@ -542,6 +552,9 @@ def main(argv: list[str] | None = None) -> int:
         diagnostics = discovery_diagnostics + diagnostics
         result["diagnostic_count"] = len(diagnostics)
         print(json.dumps(result, separators=(",", ":"), ensure_ascii=False))
+    elif args.command == "analyze":
+        from packbatch_analyze import run_analyze
+        return run_analyze(files, args, discovery_diagnostics)
     else:
         diagnostics, status = run_dump(files, args)
         diagnostics = discovery_diagnostics + diagnostics

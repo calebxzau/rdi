@@ -1,6 +1,11 @@
 package calebxzhou.rdi.mc.server.network
 
 import calebxzau.rdi.mc.metrics.PacketDirection
+import calebxzau.rdi.mc.zstdcodec.ZstdBatchObserver
+import calebxzau.rdi.mc.zstdcodec.ZstdBatchPolicy
+import calebxzau.rdi.mc.zstdcodec.ZstdBatchSample
+import calebxzau.rdi.mc.zstdcodec.ZstdCompressionPipeline
+import calebxzau.rdi.mc.zstdcodec.ZstdPacketIdentity
 import io.netty.buffer.ByteBuf
 import io.netty.buffer.DefaultByteBufHolder
 import io.netty.channel.ChannelHandlerContext
@@ -65,6 +70,7 @@ object PacketMetricsPipeline {
     fun compressionChanged(pipeline: ChannelPipeline) {
         if (pipeline.get(CAPTURE) == null) return
         val state = pipeline.channel().attr(STATE).get() ?: return
+        if (PacketMetrics.batchMetricsEnabled) ZstdCompressionPipeline.setBatchObserver(pipeline.channel(), MetricsObserver)
         if (pipeline.get("decompress") != null) {
             pipeline.remove(CAPTURE)
             pipeline.addBefore("decompress", CAPTURE, Capture(state))
@@ -88,6 +94,20 @@ object PacketMetricsPipeline {
         if (bytes == NO_FRAME) return
         state.inboundBytes = NO_FRAME
         state.recordSafely(packet, PacketDirection.C2S, bytes)
+    }
+
+    private object MetricsObserver : ZstdBatchObserver {
+        override fun recordEncoded(identity: ZstdPacketIdentity?, encodedBytes: Int, policy: ZstdBatchPolicy) {
+            PacketMetrics.recordLogical(identity, encodedBytes)
+        }
+
+        override fun batchFlushed(sample: ZstdBatchSample) = PacketMetrics.recordFrame(sample)
+
+        override fun writeCompleted(sample: ZstdBatchSample, success: Boolean) {
+            PacketMetrics.recordWriteOutcome(success, sample.recordCount)
+        }
+
+        override fun encodingFailed(recordCount: Int) = PacketMetrics.recordEncodingFailure(recordCount)
     }
 
     private class Capture(val state: State) : ChannelInboundHandlerAdapter() {
@@ -141,7 +161,13 @@ object PacketMetricsPipeline {
         override fun write(ctx: ChannelHandlerContext, msg: Any, promise: ChannelPromise) {
             val packet = state.outboundPacket
             state.outboundPacket = null
-            if (packet != null && msg is ByteBuf) state.recordSafely(packet, PacketDirection.S2C, msg.readableBytes())
+            // v4 counts S2C by frame through the encoder observer. A batching encoder also writes delayed
+            // records and whole blocks here, so the frame no longer belongs to the packet being written now.
+            if (packet != null && msg is ByteBuf && !PacketMetrics.batchMetricsEnabled &&
+                !ZstdCompressionPipeline.isOutboundBatchingEnabled(ctx.channel())
+            ) {
+                state.recordSafely(packet, PacketDirection.S2C, msg.readableBytes())
+            }
             ctx.write(msg, promise)
         }
     }

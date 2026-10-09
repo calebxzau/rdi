@@ -35,7 +35,7 @@ object RServerPacketCapture {
         runCatching {
             val metadata = linkedMapOf(
                 "format" to "RDPC",
-                "version" to 1,
+                "version" to PacketCaptureRecorder.FORMAT_VERSION,
                 "run_id" to started.runId.toString(),
                 "started_unix_ms" to started.startedEpochMillis,
                 "direction" to "s2c",

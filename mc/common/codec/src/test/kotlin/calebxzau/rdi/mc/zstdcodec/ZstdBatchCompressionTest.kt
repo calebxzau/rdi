@@ -212,17 +212,18 @@ class ZstdBatchCompressionTest {
     }
 
     @Test
-    fun `disabling compression flushes the buffered block first`() {
+    fun `disabling compression after activation aborts buffered writes`() {
         val (server, client) = connectedPair()
         try {
             val record = ByteArray(300) { (it * 9).toByte() }
-            server.writeOneOutbound(Unpooled.wrappedBuffer(record))
+            val pending = server.writeOneOutbound(Unpooled.wrappedBuffer(record))
 
             ZstdCompressionPipeline.setup(server, -1, true, TEST_VAR_INT)
 
-            assertNull(server.pipeline().get("compress"))
-            val block = assertNotNull(server.readOutbound<ByteBuf>())
-            assertRecords(listOf(record), decodeBlock(client, block))
+            assertFalse(server.isActive)
+            assertTrue(pending.isDone)
+            assertFalse(pending.isSuccess)
+            assertNull(server.readOutbound<ByteBuf>())
         } finally {
             server.finishAndReleaseAll()
             client.finishAndReleaseAll()

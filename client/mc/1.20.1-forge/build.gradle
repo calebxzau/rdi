@@ -115,7 +115,7 @@ tasks.named('test', Test).configure {
 }
 
 sourceSets.main {
-    kotlin.srcDir '../common/src/client/kotlin'
+    kotlin.srcDir '../../../mc/common/2021/src/client/kotlin'
     kotlin.srcDir '../../../mc/chunkcache/src/main/kotlin'
     kotlin.srcDir '../../../mc/chunkcache/src/20/kotlin'
     java.srcDir '../../../mc/chunkcache/src/client/java'
@@ -435,6 +435,7 @@ dependencies {
     zstdTestImplementation 'io.netty:netty-codec:4.1.97.Final'
     zstdTestImplementation 'io.netty:netty-common:4.1.97.Final'
     zstdTestImplementation 'io.netty:netty-transport:4.1.97.Final'
+    zstdTestImplementation 'io.netty:netty-handler:4.1.97.Final'
     zstdTestRuntimeOnly 'org.junit.jupiter:junit-jupiter-engine:6.1.1'
     //jarjar(project(":c-mc-common"))
 }

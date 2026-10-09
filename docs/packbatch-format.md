@@ -6,6 +6,16 @@ of batch negotiation and compression settings. Other packet types are filtered o
 before copying, queue admission or connection-sequence allocation. Filtered packets
 are not counted as dropped capture records. Custom payloads are selected by packet
 class, without a channel namespace whitelist.
+The NeoForge 1.21.1 server records the same two packet types, matched by wire
+`PacketType`. Recording starts in its `RegisterConfigurationTasksEvent` callback
+and persists on the same connection into Play and subsequent reconfiguration.
+Initial channel negotiation, brand, and any payload sent before attachment are
+outside the capture. All namespaces qualify. The live encoder supplies the phase;
+an unknown phase is skipped and reported in a rate-limited server log, without
+consuming a capture sequence. Consequently, zero sequence gaps alone does not
+prove that every configuration packet was recorded. A new connection receives a
+new ID; reconfiguration keeps the connection ID and continuing sequence.
+
 These are packet-encoder bytes, not proof of delivery or measured wire bytes.
 
 Files live in `rdi/packbatch/<run-uuid>-<part:06>.rdibatch.zst`, with a hard
@@ -18,7 +28,8 @@ data frame; a larger packet occupies its own frame. Partial files end in
 All integers in decompressed frame bodies are big-endian. UUIDs are their 16
 network-order bytes. Strings are a u16 UTF-8 byte length followed by that many
 bytes, at most 4096 bytes. Unknown packet types use `:unknown-encoded`; absent
-custom channels use an empty string. The current format version is 1. This is
+custom channels use an empty string. The current format version is 2. Readers also accept version 1, whose records
+have no phase byte and imply Play. Both server adapters now write version 2. This is
 a new format, unrelated to the earlier RDST replay captures.
 
 Each Zstd frame decompresses to exactly one of these structures:
@@ -36,10 +47,12 @@ Each packet record contains, in order:
 3. u64 connection ID, increasing from 1 within the run; reconnects get a new ID.
 4. u64 connection sequence, increasing from 1 for every attempted record,
    including attempts rejected by queue/size limits.
-5. Packet type string.
-6. Custom channel string (`namespace:path` or empty).
-7. u32 payload length, at most 8 MiB.
-8. Exact payload bytes (includes the encoded Minecraft packet ID).
+5. u8 protocol phase: 0 = Play, 1 = Configuration. Present only in version 2;
+   other values are invalid. Fixed record overhead is 49 bytes (48 in v1).
+6. Packet type string.
+7. Custom channel string (`namespace:path` or empty).
+8. u32 payload length, at most 8 MiB.
+9. Exact payload bytes (includes the encoded Minecraft packet ID).
 
 The header must be first, and the footer must be last. Data frames contain at
 least one record. Maximum uncompressed frame size is 9 MiB; maximum compressed

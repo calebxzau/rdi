@@ -37,6 +37,8 @@ internal class ZstdCompressionEncoder(
     @Volatile
     private var batchingEnabled = false
     private var batchTargetBytes = ZstdCompressionPipeline.DEFAULT_BATCH_TARGET_BYTES
+    /** Policy for a bare buffer that no adapter classified; 1.21 sends those immediately. */
+    private var unassociatedPolicy = ZstdBatchPolicy.OneTick
     private var observer: ZstdBatchObserver? = null
     private var failed: Throwable? = null
 
@@ -80,6 +82,7 @@ internal class ZstdCompressionEncoder(
     }
 
     override fun write(context: ChannelHandlerContext, msg: Any, promise: ChannelPromise) {
+        ZstdTransportGuard.existing(context.channel())?.error?.let { abort(it) }
         if (failed != null) {
             releaseMessage(msg)
             promise.tryFailure(failed!!)
@@ -100,7 +103,7 @@ internal class ZstdCompressionEncoder(
 
         val sending = when (msg) {
             is ZstdSendingRecord -> msg
-            is ByteBuf -> ZstdSendingRecord(msg, ZstdBatchPolicy.OneTick, null)
+            is ByteBuf -> ZstdSendingRecord(msg, unassociatedPolicy, null)
             else -> error("unreachable")
         }
         flushExpiredByClock(context)
@@ -154,7 +157,9 @@ internal class ZstdCompressionEncoder(
     }
 
     override fun close(context: ChannelHandlerContext, promise: ChannelPromise) {
-        flushBuffered(context, ZstdBatchFlushReason.SHUTDOWN)
+        if (failed == null && ZstdTransportGuard.existing(context.channel())?.error == null) {
+            flushBuffered(context, ZstdBatchFlushReason.SHUTDOWN)
+        } else discardBuffered(failed ?: ClosedChannelException())
         context.close(promise)
     }
 
@@ -164,7 +169,10 @@ internal class ZstdCompressionEncoder(
     }
 
     override fun handlerRemoved(context: ChannelHandlerContext) {
-        flushBuffered(context, ZstdBatchFlushReason.SHUTDOWN)
+        ZstdTransportGuard.existing(context.channel())?.removed(context, false)
+        if (failed == null && ZstdTransportGuard.existing(context.channel())?.error == null) {
+            flushBuffered(context, ZstdBatchFlushReason.SHUTDOWN)
+        } else discardBuffered(failed ?: ClosedChannelException())
         if (buffered.isNotEmpty()) discardBuffered(failed ?: ClosedChannelException())
         compressionContext.close()
         closeStream()
@@ -209,8 +217,15 @@ internal class ZstdCompressionEncoder(
 
     fun isBatchingEnabled(): Boolean = batchingEnabled
 
-    fun requestBatching(enabled: Boolean, targetBytes: Int) = onEventLoop { context ->
+    fun requestBatching(
+        enabled: Boolean,
+        targetBytes: Int,
+        delayUnassociated: Boolean = true,
+    ) = onEventLoop { context ->
+        if (enabled) ZstdTransportGuard.get(context.channel()).armOutbound(context)
         if (!enabled || targetBytes != batchTargetBytes) flushBuffered(context, ZstdBatchFlushReason.BARRIER)
+        // Set before batching starts, in the same event-loop task, so no unclassified buffer is delayed.
+        unassociatedPolicy = if (delayUnassociated) ZstdBatchPolicy.OneTick else ZstdBatchPolicy.Immediate
         batchTargetBytes = targetBytes.coerceIn(
             ZstdCompressionPipeline.MINIMUM_BATCH_TARGET_BYTES,
             ZstdCompressionPipeline.MAXIMUM_BATCH_TARGET_BYTES,
@@ -242,6 +257,7 @@ internal class ZstdCompressionEncoder(
         val context = handlerContext ?: return
         val task = Runnable {
             if (handlerContext !== context) return@Runnable
+            ZstdTransportGuard.existing(context.channel())?.error?.let { abort(it); return@Runnable }
             if (context.channel().isActive || context.channel().isOpen) action(context)
             else discardBuffered(ClosedChannelException())
         }
@@ -250,6 +266,7 @@ internal class ZstdCompressionEncoder(
 
     private fun startPacketRefs(context: ChannelHandlerContext, slots: Int, maxEntryBytes: Int) {
         if (failed != null) return
+        ZstdTransportGuard.get(context.channel()).armOutbound(context)
         flushBuffered(context, ZstdBatchFlushReason.BARRIER)
         if (failed != null) return
 
@@ -271,7 +288,8 @@ internal class ZstdCompressionEncoder(
         downstream.addListener { future ->
             if (!future.isSuccess) failConnection(context, future.cause() ?: ClosedChannelException())
         }
-        context.write(frame, downstream)
+        observeControl(frame, downstream)
+        writeFrame(context, frame, downstream)
         // A write that failed at once has already run the listener; never enable after a failed START.
         if (failed != null) return
 
@@ -288,6 +306,7 @@ internal class ZstdCompressionEncoder(
 
     private fun startStream(context: ChannelHandlerContext, windowLog: Int) {
         if (failed != null || streamContext != null) return
+        ZstdTransportGuard.get(context.channel()).armOutbound(context)
         flushBuffered(context, ZstdBatchFlushReason.BARRIER)
         if (failed != null) return
 
@@ -317,7 +336,8 @@ internal class ZstdCompressionEncoder(
         downstream.addListener { future ->
             if (!future.isSuccess) failConnection(context, future.cause() ?: ClosedChannelException())
         }
-        context.write(frame, downstream)
+        observeControl(frame, downstream)
+        writeFrame(context, frame, downstream)
         // A write that failed at once has already run the listener; never enable after a failed STREAM_START.
         if (failed != null) {
             stream.close()
@@ -548,7 +568,7 @@ internal class ZstdCompressionEncoder(
                 if (!future.isSuccess) failConnection(context, future.cause() ?: ClosedChannelException())
             }
             observe { it.batchFlushed(sample) }
-            context.write(frame.buffer, downstream)
+            writeFrame(context, frame.buffer, downstream)
             context.flush()
             return
         }
@@ -589,7 +609,7 @@ internal class ZstdCompressionEncoder(
                     else pendingCompletions.add(index to future)
                 }
                 observe { it.batchFlushed(sample) }
-                context.write(frame.buffer, downstream)
+                writeFrame(context, frame.buffer, downstream)
                 nextFrame = index + 1
             }
             context.flush()
@@ -628,7 +648,8 @@ internal class ZstdCompressionEncoder(
                     ZstdBatchFormat.varIntSize(payloadBytes) + ZstdBatchFormat.varIntSize(recordCount)
                 headerBytes + payloadBytes
             }
-            ZstdBatchFrameKind.Ref -> throw IllegalStateException("Reference frames build their own sample")
+            ZstdBatchFrameKind.Ref, ZstdBatchFrameKind.Control ->
+                throw IllegalStateException("${frame.frameKind} frames build their own sample")
         }
         val uncompressedBytes = uncompressedInnerBytes + outerPrefix
         return ZstdBatchSample(
@@ -694,7 +715,7 @@ internal class ZstdCompressionEncoder(
             if (!future.isSuccess) failConnection(context, future.cause() ?: ClosedChannelException())
         }
         observe { it.batchFlushed(sample) }
-        context.write(frame.buffer, downstream)
+        writeFrame(context, frame.buffer, downstream)
         if (batchingEnabled) context.flush()
     }
 
@@ -746,7 +767,7 @@ internal class ZstdCompressionEncoder(
             if (!future.isSuccess) failConnection(context, future.cause() ?: ClosedChannelException())
         }
         observe { it.batchFlushed(sample) }
-        context.write(frame, downstream)
+        writeFrame(context, frame, downstream)
         if (batchingEnabled) context.flush()
     }
 
@@ -908,9 +929,48 @@ internal class ZstdCompressionEncoder(
         bufferedPayloadBytes = 0
     }
 
+    /** Called before fatal close, including a failure detected by the opposite-direction guard. */
+    internal fun abort(error: Throwable) {
+        failed = error
+        discardBuffered(error)
+    }
+
+    /** Control frames are transport overhead with no records; report them once so totals stay complete. */
+    private fun observeControl(frame: ByteBuf, promise: ChannelPromise) {
+        if (observer == null) return
+        val frameBytes = frame.readableBytes()
+        val sample = ZstdBatchSample(
+            recordCount = 0,
+            payloadBytes = 0,
+            blockBytes = frameBytes,
+            raw = true,
+            flushReason = ZstdBatchFlushReason.BARRIER,
+            waitNanos = 0,
+            compressionNanos = 0,
+            frameKind = ZstdBatchFrameKind.Control,
+            outerPrefixBytes = ZstdBatchFormat.varIntSize(frameBytes),
+        )
+        promise.addListener { future -> observe { it.writeCompleted(sample, future.isSuccess) } }
+        observe { it.batchFlushed(sample) }
+    }
+
+    private fun writeFrame(context: ChannelHandlerContext, frame: ByteBuf, promise: ChannelPromise) {
+        try {
+            ZstdTransportGuard.existing(context.channel())?.encoded(context, frame)
+        } catch (error: Throwable) {
+            frame.release()
+            abort(error)
+            ZstdTransportGuard.get(context.channel()).fail(error)
+            promise.tryFailure(error)
+            return
+        }
+        context.write(frame, promise)
+    }
+
     private fun failConnection(context: ChannelHandlerContext, error: Throwable) {
         failed = error
         discardBuffered(error)
+        ZstdTransportGuard.existing(context.channel())?.fail(error)
         runCatching { context.fireExceptionCaught(error) }
         context.close()
     }

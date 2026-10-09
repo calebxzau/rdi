@@ -75,7 +75,7 @@ tasks.named('test', Test).configure {
 }
 
 sourceSets.main {
-    kotlin.srcDir '../common/src/client/kotlin'
+    kotlin.srcDir '../../../mc/common/2021/src/client/kotlin'
     java.srcDir '../../../mc/20/src/client/java'
     kotlin.srcDir '../../../mc/20/src/client/kotlin'
     kotlin.srcDir '../../../mc/20/src/main/kotlin'

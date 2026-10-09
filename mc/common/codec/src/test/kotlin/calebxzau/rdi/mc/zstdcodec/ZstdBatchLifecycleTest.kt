@@ -213,7 +213,7 @@ class ZstdBatchLifecycleTest {
     }
 
     @Test
-    fun `removing encoder drains accepted packet before the pipeline boundary`() {
+    fun `removing armed encoder fails buffered packets without flushing`() {
         val channel = channel()
         try {
             ZstdCompressionPipeline.setup(channel, 128, true, TEST_VAR_INT)
@@ -224,9 +224,10 @@ class ZstdBatchLifecycleTest {
             channel.pipeline().remove("compress")
 
             assertTrue(promise.isDone)
-            assertTrue(promise.isSuccess)
+            assertFalse(promise.isSuccess)
             assertEquals(0, input.refCnt())
-            assertNotNull(channel.readOutbound<ByteBuf>()).release()
+            assertNull(channel.readOutbound<ByteBuf>())
+            assertFalse(channel.isActive)
             assertNull(channel.pipeline().get("compress"))
         } finally {
             channel.finishAndReleaseAll()
@@ -261,6 +262,34 @@ class ZstdBatchLifecycleTest {
             assertEquals(0, secondInput.refCnt())
         } finally {
             runCatching { channel.finishAndReleaseAll() }
+        }
+    }
+
+    @Test
+    fun `unassociated buffers wait for the tick by default and go at once when the adapter asks`() {
+        val delayed = channel()
+        delayed.freezeTime()
+        try {
+            ZstdCompressionPipeline.setOutboundBatching(delayed, true)
+            val future = delayed.writeOneOutbound(Unpooled.wrappedBuffer(byteArrayOf(1, 2, 3)))
+            delayed.flushOutbound()
+            assertFalse(future.isDone)
+            assertNull(delayed.readOutbound<ByteBuf>())
+        } finally {
+            runCatching { delayed.finishAndReleaseAll() }
+        }
+
+        val immediate = channel()
+        immediate.freezeTime()
+        try {
+            ZstdCompressionPipeline.setOutboundBatching(immediate, true, delayUnassociated = false)
+            val future = immediate.writeOneOutbound(Unpooled.wrappedBuffer(byteArrayOf(1, 2, 3)))
+            immediate.flushOutbound()
+            assertTrue(future.isDone)
+            assertTrue(future.isSuccess)
+            assertNotNull(immediate.readOutbound<ByteBuf>()).release()
+        } finally {
+            runCatching { immediate.finishAndReleaseAll() }
         }
     }
 

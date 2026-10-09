@@ -229,7 +229,7 @@ tasks.register('generateModMetadata', ProcessResources) {
 }
 
 sourceSets.named('main') {
-    kotlin.srcDir '../common/src/client/kotlin'
+    kotlin.srcDir '../../../mc/common/2021/src/client/kotlin'
     kotlin.srcDir '../../../mc/chunkcache/src/main/kotlin'
     kotlin.srcDir '../../../mc/chunkcache/src/21/kotlin'
     java.srcDir '../../../mc/chunkcache/src/client/java'
@@ -240,6 +240,7 @@ sourceSets.named('main') {
     kotlin.srcDir '../../../mc/syncchunk/src/2021Client/kotlin'
     kotlin.srcDir '../../../mc/syncchunk/src/21/kotlin'
     kotlin.srcDir '../../../mc/common/codec/src/main/kotlin'
+    kotlin.srcDir '../../../mc/common/codec/src/21/kotlin'
     java.srcDir '../../../mc/common/codec/src/server/java'
     kotlin.srcDir '../../../mc/common/2021/src/main/kotlin'
     kotlin.srcDir '../../../mc/rcmd/src/main/kotlin'
@@ -257,6 +258,7 @@ sourceSets.named('test') {
     kotlin.srcDir '../../../mc/syncchunk/src/test/kotlin'
     kotlin.srcDir '../../../mc/syncchunk/src/2021Test/kotlin'
     kotlin.srcDir '../../../mc/common/codec/src/test/kotlin'
+    kotlin.srcDir '../../../mc/common/codec/src/21Test/kotlin'
 }
 
 neoForge.addModdingDependenciesTo(sourceSets.test)

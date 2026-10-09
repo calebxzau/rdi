@@ -40,6 +40,9 @@ internal enum class ZstdBatchFrameKind {
 
     /** A packet reference that replaced a legacy envelope; see [PacketRefFormat]. */
     Ref,
+
+    /** A START or STREAM_START control frame; it carries no packet records. */
+    Control,
 }
 
 /** One encoded frame handed to the downstream pipeline. Byte counts exclude the outer prefix except where named. */

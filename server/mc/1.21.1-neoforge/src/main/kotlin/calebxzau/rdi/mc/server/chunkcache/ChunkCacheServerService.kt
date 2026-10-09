@@ -30,6 +30,7 @@ object ChunkCacheServerService {
     private val logger = LoggerFactory.getLogger("rdi")
     private val random = SecureRandom()
     private val sessions = mutableMapOf<UUID, Session>()
+    private val sentChunks = ChunkCacheSentChunks()
     private var budgetTick = Long.MIN_VALUE
     private var budgetUsedNanos = 0L
 
@@ -195,9 +196,11 @@ object ChunkCacheServerService {
             return packet
         }
         session.metrics.recordNormalChunkAttempt()
+        val revisit = sentChunks.markSent(player.uuid, session.dimension, pos.toLong())
         val candidate = session.ledger.consume(pos.x, pos.z)
             ?: run {
                 session.metrics.recordNoOfferFullSend()
+                if (revisit) session.metrics.recordNoOfferRevisitFullSend()
                 return packet
             }
         val retire = ChunkCacheRetirePayload(session.epoch, listOf(candidate.id))
@@ -351,10 +354,11 @@ object ChunkCacheServerService {
             val metrics = session.metrics
             if (metrics.hasWindowActivity()) {
                 logger.info(
-                    "Chunk cache minute player={} normalAttempts={} noOfferFullSends={} candidateFallbackFullSends={} forcedRepairFullSends={} mismatches={} reuseSent={} reuseConfirmed={} clientFailure={} reuseTimeout={} repairQueued={} repairCompleted={} repairAbandonedEvents={} budgetFallbackFullSends={} sectionHashHits={} sectionHashMisses={} sectionHashStale={} rawSectionPayloadBytes={} reuseMetadataBytes={} sectionCopyDecodeNanosTotal={} sectionCopyDecodeNanosMax={} semanticHashNanosTotal={} semanticHashNanosMax={} metadataEncodeNanosTotal={} metadataEncodeNanosMax={} replacementNanosTotal={} replacementNanosMax={} replacementNanosCurrentTick={} replacementNanosMaxTick={} replacementTickBoundary=perPlayerSessionServerTick",
+                    "Chunk cache minute player={} normalAttempts={} noOfferFullSends={} noOfferRevisitFullSends={} candidateFallbackFullSends={} forcedRepairFullSends={} mismatches={} reuseSent={} reuseConfirmed={} clientFailure={} reuseTimeout={} repairQueued={} repairCompleted={} repairAbandonedEvents={} budgetFallbackFullSends={} sectionHashHits={} sectionHashMisses={} sectionHashStale={} rawSectionPayloadBytes={} reuseMetadataBytes={} sectionCopyDecodeNanosTotal={} sectionCopyDecodeNanosMax={} semanticHashNanosTotal={} semanticHashNanosMax={} metadataEncodeNanosTotal={} metadataEncodeNanosMax={} replacementNanosTotal={} replacementNanosMax={} replacementNanosCurrentTick={} replacementNanosMaxTick={} replacementTickBoundary=perPlayerSessionServerTick",
                     player.scoreboardName,
                     metrics.normalChunkAttempts,
                     metrics.noOfferFullSends,
+                    metrics.noOfferRevisitFullSends,
                     metrics.candidateFallbackFullSends,
                     metrics.forcedRepairFullSends,
                     metrics.mismatches,
@@ -401,6 +405,7 @@ object ChunkCacheServerService {
     @JvmStatic
     fun clear() {
         sessions.clear()
+        sentChunks.clear()
         budgetTick = Long.MIN_VALUE
         budgetUsedNanos = 0
     }
@@ -417,7 +422,8 @@ object ChunkCacheServerService {
         val dimension = player.level().dimension().location()
         val existing = sessions[player.uuid]
         if (existing != null && existing.dimension == dimension) return existing
-        val session = Session(newUuidV7(), dimension)
+        // Start the window now; with 0 a new session would close its first "minute" on its first tick.
+        val session = Session(newUuidV7(), dimension, metricTick = player.server.tickCount.toLong())
         sessions[player.uuid] = session
         PacketDistributor.sendToPlayer(player, ChunkCacheContextPayload(session.epoch, dimension))
         return session

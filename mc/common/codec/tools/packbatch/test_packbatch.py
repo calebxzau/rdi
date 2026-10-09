@@ -70,7 +70,7 @@ class PackbatchTest(unittest.TestCase):
         self.assertEqual({
             "run_id": str(RUN), "run_started_ms": 1_727_000_000_000, "part": 1,
             "elapsed_ns": 10, "player": str(PLAYER_A), "connection_id": 1, "sequence": 1,
-            "type": "minecraft:custom_payload", "channel": "example:channel",
+            "type": "minecraft:custom_payload", "channel": "example:channel", "phase": "play",
             "payload_length": 8, "_payload": b"\x00\xffpacket",
         }, decoded[0])
 

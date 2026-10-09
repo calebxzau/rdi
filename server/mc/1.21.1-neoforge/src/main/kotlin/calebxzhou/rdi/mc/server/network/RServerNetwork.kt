@@ -21,6 +21,7 @@ object RServerNetwork {
 @JvmStatic
     @SubscribeEvent
     fun registerPayloads(event: RegisterPayloadHandlersEvent) {
+        calebxzau.rdi.mc.zstdcodec.v21.RdiExtensionChannels21.register(event, client = false)
         event.registrar("1")
             .optional()
             .playToClient(

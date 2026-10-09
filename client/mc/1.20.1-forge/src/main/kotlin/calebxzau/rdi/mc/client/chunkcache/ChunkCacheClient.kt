@@ -60,7 +60,7 @@ object ChunkCacheClient {
         val pins = ChunkCacheOfferPins<PreparedTerrain>(ChunkCacheLimits.MAX_OFFERS, ChunkCacheLimits.MAX_PREPARED_BYTES.toLong())
         val preparing = LongOpenHashSet()
         val retryAfter = Long2LongOpenHashMap()
-        val pendingOffers = ArrayList<ChunkCacheOffer>()
+        val outbox = ChunkCacheOutbox<ChunkCacheOffer> { it.id }
         val repairs = Long2ObjectOpenHashMap<Repair>()
         val candidates = ChunkCacheCandidateScan()
         var centerX = Int.MIN_VALUE
@@ -187,6 +187,7 @@ object ChunkCacheClient {
         }
         state.candidates.restart()
         pump(state, now)
+        flush(state)
         if (System.nanoTime() - state.lastLog >= TimeUnit.SECONDS.toNanos(30)) {
             state.lastLog = System.nanoTime()
             logger.info("CHUNK_REUSE_CLIENT hits={} reuse_failures={} repairs_completed={} attempts={} prepared={} absent={} incompatible={} prepare_failures={} too_late={} outside_view={} pin_rejected={} offers_sent={} offers_expired={} pins={} pin_bytes={} preparing={} repairs={}",
@@ -222,10 +223,9 @@ object ChunkCacheClient {
         return true
     }
 
-    /** Publishes completed offers and fills worker slots, without repeating tick maintenance. */
+    /** Fills worker slots without repeating tick maintenance; offers leave in [flush] at the end of the tick. */
     private fun pump(state: State, now: Long) {
         if (!active(state) || !RdiChunkCache.isCacheActive(state.capture) || !updateView(state)) return
-        if (state.pendingOffers.isNotEmpty()) publishOffers(state)
         if (state.pins.size >= ChunkCacheLimits.MAX_OFFERS || state.pins.bytes >= ChunkCacheLimits.MAX_PREPARED_BYTES) return
         while (state.candidates.hasNext()) {
             if (state.preparing.size >= MAX_PREPARING || outstandingPreparations.get() >= MAX_PREPARING) break
@@ -239,22 +239,21 @@ object ChunkCacheClient {
         }
     }
 
-    private fun publishOffers(state: State) {
-        var offers = ArrayList<ChunkCacheOffer>(ChunkCacheLimits.MAX_OFFER_BATCH)
-        for (offer in state.pendingOffers) {
-            if (state.pins.get(offer.id)?.cancelling != false) continue
-            offers.add(offer)
-            if (offers.size == ChunkCacheLimits.MAX_OFFER_BATCH) {
-                send(state, ChunkCacheOfferPayload(state.epoch, state.level.dimension().location(), offers))
-                state.offersSent += offers.size
-                offers = ArrayList(ChunkCacheLimits.MAX_OFFER_BATCH)
-            }
-        }
-        if (offers.isNotEmpty()) {
-            send(state, ChunkCacheOfferPayload(state.epoch, state.level.dimension().location(), offers))
-            state.offersSent += offers.size
-        }
-        state.pendingOffers.clear()
+    /** Sends this tick's cancels, then one offer batch; see [ChunkCacheOutbox]. */
+    private fun flush(state: State) {
+        state.outbox.drain(
+            ChunkCacheLimits.MAX_OFFERS,
+            ChunkCacheLimits.MAX_OFFER_BATCH,
+            { ids -> send(state, ChunkCacheCancelPayload(state.epoch, ids)) },
+            { batch ->
+                // A pin cancelled after queueing is settled by its cancel; never offer it.
+                val offers = batch.filter { state.pins.get(it.id)?.cancelling == false }
+                if (offers.isNotEmpty()) {
+                    send(state, ChunkCacheOfferPayload(state.epoch, state.level.dimension().location(), offers))
+                    state.offersSent += offers.size
+                }
+            },
+        )
     }
 
     private fun prepare(state: State, position: Long, now: Long) {
@@ -314,7 +313,7 @@ object ChunkCacheClient {
                         state.pinRejected++
                         return@tell
                     }
-                    state.pendingOffers.add(ChunkCacheOffer(pin.id, x, z, pin.hash))
+                    state.outbox.offer(ChunkCacheOffer(pin.id, x, z, pin.hash))
                 } finally {
                     // Continue immediately from the cursor; restarting here repeatedly scans the same prefix.
                     pump(state, nowMillis())
@@ -389,8 +388,10 @@ object ChunkCacheClient {
     private fun near(state: State, position: Long): Boolean =
         ChunkCacheViewRange.admits(ChunkPos.getX(position), ChunkPos.getZ(position), state.centerX, state.centerZ, state.viewDistance)
 
+    /** Queues cancels for the end-of-tick flush; offers that never left are retired here without a message. */
     private fun cancel(state: State, ids: List<Long>) {
-        ids.chunked(ChunkCacheLimits.MAX_OFFERS).forEach { send(state, ChunkCacheCancelPayload(state.epoch, it)) }
+        if (ids.isEmpty()) return
+        state.outbox.cancel(ids).forEach { state.pins.retire(it) }
     }
 
     private fun send(state: State, payload: ChunkCachePayload) {
