@@ -34,10 +34,12 @@ object RJeiRuntimeStore {
 
     fun set(runtime: IJeiRuntime) {
         state = State(runtime, state.generation + 1)
+        calebxzau.rdi.mc.client.preview.ItemPreviewExporter.onJeiRuntimeChanged()
     }
 
     fun clear() {
         state = State(generation = state.generation + 1)
+        calebxzau.rdi.mc.client.preview.ItemPreviewExporter.onJeiRuntimeChanged()
     }
 
     private data class State(
