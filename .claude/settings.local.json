@@ -1,0 +1,6 @@
+{
+  "enabledMcpjsonServers": [
+    "compose-hot-reload"
+  ],
+  "enableAllProjectMcpServers": true
+}
