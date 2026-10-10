@@ -272,6 +272,53 @@ class ModpackTestSessionTest {
     }
 
     @Test
+    fun `test content hard link rule covers media and packs but not configs or shader settings`() {
+        assertTrue(shouldHardLinkTestContent("kubejs/assets/icon.PNG"))
+        assertTrue(shouldHardLinkTestContent("config/menu/background.tga"))
+        assertTrue(shouldHardLinkTestContent("resourcepacks/pack.zip"))
+        assertTrue(shouldHardLinkTestContent("resourcepacks/unpacked/pack.mcmeta"))
+        assertTrue(shouldHardLinkTestContent("shaderpacks/shader.zip"))
+        assertFalse(shouldHardLinkTestContent("shaderpacks/shader.zip.txt"))
+        assertFalse(shouldHardLinkTestContent("config/a.toml"))
+        assertFalse(shouldHardLinkTestContent("options.txt"))
+    }
+
+    @Test
+    fun `client test links media and packs while copying configs and shader settings`() = runBlocking {
+        val fixture = TestFixture(clientLine = CLIENT_TEST_SUCCESS_MARKER)
+        val linked = mapOf(
+            "resourcepacks/direct.zip" to "resourcepacks/direct.zip",
+            "overrides/resourcepacks/pack.zip" to "resourcepacks/pack.zip",
+            "overrides/shaderpacks/shader.zip" to "shaderpacks/shader.zip",
+            "overrides/kubejs/assets/icon.png" to "kubejs/assets/icon.png",
+            "overrides/config/menu/background.tga" to "config/menu/background.tga",
+        ).map { (source, target) -> fixture.addSourceFile(source, source.encodeToByteArray()) to target }
+        val copied = mapOf(
+            "overrides/config/a.toml" to "config/a.toml",
+            "overrides/shaderpacks/shader.zip.txt" to "shaderpacks/shader.zip.txt",
+        ).map { (source, target) -> fixture.addSourceFile(source, source.encodeToByteArray()) to target }
+        val session = fixture.session(ModpackTestTarget.CLIENT)
+        try {
+            session.start(emptyList()).getOrThrow()
+            awaitStatus(session, ModpackTestStatus.PASSED)
+
+            val clientDir = checkNotNull(fixture.launcher.clientVersionDir)
+            linked.forEach { (source, target) ->
+                assertTrue(Files.isSameFile(source.toPath(), clientDir.resolve(target).toPath()), target)
+            }
+            copied.forEach { (source, target) ->
+                assertContentEquals(source.readBytes(), clientDir.resolve(target).readBytes(), target)
+                assertFalse(Files.isSameFile(source.toPath(), clientDir.resolve(target).toPath()), target)
+            }
+            clientDir.resolve("config/a.toml").writeText("changed by game")
+            assertEquals("overrides/config/a.toml", copied.first().first.readText())
+        } finally {
+            session.close()
+            fixture.close()
+        }
+    }
+
+    @Test
     fun `client test applies client overrides while server test keeps them out`() = runBlocking {
         val mod = Mod(
             platform = "mr",

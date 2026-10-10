@@ -1,6 +1,8 @@
 package calebxzhou.rdi.client.ui.screen
 
 import androidx.compose.foundation.focusable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -22,7 +24,6 @@ import calebxzau.rdi.client.ui.ConfirmDialog
 import calebxzau.rdi.client.ui.ContentBody
 import calebxzau.rdi.client.ui.MaxBox
 import calebxzau.rdi.client.ui.RColumn
-import calebxzau.rdi.client.ui.RRow
 import calebxzau.rdi.client.ui.ScreenContentSize
 import calebxzau.rdi.client.ui.ScreenContentSurface
 import calebxzau.rdi.client.ui.SimpleTooltip
@@ -37,7 +38,7 @@ import calebxzhou.rdi.client.ui.comp.ConsoleState
 import calebxzhou.rdi.client.ui.comp.ModGrid
 import calebxzhou.rdi.client.ui.comp.ModpackCategorySelector
 import calebxzhou.rdi.client.ui.comp.Task2DetailDialog
-import calebxzau.rdi.client.ui.pickLocalDirectory
+import calebxzau.rdi.client.ui.pickLocalZipFile
 import calebxzau.rdi.client.ui.pickLocalModpackFile
 import calebxzau.rdi.client.ui.viewmodel.ModpackUploadEvent
 import calebxzau.rdi.client.ui.viewmodel.ModpackUploadMode
@@ -83,13 +84,13 @@ fun ModpackUploadScreen(
 
     fun selectServerPack() {
         scope.launch {
-            pickLocalDirectory("选择服务端安装目录")?.let(viewModel::loadServerPack)
+            pickLocalZipFile("选择服务端ZIP文件")?.let(viewModel::loadServerPack)
         }
     }
 
     MaxBox {
         ScreenContentSurface(
-            size = ScreenContentSize.LARGE,
+            size = ScreenContentSize.FULL,
             modifier = Modifier
                 .focusRequester(focusRequester)
                 .focusable()
@@ -113,23 +114,22 @@ fun ModpackUploadScreen(
                     Space8w()
                     CircleIconButton(
                         "\uF07C",
-                        if (uiState.serverPackName == null) "选择整合包服务端" else "重选服务端",
+                        if (uiState.serverPackName == null) "选择服务端ZIP" else "重选服务端ZIP",
                         enabled = uiState.canSelectServerPack,
                         onClick = ::selectServerPack,
                     )
-                    uiState.serverPackName?.let {
+                    if (uiState.loading) {
                         Space8w()
-                        Text(it)
+                        PackLoadingProgress(
+                            progressText = uiState.progressText,
+                            progressFraction = uiState.progressFraction,
+                        )
+                    } else {
+                        uiState.serverPackName?.let {
+                            Space8w()
+                            Text(it)
+                        }
                     }
-                    Space8w()
-                    CircleIconButton(
-                        "\uF019",
-                        "下载测试服务端",
-                        enabled = uiState.loadedModpack != null &&
-                            !uiState.uiModsLoading &&
-                            uiState.downloadTaskRunId == null,
-                        onClick = viewModel::downloadTestServer,
-                    )
                     Space8w()
                     UploadSubmitButton(
                         enabled = uiState.canSubmitUpload,
@@ -170,6 +170,17 @@ fun ModpackUploadScreen(
                                 enabled = uiState.uploadInitializationReady && !uiState.loading,
                                 onClick = ::selectClientPack,
                             )
+                            Box(
+                                modifier = Modifier.height(24.dp),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                if (uiState.loading) {
+                                    PackLoadingProgress(
+                                        progressText = uiState.progressText,
+                                        progressFraction = uiState.progressFraction,
+                                    )
+                                }
+                            }
                         }
                     }
                 } else {
@@ -186,96 +197,79 @@ fun ModpackUploadScreen(
                         Tab(
                             selected = selectedTab == 1,
                             onClick = { selectedTab = 1 },
-                            text = { Text("Mod列表(${uiState.uiMods.size})") },
-                        )
-                        Tab(
-                            selected = selectedTab == 2,
-                            onClick = { selectedTab = 2 },
-                            text = { Text("客户端测试") },
-                        )
-                        Tab(
-                            selected = selectedTab == 3,
-                            onClick = { selectedTab = 3 },
-                            text = { Text("服务端测试") },
+                            text = { Text("测试") },
                         )
                     }
                     Space8h()
 
                     when (selectedTab) {
-                        0 -> ModpackUploadInfoTab(
-                            state = uiState,
-                            viewModel = viewModel,
-                        )
-
-                        1 -> Column(modifier = Modifier.fillMaxSize()) {
-                            if (uiState.uiModsLoading) {
-                                Text(
-                                    "正在补充Mod详细信息...",
-                                    color = themeNow.onSurfaceVariant,
+                        0 -> Row(modifier = Modifier.fillMaxSize()) {
+                            Box(
+                                modifier = Modifier
+                                    .weight(0.4f)
+                                    .fillMaxHeight()
+                                    .verticalScroll(rememberScrollState())
+                                    .padding(end = 12.dp),
+                            ) {
+                                ModpackUploadInfoTab(
+                                    state = uiState,
+                                    viewModel = viewModel,
                                 )
-                                Space8h()
                             }
-                            ModGrid(
-                                mods = uiState.uiMods,
-                                modifier = Modifier.fillMaxWidth().weight(1f),
-                                emptyText = "没有可显示的mod",
-                                onSideChange = viewModel::updateModSide,
-                            )
+                            VerticalDivider()
+                            Column(
+                                modifier = Modifier
+                                    .weight(0.6f)
+                                    .fillMaxHeight()
+                                    .padding(start = 12.dp),
+                            ) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text("Mod列表(${uiState.uiMods.size})")
+                                    if (uiState.uiModsLoading) {
+                                        Space8w()
+                                        Text(
+                                            "正在补充Mod详细信息...",
+                                            color = themeNow.onSurfaceVariant,
+                                        )
+                                    }
+                                }
+                                Space8h()
+                                ModGrid(
+                                    mods = uiState.uiMods,
+                                    modifier = Modifier.fillMaxWidth().weight(1f),
+                                    emptyText = "没有可显示的mod",
+                                    onSideChange = viewModel::updateModSide,
+                                    initialIconOnly = true,
+                                )
+                            }
                         }
 
-                        2 -> TestConsolePane(
-                            statusText = testStatusText(
-                                uiState.clientTestStatus,
-                                uiState.clientTestPassSeconds,
-                            ),
-                            consoleState = viewModel.clientTestConsoleState,
-                            hint = "创建单机存档，在聊天框发送$CLIENT_TEST_SUCCESS_MARKER",
-                            onStart = viewModel::startClientTest,
-                            onStop = viewModel::stopClientTest,
-                        )
-
-                        3 -> TestConsolePane(
-                            statusText = testStatusText(
-                                uiState.serverTestStatus,
-                                uiState.serverTestPassSeconds,
-                            ),
-                            consoleState = viewModel.serverTestConsoleState,
-                            hint = "",
-                            onStart = viewModel::startServerTest,
-                            onStop = viewModel::stopServerTest,
-                        )
-                    }
-                }
-            }
-        }
-
-        if (uiState.loading) {
-            AlertDialog(onDismissRequest = {}) {
-                Surface(
-                    shape = MaterialTheme.shapes.medium,
-                    color = MaterialTheme.colorScheme.surface,
-                    tonalElevation = 6.dp,
-                ) {
-                    Column(
-                        modifier = Modifier
-                            .widthIn(min = 280.dp, max = 420.dp)
-                            .padding(24.dp),
-                        verticalArrangement = Arrangement.spacedBy(12.dp),
-                    ) {
-                        Text("正在读取整合包", style = MaterialTheme.typography.titleLarge)
-                        Text(uiState.progressText ?: "正在处理...")
-                        val progress = uiState.progressFraction
-                        if (progress != null) {
-                            LinearProgressIndicator(
-                                progress = progress,
-                                modifier = Modifier.fillMaxWidth(),
+                        1 -> Row(modifier = Modifier.fillMaxSize()) {
+                            TestConsolePane(
+                                title = "客户端测试",
+                                statusText = testStatusText(
+                                    uiState.clientTestStatus,
+                                    uiState.clientTestPassSeconds,
+                                ),
+                                consoleState = viewModel.clientTestConsoleState,
+                                hint = "创建单机存档，在聊天框发送${CLIENT_TEST_SUCCESS_MARKER}",
+                                onStart = viewModel::startClientTest,
+                                onStop = viewModel::stopClientTest,
+                                modifier = Modifier.weight(1f).fillMaxHeight().padding(end = 12.dp),
                             )
-                            Text(
-                                text = "${(progress * 100).toInt()}%",
-                                style = MaterialTheme.typography.labelSmall,
+                            VerticalDivider()
+                            TestConsolePane(
+                                title = "服务端测试",
+                                statusText = testStatusText(
+                                    uiState.serverTestStatus,
+                                    uiState.serverTestPassSeconds,
+                                ),
+                                consoleState = viewModel.serverTestConsoleState,
+                                hint = "",
+                                onStart = viewModel::startServerTest,
+                                onStop = viewModel::stopServerTest,
+                                modifier = Modifier.weight(1f).fillMaxHeight().padding(start = 12.dp),
                             )
-                        } else {
-                            LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
                         }
                     }
                 }
@@ -295,6 +289,30 @@ fun ModpackUploadScreen(
             )
         }
 
+    }
+}
+
+@Composable
+private fun PackLoadingProgress(
+    progressText: String?,
+    progressFraction: Float?,
+) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        if (progressFraction != null) {
+            CircularProgressIndicator(
+                progress = { progressFraction },
+                modifier = Modifier.size(20.dp),
+                strokeWidth = 2.dp,
+            )
+        } else {
+            CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+        }
+        Space8w()
+        val text = progressText ?: "正在处理..."
+        Text(
+            text = if (progressFraction != null) "${text} ${(progressFraction * 100).toInt()}%" else text,
+            color = themeNow.onSurfaceVariant,
+        )
     }
 }
 
@@ -351,10 +369,11 @@ private fun ModpackUploadInfoTab(
                 singleLine = true,
             )
         }
-        RRow {
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedTextField(
                 value = state.draft.iconUrl,
                 onValueChange = { viewModel.updateDraft(state.draft.copy(iconUrl = it)) },
+                modifier = Modifier.weight(1f),
                 label = { Text("图标链接") },
                 singleLine = true,
                 enabled = metadataEnabled,
@@ -364,25 +383,27 @@ private fun ModpackUploadInfoTab(
             OutlinedTextField(
                 value = state.draft.sourceUrl,
                 onValueChange = { viewModel.updateDraft(state.draft.copy(sourceUrl = it)) },
+                modifier = Modifier.weight(1f),
                 label = { Text("原帖发布链接") },
                 singleLine = true,
                 enabled = metadataEnabled,
             )
-            OutlinedTextField(
-                value = state.draft.info,
-                onValueChange = { viewModel.updateDraft(state.draft.copy(info = it)) },
-                label = { Text("简介(10~100字符)") },
-                singleLine = true,
-                enabled = metadataEnabled,
-                isError = state.draftErrors.info != null,
-                supportingText = {
-                    Text(
-                        state.draftErrors.info
-                            ?: "${state.draft.info.trim().modpackInfoCharacterCount()}/100"
-                    )
-                },
-            )
         }
+        OutlinedTextField(
+            value = state.draft.info,
+            onValueChange = { viewModel.updateDraft(state.draft.copy(info = it)) },
+            modifier = Modifier.fillMaxWidth(),
+            label = { Text("简介(10~100字符)") },
+            singleLine = true,
+            enabled = metadataEnabled,
+            isError = state.draftErrors.info != null,
+            supportingText = {
+                Text(
+                    state.draftErrors.info
+                        ?: "${state.draft.info.trim().modpackInfoCharacterCount()}/100"
+                )
+            },
+        )
         Text("分类(至少1个，最多${Modpack.MAX_CATEGORY_COUNT}个)")
         ModpackCategorySelector(
             selected = state.draft.categories,
@@ -399,23 +420,31 @@ private fun ModpackUploadInfoTab(
 
 @Composable
 private fun TestConsolePane(
+    title: String,
     statusText: String,
     consoleState: ConsoleState,
     hint: String,
     onStart: () -> Unit,
     onStop: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
-    Column(Modifier.fillMaxSize()) {
+    Column(modifier) {
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            Text(statusText)
-            if (hint.isNotBlank()) Text(hint)
+            Text("${title} · ${statusText}")
             Spacer(Modifier.weight(1f))
             CircleIconButton("\uF04B", "开始", onClick = onStart)
             CircleIconButton("\uF04D", "停止", onClick = onStop)
+        }
+        if (hint.isNotBlank()) {
+            Text(
+                text = hint,
+                color = themeNow.onSurfaceVariant,
+                style = MaterialTheme.typography.bodySmall,
+            )
         }
         Space8h()
         Box(modifier = Modifier.fillMaxSize().padding(bottom = 8.dp)) {

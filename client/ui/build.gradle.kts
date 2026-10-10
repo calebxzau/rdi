@@ -3,6 +3,8 @@ import org.gradle.api.GradleException
 import org.gradle.api.artifacts.component.ModuleComponentIdentifier
 import org.gradle.api.artifacts.type.ArtifactTypeDefinition
 import org.gradle.api.tasks.Copy
+import org.gradle.internal.fingerprint.classpath.impl.ClasspathFingerprintingStrategy.compileClasspath
+import org.gradle.internal.fingerprint.classpath.impl.ClasspathFingerprintingStrategy.runtimeClasspath
 import org.gradle.jvm.tasks.Jar
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 import sun.jvmstat.monitor.MonitoredVmUtil.mainClass
@@ -23,7 +25,7 @@ plugins {
     alias(libs.plugins.kotlin.jvm)
     alias(libs.plugins.kotlin.serialization)
     alias(libs.plugins.kotlin.compose)
-    id("org.jetbrains.compose.hot-reload") version "1.1.1"
+    id("org.jetbrains.compose.hot-reload") version "1.3.0-beta01"
     alias(libs.plugins.compose)
     id("org.gradlex.extra-java-module-info") version "1.14.2"
     idea

@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -61,13 +62,9 @@ fun ContentCard(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Text(
-                    text = presentation.name,
-                    color = MaterialTheme.colorScheme.onSurface,
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 16.sp,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
+                ContentCardTitle(
+                    name = presentation.name,
+                    version = presentation.version,
                     modifier = Modifier.weight(1f),
                 )
                 trailingContent?.invoke(this)
@@ -79,6 +76,38 @@ fun ContentCard(
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
                 lineHeight = 15.6.sp,
+            )
+        }
+    }
+}
+
+/** Name with an optional version label; the name is truncated first so the version stays visible. */
+@Composable
+internal fun ContentCardTitle(
+    name: String,
+    version: String?,
+    modifier: Modifier = Modifier,
+) {
+    Row(modifier = modifier, verticalAlignment = Alignment.CenterVertically) {
+        Text(
+            text = name,
+            color = MaterialTheme.colorScheme.onSurface,
+            fontWeight = FontWeight.Bold,
+            fontSize = 16.sp,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f, fill = false),
+        )
+        if (version != null) {
+            Text(
+                text = version,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                fontSize = 12.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier
+                    .padding(start = 6.dp)
+                    .widthIn(max = 120.dp),
             )
         }
     }

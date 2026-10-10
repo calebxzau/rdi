@@ -1433,6 +1433,19 @@ class McInstall(
         )
     }
 
+    /** Quick presence check for the local test server; the download task still verifies file contents. */
+    fun isTestServerInstalled(version: McVersion, loader: ModLoader): Boolean {
+        val runtime = version.resolveServerRuntime(loader) ?: return false
+        val loaderLibraryPath = when (loader) {
+            ModLoader.Fabric -> return findFabricServerRuntime(runtime) != null
+            ModLoader.forge -> "net/minecraftforge/forge"
+            ModLoader.neoforge -> "net/neoforged/neoforge"
+        }
+        val isWindows = System.getProperty("os.name").orEmpty().startsWith("Windows", ignoreCase = true)
+        val argsFileName = if (isWindows) "win_args.txt" else "unix_args.txt"
+        return libsDir.resolve("${loaderLibraryPath}/${runtime.loaderVersion}/${argsFileName}").isFile
+    }
+
     internal fun findFabricServerRuntime(runtime: ServerLoaderRuntime): File? {
         if (runtime.mcVersion != McVersion.V201.mcVer || runtime.loader != ModLoader.Fabric ||
             runtime.loaderVersion != FABRIC_1_20_1_LOADER_VERSION

@@ -149,6 +149,7 @@ data class ContentCardPresentation(
     val description: String,
     val iconData: ByteArray?,
     val iconUrls: List<String>,
+    val version: String? = null,
 )
 
 private data class ContentGridTooltipAnchor(
@@ -190,7 +191,13 @@ internal fun ContentGridItem.ContentItem.toCardPresentation(): ContentCardPresen
     ).joinToString(" · ").ifBlank {
         targetPath.takeIf(String::isNotBlank) ?: "暂无简介"
     }
-    return ContentCardPresentation(displayName, description, card?.iconData, card?.iconUrls.orEmpty())
+    return ContentCardPresentation(
+        name = displayName,
+        description = description,
+        iconData = card?.iconData,
+        iconUrls = card?.iconUrls.orEmpty(),
+        version = card?.version?.takeIf(String::isNotBlank),
+    )
 }
 
 sealed interface ContentGridDragEvent {

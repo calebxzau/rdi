@@ -54,7 +54,7 @@ fun List<UiMod>.hydrateToUiModsInBatches(
         source.mapNotNull { uiMod ->
             uiMod.card?.let { uiMod.mod.projectKey() to it }
         }.forEach { (key, card) -> put(key, card) }
-        putAll(localCardMap)
+        localCardMap.forEach { (key, card) -> put(key, card.withVersionFallback(get(key))) }
     }
 
     emit(source.withCards(cardMap))
@@ -79,7 +79,8 @@ fun List<UiMod>.hydrateToUiModsInBatches(
             resolution.result
                 .onSuccess { remoteCardMap ->
                     remoteCardMap.forEach { (key, remoteCard) ->
-                        cardMap[key] = localCardMap[key]?.mergeLocalFirst(remoteCard) ?: remoteCard
+                        val merged = localCardMap[key]?.mergeLocalFirst(remoteCard) ?: remoteCard
+                        cardMap[key] = merged.withVersionFallback(cardMap[key])
                     }
                 }
                 .onFailure { cause ->
@@ -94,6 +95,10 @@ fun List<UiMod>.hydrateToUiModsInBatches(
         results.close()
     }
 }
+
+/** A later card without a version keeps the one already known for the same mod. */
+private fun Mod.CardVo.withVersionFallback(previous: Mod.CardVo?): Mod.CardVo =
+    if (version == null && previous?.version != null) copy(version = previous.version) else this
 
 private data class RemoteCardResolution(
     val resolver: ModCardResolver,

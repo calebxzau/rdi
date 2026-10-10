@@ -68,6 +68,8 @@ import calebxzhou.rdi.client.ui.navigateRoot
 import calebxzhou.rdi.client.ui.screen.*
 import calebxzau.rdi.client.ui.window.WindowChrome
 import calebxzau.rdi.client.ui.window.activeMcSessions
+import calebxzau.rdi.client.ui.window.initialWindowPlacement
+import calebxzau.rdi.client.ui.window.readSingleDisplayDiagonalInches
 import calebxzhou.rdi.client.Const
 import calebxzhou.rdi.common.DEBUG
 import calebxzhou.rdi.common.model.RAccount
@@ -133,6 +135,9 @@ fun main() {
     mcDiscovery.start()
     val mcInstallationReuse = McInstallationReuse(installations = mcDiscovery.installations)
     mcInstallationReuse.start()
+    val displayDiagonalInches = readSingleDisplayDiagonalInches()
+        .onFailure { cause -> lgr.warn(cause) { "读取显示器EDID失败，仅按屏幕分辨率决定窗口大小" } }
+        .getOrElse { null }
     try {
         application {
         val windowIcon = remember {
@@ -141,10 +146,11 @@ fun main() {
             }
         }
 
-        // 设置窗口初始大小为屏幕的2/3，并居中显示
+        // 设置窗口初始大小为屏幕的2/3，并居中显示；笔记本或小屏幕直接最大化
         val screen = remember { Toolkit.getDefaultToolkit().screenSize }
         ScreenSize = (screen.width * 2 / 3).dp to (screen.height * 2 / 3).dp
         val windowState = rememberWindowState(
+            placement = initialWindowPlacement(screen.height, displayDiagonalInches),
             width = ScreenSize.first,
             height = ScreenSize.second,
             position = WindowPosition(Alignment.Center)

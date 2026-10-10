@@ -63,6 +63,7 @@ import calebxzau.rdi.modpacktest.ModpackTestTarget
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -269,23 +270,25 @@ interface ModpackUploadGateway {
     ): Result<Map<String, Mod.Side>> = Result.success(emptyMap())
 
     suspend fun prepareServerPack(
-        directory: File,
+        file: File,
         clientUiMods: List<UiMod>,
         onProgress: (LoadProgress) -> Unit,
     ): Result<PreparedServerPack>
 
     suspend fun prepareServerPack(
-        directory: File,
+        file: File,
         clientUiMods: List<UiMod>,
         loader: ModLoader,
         onProgress: (LoadProgress) -> Unit,
-    ): Result<PreparedServerPack> = prepareServerPack(directory, clientUiMods, onProgress)
+    ): Result<PreparedServerPack> = prepareServerPack(file, clientUiMods, onProgress)
 
     suspend fun validateRuntime(mcVersion: McVersion): Result<Unit>
 
     suspend fun findMissingMods(mods: List<Mod>): Result<List<Mod>>
 
     fun queueMissingModDownload(mods: List<Mod>): Result<String>
+
+    suspend fun isTestServerReady(pack: LoadedLocalModpack): Result<Boolean>
 
     fun queueTestServer(pack: LoadedLocalModpack): Result<String>
 
@@ -398,25 +401,22 @@ class RdiModpackUploadGateway(
     }
 
     override suspend fun prepareServerPack(
-        directory: File,
+        file: File,
         clientUiMods: List<UiMod>,
         onProgress: (LoadProgress) -> Unit,
-    ): Result<PreparedServerPack> = prepareServerPack(directory, clientUiMods, ModLoader.forge, onProgress)
+    ): Result<PreparedServerPack> = prepareServerPack(file, clientUiMods, ModLoader.forge, onProgress)
 
     override suspend fun prepareServerPack(
-        directory: File,
+        file: File,
         clientUiMods: List<UiMod>,
         loader: ModLoader,
         onProgress: (LoadProgress) -> Unit,
     ): Result<PreparedServerPack> = resultOf {
-        if (INVALID_SERVER_ROOT_MARKERS.any { directory.resolve(it).isFile }) {
-            throw ModpackError("请选择 正确安装了模组载入器 的服务端")
-        }
         val clientMods = clientUiMods.map(UiMod::toMod)
         onProgress(LoadProgress.Phase("正在检查本地Mod"))
         val serverPack = withAvailableClientModSources(clientUiMods, onProgress) { clientModSources ->
             processor.loadServerPack(
-                file = directory,
+                file = file,
                 clientMods = clientMods,
                 clientModSources = clientModSources,
                 loader = loader,
@@ -434,10 +434,6 @@ class RdiModpackUploadGateway(
         )
         val resolvedMergedMods = applyAvailableFabricSides(mergedUiMods, loader)
         PreparedServerPack(serverPack, processUiMods(resolvedMergedMods, loader).getOrThrow())
-    }
-
-    private companion object {
-        val INVALID_SERVER_ROOT_MARKERS = listOf("spigot.yml", "arclight.conf", "bukkit.yml")
     }
 
     private suspend fun <T> withAvailableClientModSources(
@@ -576,6 +572,10 @@ class RdiModpackUploadGateway(
         ClientTaskManager.submit(createUploadClientModDownloadTask2(mods))
     }
 
+    override suspend fun isTestServerReady(pack: LoadedLocalModpack): Result<Boolean> = resultOf {
+        mcInstall.isTestServerInstalled(pack.mcVersion, pack.modloader)
+    }
+
     override fun queueTestServer(pack: LoadedLocalModpack): Result<String> = runCatching {
         requireModpackUploadRuntime(pack.mcVersion, pack.modloader)
         ClientTaskManager.submit(mcInstall.downloadTestServerTask2(pack.mcVersion, pack.modloader))
@@ -656,6 +656,9 @@ class ModpackUploadViewModel(
     private var serverTester: ModpackTestSession? = null
     private var fabricSideRefreshRunId: String? = null
     private val testerObservationJobs = mutableListOf<Job>()
+    private var packLoadJob: Job? = null
+    private var serverTestDownloadRunId: String? = null
+    private var closing = false
 
     init {
         observeTasks()
@@ -753,7 +756,7 @@ class ModpackUploadViewModel(
                 warningMessage = null,
             )
         }
-        viewModelScope.launch {
+        packLoadJob = viewModelScope.launch {
             try {
                 val prepared = withContext(Dispatchers.IO) {
                     gateway.prepareClientPack(file, ::updateProgress).getOrThrow()
@@ -828,7 +831,7 @@ class ModpackUploadViewModel(
         }
     }
 
-    fun loadServerPack(directory: File) {
+    fun loadServerPack(file: File) {
         val state = _uiState.value
         if (state.loadedModpack == null) {
             _uiState.update { it.copy(errorMessage = "请先选择整合包文件") }
@@ -837,16 +840,16 @@ class ModpackUploadViewModel(
         _uiState.update {
             it.copy(
                 loading = true,
-                progressText = "已选择服务端目录:${directory.name}",
+                progressText = "已选择服务端ZIP:${file.name}",
                 progressFraction = null,
                 errorMessage = null,
             )
         }
-        viewModelScope.launch {
+        packLoadJob = viewModelScope.launch {
             try {
                 val prepared = withContext(Dispatchers.IO) {
                     gateway.prepareServerPack(
-                        directory,
+                        file,
                         state.uiMods,
                         state.loadedModpack.modloader,
                         ::updateProgress,
@@ -856,7 +859,7 @@ class ModpackUploadViewModel(
             } catch (cancel: CancellationException) {
                 throw cancel
             } catch (cause: Throwable) {
-                reportError("读取服务端目录失败", cause)
+                reportError("读取服务端ZIP失败", cause)
             } finally {
                 finishLoading()
             }
@@ -903,7 +906,9 @@ class ModpackUploadViewModel(
             _uiState.value.uiModsLoading -> _uiState.update { it.copy(errorMessage = "Mod信息仍在载入中") }
             tester == null -> _uiState.update { it.copy(errorMessage = "请先选择整合包文件") }
             tester.isRunning() -> _uiState.update { it.copy(errorMessage = "测试服务器已经在运行中") }
-            else -> requireModsDownloadedFor("服务端测试") { startServerTestAfterModsReady(tester) }
+            else -> requireModsDownloadedFor("服务端测试") {
+                startServerTestWhenServerReady(tester, allowDownload = true)
+            }
         }
     }
 
@@ -938,21 +943,6 @@ class ModpackUploadViewModel(
                 setDownloadRunId(runId)
             }
             .onFailure { reportError("提交Mod下载任务失败", it) }
-    }
-
-    fun downloadTestServer() {
-        val pack = _uiState.value.loadedModpack
-        if (pack == null) {
-            _uiState.update { it.copy(errorMessage = "请先选择整合包文件") }
-            return
-        }
-        if (_uiState.value.downloadTaskRunId != null) {
-            _uiState.update { it.copy(errorMessage = "已有下载任务正在运行") }
-            return
-        }
-        gateway.queueTestServer(pack)
-            .onSuccess(::setDownloadRunId)
-            .onFailure { reportError("提交测试服务端下载失败", it) }
     }
 
     fun submitUpload() {
@@ -1087,9 +1077,15 @@ class ModpackUploadViewModel(
     }
 
     fun closeScreen() {
+        if (closing) return
+        closing = true
         disposeTesters()
         _uiState.update { it.copy(loading = true, title = "清理缓存中...") }
+        val loadJob = packLoadJob
         viewModelScope.launch {
+            // Stop pack reading first so cleanup does not race with files still being extracted.
+            loadJob?.cancelAndJoin()
+            _uiState.update { it.copy(loading = true, title = "清理缓存中...") }
             gateway.cleanup()
                 .onFailure { lgr.warn(it) { "清理整合包处理缓存失败" } }
             eventChannel.send(ModpackUploadEvent.NavigateBack)
@@ -1169,6 +1165,47 @@ class ModpackUploadViewModel(
         _uiState.update { it.copy(errorMessage = null) }
         tester.start(_uiState.value.uiMods.map(UiMod::toMod))
             .onFailure { reportError("启动服务端测试失败", it) }
+    }
+
+    /** Downloads the local test server on first use, then starts the test once the download finishes. */
+    private fun startServerTestWhenServerReady(tester: ModpackTestSession, allowDownload: Boolean) {
+        val pack = _uiState.value.loadedModpack
+        if (pack == null) {
+            _uiState.update { it.copy(errorMessage = "请先选择整合包文件") }
+            return
+        }
+        viewModelScope.launch {
+            try {
+                val ready = withContext(Dispatchers.IO) {
+                    gateway.isTestServerReady(pack).getOrThrow()
+                }
+                when {
+                    ready -> startServerTestAfterModsReady(tester)
+                    !allowDownload -> _uiState.update {
+                        it.copy(errorMessage = "测试服务端下载后仍不完整，请重试")
+                    }
+                    _uiState.value.downloadTaskRunId != null -> _uiState.update {
+                        it.copy(errorMessage = "已有下载任务正在运行")
+                    }
+                    else -> gateway.queueTestServer(pack)
+                        .onSuccess { runId ->
+                            serverTestDownloadRunId = runId
+                            setDownloadRunId(runId)
+                        }
+                        .onFailure { reportError("提交测试服务端下载失败", it) }
+                }
+            } catch (cancel: CancellationException) {
+                throw cancel
+            } catch (cause: Throwable) {
+                reportError("检查测试服务端失败", cause)
+            }
+        }
+    }
+
+    private fun startServerTestAfterDownload() {
+        val tester = serverTester
+        if (tester == null || tester.isRunning()) return
+        startServerTestWhenServerReady(tester, allowDownload = false)
     }
 
     private fun applyServerPack(prepared: PreparedServerPack) {
@@ -1276,6 +1313,12 @@ class ModpackUploadViewModel(
     private fun updateDownloadTaskEntry(entry: Task2Entry?) {
         when (entry?.status) {
             Task2Status.DONE -> {
+                if (entry.runId == serverTestDownloadRunId) {
+                    serverTestDownloadRunId = null
+                    _uiState.update { it.copy(downloadTaskRunId = null, downloadTaskEntry = null) }
+                    startServerTestAfterDownload()
+                    return
+                }
                 val state = _uiState.value
                 val pack = state.loadedModpack
                 if (pack?.modloader == ModLoader.Fabric) {
@@ -1319,10 +1362,12 @@ class ModpackUploadViewModel(
             }
 
             Task2Status.CANCELLED -> {
+                if (entry.runId == serverTestDownloadRunId) serverTestDownloadRunId = null
                 _uiState.update { it.copy(downloadTaskRunId = null, downloadTaskEntry = null) }
             }
 
             Task2Status.FAILED -> {
+                if (entry.runId == serverTestDownloadRunId) serverTestDownloadRunId = null
                 _uiState.update {
                     it.copy(
                         downloadTaskRunId = null,

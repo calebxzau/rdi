@@ -39,6 +39,7 @@ fun ModpackDownloadMethodDialog(
 ) {
     val scope = rememberCoroutineScope()
     var showFriendTransferTodo by remember(packName, packVer) { mutableStateOf(false) }
+    var showGroupFileGuide by remember(packName, packVer) { mutableStateOf(false) }
     var includeClientExtras by remember(packName, packVer) { mutableStateOf(false) }
     val packTitle = listOf(packName, packVer).filter(String::isNotBlank).joinToString(" ")
 
@@ -93,6 +94,31 @@ fun ModpackDownloadMethodDialog(
         return
     }
 
+    if (showGroupFileGuide) {
+        AlertDialog(
+            onDismissRequest = onDismiss,
+            title = { Text("从群文件下载") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text("1.打开rdi群文件")
+                    Text("2.点击热门包")
+                    Text("3.下载想玩的")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = onDismiss) {
+                    Text("取消")
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = ::importRdiModpack) {
+                    Text("4.点此导入")
+                }
+            }
+        )
+        return
+    }
+
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("选择下载方式") },
@@ -119,8 +145,13 @@ fun ModpackDownloadMethodDialog(
             }
         },
         confirmButton = {
-            TextButton(onClick = { onDirectDownload(includeClientExtras) }) {
-                Text("2.直接下载(很慢)")
+            Row {
+                TextButton(onClick = { onDirectDownload(includeClientExtras) }) {
+                    Text("2.直接下载(很慢)")
+                }
+                TextButton(onClick = { showGroupFileGuide = true }) {
+                    Text("3.从群文件下载(非常快)")
+                }
             }
         },
         dismissButton = {

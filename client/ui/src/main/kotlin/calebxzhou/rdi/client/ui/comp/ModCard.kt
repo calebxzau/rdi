@@ -60,13 +60,9 @@ internal fun UiModCard(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text(
-                    text = mod.primaryName,
-                    color = MaterialTheme.colorScheme.onSurface,
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 16.sp,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
+                ContentCardTitle(
+                    name = mod.primaryName,
+                    version = mod.card?.version?.takeIf(String::isNotBlank),
                     modifier = Modifier.weight(1f)
                 )
                 if (trailingContent != null) {

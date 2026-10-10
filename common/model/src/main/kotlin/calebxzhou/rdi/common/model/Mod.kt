@@ -47,6 +47,8 @@ data class Mod(
         //curseforge的icon&mc百科的icon  哪个能用用哪个
         val iconUrls: List<String> =emptyList(),
         val side: Side = Side.BOTH,
+        //简化后的版本号 如0.1.2 未知则为null
+        val version: String? = null,
     ) {
     }
 }

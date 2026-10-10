@@ -64,7 +64,8 @@ private fun UiMod.toLocalCardVo(
 ): Mod.CardVo? {
     val iconBytes = localMeta?.iconBytes
     val introText = localMeta?.introText
-    if (metadata == null && iconBytes == null && introText == null) return null
+    val version = localMeta?.version
+    if (metadata == null && iconBytes == null && introText == null && version == null) return null
 
     return metadata?.toUiCardVo(localMeta, mod.side)?.copy(
         intro = metadata.intro?.takeIf(String::isNotBlank) ?: introText ?: "暂无介绍"
@@ -72,7 +73,8 @@ private fun UiMod.toLocalCardVo(
         name = mod.slug.ifBlank { mod.projectId },
         intro = introText ?: "暂无介绍",
         iconData = iconBytes,
-        side = mod.side
+        side = mod.side,
+        version = version,
     )
 }
 
@@ -146,7 +148,8 @@ internal fun CurseForgeModInfo.toUiCardVo(metadata: CatalogModMetadata?, modFile
         intro = introText,
         iconData = iconBytes,
         iconUrls = icons,
-        side = Mod.Side.BOTH
+        side = Mod.Side.BOTH,
+        version = localMeta?.version,
     )
 }
 
@@ -170,19 +173,23 @@ internal fun ModrinthProject.toUiCardVo(metadata: CatalogModMetadata?, modFile: 
         intro = introText,
         iconData = iconBytes,
         iconUrls = icons,
-        side = Mod.Side.BOTH
+        side = Mod.Side.BOTH,
+        version = localMeta?.version,
     )
 }
 
 internal data class LocalModCardMeta(
     val iconBytes: ByteArray? = null,
-    val introText: String? = null
+    val introText: String? = null,
+    val version: String? = null,
 )
 
 internal fun File.readLocalModCardMeta(): LocalModCardMeta = JarFile(this).use { jar ->
+    val meta = jar.readModMeta()
     LocalModCardMeta(
         iconBytes = jar.modLogo,
-        introText = jar.readModMeta()?.description?.takeIf { it.isNotBlank() }
+        introText = meta?.description?.takeIf { it.isNotBlank() },
+        version = jar.readDisplayVersion(meta?.version),
     )
 }
 
@@ -200,6 +207,7 @@ internal fun CatalogMod.toCardVo(
     iconData = localMeta?.iconBytes,
     iconUrls = (iconUrls + listOfNotNull(source?.iconUrl)).distinct(),
     side = side,
+    version = localMeta?.version,
 )
 
 /** Merge a remote catalog card while retaining local JAR metadata. */
@@ -210,6 +218,7 @@ internal fun Mod.CardVo.mergeLocalFirst(remote: Mod.CardVo): Mod.CardVo = remote
     iconData = iconData ?: remote.iconData,
     iconUrls = buildIconUrls(remote.iconUrls + iconUrls),
     side = side,
+    version = version ?: remote.version,
 )
 
 private fun CatalogModMetadata.toUiCardVo(
@@ -221,5 +230,6 @@ private fun CatalogModMetadata.toUiCardVo(
     intro = intro.orEmpty(),
     iconData = localMeta?.iconBytes,
     iconUrls = buildIconUrls(logoUrl),
-    side = side
+    side = side,
+    version = localMeta?.version,
 )

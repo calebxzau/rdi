@@ -10,7 +10,10 @@ import calebxzhou.rdi.common.model.McVersion
 import calebxzhou.rdi.common.model.Mod
 import calebxzhou.rdi.common.model.ModLoader
 import calebxzhou.rdi.common.model.Modpack
+import calebxzhou.rdi.common.model.Task2
 import calebxzhou.rdi.common.model.Task2Entry
+import calebxzhou.rdi.common.model.Task2Snapshot
+import calebxzhou.rdi.common.model.Task2Status
 import calebxzhou.rdi.common.service.validateIconUrlAddress
 import calebxzau.rdi.client.packproc.LoadedLocalModpack
 import calebxzau.rdi.client.packproc.LoadedServerPackResult
@@ -146,9 +149,9 @@ class ModpackUploadViewModelTest {
             directory.resolve(markerName).writeText("")
 
             val result = gateway.prepareServerPack(
-                directory = directory,
+                file = directory,
                 clientUiMods = emptyList(),
-                onProgress = { error("invalid server marker should reject before progress") },
+                onProgress = {},
             )
 
             val exception = assertIs<ModpackError>(result.exceptionOrNull())
@@ -708,6 +711,7 @@ class ModpackUploadViewModelTest {
                 categories = listOf(Modpack.Category.ADVENTURE),
             ),
             uiModsLoading = true,
+            uploadInitializationReady = true,
         )
 
         assertEquals("正在补充Mod详细信息", state.uploadDisabledReason)
@@ -732,6 +736,56 @@ class ModpackUploadViewModelTest {
         assertEquals("客户端测试", state.pendingMissingModDownload?.usage)
         assertEquals(listOf(missing), state.pendingMissingModDownload?.mods)
         assertEquals(ModpackTestStatus.NOT_RUN, state.clientTestStatus)
+    }
+
+    @Test
+    fun `server test downloads missing test server before starting`() = runBlocking {
+        val gateway = FakeModpackUploadGateway(
+            preparedClientPack = PreparedClientPack(testPack(), testPack().mods.toUiMods()),
+            testServerReady = false,
+        )
+        val viewModel = ModpackUploadViewModel(gateway)
+        viewModel.loadClientPack(File("client-pack.mrpack"))
+        awaitClientPackLoaded(viewModel)
+
+        viewModel.startServerTest()
+
+        val state = withTimeout(5_000) {
+            viewModel.uiState.filter { it.downloadTaskRunId == "server-1" }.first()
+        }
+        assertEquals(1, gateway.testServerQueueCount)
+        assertEquals(ModpackTestStatus.NOT_RUN, state.serverTestStatus)
+    }
+
+    @Test
+    fun `finished test server download rechecks server without downloading again`() = runBlocking {
+        val gateway = FakeModpackUploadGateway(
+            preparedClientPack = PreparedClientPack(testPack(), testPack().mods.toUiMods()),
+            testServerReady = false,
+        )
+        val viewModel = ModpackUploadViewModel(gateway)
+        viewModel.loadClientPack(File("client-pack.mrpack"))
+        awaitClientPackLoaded(viewModel)
+        viewModel.startServerTest()
+        withTimeout(5_000) {
+            viewModel.uiState.filter { it.downloadTaskRunId == "server-1" }.first()
+        }
+
+        gateway.taskEntries.value = listOf(
+            Task2Entry(
+                runId = "server-1",
+                task = Task2.Leaf(title = "server-1", id = "server-1") { _ -> },
+                snapshot = Task2Snapshot(status = Task2Status.DONE),
+            )
+        )
+
+        val state = withTimeout(5_000) {
+            viewModel.uiState.filter { it.errorMessage == "测试服务端下载后仍不完整，请重试" }.first()
+        }
+        assertNull(state.downloadTaskRunId)
+        assertEquals(1, gateway.testServerQueueCount)
+        assertEquals(2, gateway.testServerReadyChecks)
+        assertEquals(ModpackTestStatus.NOT_RUN, state.serverTestStatus)
     }
 
     @Test
@@ -833,8 +887,11 @@ class ModpackUploadViewModelTest {
         private val preflightResult: Result<Unit> = Result.success(Unit),
         private val preflightGate: CompletableDeferred<Result<Unit>>? = null,
         private val onPreflightStarted: (() -> Unit)? = null,
+        private val testServerReady: Boolean = true,
     ) : ModpackUploadGateway {
-        override val taskEntries: StateFlow<List<Task2Entry>> = MutableStateFlow(emptyList())
+        override val taskEntries = MutableStateFlow<List<Task2Entry>>(emptyList())
+        var testServerReadyChecks = 0
+        var testServerQueueCount = 0
         var submission: ModpackUploadSubmission? = null
         var preflightCount = 0
         var cleanupCalled = false
@@ -867,7 +924,7 @@ class ModpackUploadViewModelTest {
         override fun hydrateMods(mods: List<UiMod>) = flowOf(mods)
 
         override suspend fun prepareServerPack(
-            directory: File,
+            file: File,
             clientUiMods: List<UiMod>,
             onProgress: (calebxzhou.rdi.common.model.LoadProgress) -> Unit,
         ): Result<PreparedServerPack> = preparedServerPack?.let { Result.success(it) }
@@ -880,7 +937,15 @@ class ModpackUploadViewModelTest {
 
         override fun queueMissingModDownload(mods: List<Mod>): Result<String> = Result.success("download-1")
 
-        override fun queueTestServer(pack: LoadedLocalModpack): Result<String> = Result.success("server-1")
+        override suspend fun isTestServerReady(pack: LoadedLocalModpack): Result<Boolean> {
+            testServerReadyChecks++
+            return Result.success(testServerReady)
+        }
+
+        override fun queueTestServer(pack: LoadedLocalModpack): Result<String> {
+            testServerQueueCount++
+            return Result.success("server-1")
+        }
 
         override fun queueUpload(submission: ModpackUploadSubmission): Result<String> {
             this.submission = submission

@@ -10,8 +10,10 @@ import calebxzhou.rdi.common.model.Mod
 import calebxzhou.rdi.common.util.sha1
 import kotlinx.coroutines.runBlocking
 import java.nio.file.Files
+import java.util.jar.Attributes
 import java.util.jar.JarEntry
 import java.util.jar.JarOutputStream
+import java.util.jar.Manifest
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
@@ -144,6 +146,61 @@ class UiModCardMappingTest {
         assertEquals("Catalog intro", cards.getValue("project-miss").intro)
     }
 
+    @Test
+    fun `local first merge keeps jar version over remote version`() {
+        val merged = Mod.CardVo(name = "local", version = "1.2.3")
+            .mergeLocalFirst(Mod.CardVo(name = "remote", version = "9.9.9"))
+
+        assertEquals("1.2.3", merged.version)
+        val remoteOnly = Mod.CardVo(name = "local")
+            .mergeLocalFirst(Mod.CardVo(name = "remote", version = "9.9.9"))
+        assertEquals("9.9.9", remoteOnly.version)
+    }
+
+    @Test
+    fun `local card reads simplified version from fabric metadata`() = runBlocking {
+        val cacheRoot = Files.createTempDirectory("rdi-ui-card-cache-version")
+        val jarBytes = jarWithEntries(
+            "fabric.mod.json" to """{"id":"example","version":"0.5.1+mc1.20.1"}""".toByteArray(),
+        )
+        val hash = sha1(jarBytes)
+        Files.write(cacheRoot.resolve("$hash.sha1"), jarBytes)
+
+        val card = testMod(hash).toUiMod().toLocalCardVo(
+            metadata = null,
+            contentStore = ClientContentStore(cacheRoot)
+        )
+
+        assertEquals("0.5.1", assertNotNull(card).version)
+    }
+
+    @Test
+    fun `local card falls back to manifest version for jarVersion placeholder`() = runBlocking {
+        val cacheRoot = Files.createTempDirectory("rdi-ui-card-cache-manifest")
+        val manifest = Manifest().apply {
+            mainAttributes[Attributes.Name.MANIFEST_VERSION] = "1.0"
+            mainAttributes[Attributes.Name.IMPLEMENTATION_VERSION] = "1.20.1-forge-15.2.0.27"
+        }
+        val modsToml = """
+            modLoader="javafml"
+            loaderVersion="[47,)"
+            license="MIT"
+            [[mods]]
+            modId="example"
+            version="${'$'}{file.jarVersion}"
+        """.trimIndent()
+        val jarBytes = jarWithEntries("META-INF/mods.toml" to modsToml.toByteArray(), manifest = manifest)
+        val hash = sha1(jarBytes)
+        Files.write(cacheRoot.resolve("$hash.sha1"), jarBytes)
+
+        val card = testMod(hash).toUiMod().toLocalCardVo(
+            metadata = null,
+            contentStore = ClientContentStore(cacheRoot)
+        )
+
+        assertEquals("15.2.0.27", assertNotNull(card).version)
+    }
+
     private fun testMod(hash: String) = Mod(
         platform = "mr",
         projectId = "project",
@@ -158,6 +215,19 @@ class UiModCardMappingTest {
             jar.putNextEntry(JarEntry("icon.png"))
             jar.write(icon)
             jar.closeEntry()
+        }
+        return output.toByteArray()
+    }
+
+    private fun jarWithEntries(vararg entries: Pair<String, ByteArray>, manifest: Manifest? = null): ByteArray {
+        val output = java.io.ByteArrayOutputStream()
+        val jar = if (manifest != null) JarOutputStream(output, manifest) else JarOutputStream(output)
+        jar.use {
+            entries.forEach { (name, bytes) ->
+                it.putNextEntry(JarEntry(name))
+                it.write(bytes)
+                it.closeEntry()
+            }
         }
         return output.toByteArray()
     }

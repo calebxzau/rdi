@@ -58,7 +58,10 @@ private fun ModpackArchiveFile.toContentItem(
 ): ContentGridItem.ContentItem {
     val source = resolved?.mod?.sourceFor(resolved.file)
     val card = resolved?.mod?.toCardVo(source)?.let { remote ->
-        remote.copy(iconUrls = (remote.iconUrls + iconUrls).distinct())
+        remote.copy(
+            iconUrls = (remote.iconUrls + iconUrls).distinct(),
+            version = simplifyModVersion(resolved.file.versionNumber),
+        )
     }
     return ContentGridItem.ContentItem(
         key = key,
@@ -150,6 +153,7 @@ private fun ResolvedArchiveMod.toUiMod(downloadUrls: List<String>): UiMod? {
             intro = mod.summary,
             iconUrls = mod.iconUrls,
             side = legacy.side,
+            version = simplifyModVersion(file.versionNumber),
         ),
     )
 }

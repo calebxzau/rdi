@@ -19,6 +19,10 @@ import calebxzhou.rdi.common.model.CurseForgeFileHash
 import calebxzhou.rdi.common.model.CurseForgeModInfo
 import calebxzhou.rdi.common.service.murmur2
 import calebxzhou.rdi.common.util.sha1
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
@@ -63,7 +67,7 @@ class PackModelsTest {
                 archive,
                 mapOf(
                     "modrinth.index.json" to """
-                        {"formatVersion":1,"game":"minecraft","versionId":"fabric-test","name":"Fabric pack","files":[],"dependencies":{"minecraft":"1.20.1","fabric-loader":"0.16.10","fabric-api":"0.92.2+1.20.1"}}
+                        {"formatVersion":1,"game":"minecraft","versionId":"fabric-test","name":"Fabric pack","files":[],"dependencies":{"minecraft":"1.21.1","fabric-loader":"0.16.10"}}
                     """.trimIndent().toByteArray(),
                     "overrides/" to byteArrayOf(),
                 ),
@@ -73,7 +77,7 @@ class PackModelsTest {
                 .loadLocalModpack(noCallModCatalog(), archive, onProgress = {})
 
             assertTrue(result.isFailure)
-            assertTrue(result.exceptionOrNull()?.message.orEmpty().contains("Minecraft1.20.1／Fabric"))
+            assertTrue(result.exceptionOrNull()?.message.orEmpty().contains("Minecraft1.21.1／Fabric"))
             assertTrue(root.resolve("work").listFiles().orEmpty().none { it.name.startsWith("pack-") })
         } finally {
             root.deleteRecursively()
@@ -89,7 +93,7 @@ class PackModelsTest {
                 archive,
                 mapOf(
                     "manifest.json" to """
-                        {"name":"Fabric pack","version":"1.0","minecraft":{"version":"1.20.1","modLoaders":[{"id":"forge-47.2.0"},{"id":"fabric-0.16.10","primary":true}]},"files":[],"overrides":"overrides"}
+                        {"name":"Fabric pack","version":"1.0","minecraft":{"version":"1.21.1","modLoaders":[{"id":"neoforge-21.1.77"},{"id":"fabric-0.16.10","primary":true}]},"files":[],"overrides":"overrides"}
                     """.trimIndent().toByteArray(),
                     "overrides/" to byteArrayOf(),
                 ),
@@ -99,7 +103,7 @@ class PackModelsTest {
                 .loadLocalModpack(noCallModCatalog(), archive, onProgress = {})
 
             assertTrue(result.isFailure)
-            assertTrue(result.exceptionOrNull()?.message.orEmpty().contains("Minecraft1.20.1／Fabric"))
+            assertTrue(result.exceptionOrNull()?.message.orEmpty().contains("Minecraft1.21.1／Fabric"))
             assertTrue(root.resolve("work").listFiles().orEmpty().none { it.name.startsWith("pack-") })
         } finally {
             root.deleteRecursively()
@@ -109,9 +113,10 @@ class PackModelsTest {
     @Test
     fun `upload runtime guard rejects unsupported loader even when upload tests are skipped`() {
         val error = assertFailsWith<Exception> {
-            requireModpackUploadRuntime(McVersion.V201, ModLoader.Fabric)
+            requireModpackUploadRuntime(McVersion.V211, ModLoader.Fabric)
         }
-        assertTrue(error.message.orEmpty().contains("Minecraft1.20.1／Fabric"))
+        assertTrue(error.message.orEmpty().contains("Minecraft1.21.1／Fabric"))
+        requireModpackUploadRuntime(McVersion.V201, ModLoader.Fabric)
     }
 
     @Test
@@ -141,6 +146,50 @@ class PackModelsTest {
             assertTrue(result.isFailure)
             assertTrue(workDir.listFiles().orEmpty().none { it.name.startsWith("pack-") })
             assertFalse(workDir.resolve("escape.txt").exists())
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `cancelled local archive extraction removes temporary pack directory`() = runBlocking {
+        val root = Files.createTempDirectory("pack-proc-extract-cancel").toFile()
+        try {
+            val archive = root.resolve("cancel.zip")
+            archive.outputStream().use { fileOutput ->
+                ZipOutputStream(fileOutput).use { zip ->
+                    zip.putNextEntry(ZipEntry("modrinth.index.json"))
+                    zip.write("{}".toByteArray())
+                    zip.closeEntry()
+                    repeat(5) { index ->
+                        zip.putNextEntry(ZipEntry("overrides/config/file${index}.txt"))
+                        zip.write("content".toByteArray())
+                        zip.closeEntry()
+                    }
+                }
+            }
+            val workDir = root.resolve("work")
+            val processor = ModpackProcessor(PackProcessingPaths(workDir))
+            var extractedBeforeCancel = 0
+            lateinit var loadJob: Job
+            loadJob = launch(Dispatchers.IO, start = CoroutineStart.LAZY) {
+                processor.loadLocalModpack(
+                    modCatalog = noCallModCatalog(),
+                    file = archive,
+                    onProgress = { progress ->
+                        if (progress is LoadProgress.Percent && progress.fraction < 1f) {
+                            extractedBeforeCancel++
+                            loadJob.cancel()
+                        }
+                    },
+                )
+            }
+            loadJob.start()
+            loadJob.join()
+
+            assertTrue(loadJob.isCancelled)
+            assertEquals(1, extractedBeforeCancel)
+            assertTrue(workDir.listFiles().orEmpty().none { it.name.startsWith("pack-") })
         } finally {
             root.deleteRecursively()
         }
@@ -697,21 +746,21 @@ class PackModelsTest {
     }
 
     @Test
-    fun `unmatched resourcepack size uses strict five mebibyte boundary as one pack`() = runBlocking {
+    fun `unmatched resourcepack size uses strict size limit boundary as one pack`() = runBlocking {
         val root = Files.createTempDirectory("pack-proc-resourcepack-boundary").toFile()
         try {
             val exact = root.resolve("resourcepacks/exact/assets/first.bin")
                 .also { it.parentFile.mkdirs() }
-            RandomAccessFile(exact, "rw").use { it.setLength(5L * 1024L * 1024L) }
+            RandomAccessFile(exact, "rw").use { it.setLength(RESOURCEPACK_MAX_SIZE_BYTES) }
             val oversizedFirst = root.resolve("overrides/resourcepacks/oversized/assets/first.bin")
                 .also { it.parentFile.mkdirs() }
             val oversizedSecond = root.resolve("overrides/resourcepacks/oversized/assets/second.bin")
-            RandomAccessFile(oversizedFirst, "rw").use { it.setLength(2L * 1024L * 1024L) }
-            RandomAccessFile(oversizedSecond, "rw").use { it.setLength(3L * 1024L * 1024L + 1L) }
+            RandomAccessFile(oversizedFirst, "rw").use { it.setLength(RESOURCEPACK_MAX_SIZE_BYTES / 2) }
+            RandomAccessFile(oversizedSecond, "rw").use { it.setLength(RESOURCEPACK_MAX_SIZE_BYTES - RESOURCEPACK_MAX_SIZE_BYTES / 2 + 1L) }
             val exactZip = root.resolve("resourcepacks/exact.zip")
-            writeStoredZipOfSize(exactZip, 5L * 1024L * 1024L)
+            writeStoredZipOfSize(exactZip, RESOURCEPACK_MAX_SIZE_BYTES)
             val oversizedZip = root.resolve("overrides/resourcepacks/oversized.zip")
-            writeStoredZipOfSize(oversizedZip, 5L * 1024L * 1024L + 1L)
+            writeStoredZipOfSize(oversizedZip, RESOURCEPACK_MAX_SIZE_BYTES + 1L)
             root.resolve("shaderpacks/unmatched/assets/shader.properties")
                 .also { it.parentFile.mkdirs() }
                 .writeText("drop")
@@ -735,20 +784,20 @@ class PackModelsTest {
         val root = Files.createTempDirectory("pack-proc-resourcepack-reverse-boundary").toFile()
         try {
             val overrideExactZip = root.resolve("overrides/resourcepacks/override-exact.zip")
-            writeStoredZipOfSize(overrideExactZip, 5L * 1024L * 1024L)
+            writeStoredZipOfSize(overrideExactZip, RESOURCEPACK_MAX_SIZE_BYTES)
             val directOverZip = root.resolve("resourcepacks/direct-over.zip")
-            writeStoredZipOfSize(directOverZip, 5L * 1024L * 1024L + 1L)
+            writeStoredZipOfSize(directOverZip, RESOURCEPACK_MAX_SIZE_BYTES + 1L)
             val directUnderZip = root.resolve("resourcepacks/direct-under.zip")
-            writeStoredZipOfSize(directUnderZip, 5L * 1024L * 1024L - 1L)
+            writeStoredZipOfSize(directUnderZip, RESOURCEPACK_MAX_SIZE_BYTES - 1L)
 
             val overrideExactFile = root.resolve("overrides/resourcepacks/override-exact-dir/assets/payload.bin")
                 .also { it.parentFile.mkdirs() }
-            RandomAccessFile(overrideExactFile, "rw").use { it.setLength(5L * 1024L * 1024L) }
+            RandomAccessFile(overrideExactFile, "rw").use { it.setLength(RESOURCEPACK_MAX_SIZE_BYTES) }
             val directOverFirst = root.resolve("resourcepacks/direct-over-dir/assets/first.bin")
                 .also { it.parentFile.mkdirs() }
             val directOverSecond = root.resolve("resourcepacks/direct-over-dir/assets/second.bin")
-            RandomAccessFile(directOverFirst, "rw").use { it.setLength(2L * 1024L * 1024L) }
-            RandomAccessFile(directOverSecond, "rw").use { it.setLength(3L * 1024L * 1024L + 1L) }
+            RandomAccessFile(directOverFirst, "rw").use { it.setLength(RESOURCEPACK_MAX_SIZE_BYTES / 2) }
+            RandomAccessFile(directOverSecond, "rw").use { it.setLength(RESOURCEPACK_MAX_SIZE_BYTES - RESOURCEPACK_MAX_SIZE_BYTES / 2 + 1L) }
 
             val archive = ModpackProcessor(PackProcessingPaths(root.resolve("work")))
                 .buildUploadArchive(root, "resourcepack-reverse-boundary")

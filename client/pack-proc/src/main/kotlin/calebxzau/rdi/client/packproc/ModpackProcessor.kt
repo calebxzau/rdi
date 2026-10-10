@@ -38,6 +38,7 @@ import calebxzhou.rdi.common.service.murmur2
 import kotlinx.coroutines.*
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
+import kotlin.coroutines.CoroutineContext
 import java.io.BufferedInputStream
 import java.io.ByteArrayOutputStream
 import java.io.File
@@ -188,6 +189,43 @@ fun requireModpackUploadRuntime(mcVersion: McVersion, modLoader: ModLoader) {
 
 // ==================== Upload-only code ====================
 
+internal const val RESOURCEPACK_MAX_SIZE_BYTES = 50L * 1024L * 1024L
+
+/** Picture, audio and video file extensions, compared in lowercase. */
+val MEDIA_FILE_EXTENSIONS = setOf(
+    "ogg",
+    "wav",
+    "mp3",
+    "flac",
+    "aac",
+    "m4a",
+    "opus",
+    "wma",
+    "mp4",
+    "mov",
+    "avi",
+    "mkv",
+    "webm",
+    "m4v",
+    "mpeg",
+    "mpg",
+    "flv",
+    "wmv",
+    "png",
+    "jpg",
+    "jpeg",
+    "webp",
+    "gif",
+    "bmp",
+    "tif",
+    "tiff",
+    "avif",
+    "ico",
+    "svg",
+    "psd",
+    "tga",
+)
+
 class ModpackProcessor(
     private val paths: PackProcessingPaths,
     private val embeddedClientExtraMatcher: (suspend (File, List<Content>) -> List<EmbeddedClientExtraSource>)? = null,
@@ -228,7 +266,8 @@ class ModpackProcessor(
         var payload: UploadPayload? = null
         runCatching {
             onProgress.phase("开始读取整合包")
-            payload = parseUploadPayload(file, onProgress).getOrThrow()
+            payload = parseUploadPayload(file, coroutineContext, onProgress).getOrThrow()
+            ensureActive()
             val parsedPayload = payload
             requireModpackUploadRuntime(parsedPayload.mcVersion, parsedPayload.modloader)
             onProgress.phase(
@@ -252,6 +291,7 @@ class ModpackProcessor(
                 payload = parsedPayload,
                 onProgress = onProgress
             ).getOrThrow()
+            ensureActive()
             onProgress.phase("Mod列表整理完成，共${mods.size}个，准备进入编辑")
             LoadedLocalModpack(
                 sourceType = parsedPayload.sourceType,
@@ -279,6 +319,7 @@ class ModpackProcessor(
 
     private fun parseUploadPayload(
         file: File,
+        context: CoroutineContext,
         onProgress: (LoadProgress) -> Unit
     ): Result<UploadPayload> {
         var prepared: PreparedModpack? = null
@@ -287,8 +328,9 @@ class ModpackProcessor(
             onProgress(LoadProgress.Phase("快速检查整合包结构"))
             val preflight = preflightPackStructure(file)
             prepared = runCatching {
-                prepareModpackSource(file, onProgress)
+                prepareModpackSource(file, context, onProgress)
             }.getOrElse { e ->
+                if (e is CancellationException) throw e
                 throw ModpackError("读取整合包文件失败", e)
             }
             val preparedPack = prepared
@@ -491,17 +533,18 @@ class ModpackProcessor(
     ): Result<LoadedServerPackResult> = withContext(Dispatchers.IO) {
         paths.workDir.mkdirs()
         runCatching {
-            onProgress.phase("开始读取服务端目录")
-            if (!file.exists() || !file.isDirectory) {
-                throw ModpackError("请选择服务端根目录")
+            val rootDir = prepareServerPackDirectory(file, paths.workDir, onProgress)
+            if (listOf("spigot.yml", "arclight.conf", "bukkit.yml").any { rootDir.resolve(it).isFile }) {
+                throw ModpackError("请选择正确安装了模组载入器的服务端")
             }
-            val modsDir = file.resolve("mods")
+            onProgress.phase("开始读取服务端包")
+            val modsDir = rootDir.resolve("mods")
             if (!modsDir.exists() || !modsDir.isDirectory) {
-                throw ModpackError("请选择服务端根目录，目录下应有mods文件夹")
+                throw ModpackError("服务端包中应有mods文件夹")
             }
-            val modFileSelection = collectServerPackModFiles(file)
+            val modFileSelection = collectServerPackModFiles(rootDir)
             if (modFileSelection.selected.isEmpty()) {
-                throw ModpackError("请选择服务端根目录，目录下应有mods文件夹")
+                throw ModpackError("服务端包的mods文件夹中没有可用的Mod文件")
             }
             val clientModsByModId = buildClientModsByModId(clientMods, clientModSources, loader)
             val matchedByModId = matchServerModsByClientModId(
@@ -531,7 +574,7 @@ class ModpackProcessor(
                 if (loader != ModLoader.Fabric) ModService.run { it.postProcessModSides() }
             }
             val serverExtraSelection = collectServerPackExtraFiles(
-                rootDir = file,
+                rootDir = rootDir,
                 matchedModFiles = matchedFiles
             )
             val embeddedModSources = stageMatchedEmbeddedMods(finalMatchedMods)
@@ -938,17 +981,25 @@ class ModpackProcessor(
         }
     }
 
-    private fun prepareModpackSource(input: File, onProgress: (LoadProgress) -> Unit): PreparedModpack {
+    private fun prepareModpackSource(
+        input: File,
+        context: CoroutineContext,
+        onProgress: (LoadProgress) -> Unit,
+    ): PreparedModpack {
+        context.ensureActive()
         val tempDir = Files.createTempDirectory(paths.workDir.toPath(), "pack-").toFile()
         return try {
             if (input.isDirectory) {
                 onProgress(LoadProgress.Phase("正在复制整合包目录"))
                 input.copyRecursively(tempDir, overwrite = true)
+                context.ensureActive()
                 onProgress(LoadProgress.Percent("整合包目录复制完成", 1f))
                 PreparedModpack(tempDir, input.name)
             } else {
                 onProgress(LoadProgress.Phase("正在解压整合包"))
                 extractArchiveToDir(input, tempDir) { done, total, _ ->
+                    // Checked per extracted file so leaving the screen stops a large pack quickly.
+                    context.ensureActive()
                     val fraction = done.toFloat() / total.coerceAtLeast(1)
                     onProgress(LoadProgress.Percent("正在解压整合包(${done}/$total)", fraction))
                 }
@@ -1231,7 +1282,7 @@ class ModpackProcessor(
         if (relativeLower.startsWith("logs/") || relativeLower.startsWith("crash-reports/")) return true
         if (fileNameLower == ".ds_store" || fileNameLower == "desktop.ini") return true
         if (file.extension.equals("db", ignoreCase = true)) return true
-        if (file.extension.lowercase() in serverExtraMediaExtensions) return true
+        if (file.extension.lowercase() in MEDIA_FILE_EXTENSIONS) return true
         val isInsideMods = relativeLower.startsWith("mods/")
         if (!isInsideMods && file.extension.equals("jar", ignoreCase = true)) return true
         if (!isInsideMods && file.extension.equals("exe", ignoreCase = true)) return true
@@ -1301,39 +1352,6 @@ class ModpackProcessor(
         }
         return left.compareTo(right)
     }
-
-    private val serverExtraMediaExtensions = setOf(
-        "ogg",
-        "wav",
-        "mp3",
-        "flac",
-        "aac",
-        "m4a",
-        "opus",
-        "wma",
-        "mp4",
-        "mov",
-        "avi",
-        "mkv",
-        "webm",
-        "m4v",
-        "mpeg",
-        "mpg",
-        "flv",
-        "wmv",
-        "png",
-        "jpg",
-        "jpeg",
-        "webp",
-        "gif",
-        "bmp",
-        "tif",
-        "tiff",
-        "avif",
-        "ico",
-        "svg",
-        "psd",
-    )
 
     private fun hasOverridesDir(rootDir: File): Boolean {
         return rootDir.walkTopDown().any { it.isDirectory && it.name.equals("overrides", ignoreCase = true) }
@@ -1999,7 +2017,6 @@ class ModpackProcessor(
     )
     private val allowedQuestLangFiles = setOf("en_us.snbt", "zh_cn.snbt")
     private  val QUEST_LANG_PREFIX = "config/ftbquests/quests/lang/"
-    private val RESOURCEPACK_MAX_SIZE_BYTES = 50L * 1024L * 1024L
     private fun isQuestLangEntryDisallowed(relativeLower: String, isDirectory: Boolean): Boolean {
         if (!relativeLower.startsWith(QUEST_LANG_PREFIX)) return false
         val remainder = relativeLower.removePrefix(QUEST_LANG_PREFIX)

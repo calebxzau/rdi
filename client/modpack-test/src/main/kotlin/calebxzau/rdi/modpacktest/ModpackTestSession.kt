@@ -11,6 +11,7 @@ import calebxzhou.rdi.common.util.hardLinkDirectory
 import calebxzhou.rdi.common.util.hardLinkFile
 import calebxzhou.rdi.common.util.sha1
 import calebxzau.rdi.client.packproc.LoadedLocalModpack
+import calebxzau.rdi.client.packproc.MEDIA_FILE_EXTENSIONS
 import calebxzau.rdi.mcinstall.writeMinecraftOptions
 import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.CancellationException
@@ -585,7 +586,7 @@ private fun createClientTestBaseDir(loadedModpack: LoadedLocalModpack, workDir: 
 private fun copyDirectClientExtraRoots(sourceDir: File, targetDir: File) {
     listOf("resourcepacks", "shaderpacks").forEach { rootName ->
         val source = sourceDir.resolve(rootName)
-        if (source.exists()) copyFileOrDirectory(source, targetDir.resolve(rootName))
+        if (source.exists()) copyFileOrDirectory(source, targetDir.resolve(rootName), targetDir)
     }
 }
 
@@ -638,37 +639,72 @@ private fun copyTestPackBaseContent(
         if (child.name.equals("server", ignoreCase = true)) return@forEach
         if (child.name.equals("manifest.json", ignoreCase = true)) return@forEach
         if (child.name.equals("modrinth.index.json", ignoreCase = true)) return@forEach
-        copyFileOrDirectory(child, targetDir.resolve(child.name), skipModsDirectories)
+        copyFileOrDirectory(child, targetDir.resolve(child.name), targetDir, skipModsDirectories)
     }
     val overridesDir = sourceDir.resolve("overrides")
     if (overridesDir.exists() && overridesDir.isDirectory) {
-        copyDirectoryContent(overridesDir, targetDir, skipModsDirectories)
+        copyDirectoryContent(overridesDir, targetDir, targetDir, skipModsDirectories)
     }
     if (includeClientOverrides) {
         val clientOverridesDir = sourceDir.resolve("client-overrides")
         if (clientOverridesDir.exists() && clientOverridesDir.isDirectory) {
-            copyDirectoryContent(clientOverridesDir, targetDir, skipModsDirectories)
+            copyDirectoryContent(clientOverridesDir, targetDir, targetDir, skipModsDirectories)
         }
     }
 }
 
-private fun copyDirectoryContent(source: File, target: File, skipModsDirectories: Boolean = false) {
+private fun copyDirectoryContent(
+    source: File,
+    target: File,
+    targetRoot: File,
+    skipModsDirectories: Boolean = false,
+) {
     source.listFiles()?.forEach { child ->
         if (skipModsDirectories && child.isDirectory && child.name.equals("mods", ignoreCase = true)) return@forEach
         if (isClientOnlyMarkedModFile(child)) return@forEach
-        copyFileOrDirectory(child, target.resolve(child.name), skipModsDirectories)
+        copyFileOrDirectory(child, target.resolve(child.name), targetRoot, skipModsDirectories)
     }
 }
 
-private fun copyFileOrDirectory(source: File, target: File, skipModsDirectories: Boolean = false) {
+private fun copyFileOrDirectory(
+    source: File,
+    target: File,
+    targetRoot: File,
+    skipModsDirectories: Boolean = false,
+) {
     if (source.isDirectory) {
         if (!target.exists()) target.mkdirs()
-        copyDirectoryContent(source, target, skipModsDirectories)
+        copyDirectoryContent(source, target, targetRoot, skipModsDirectories)
         return
     }
     target.parentFile?.mkdirs()
+    if (shouldHardLinkTestContent(target.relativeTo(targetRoot).invariantSeparatorsPath)) {
+        hardLinkFile(source, target).onFailure { cause ->
+            testContentLogger.debug(cause) { "硬链接测试文件失败，改为复制: ${target.absolutePath}" }
+            Files.copy(source.toPath(), target.toPath(), StandardCopyOption.REPLACE_EXISTING)
+        }
+        return
+    }
     Files.copy(source.toPath(), target.toPath(), StandardCopyOption.REPLACE_EXISTING)
 }
+
+/**
+ * Media files and resource/shader packs are never rewritten by the game, so tests can share them with the
+ * extracted pack. Everything else is copied because mods rewrite configs in place, and a hard link would leak
+ * those edits into the pack that gets uploaded. Shader settings (`.txt` files under shaderpacks) are written by Iris/Oculus.
+ */
+internal fun shouldHardLinkTestContent(relativePath: String): Boolean {
+    val normalized = relativePath.replace('\\', '/').trimStart('/').lowercase()
+    val extension = normalized.substringAfterLast('/').substringAfterLast('.', "")
+    return when {
+        extension in MEDIA_FILE_EXTENSIONS -> true
+        normalized.startsWith("resourcepacks/") -> true
+        normalized.startsWith("shaderpacks/") -> extension != "txt"
+        else -> false
+    }
+}
+
+private val testContentLogger = KotlinLogging.logger {}
 
 private fun stageSourceModFiles(
     modsDir: File,
@@ -719,7 +755,7 @@ private fun stageSourceModDirectories(modsDir: File, sourceDir: File) {
         sourceModsDir.listFiles()
             ?.asSequence()
             ?.filter(File::isDirectory)
-            ?.forEach { copyFileOrDirectory(it, modsDir.resolve(it.name)) }
+            ?.forEach { copyFileOrDirectory(it, modsDir.resolve(it.name), modsDir.parentFile) }
     }
 }
 
@@ -729,7 +765,7 @@ private fun stageClientOverrideModDirectories(modsDir: File, sourceDir: File) {
     sourceModsDir.listFiles()
         ?.asSequence()
         ?.filter(File::isDirectory)
-        ?.forEach { copyFileOrDirectory(it, modsDir.resolve(it.name)) }
+        ?.forEach { copyFileOrDirectory(it, modsDir.resolve(it.name), modsDir.parentFile) }
 }
 
 private fun findMatchedSourceMod(source: File, mods: List<Mod>): Mod? {
