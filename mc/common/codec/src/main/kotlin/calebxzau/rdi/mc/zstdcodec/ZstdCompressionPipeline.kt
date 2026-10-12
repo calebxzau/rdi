@@ -18,8 +18,9 @@ import io.netty.channel.local.LocalServerChannel
  */
 object ZstdCompressionPipeline {
     /**
-     * Mixin 0.8.5 prepends later HEAD injections. Apply after Krypton's priority-1000 mixin
-     * so our cancelling callback executes first; a higher priority would execute last.
+     * Mixin applies lower priorities first, and an earlier HEAD callback runs before a later one
+     * (verified on Mixin 0.8.5 and 0.8.7). Staying below Krypton's default 1000 lets our cancelling
+     * callback install the Zstd handlers before Krypton can; a higher value would run after it.
      */
     const val SETUP_MIXIN_PRIORITY: Int = 900
 
@@ -180,6 +181,20 @@ object ZstdCompressionPipeline {
         decoder.requestStreamReady(ready)
         return true
     }
+
+    /**
+     * Lets the encoder of this server connection name the packets the client holds, see
+     * [PersistentPacketFormat]. Attach it during login, before Play starts, and only after the client
+     * answered the query; the encoder reads it when it meets a persistent packet.
+     */
+    @JvmStatic
+    fun attachPersistentPackets(channel: Channel, session: PersistentPacketServerSession) =
+        PersistentPacketSessions.attach(channel, session)
+
+    /** Lets the decoder of this client connection restore persistent packets; attach it before answering the query. */
+    @JvmStatic
+    fun attachPersistentPackets(channel: Channel, session: PersistentPacketClientSession) =
+        PersistentPacketSessions.attach(channel, session)
 
     /** Returns whether this channel has any compression encoder, RDI or not. */
     @JvmStatic

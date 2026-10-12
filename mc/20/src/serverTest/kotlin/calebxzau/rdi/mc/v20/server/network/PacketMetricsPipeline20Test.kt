@@ -6,6 +6,7 @@ import calebxzau.rdi.mc.zstdcodec.ZstdBatchObserver
 import calebxzau.rdi.mc.zstdcodec.ZstdBatchPolicy
 import calebxzau.rdi.mc.zstdcodec.ZstdPacketIdentity
 import calebxzau.rdi.mc.zstdcodec.ZstdBatchSample
+import calebxzau.rdi.mc.zstdcodec.ZstdBatchFrameKind
 import calebxzau.rdi.mc.zstdcodec.PacketCaptureRecorder
 import com.github.luben.zstd.ZstdInputStream
 import java.io.DataInputStream
@@ -18,6 +19,10 @@ import net.minecraft.resources.ResourceLocation
 import net.minecraft.network.protocol.game.ClientboundCustomPayloadPacket
 import net.minecraft.network.protocol.game.ClientboundUpdateAttributesPacket
 import net.minecraft.network.protocol.game.ClientboundKeepAlivePacket
+import net.minecraft.network.protocol.game.ClientboundMoveEntityPacket
+import net.minecraft.network.protocol.game.ClientboundSetEntityDataPacket
+import net.minecraft.network.protocol.game.ClientboundSetEntityMotionPacket
+import net.minecraft.world.phys.Vec3
 import io.netty.buffer.ByteBuf
 import io.netty.buffer.Unpooled
 import io.netty.channel.ChannelHandlerContext
@@ -344,51 +349,100 @@ class PacketMetricsPipeline20Test {
 
     @Test
     fun `selective records bind metadata to bytes and ordinary packet drains earlier queue`(): Unit {
+        val harness = SelectiveHarness(entityBatching = true)
+        try {
+            harness.channel.writeOutbound(ClientboundUpdateAttributesPacket(1, emptyList()))
+            harness.channel.writeOutbound(ClientboundUpdateAttributesPacket(2, emptyList()))
+            assertEquals(listOf(ZstdBatchPolicy.OneTick, ZstdBatchPolicy.OneTick), harness.policies)
+            assertEquals(0, harness.frames.size)
+            harness.channel.writeOutbound(ClientboundKeepAlivePacket(33))
+            assertEquals(listOf(ZstdBatchPolicy.OneTick, ZstdBatchPolicy.OneTick, ZstdBatchPolicy.Immediate), harness.policies)
+            assertEquals(listOf("net.minecraft.network.protocol.game.ClientboundUpdateAttributesPacket",
+                "net.minecraft.network.protocol.game.ClientboundUpdateAttributesPacket",
+                "net.minecraft.network.protocol.game.ClientboundKeepAlivePacket"), harness.identities.map { it?.packetType })
+            assertEquals(3, harness.frames.sumOf { it.recordCount })
+            assertEquals(harness.originals.map { it.toList() }, harness.roundTrip().map { it.toList() })
+        } finally {
+            harness.close()
+        }
+    }
+
+    @Test
+    fun `entity tracking updates share one batch and keep their bytes and order`(): Unit {
+        val harness = SelectiveHarness(entityBatching = true)
+        try {
+            harness.channel.writeOutbound(ClientboundMoveEntityPacket.Pos(7, 12, -3, 40, true))
+            harness.channel.writeOutbound(ClientboundSetEntityMotionPacket(7, Vec3(0.1, 0.0, -0.2)))
+            harness.channel.writeOutbound(ClientboundSetEntityDataPacket(7, emptyList()))
+            harness.channel.writeOutbound(ClientboundMoveEntityPacket.PosRot(8, 1, 2, 3, 64, 0, false))
+            assertEquals(List(4) { ZstdBatchPolicy.OneTick }, harness.policies)
+            assertEquals(0, harness.frames.size)
+            harness.channel.writeOutbound(ClientboundKeepAlivePacket(34))
+            assertEquals(ZstdBatchPolicy.Immediate, harness.policies.last())
+            assertEquals(listOf(4, 1), harness.frames.map { it.recordCount })
+            assertTrue(harness.frames.first().frameKind != ZstdBatchFrameKind.Legacy)
+            assertEquals(harness.originals.map { it.toList() }, harness.roundTrip().map { it.toList() })
+        } finally {
+            harness.close()
+        }
+    }
+
+    @Test
+    fun `entity tracking updates send immediately when entity batching is off`(): Unit {
+        val harness = SelectiveHarness(entityBatching = false)
+        try {
+            harness.channel.writeOutbound(ClientboundMoveEntityPacket.Pos(7, 12, -3, 40, true))
+            harness.channel.writeOutbound(ClientboundSetEntityMotionPacket(7, Vec3(0.1, 0.0, -0.2)))
+            assertEquals(List(2) { ZstdBatchPolicy.Immediate }, harness.policies)
+            assertEquals(listOf(1, 1), harness.frames.map { it.recordCount })
+            assertEquals(harness.originals.map { it.toList() }, harness.roundTrip().map { it.toList() })
+        } finally {
+            harness.close()
+        }
+    }
+
+    /** A selective-batching connection that loops its own outbound frames back through the decoder. */
+    private class SelectiveHarness(entityBatching: Boolean) {
         val channel = EmbeddedChannel()
-        channel.freezeTime()
         val originals = mutableListOf<ByteArray>()
         val identities = mutableListOf<ZstdPacketIdentity?>()
         val policies = mutableListOf<ZstdBatchPolicy>()
         val frames = mutableListOf<ZstdBatchSample>()
-        channel.pipeline().addLast("splitter", ChannelInboundHandlerAdapter())
-        channel.pipeline().addLast("decoder", ChannelInboundHandlerAdapter())
-        channel.pipeline().addLast("prepender", ChannelOutboundHandlerAdapter())
-        channel.pipeline().addLast("encoder", object : MessageToMessageEncoder<Packet<*>>() {
-            override fun encode(ctx: ChannelHandlerContext, packet: Packet<*>, out: MutableList<Any>) {
-                // Vanilla PacketEncoder emits the allocated ByteBuf; FriendlyByteBuf is
-                // only its temporary writer facade. Netty touch() may unwrap that facade.
-                val bytes = ctx.alloc().buffer()
-                val writer = FriendlyByteBuf(bytes)
-                writer.writeVarInt(1)
-                packet.write(writer)
-                originals += ByteArray(bytes.readableBytes()).also { bytes.getBytes(bytes.readerIndex(), it) }
-                PacketMetricsPipeline20.encoded(ctx, packet, bytes)
-                out += bytes
-            }
-        })
-        ZstdCompressionPipeline.setup(channel, 16, true, MinecraftVarIntCodec20.INSTANCE)
-        PacketMetricsPipeline20.install(channel.pipeline()) { _, _, _ -> }
-        PacketMetricsPipeline20.configureBatching(channel, false, emptySet())
-        ZstdCompressionPipeline.setBatchObserver(channel, object : ZstdBatchObserver {
-            override fun recordEncoded(identity: ZstdPacketIdentity?, encodedBytes: Int, policy: ZstdBatchPolicy) {
-                identities += identity
-                policies += policy
-            }
-            override fun batchFlushed(sample: ZstdBatchSample) { frames += sample }
-        })
-        ZstdCompressionPipeline.setInboundBatching(channel, true)
-        ZstdCompressionPipeline.setOutboundBatching(channel, true)
-        try {
-            channel.writeOutbound(ClientboundUpdateAttributesPacket(1, emptyList()))
-            channel.writeOutbound(ClientboundUpdateAttributesPacket(2, emptyList()))
-            assertEquals(listOf(ZstdBatchPolicy.OneTick, ZstdBatchPolicy.OneTick), policies)
-            assertEquals(0, frames.size)
-            channel.writeOutbound(ClientboundKeepAlivePacket(33))
-            assertEquals(listOf(ZstdBatchPolicy.OneTick, ZstdBatchPolicy.OneTick, ZstdBatchPolicy.Immediate), policies)
-            assertEquals(listOf("net.minecraft.network.protocol.game.ClientboundUpdateAttributesPacket",
-                "net.minecraft.network.protocol.game.ClientboundUpdateAttributesPacket",
-                "net.minecraft.network.protocol.game.ClientboundKeepAlivePacket"), identities.map { it?.packetType })
-            assertEquals(3, frames.sumOf { it.recordCount })
+
+        init {
+            channel.freezeTime()
+            channel.pipeline().addLast("splitter", ChannelInboundHandlerAdapter())
+            channel.pipeline().addLast("decoder", ChannelInboundHandlerAdapter())
+            channel.pipeline().addLast("prepender", ChannelOutboundHandlerAdapter())
+            channel.pipeline().addLast("encoder", object : MessageToMessageEncoder<Packet<*>>() {
+                override fun encode(ctx: ChannelHandlerContext, packet: Packet<*>, out: MutableList<Any>) {
+                    // Vanilla PacketEncoder emits the allocated ByteBuf; FriendlyByteBuf is
+                    // only its temporary writer facade. Netty touch() may unwrap that facade.
+                    val bytes = ctx.alloc().buffer()
+                    val writer = FriendlyByteBuf(bytes)
+                    writer.writeVarInt(1)
+                    packet.write(writer)
+                    originals += ByteArray(bytes.readableBytes()).also { bytes.getBytes(bytes.readerIndex(), it) }
+                    PacketMetricsPipeline20.encoded(ctx, packet, bytes)
+                    out += bytes
+                }
+            })
+            ZstdCompressionPipeline.setup(channel, 16, true, MinecraftVarIntCodec20.INSTANCE)
+            PacketMetricsPipeline20.install(channel.pipeline()) { _, _, _ -> }
+            PacketMetricsPipeline20.configureBatching(channel, false, emptySet(), entityBatching)
+            ZstdCompressionPipeline.setBatchObserver(channel, object : ZstdBatchObserver {
+                override fun recordEncoded(identity: ZstdPacketIdentity?, encodedBytes: Int, policy: ZstdBatchPolicy) {
+                    identities += identity
+                    policies += policy
+                }
+                override fun batchFlushed(sample: ZstdBatchSample) { frames += sample }
+            })
+            ZstdCompressionPipeline.setInboundBatching(channel, true)
+            ZstdCompressionPipeline.setOutboundBatching(channel, true)
+        }
+
+        /** Feeds every written frame back in and returns the decoded packet bytes in arrival order. */
+        fun roundTrip(): List<ByteArray> {
             while (true) {
                 val frame = channel.readOutbound<ByteBuf>() ?: break
                 channel.writeInbound(frame)
@@ -399,8 +453,10 @@ class PacketMetricsPipeline20Test {
                 try { decoded += ByteArray(packet.readableBytes()).also(packet::readBytes) }
                 finally { packet.release() }
             }
-            assertEquals(originals.map { it.toList() }, decoded.map { it.toList() })
-        } finally {
+            return decoded
+        }
+
+        fun close() {
             channel.finishAndReleaseAll()
         }
     }

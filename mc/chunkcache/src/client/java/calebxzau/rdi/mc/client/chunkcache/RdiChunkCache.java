@@ -6,6 +6,7 @@ import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.network.protocol.Packet;
 import net.minecraft.network.protocol.game.ClientboundLevelChunkPacketData;
 import net.minecraft.resources.ResourceLocation;
+import net.minecraft.world.level.ChunkPos;
 import org.slf4j.Logger;
 
 import java.nio.file.Path;
@@ -22,7 +23,9 @@ import static calebxzhou.rdi.mc.common.RDI.HOST_ID;
 /** Captures detached server packet data in network order and binds cache metadata on the game thread. */
 public final class RdiChunkCache {
     private static final Logger LOGGER = LogUtils.getLogger();
-    private static final int MAX_PACKET_HANDOFF_ENTRIES = 4096;
+    private static final int MAX_BASE_HANDOFF_ENTRIES = 4096;
+    /** Updates are small; the byte bound limits memory while the client thread is busy, e.g. loading recipe viewers. */
+    private static final int MAX_DELTA_HANDOFF_ENTRIES = 65_536;
     private static final long MAX_PACKET_HANDOFF_BYTES = 256L * 1024 * 1024;
     private static final long LOG_INTERVAL_NANOS = TimeUnit.SECONDS.toNanos(30);
     private static final String SHARED_HOST_ID = "shared";
@@ -36,6 +39,8 @@ public final class RdiChunkCache {
         final LongAdder networkCaptureNanos = new LongAdder();
         final LongAdder networkCaptures = new LongAdder();
         final AtomicLong networkMaxNanos = new AtomicLong();
+        final AtomicLong skippedCaptures = new AtomicLong();
+        long invalidatedChunks;
         long mainBindNanos;
         long baseCaptures;
         long deltaWrites;
@@ -51,9 +56,9 @@ public final class RdiChunkCache {
     public static final class PacketCaptureContext {
         private final Session owner;
         private final ClientChunkPacketHandoff bases = new ClientChunkPacketHandoff(
-                MAX_PACKET_HANDOFF_ENTRIES, MAX_PACKET_HANDOFF_BYTES);
+                MAX_BASE_HANDOFF_ENTRIES, MAX_PACKET_HANDOFF_BYTES);
         private final ClientChunkDeltaPacketHandoff deltas = new ClientChunkDeltaPacketHandoff(
-                MAX_PACKET_HANDOFF_ENTRIES, MAX_PACKET_HANDOFF_BYTES);
+                MAX_DELTA_HANDOFF_ENTRIES, MAX_PACKET_HANDOFF_BYTES);
 
         private PacketCaptureContext(Session owner) { this.owner = owner; }
 
@@ -135,7 +140,7 @@ public final class RdiChunkCache {
         if (context != null) context.deltas.consume(packet);
     }
 
-    /** Returns copied bytes, zero for unrelated bundle members and -1 on a cache failure. */
+    /** Returns copied bytes, zero for unrelated bundle members and -1 when this packet was not copied. */
     public static long captureDelta(PacketCaptureContext context, Packet<?> packet, long packetLimit) {
         return capture(context, () -> context.deltas.capture(packet, packetLimit));
     }
@@ -147,8 +152,11 @@ public final class RdiChunkCache {
         long started = System.nanoTime();
         try {
             long copied = action.capture();
-            if (copied < 0) fail(session, new IllegalStateException("Chunk packet handoff capacity exceeded"));
+            if (copied < 0) skipCapture(session);
             return copied;
+        } catch (ClientChunkSnapshot.TooLargeException tooLarge) {
+            skipCapture(session);
+            return -1;
         } catch (Throwable error) {
             fail(session, error);
             return -1;
@@ -163,6 +171,17 @@ public final class RdiChunkCache {
     @FunctionalInterface
     private interface Capture { long capture(); }
 
+    /**
+     * A full handoff or an oversized packet only skips this copy: the client thread then invalidates the
+     * chunks it touches instead of pausing the whole cache.
+     */
+    private static void skipCapture(Session session) {
+        if (session.skippedCaptures.incrementAndGet() == 1) {
+            LOGGER.warn("Chunk cache skipped a packet copy for room {}; its chunks are saved again on their next full send",
+                    session.hostId);
+        }
+    }
+
     /** Called during vanilla's ordered game-thread application, before packet-owned tags are applied. */
     public static void receivedBase(ClientLevel level, int x, int z, ClientboundLevelChunkPacketData data,
                                     PacketCaptureContext context) {
@@ -171,7 +190,7 @@ public final class RdiChunkCache {
         if (!isActiveLevel(session, level) || session.packetCaptureContext != context) return;
         ClientChunkSnapshot.PacketData packet = context.bases.consume(data);
         if (packet == null) {
-            fail(session, new IllegalStateException("Full chunk packet reached client thread without a detached network capture"));
+            invalidate(session, level, x, z);
             return;
         }
         long started = System.nanoTime();
@@ -199,7 +218,11 @@ public final class RdiChunkCache {
         if (!isActiveLevel(session, level) || session.packetCaptureContext != context) return;
         ClientChunkDeltaPacketHandoff.PacketUpdates detached = context.deltas.consume(packet);
         if (detached == null) {
-            fail(session, new IllegalStateException("Chunk update reached client thread without a detached network capture"));
+            for (long chunk : ClientChunkDeltaPacketHandoff.affectedChunks(packet)) {
+                int x = ChunkPos.getX(chunk);
+                int z = ChunkPos.getZ(chunk);
+                if (!ChunkCacheClient.waitingForRepair(level, x, z)) invalidate(session, level, x, z);
+            }
             return;
         }
         if (detached.updates().isEmpty()) return;
@@ -212,7 +235,8 @@ public final class RdiChunkCache {
                 if (ChunkCacheClient.waitingForRepair(level, x, z)) continue;
                 long estimatedBytes = 128 + update.estimatedBytes();
                 if (estimatedBytes > ClientChunkSnapshot.MAX_SNAPSHOT_BYTES) {
-                    throw new ClientChunkSnapshot.TooLargeException("Merged chunk delta exceeds cache limit");
+                    invalidate(session, level, x, z);
+                    continue;
                 }
                 long sequence = ++session.sequence;
                 submit(session, new ClientChunkCacheWrite(new ClientChunkRegionSink.Key(dimension, x, z),
@@ -225,6 +249,13 @@ public final class RdiChunkCache {
         } finally {
             session.mainBindNanos += System.nanoTime() - started;
         }
+    }
+
+    /** Orders the forgetting of an uncaptured chunk behind its earlier writes; the next full chunk saves it again. */
+    private static void invalidate(Session session, ClientLevel level, int x, int z) {
+        submit(session, new ClientChunkCacheWrite(new ClientChunkRegionSink.Key(level.dimension().location(), x, z),
+                ++session.sequence, level.getGameTime(), null, List.of(new ClientChunkCacheWrite.Invalidate()), 64));
+        session.invalidatedChunks++;
     }
 
     private static void submit(Session session, ClientChunkCacheWrite write) {
@@ -274,8 +305,9 @@ public final class RdiChunkCache {
 
     private static void logStats(Session session) {
         session.lastLogNanos = System.nanoTime();
-        LOGGER.info("CHUNK_CACHE room={} base_captures={} delta_writes={} network_captures={} network_copy_ms={} network_max_ms={} main_bind_ms={} writer={}",
-                session.hostId, session.baseCaptures, session.deltaWrites, session.networkCaptures.sum(),
+        LOGGER.info("CHUNK_CACHE room={} base_captures={} delta_writes={} skipped_copies={} invalidated_chunks={} network_captures={} network_copy_ms={} network_max_ms={} main_bind_ms={} writer={}",
+                session.hostId, session.baseCaptures, session.deltaWrites, session.skippedCaptures.get(), session.invalidatedChunks,
+                session.networkCaptures.sum(),
                 session.networkCaptureNanos.sum() / 1_000_000.0, session.networkMaxNanos.get() / 1_000_000.0,
                 session.mainBindNanos / 1_000_000.0, session.writer == null ? "starting" : session.writer.stats());
     }

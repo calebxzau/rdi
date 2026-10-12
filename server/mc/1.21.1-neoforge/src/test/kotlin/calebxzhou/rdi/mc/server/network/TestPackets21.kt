@@ -25,5 +25,7 @@ internal class TestPacket21(
         fun attributes(tag: Int) = TestPacket21(tag, GamePacketTypes.CLIENTBOUND_UPDATE_ATTRIBUTES)
 
         fun other(tag: Int) = TestPacket21(tag, OTHER)
+
+        fun entityMove(tag: Int) = TestPacket21(tag, GamePacketTypes.CLIENTBOUND_MOVE_ENTITY_POS)
     }
 }

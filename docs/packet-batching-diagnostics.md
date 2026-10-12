@@ -56,9 +56,27 @@ These settings control network batching separately from automatic content captur
 | --- | --- | --- |
 | `rdi.batch.enabled` | `true` | Batch packets for compatible clients; false uses the legacy per-packet path. |
 | `rdi.batch.longWindow` | `false` | Permit verified messages to wait four ticks instead of one. |
-| `rdi.pktref.enabled` | `false` | Replace repeated server-to-client packets with references; see [packet-ref-dedup.md](packet-ref-dedup.md). |
+| `rdi.batch.entity` | `true` | Forge1.20.1 only: batch entity tracking updates for one tick (see below). |
+| `rdi.pktref.enabled` | `true` | Replace repeated server-to-client packets with references; see [packet-ref-dedup.md](packet-ref-dedup.md). |
 | `rdi.pktref.slots` | `256` | Packet reference table slots, clamped to 1-1024. |
 | `rdi.pktref.maxEntryBytes` | `1024` | Largest packet the reference table records, clamped to 8-2048. |
+
+### Entity tracking updates (Forge1.20.1)
+
+`ClientboundMoveEntityPacket` (`Pos`, `Rot`, `PosRot`), `ClientboundSetEntityMotionPacket`,
+`ClientboundRotateHeadPacket`, `ClientboundSetEntityDataPacket` and
+`ClientboundTeleportEntityPacket` use the one-tick window. They are what
+`ServerEntity.sendChanges` broadcasts. Most are 5-13 bytes, below the 32-byte stream
+compression floor, so without batching each one leaves as a raw frame. A tick's
+updates now share one batch frame that continues the Zstd stream.
+
+Packet bytes and order are unchanged: any immediately sent packet drains the batch
+before itself, and the batch leaves at the end of the server tick or after 50ms.
+Packets inside a batch are not replaced by packet references. A 2026-10-09/10 host
+log had 37 million such packets, 86% of all server-to-client packets. Their wire
+saving was not measured before release; compare `Legacy` and `ZstdBatch` rows in
+`packet_batch_frame_totals` before and after. Note that `Legacy` covers
+single-packet frames whether or not the stream compressed them.
 
 In `packet_batch_frame_totals`, `frame_kind = 'Ref'` rows count packet references.
 For them, `sum_replaced_frame_bytes` holds the legacy frames they replaced, so

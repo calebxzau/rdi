@@ -4,6 +4,11 @@ import calebxzau.rdi.mc.zstdcodec.ZstdBatchPolicy
 import io.netty.buffer.ByteBuf
 import net.minecraft.network.protocol.Packet
 import net.minecraft.network.protocol.game.ClientboundCustomPayloadPacket
+import net.minecraft.network.protocol.game.ClientboundMoveEntityPacket
+import net.minecraft.network.protocol.game.ClientboundRotateHeadPacket
+import net.minecraft.network.protocol.game.ClientboundSetEntityDataPacket
+import net.minecraft.network.protocol.game.ClientboundSetEntityMotionPacket
+import net.minecraft.network.protocol.game.ClientboundTeleportEntityPacket
 import net.minecraft.network.protocol.game.ClientboundUpdateAttributesPacket
 import java.nio.charset.StandardCharsets
 
@@ -17,8 +22,12 @@ object PacketBatchPolicy20 {
         encoded: ByteBuf,
         verifiedChannels: Set<String>,
         longWindow: Boolean,
+        entityBatching: Boolean,
     ): ZstdBatchPolicy {
         if (packet is ClientboundUpdateAttributesPacket) return ZstdBatchPolicy.OneTick
+        // Entity tracking updates are mostly below the compression floor and would leave as raw frames.
+        // They keep their order and bytes; any immediate packet still drains the batch before itself.
+        if (entityBatching && isEntityTracking(packet)) return ZstdBatchPolicy.OneTick
         if (packet !is ClientboundCustomPayloadPacket) return ZstdBatchPolicy.Immediate
         val channel = packet.identifier.toString()
         if (channel != L2_TABS_CHANNEL || channel !in verifiedChannels) return ZstdBatchPolicy.Immediate
@@ -36,6 +45,14 @@ object PacketBatchPolicy20 {
         // updates and unknown messages remain ordering barriers.
         return if (longWindow) ZstdBatchPolicy.FourTicks else ZstdBatchPolicy.OneTick
     }
+
+    /** What `ServerEntity.sendChanges` broadcasts every few ticks for each tracked entity. */
+    private fun isEntityTracking(packet: Packet<*>): Boolean =
+        packet is ClientboundMoveEntityPacket ||
+            packet is ClientboundSetEntityMotionPacket ||
+            packet is ClientboundRotateHeadPacket ||
+            packet is ClientboundSetEntityDataPacket ||
+            packet is ClientboundTeleportEntityPacket
 
     private class Cursor(val buffer: ByteBuf) {
         var index = buffer.readerIndex()

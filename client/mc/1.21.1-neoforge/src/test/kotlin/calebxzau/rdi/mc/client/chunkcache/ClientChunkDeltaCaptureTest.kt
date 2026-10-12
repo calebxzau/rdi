@@ -96,6 +96,28 @@ class ClientChunkDeltaCaptureTest {
     }
 
     @Test
+    fun affectedChunksNameEveryChunkAnUncapturedUpdateTouches(): Unit {
+        val block = ClientboundBlockUpdatePacket(BlockPos(-17, 64, 31), Blocks.STONE.defaultBlockState())
+        assertContentEquals(longArrayOf(ChunkPos.asLong(-2, 1)), ClientChunkDeltaPacketHandoff.affectedChunks(block))
+
+        val section = LevelChunkSection(biomeRegistry())
+        val positions = it.unimi.dsi.fastutil.shorts.ShortOpenHashSet().apply {
+            add(SectionPos.sectionRelativePos(BlockPos(0, 0, 0)))
+            add(SectionPos.sectionRelativePos(BlockPos(5, 3, 7)))
+        }
+        val sectionPacket = ClientboundSectionBlocksUpdatePacket(SectionPos.of(2, 4, -3), positions, section)
+        assertContentEquals(longArrayOf(ChunkPos.asLong(2, -3)), ClientChunkDeltaPacketHandoff.affectedChunks(sectionPacket))
+
+        val biomes = ClientboundChunksBiomesPacket(listOf(
+            ClientboundChunksBiomesPacket.ChunkBiomeData(ChunkPos(4, -2), byteArrayOf(1)),
+            ClientboundChunksBiomesPacket.ChunkBiomeData(ChunkPos(-1, 8), byteArrayOf(2)),
+            ClientboundChunksBiomesPacket.ChunkBiomeData(ChunkPos(4, -2), byteArrayOf(3)),
+        ))
+        assertContentEquals(longArrayOf(ChunkPos.asLong(4, -2), ChunkPos.asLong(-1, 8)),
+            ClientChunkDeltaPacketHandoff.affectedChunks(biomes))
+    }
+
+    @Test
     fun capacityRejectsAnotherUpdateUntilTheFirstIsConsumed(): Unit {
         val handoff = ClientChunkDeltaPacketHandoff(1, 1024)
         val first = ClientboundBlockUpdatePacket(BlockPos(0, 64, 0), Blocks.STONE.defaultBlockState())

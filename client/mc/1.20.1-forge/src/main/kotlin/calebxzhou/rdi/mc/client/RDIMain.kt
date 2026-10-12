@@ -9,6 +9,7 @@ import calebxzau.rdi.mc.v20.client.RoomJoinUi20
 // import calebxzhou.rdi.mc.client.chunkcache.RdiChunkCacheClientHandler
 import calebxzhou.rdi.mc.client.network.RClientNetwork
 import calebxzhou.rdi.mc.client.network.RClientBatching
+import calebxzhou.rdi.mc.client.network.RClientIdle
 import calebxzhou.rdi.mc.client.network.RClientPacketRefs
 import calebxzhou.rdi.mc.client.network.RClientZstdStream
 import calebxzau.rdi.mc.v20.client.GlobalPlayerListState
@@ -17,12 +18,14 @@ import calebxzhou.rdi.mc.client.mcpimpl.McpGameImpl
 import calebxzhou.rdi.mc.client.mcpimpl.McpNetwork
 import calebxzhou.rdi.mc.common.RDI
 import net.minecraft.ChatFormatting
+import net.minecraft.client.Minecraft
 import net.minecraft.client.gui.components.Button
 import net.minecraft.client.player.LocalPlayer
 import net.minecraft.network.chat.ClickEvent
 import net.minecraft.network.chat.Component
 import net.minecraftforge.api.distmarker.Dist
 import net.minecraftforge.client.event.ClientPlayerNetworkEvent
+import net.minecraftforge.event.TickEvent
 import net.minecraftforge.eventbus.api.SubscribeEvent
 import net.minecraftforge.fml.common.Mod
 import org.apache.logging.log4j.LogManager
@@ -42,6 +45,7 @@ class RDIMain {
         RdiPacketRefChannel.register()
         RdiZstdStreamChannel.register()
         calebxzau.rdi.mc.v20.forge.l2.L2NameChannel.register()
+        calebxzau.rdi.mc.v20.forge.idle.IdleChannel.register()
         calebxzau.rdi.mc.client.chunkcache.ChunkCacheClientNetwork.register()
         calebxzau.rdi.mc.client.syncchunk.SyncChunkForgeClient.register()
         calebxzau.rdi.mc.client.syncchunk.SyncChunkIntegratedForge.register()
@@ -82,7 +86,14 @@ class RDIMain {
 
         @SubscribeEvent
         @JvmStatic
+        fun onClientTick(event: TickEvent.ClientTickEvent) {
+            if (event.phase == TickEvent.Phase.END) RClientIdle.onClientTick(Minecraft.getInstance())
+        }
+
+        @SubscribeEvent
+        @JvmStatic
         fun onClientLeaveServer(event: ClientPlayerNetworkEvent.LoggingOut) {
+            RClientIdle.reset()
             calebxzau.rdi.mc.client.l2.RClientL2Names.clear()
             GlobalPlayerListState.endSession(event.connection)
             RClientBatching.onLeave(event.connection)

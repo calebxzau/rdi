@@ -9,8 +9,7 @@ import org.apache.logging.log4j.LogManager
 /**
  * Forge-only activation of packet references for server-to-client packets.
  *
- * Off unless the server runs with `-Drdi.pktref.enabled=true`; turning it off again takes a restart
- * and no client change.
+ * On by default; `-Drdi.pktref.enabled=false` disables it for new connections without a client change.
  */
 object RServerPacketRefs {
     private val logger = LogManager.getLogger("rdi")

@@ -7,10 +7,11 @@ and vanilla code receive byte-identical packets.
 
 Scope of the first version:
 
-- Server-to-client only, Forge1.20.1 only. NeoForge1.21.1 and Fabric compile the
-  shared codec but never enable it.
+- Server-to-client only, Forge1.20.1 and NeoForge1.21.1 (see
+  [network-optimizations-1.21.1-plan.md](network-optimizations-1.21.1-plan.md) for
+  the 1.21 activation). Fabric compiles the shared codec but never enables it.
 - Packets inside batch blocks are recorded but never replaced by references.
-- Off by default; enable it per server with `-Drdi.pktref.enabled=true`.
+- On by default; disable it per server with `-Drdi.pktref.enabled=false`.
 
 ## Negotiation
 
@@ -22,7 +23,7 @@ The server enables references for a player only when all of these hold:
 
 | Check | Otherwise |
 | --- | --- |
-| `rdi.pktref.enabled=true` | Nothing happens. |
+| `rdi.pktref.enabled` is not `false` | Nothing happens. |
 | Not a memory (integrated server) connection | Nothing happens. |
 | The client announced `rdi:pktref` | Logs `rdi:pktref is absent`. |
 | Network compression is on | Logs `network compression is off`. |
@@ -138,7 +139,7 @@ out.
 
 | Property | Default | Meaning |
 | --- | --- | --- |
-| `rdi.pktref.enabled` | `false` | Enable packet references for negotiated clients. |
+| `rdi.pktref.enabled` | `true` | Enable packet references for negotiated clients. |
 | `rdi.pktref.slots` | `256` | Table slots, clamped to 1-1024 with a warning. |
 | `rdi.pktref.maxEntryBytes` | `1024` | Largest recorded packet, clamped to 8-2048 with a warning. |
 
@@ -179,12 +180,12 @@ its own savings are unknown. Measure on a test server with the SQL above.
 
 ## Rollout and rollback
 
-1. Deploy both jars; enable `-Drdi.pktref.enabled=true` on a test server only and
+1. Deploy both jars (references are on by default) and
    check that the log shows `packet references requested` for each player.
 2. Play through joining, dimension changes, death and respawn, reconnecting and two
    players at once; check Epic Fight combat, Xaero's minimap and Jade; run for at
    least two hours without reference-related disconnects.
 3. Compare the measured savings with total downlink, and compare server network
    thread CPU with the feature on and off.
-4. Roll back by removing the property and restarting the server; clients need no
+4. Roll back with `-Drdi.pktref.enabled=false` and a server restart; clients need no
    change.

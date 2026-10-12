@@ -17,13 +17,19 @@ public record ClientChunkCacheWrite(ClientChunkRegionSink.Key key, long sequence
         }
     }
 
-    public sealed interface Update permits BlockChange, BlockEntityChange, Biomes { }
+    public sealed interface Update permits BlockChange, BlockEntityChange, Biomes, Invalidate { }
 
     public record BlockChange(long position, int stateId, boolean hasBlockEntity) implements Update { }
 
-    /** Keep packet order: mod block entity tags are not necessarily complete snapshots. */
+    /**
+     * Kept in packet order. The store keeps only the latest non-empty tag per position, the loaders' default
+     * of a full reload; see {@code ClientChunkDeltaStore.compactEvents}.
+     */
     public record BlockEntityChange(long position, String type, CompoundTag tag) implements Update { }
 
     /** All section biome palettes for this chunk, in vanilla packet order. */
     public record Biomes(byte[] data) implements Update { }
+
+    /** Forgets this chunk, whose update was not captured; later updates are ignored until its next full chunk. */
+    public record Invalidate() implements Update { }
 }

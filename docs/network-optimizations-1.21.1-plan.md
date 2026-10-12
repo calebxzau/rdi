@@ -107,7 +107,7 @@ Not performed: live Mixin application, real-modpack login/new-old peer matrix, d
 
 ## Phase 2: selective attribute batching (2026-10-08)
 
-Server only; the Phase 1 client already announces and prepares `rdi:batch`. Default `rdi.batch.enabled=false`, sampled once per connection.
+Server only; the Phase 1 client already announces and prepares `rdi:batch`. Originally default `rdi.batch.enabled=false`; the default is now `true` (disable with `-Drdi.batch.enabled=false`), sampled once per connection.
 
 - The server now registers `rdi:batch`. `RServerBatching` activates at player join on the event loop using the shared `ExtensionDecision21` order (disabled, memory connection, not negotiated, compression off, foreign encoder). It first enables per-packet classification, then calls `setOutboundBatching(..., delayUnassociated = false)` in one event-loop task.
 - `PacketRecordPipeline` (installed at connection setup, independent of metrics) opens a scope around each outbound write before the bundle unpacker and encoder. The `PacketEncoder` RETURN hook records `output buffer -> packet` by identity, and the handler after the encoder takes it back and wraps it in `ZstdSendingRecord`. A failed encode never reaches that handler and its scope is dropped.
@@ -227,3 +227,17 @@ negotiation versus ad-hoc presence, eligibility, per-connection setting snapshot
 reentrant/duplicate START and byte-exact round trips for all four batch/stream
 combinations. Logs: each module's `build/pktref-validation-20261009.log`.
 Real server/client connections and measured bandwidth/performance were not tested.
+
+
+## Entity tracking batching (2026-10-12)
+
+Ported from 1.20.1 (`PacketBatchPolicy20`). With `rdi.batch.entity` (default `true`, sampled once per
+connection in `BatchSettings21`), `PacketBatchPolicy21` also makes these wire types `OneTick`:
+`CLIENTBOUND_MOVE_ENTITY_POS`, `_POS_ROT`, `_ROT`, `SET_ENTITY_MOTION`, `ROTATE_HEAD`,
+`SET_ENTITY_DATA` and `TELEPORT_ENTITY`. They are what `ServerEntity.sendChanges` broadcasts and are
+mostly below the compression floor. Every other packet stays an immediate barrier, so wire order is
+unchanged. Server only; clients already announce `rdi:batch`. Covered by `PacketBatchPolicy21Test` and
+`BatchSettings21Test`; not yet measured in a live session.
+
+Persistent join packets and the idle gate were ported the same day; see
+`docs/persistent-packets-1.20.1.md` and `docs/idle-gate-1.20.1.md`.

@@ -22,6 +22,8 @@ object RServerNetwork {
     @SubscribeEvent
     fun registerPayloads(event: RegisterPayloadHandlersEvent) {
         calebxzau.rdi.mc.zstdcodec.v21.RdiExtensionChannels21.register(event, client = false)
+        RServerPersistentPackets.register(event)
+        RServerIdle.register(event)
         event.registrar("1")
             .optional()
             .playToClient(

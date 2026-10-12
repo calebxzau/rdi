@@ -87,6 +87,30 @@ public final class ClientChunkRegionSink implements CoalescingWriteQueue.Sink<Cl
 
     /** Reads a bounded record from an existing region. The returned array is detached. */
     public byte[] readEncoded(Key key) throws IOException {
+        RegionFile region = existingRegion(key);
+        if (region == null) return null;
+        try (InputStream input = region.getChunkDataInputStream(new ChunkPos(key.x(), key.z()))) {
+            if (input == null) return null;
+            ByteArrayOutputStream record = new ByteArrayOutputStream();
+            byte[] buffer = new byte[8192];
+            int read;
+            while ((read = input.read(buffer)) != -1) {
+                if (record.size() + read > ClientChunkSnapshot.MAX_SNAPSHOT_BYTES + 64L) {
+                    throw new IOException("Encoded chunk record exceeds limit");
+                }
+                record.write(buffer, 0, read);
+            }
+            return record.toByteArray();
+        }
+    }
+
+    /** Removes one chunk record; a missing region already has none. */
+    public void clear(Key key) throws IOException {
+        RegionFile region = existingRegion(key);
+        if (region != null) region.clear(new ChunkPos(key.x(), key.z()));
+    }
+
+    private RegionFile existingRegion(Key key) throws IOException {
         if (key == null) throw new IOException("Chunk key is required");
         Path directory = directory(key.dimension());
         Path path = directory.resolve("r." + (key.x() >> 5) + "." + (key.z() >> 5) + ".mca");
@@ -103,19 +127,7 @@ public final class ClientChunkRegionSink implements CoalescingWriteQueue.Sink<Cl
             region = ChunkCacheCompat.openRegion("rdi-client-chunks", dimension, path, directory);
             regions.put(path, region);
         }
-        try (InputStream input = region.getChunkDataInputStream(new ChunkPos(key.x(), key.z()))) {
-            if (input == null) return null;
-            ByteArrayOutputStream record = new ByteArrayOutputStream();
-            byte[] buffer = new byte[8192];
-            int read;
-            while ((read = input.read(buffer)) != -1) {
-                if (record.size() + read > ClientChunkSnapshot.MAX_SNAPSHOT_BYTES + 64L) {
-                    throw new IOException("Encoded chunk record exceeds limit");
-                }
-                record.write(buffer, 0, read);
-            }
-            return record.toByteArray();
-        }
+        return region;
     }
 
     @Override

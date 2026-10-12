@@ -111,6 +111,33 @@ public final class ClientChunkDeltaPacketHandoff {
         return 0;
     }
 
+    /** Chunks a capturable update touches; read on the client thread when its capture was skipped. */
+    public static long[] affectedChunks(Packet<?> packet) {
+        if (packet instanceof ClientboundBlockUpdatePacket value) {
+            return new long[] {ChunkPos.asLong(value.getPos().getX() >> 4, value.getPos().getZ() >> 4)};
+        }
+        if (packet instanceof ClientboundBlockEntityDataPacket value) {
+            return new long[] {ChunkPos.asLong(value.getPos().getX() >> 4, value.getPos().getZ() >> 4)};
+        }
+        if (packet instanceof ClientboundSectionBlocksUpdatePacket value) {
+            // Every position of a section packet lies in the same chunk.
+            long[] chunk = new long[1];
+            boolean[] found = {false};
+            value.runUpdates((pos, state) -> {
+                if (!found[0]) {
+                    chunk[0] = ChunkPos.asLong(pos.getX() >> 4, pos.getZ() >> 4);
+                    found[0] = true;
+                }
+            });
+            return found[0] ? chunk : new long[0];
+        }
+        if (packet instanceof ClientboundChunksBiomesPacket value) {
+            return value.chunkBiomeData().stream().mapToLong(data -> ChunkPos.asLong(data.pos().x, data.pos().z))
+                    .distinct().toArray();
+        }
+        return new long[0];
+    }
+
     private long capture(Packet<?> packet, long bytes, long packetLimit, Supplier<List<ChunkUpdate>> copier) {
         if (bytes <= 0 || bytes > packetLimit || bytes > ClientChunkSnapshot.MAX_SNAPSHOT_BYTES) return -1;
         Entry reservation = new Entry(bytes);

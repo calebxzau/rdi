@@ -15,7 +15,9 @@ import calebxzhou.rdi.mc.rcmd.tpa.TpaService
 import calebxzhou.rdi.mc.server.mcpimpl.McpNetwork
 import calebxzhou.rdi.mc.server.network.RServerNetwork
 import calebxzhou.rdi.mc.server.network.RServerBatching
+import calebxzhou.rdi.mc.server.network.RServerIdle
 import calebxzhou.rdi.mc.server.network.RServerPacketRefs
+import calebxzhou.rdi.mc.server.network.RServerPersistentPackets
 import calebxzhou.rdi.mc.server.network.RServerPacketCapture
 import calebxzhou.rdi.mc.server.network.RServerZstdStream
 import calebxzhou.rdi.mc.server.rcmd.PlayerNbtChatRangeStore
@@ -34,6 +36,7 @@ import net.minecraft.server.dedicated.DedicatedServer
 import net.minecraft.server.level.ServerPlayer
 import net.minecraft.world.level.GameRules
 import net.minecraftforge.event.entity.player.PlayerEvent
+import net.minecraftforge.event.entity.player.PlayerNegotiationEvent
 import net.minecraftforge.event.TickEvent
 import net.minecraftforge.event.server.ServerStartedEvent
 import net.minecraftforge.event.server.ServerStartingEvent
@@ -59,6 +62,8 @@ class RDIMain {
         RdiPacketRefChannel.register()
         RdiZstdStreamChannel.register()
         calebxzau.rdi.mc.v20.forge.l2.L2NameChannel.register()
+        calebxzau.rdi.mc.v20.forge.idle.IdleChannel.register()
+        RServerIdle.register()
         calebxzau.rdi.mc.server.chunkcache.ChunkCacheServerNetwork.register()
         calebxzau.rdi.mc.server.syncchunk.SyncChunkForgeNetwork.register()
         McpNetwork.register()
@@ -133,6 +138,11 @@ class RDIMain {
         }
 
         @SubscribeEvent @JvmStatic
+        fun onPlayerNegotiation(e: PlayerNegotiationEvent) {
+            RServerPersistentPackets.onNegotiation(e)
+        }
+
+        @SubscribeEvent @JvmStatic
         fun onPlayerJoin(e: PlayerEvent.PlayerLoggedInEvent) {
             val player: ServerPlayer = e.entity as ServerPlayer
             RServerPacketCapture.onPlayerJoined(player)
@@ -181,6 +191,7 @@ class RDIMain {
             val player: ServerPlayer = e.entity as ServerPlayer
             PlayerChatRangeState.remove(player.getUUID())
             TpaService.removeRelated(player.getUUID())
+            RServerIdle.onLogout(player)
             /* RdiDelayedChunkCache.remove(player)
             RdiChunkCacheServer.remove(player) */
         }

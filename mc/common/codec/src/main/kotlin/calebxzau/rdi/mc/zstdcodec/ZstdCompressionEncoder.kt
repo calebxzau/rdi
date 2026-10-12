@@ -4,6 +4,7 @@ import com.github.luben.zstd.EndDirective
 import com.github.luben.zstd.Zstd
 import com.github.luben.zstd.ZstdCompressCtx
 import io.netty.buffer.ByteBuf
+import io.netty.buffer.ByteBufUtil
 import io.netty.channel.ChannelHandlerContext
 import io.netty.channel.ChannelDuplexHandler
 import io.netty.channel.ChannelPromise
@@ -116,7 +117,8 @@ internal class ZstdCompressionEncoder(
         observe { it.recordEncoded(sending.identity, encodedBytes, sending.policy) }
 
         if (!batchingEnabled || sending.policy == ZstdBatchPolicy.Immediate ||
-            encodedBytes == 0 || encodedBytes > MAXIMUM_BATCHED_RECORD_BYTES
+            encodedBytes == 0 || encodedBytes > MAXIMUM_BATCHED_RECORD_BYTES ||
+            sending.persistentKind != PersistentPacketKind.NONE
         ) {
             if (batchingEnabled) flushBuffered(context, ZstdBatchFlushReason.BARRIER)
             if (failed != null) {
@@ -648,7 +650,7 @@ internal class ZstdCompressionEncoder(
                     ZstdBatchFormat.varIntSize(payloadBytes) + ZstdBatchFormat.varIntSize(recordCount)
                 headerBytes + payloadBytes
             }
-            ZstdBatchFrameKind.Ref, ZstdBatchFrameKind.Control ->
+            ZstdBatchFrameKind.Ref, ZstdBatchFrameKind.Control, ZstdBatchFrameKind.Persistent ->
                 throw IllegalStateException("${frame.frameKind} frames build their own sample")
         }
         val uncompressedBytes = uncompressedInnerBytes + outerPrefix
@@ -686,6 +688,13 @@ internal class ZstdCompressionEncoder(
         if (refs != null && PacketRefCache.isMatch(refResult) && isReferenceSmaller(refResult, recordBytes)) {
             writeReference(context, sending, promise, refs, refResult, started)
             return
+        }
+        if (sending.persistentKind != PersistentPacketKind.NONE && recordBytes >= PersistentPacketFormat.MINIMUM_PACKET_BYTES) {
+            val session = PersistentPacketSessions.server(context.channel())
+            if (session != null) {
+                writePersistent(context, sending, promise, session, started)
+                return
+            }
         }
         val frame: EncodedFrame
         try {
@@ -769,6 +778,137 @@ internal class ZstdCompressionEncoder(
         observe { it.batchFlushed(sample) }
         writeFrame(context, frame, downstream)
         if (batchingEnabled) context.flush()
+    }
+
+    /**
+     * Names a packet the client holds, or sends it against a base the client holds, or sends it whole;
+     * see [PersistentPacketFormat]. A packet this large never enters the packet reference tables.
+     */
+    private fun writePersistent(
+        context: ChannelHandlerContext,
+        sending: ZstdSendingRecord,
+        promise: ChannelPromise,
+        session: PersistentPacketServerSession,
+        started: Long,
+    ) {
+        val kind = sending.persistentKind
+        val recordBytes = sending.content.readableBytes()
+        val content: ByteArray
+        val hash: PersistentPacketHash
+        val hit: Boolean
+        val frame: ByteBuf
+        try {
+            content = ByteBufUtil.getBytes(sending.content)
+            hash = PersistentPacketHash.of(content)
+            hit = session.holds(kind, hash)
+            frame = if (hit) {
+                encodePersistentHit(context, kind, hash)
+            } else {
+                encodePersistentDelta(context, session, kind, hash, content)
+                    ?: encodePersistentFull(context, kind, hash, sending.content)
+            }
+        } catch (error: Throwable) {
+            failDirect(context, sending, promise, error)
+            return
+        }
+        sending.release()
+        if (!hit) session.sent(kind, hash, content)
+        val frameBytes = frame.readableBytes()
+        val sample = ZstdBatchSample(
+            recordCount = 1,
+            payloadBytes = recordBytes,
+            blockBytes = frameBytes,
+            raw = false,
+            flushReason = ZstdBatchFlushReason.BARRIER,
+            waitNanos = 0,
+            compressionNanos = (nanoTime() - started).coerceAtLeast(0L),
+            frameKind = ZstdBatchFrameKind.Persistent,
+            outerPrefixBytes = ZstdBatchFormat.varIntSize(frameBytes),
+            compressedBytes = frameBytes + ZstdBatchFormat.varIntSize(frameBytes),
+        )
+        val downstream = context.newPromise()
+        downstream.addListener { future ->
+            if (future.isSuccess) promise.trySuccess() else promise.tryFailure(future.cause() ?: ClosedChannelException())
+            observe { it.writeCompleted(sample, future.isSuccess) }
+            if (!future.isSuccess) failConnection(context, future.cause() ?: ClosedChannelException())
+        }
+        observe { it.batchFlushed(sample) }
+        writeFrame(context, frame, downstream)
+        if (batchingEnabled) context.flush()
+    }
+
+    private fun encodePersistentHit(context: ChannelHandlerContext, kind: Int, hash: PersistentPacketHash): ByteBuf {
+        val frame = context.alloc().buffer(PersistentPacketFormat.HEADER_BYTES, PersistentPacketFormat.HEADER_BYTES)
+        var written = false
+        try {
+            writePersistentHeader(frame, PersistentPacketFormat.OP_HIT, kind, hash)
+            written = true
+            return frame
+        } finally {
+            if (!written) frame.release()
+        }
+    }
+
+    /** Null when the client holds no base this server still has, or when the delta would not fit. */
+    private fun encodePersistentDelta(
+        context: ChannelHandlerContext,
+        session: PersistentPacketServerSession,
+        kind: Int,
+        hash: PersistentPacketHash,
+        content: ByteArray,
+    ): ByteBuf? {
+        for (base in session.bases(kind)) {
+            val baseContent = session.store.base(kind, base) ?: continue
+            if (!PersistentPacketDelta.isUsableBase(baseContent)) continue
+            val delta = session.store.delta(base, baseContent, hash, content)
+                .onFailure { error ->
+                    LOGGER.log(System.Logger.Level.ERROR, "Failed to compute a persistent packet delta from ${base} to ${hash}", error)
+                }
+                .getOrNull() ?: continue
+            if (delta.size > ZstdCompressionPipeline.MAXIMUM_COMPRESSED_LENGTH) continue
+            val frameBytes = PersistentPacketFormat.HEADER_BYTES + PersistentPacketHash.BYTES +
+                ZstdBatchFormat.varIntSize(content.size) + delta.size
+            val frame = context.alloc().buffer(frameBytes, frameBytes)
+            var written = false
+            try {
+                writePersistentHeader(frame, PersistentPacketFormat.OP_DELTA, kind, base)
+                hash.writeTo(frame)
+                varIntCodec.write(frame, content.size)
+                frame.writeBytes(delta)
+                written = true
+                return frame
+            } finally {
+                if (!written) frame.release()
+            }
+        }
+        return null
+    }
+
+    /** The legacy envelope inside continues the Zstd stream when one runs, like any other packet. */
+    private fun encodePersistentFull(context: ChannelHandlerContext, kind: Int, hash: PersistentPacketHash, content: ByteBuf): ByteBuf {
+        val envelope = encodeLegacyFrame(context, content).buffer
+        try {
+            val frameBytes = PersistentPacketFormat.HEADER_BYTES + envelope.readableBytes()
+            val frame = context.alloc().directBuffer(frameBytes, frameBytes)
+            var written = false
+            try {
+                writePersistentHeader(frame, PersistentPacketFormat.OP_FULL, kind, hash)
+                frame.writeBytes(envelope, envelope.readerIndex(), envelope.readableBytes())
+                written = true
+                return frame
+            } finally {
+                if (!written) frame.release()
+            }
+        } finally {
+            envelope.release()
+        }
+    }
+
+    private fun writePersistentHeader(frame: ByteBuf, opcode: Int, kind: Int, hash: PersistentPacketHash) {
+        varIntCodec.write(frame, PersistentPacketFormat.MARKER)
+        frame.writeByte(opcode)
+        frame.writeByte(kind)
+        hash.writeTo(frame)
     }
 
     private fun encodeReferenceFrame(context: ChannelHandlerContext, slot: Int, check: Int): ByteBuf {

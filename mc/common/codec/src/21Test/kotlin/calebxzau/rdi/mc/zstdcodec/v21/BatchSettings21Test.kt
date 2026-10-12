@@ -12,6 +12,13 @@ class BatchSettings21Test {
     }
 
     @Test
+    fun `entity batching is on unless explicitly disabled`() {
+        assertEquals(true, BatchSettings21.read { null }.entityBatching)
+        assertEquals(false, BatchSettings21.read { if (it == "rdi.batch.entity") " false " else null }.entityBatching)
+        assertEquals(BatchSettings21(true, false), BatchSettings21.read { if (it == "rdi.batch.entity") "false" else null })
+    }
+
+    @Test
     fun `batching uses the shared eligibility order`() {
         val settings = BatchSettings21(true)
         assertEquals(ExtensionDecision21.Enable, settings.decide(false, true, true, true))

@@ -45,6 +45,7 @@ object PacketRecordPipeline {
     ) {
         val scopes = ArrayDeque<IdentityHashMap<ByteBuf, Packet<*>>>()
         var selective = false
+        var entityBatching = false
         var capture: PacketCaptureConnection? = null
         var captureFailed = false
         var unknownPhaseCount = 0L
@@ -94,9 +95,10 @@ object PacketRecordPipeline {
         }
 
     /** Starts per-packet classification; call on the event loop before enabling encoder batching. */
-    fun enableSelective(channel: Channel): Boolean {
+    fun enableSelective(channel: Channel, entityBatching: Boolean = false): Boolean {
         check(channel.eventLoop().inEventLoop()) { "Batching state belongs to the connection event loop" }
         val state = channel.attr(STATE).get() ?: return false
+        state.entityBatching = entityBatching
         state.selective = true
         return true
     }
@@ -156,8 +158,8 @@ object PacketRecordPipeline {
                 return
             }
             // The identity also feeds v4 logical bytes, so every associated packet carries it.
-            val policy = if (state.selective) PacketBatchPolicy21.classify(packet) else ZstdBatchPolicy.Immediate
-            ctx.write(ZstdSendingRecord(msg, policy, packetIdentity(packet)), promise)
+            val policy = if (state.selective) PacketBatchPolicy21.classify(packet, state.entityBatching) else ZstdBatchPolicy.Immediate
+            ctx.write(ZstdSendingRecord(msg, policy, packetIdentity(packet), PersistentPacketKinds21.kindOf(packet)), promise)
         }
     }
 }

@@ -58,6 +58,7 @@ object PacketMetricsPipeline20 {
         val encodingScopes = ArrayDeque<IdentityHashMap<ByteBuf, Packet<*>>>()
         var selective = false
         var longWindow = false
+        var entityBatching = false
         var verifiedChannels: Set<String> = emptySet()
         var capture: PacketCaptureConnection? = null
 
@@ -124,11 +125,13 @@ object PacketMetricsPipeline20 {
         channel: Channel,
         longWindow: Boolean,
         verifiedChannels: Set<String>,
+        entityBatching: Boolean,
     ) {
         val task = Runnable {
             val state = channel.attr(STATE).get() ?: return@Runnable
             state.selective = true
             state.longWindow = longWindow
+            state.entityBatching = entityBatching
             if (state.verifiedChannels != verifiedChannels) state.verifiedChannels = verifiedChannels.toSet()
         }
         if (channel.eventLoop().inEventLoop()) task.run() else channel.eventLoop().execute(task)
@@ -222,7 +225,7 @@ object PacketMetricsPipeline20 {
             val key = packet?.let { PacketMetrics20.metricKey(it, PacketDirection.S2C) }
             val identity = key?.let { ZstdPacketIdentity(it.packetType, it.namespace, it.path) }
             val policy = if (state.selective && packet != null) {
-                PacketBatchPolicy20.classify(packet, msg, state.verifiedChannels, state.longWindow)
+                PacketBatchPolicy20.classify(packet, msg, state.verifiedChannels, state.longWindow, state.entityBatching)
             } else {
                 ZstdBatchPolicy.Immediate
             }
@@ -238,7 +241,7 @@ object PacketMetricsPipeline20 {
             state.outboundPacket = packet
             try {
                 if (ZstdCompressionPipeline.hasOutboundEncoder(ctx.channel())) {
-                    ctx.write(ZstdSendingRecord(msg, policy, identity), promise)
+                    ctx.write(ZstdSendingRecord(msg, policy, identity, PersistentPacketKinds20.kindOf(packet)), promise)
                 } else {
                     if (PacketMetrics20.batchMetricsEnabled) {
                         PacketMetrics20.recordUncompressed(identity, msg.readableBytes(), promise)

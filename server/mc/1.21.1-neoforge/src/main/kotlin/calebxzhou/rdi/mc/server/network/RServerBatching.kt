@@ -10,7 +10,10 @@ import net.minecraft.server.MinecraftServer
 import net.minecraft.server.level.ServerPlayer
 import org.apache.logging.log4j.LogManager
 
-/** Selective batching of vanilla attribute updates; off unless `-Drdi.batch.enabled=true`. */
+/**
+ * Selective batching of vanilla attribute updates and, unless `-Drdi.batch.entity=false`, entity tracking
+ * updates; on unless `-Drdi.batch.enabled=false`.
+ */
 object RServerBatching {
     private val logger = LogManager.getLogger("rdi.network-extensions")
     private val settingsKey = AttributeKey.valueOf<BatchSettings21>("rdi.batch.settings21")
@@ -39,13 +42,14 @@ object RServerBatching {
                     return@execute
                 }
                 // Nothing is armed yet, so a missing adapter only means this connection stays unbatched.
-                if (!PacketRecordPipeline.enableSelective(channel)) {
+                if (!PacketRecordPipeline.enableSelective(channel, settings.entityBatching)) {
                     logger.warn("Player {} keeps unbatched packets: packet record adapter is not installed", name)
                     return@execute
                 }
                 ZstdCompressionPipeline.setOutboundBatching(channel, true, delayUnassociated = false)
                 check(ZstdCompressionPipeline.isOutboundBatchingEnabled(channel)) { "Packet batching activation failed" }
-                logger.info("Player {} attribute batching active, handlers={}", name,
+                logger.info("Player {} {} batching active, handlers={}", name,
+                    if (settings.entityBatching) "attribute and entity" else "attribute",
                     ZstdCompressionPipeline.describeHandlers(channel))
             } catch (error: Exception) {
                 logger.error("Unable to activate packet batching for ${name}", error)

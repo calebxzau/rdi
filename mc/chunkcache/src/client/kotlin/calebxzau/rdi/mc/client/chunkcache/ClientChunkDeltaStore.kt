@@ -10,6 +10,7 @@ import calebxzau.rdi.mc.client.chunkcache.ClientChunkSnapshot.Snapshot
 import calebxzau.rdi.mc.client.chunkcache.ClientChunkRegionSink.Key
 import calebxzau.rdi.mc.client.chunkcache.ClientChunkBinaryCodec
 import calebxzau.rdi.mc.regioncodec.RegionZstdStreams
+import com.mojang.logging.LogUtils
 import net.minecraft.core.BlockPos
 import net.minecraft.core.Registry
 import net.minecraft.core.registries.BuiltInRegistries
@@ -96,13 +97,20 @@ class ClientChunkDeltaStore(root: Path) : AutoCloseable {
         try {
             acceptInternal(write)
         } catch (failure: Throwable) {
-            failed = true
-            throw failure
+            if (!isChunkLimit(failure)) {
+                failed = true
+                throw failure
+            }
+            discardChunkOrFail(write.key(), failure)
         }
     }
 
     private fun acceptInternal(write: ClientChunkCacheWrite) {
         val key = write.key()
+        if (write.updates().any { it is ClientChunkCacheWrite.Invalidate }) {
+            forgetChunk(key)
+            return
+        }
         if (write.base() != null) {
             val snapshot = write.base()
             validateKey(key, snapshot)
@@ -141,8 +149,8 @@ class ClientChunkDeltaStore(root: Path) : AutoCloseable {
         val overlay = loadOverlay(key, generation) ?: newOverlay(key, generation).also { overlays[key] = it }
         if (write.sequence() <= overlay.lastSequence) throw IOException("Nonmonotonic chunk delta sequence")
         val encodedSize = write.estimatedBytes()
-        if (encodedSize <= 0 || encodedSize > MAX_OVERLAY_BYTES) throw IOException("Chunk delta exceeds limit")
-        if (write.updates().size > MAX_BLOCK_CHANGES + MAX_BE_EVENTS + 1) throw IOException("Too many chunk delta updates")
+        if (encodedSize <= 0 || encodedSize > MAX_OVERLAY_BYTES) throw ChunkLimitException("Chunk delta exceeds limit")
+        if (write.updates().size > MAX_BLOCK_CHANGES + MAX_BE_EVENTS + 1) throw ChunkLimitException("Too many chunk delta updates")
         var order = 0
         for (update in write.updates()) {
             val updateOrder = order++
@@ -191,7 +199,7 @@ class ClientChunkDeltaStore(root: Path) : AutoCloseable {
                 }
                 is BiomeDelta -> {
                     val data = update.data().clone()
-                    if (data.size > MAX_BIOME_BYTES) throw IOException("Biome delta exceeds limit")
+                    if (data.size > MAX_BIOME_BYTES) throw ChunkLimitException("Biome delta exceeds limit")
                     overlay.estimatedBytes += data.size - (overlay.biomes?.size ?: 0)
                     overlay.biomes = data
                     overlay.biomeSequence = write.sequence()
@@ -201,9 +209,14 @@ class ClientChunkDeltaStore(root: Path) : AutoCloseable {
         }
         overlay.lastSequence = write.sequence()
         overlay.dirty = true
+        for (update in write.updates()) when (update) {
+            is BlockChange -> compactHistory(overlay, update.position())
+            is BlockEntityChange -> compactHistory(overlay, update.position())
+            else -> Unit
+        }
         if (overlay.blocks.size > MAX_BLOCK_CHANGES || overlay.eventCount > MAX_BE_EVENTS ||
-            overlay.trackedBlockEntities.size > MAX_BE_EVENTS) throw IOException("Chunk delta event count exceeds limit")
-        if (overlay.estimatedBytes > MAX_OVERLAY_BYTES) throw IOException("Chunk delta overlay exceeds limit")
+            overlay.trackedBlockEntities.size > MAX_BE_EVENTS) throw ChunkLimitException("Chunk delta event count exceeds limit")
+        if (overlay.estimatedBytes > MAX_OVERLAY_BYTES) throw ChunkLimitException("Chunk delta overlay exceeds limit")
         overlays[key] = overlay
         enforceOverlayLimits()
     }
@@ -214,7 +227,7 @@ class ClientChunkDeltaStore(root: Path) : AutoCloseable {
         ensureOpen()
         if (failed) throw IOException("Chunk delta store is failed")
         try {
-            for ((key, overlay) in overlays) if (overlay.dirty) persist(key, overlay)
+            for ((key, overlay) in overlays.entries.toList()) if (overlay.dirty) persistOrDiscard(key, overlay)
         } catch (failure: Throwable) {
             failed = true
             throw failure
@@ -253,7 +266,12 @@ class ClientChunkDeltaStore(root: Path) : AutoCloseable {
         ensureOpen()
         val raw = baseSink.readEncoded(key) ?: return null
         val (generation, snapshot) = decodeBase(raw, key)
-        val overlay = overlays[key]?.takeIf { it.generation == generation } ?: readOverlay(key, generation)
+        val overlay = try {
+            overlays[key]?.takeIf { it.generation == generation } ?: readOverlay(key, generation)
+        } catch (failure: ChunkLimitException) {
+            discardChunkOrFail(key, failure)
+            return null
+        }
         return snapshot to overlay
     }
 
@@ -298,12 +316,46 @@ class ClientChunkDeltaStore(root: Path) : AutoCloseable {
 
     private fun enforceOverlayLimits() {
         while (overlays.size > MAX_OVERLAYS || overlays.values.sumOf { it.estimatedBytes } > MAX_RETAINED_BYTES) {
-            val iterator = overlays.entries.iterator()
-            if (!iterator.hasNext()) return
-            val (key, overlay) = iterator.next()
-            if (overlay.dirty) persist(key, overlay)
-            iterator.remove()
+            val (key, overlay) = overlays.entries.firstOrNull() ?: return
+            overlays.remove(key)
+            if (overlay.dirty) persistOrDiscard(key, overlay)
         }
+    }
+
+    private fun persistOrDiscard(key: Key, overlay: Overlay) {
+        try {
+            persist(key, overlay)
+        } catch (failure: ChunkLimitException) {
+            discardChunk(key, failure, overlay)
+        }
+    }
+
+    private fun discardChunkOrFail(key: Key, cause: Throwable) {
+        try {
+            discardChunk(key, cause, overlays[key])
+        } catch (failure: Throwable) {
+            failed = true
+            failure.addSuppressed(cause)
+            throw failure
+        }
+    }
+
+    /**
+     * Forgets one chunk that outgrew a per-chunk limit, on disk as well, so no stale terrain is offered. Later deltas
+     * find no base and are ignored until the server sends this chunk in full again; other chunks keep saving.
+     */
+    private fun discardChunk(key: Key, cause: Throwable, overlay: Overlay?) {
+        logger.warn("Chunk cache dropped chunk {} ({}, {}) after a per-chunk limit: {} blocks={} events={} estimatedBytes={}",
+            key.dimension(), key.x(), key.z(), cause.message, overlay?.blocks?.size ?: 0, overlay?.eventCount ?: 0,
+            overlay?.estimatedBytes ?: 0)
+        forgetChunk(key)
+    }
+
+    private fun forgetChunk(key: Key) {
+        overlays.remove(key)
+        baseGenerations.remove(key)
+        baseSink.clear(key)
+        deltaRegion(key, create = false)?.clear(ChunkPos(key.x(), key.z()))
     }
 
     private fun persist(key: Key, overlay: Overlay) {
@@ -349,7 +401,7 @@ class ClientChunkDeltaStore(root: Path) : AutoCloseable {
         val record = ByteArrayOutputStream()
         ClientChunkBinaryCodec.write(DataOutputStream(record), snapshot)
         val payload = record.toByteArray()
-        if (payload.size > MAX_RECORD_BYTES) throw IOException("Base chunk exceeds record limit")
+        if (payload.size > MAX_RECORD_BYTES) throw ChunkLimitException("Base chunk exceeds record limit")
         val output = ByteArrayOutputStream(payload.size + BASE_HEADER_BYTES)
         DataOutputStream(output).use { data ->
             data.writeInt(BASE_MAGIC); data.writeShort(FORMAT_VERSION)
@@ -409,7 +461,7 @@ class ClientChunkDeltaStore(root: Path) : AutoCloseable {
             val biomes = overlay.biomes; out.writeInt(biomes?.size ?: -1); if (biomes != null) out.write(biomes)
         }
         val bytes = buffer.toByteArray()
-        if (bytes.size > MAX_OVERLAY_BYTES) throw IOException("Chunk delta overlay exceeds limit")
+        if (bytes.size > MAX_OVERLAY_BYTES) throw ChunkLimitException("Chunk delta overlay exceeds limit")
         return bytes
     }
 
@@ -470,9 +522,14 @@ class ClientChunkDeltaStore(root: Path) : AutoCloseable {
             if (biomeLength < 0 && overlay.biomeSequence != 0L) throw IOException("Biome sequence exists without biome data")
             if (biomeLength >= 0) overlay.biomes = ByteArray(biomeLength).also(input::readFully)
             if (input.available() != 0) throw IOException("Trailing delta record bytes")
+            // Records written before compaction may still hold a long history.
+            for (entry in overlay.blockEntityHistory.entries) entry.setValue(compactEvents(entry.value))
+            overlay.eventCount = overlay.blockEntityHistory.values.sumOf { it.size }
             overlay.estimatedBytes = estimateOverlay(overlay)
-            if (overlay.estimatedBytes > MAX_OVERLAY_BYTES) throw IOException("Decoded chunk overlay exceeds retained-data limit")
+            if (overlay.estimatedBytes > MAX_OVERLAY_BYTES) throw ChunkLimitException("Decoded chunk overlay exceeds retained-data limit")
             return overlay
+        } catch (failure: ClientChunkSnapshot.TooLargeException) {
+            throw ChunkLimitException(failure.message ?: "Decoded chunk overlay exceeds limit")
         } catch (failure: RuntimeException) { throw IOException("Malformed delta record", failure) }
     }
 
@@ -493,24 +550,61 @@ class ClientChunkDeltaStore(root: Path) : AutoCloseable {
     private fun appendEvent(overlay: Overlay, position: Long, event: BeEntry) {
         overlay.blockEntityHistory.getOrPut(position) { mutableListOf() }.add(event)
         overlay.eventCount++
-        overlay.estimatedBytes += EVENT_ENTRY_BYTES
-        if (event.replay is ReplayEvent.BlockEntity) {
-            overlay.estimatedBytes += ClientChunkSnapshot.estimateTag(event.replay.tag) + event.replay.type.length * 2L
+        overlay.estimatedBytes += eventBytes(event)
+    }
+
+    private fun compactHistory(overlay: Overlay, position: Long) {
+        val entries = overlay.blockEntityHistory[position] ?: return
+        val compacted = compactEvents(entries)
+        if (compacted.size == entries.size) return
+        overlay.eventCount += compacted.size - entries.size
+        overlay.estimatedBytes += compacted.sumOf(::eventBytes) - entries.sumOf(::eventBytes)
+        overlay.blockEntityHistory[position] = compacted
+    }
+
+    /**
+     * Shortest replay for one position with the same final client state, so machines that sync every tick stay
+     * bounded. A non-empty update tag fully reloads the block entity (the loader default), so only the block it
+     * was applied to matters before it; empty tags never reach a block entity. After it, consecutive block changes
+     * reduce to the final state plus the last block-type change, since a type change replaces the client's block
+     * entity while a same-block state change keeps it.
+     */
+    private fun compactEvents(entries: List<BeEntry>): MutableList<BeEntry> {
+        val latestTag = entries.indexOfLast { (it.replay as? ReplayEvent.BlockEntity)?.tag?.isEmpty == false }
+        val result = ArrayList<BeEntry>(5)
+        if (latestTag >= 0) {
+            entries.subList(0, latestTag).lastOrNull { it.replay is ReplayEvent.Block }?.let(result::add)
+            result += entries[latestTag]
         }
+        val blocks = entries.subList(latestTag + 1, entries.size).filter { it.replay is ReplayEvent.Block }
+        if (blocks.isEmpty()) return result
+        val typeChange = (blocks.size - 1 downTo 1).firstOrNull { blockOf(blocks[it]) != blockOf(blocks[it - 1]) }
+        if (typeChange != null) {
+            result += blocks[typeChange - 1]
+            if (typeChange < blocks.size - 1) result += blocks[typeChange]
+        }
+        result += blocks.last()
+        return result
+    }
+
+    private fun blockOf(entry: BeEntry): Block? =
+        Block.BLOCK_STATE_REGISTRY.byId((entry.replay as ReplayEvent.Block).stateId)?.block
+
+    private fun eventBytes(entry: BeEntry): Long = EVENT_ENTRY_BYTES + when (val event = entry.replay) {
+        is ReplayEvent.BlockEntity -> ClientChunkSnapshot.estimateTag(event.tag) + event.type.length * 2L
+        is ReplayEvent.Block -> 0L
     }
 
     private fun checkTag(tag: CompoundTag) {
-        if (ClientChunkSnapshot.estimateTag(tag) > MAX_OVERLAY_BYTES) throw IOException("Block entity NBT exceeds delta limit")
+        if (ClientChunkSnapshot.estimateTag(tag) > MAX_OVERLAY_BYTES) throw ChunkLimitException("Block entity NBT exceeds delta limit")
     }
 
     private fun estimateOverlay(overlay: Overlay): Long = 128L + overlay.blocks.size * BLOCK_ENTRY_BYTES + overlay.trackedBlockEntities.size * TRACKED_POSITION_BYTES +
-        overlay.blockEntityHistory.values.sumOf { entries -> entries.sumOf { entry ->
-            EVENT_ENTRY_BYTES + if (entry.replay is ReplayEvent.BlockEntity) ClientChunkSnapshot.estimateTag(entry.replay.tag) + entry.replay.type.length * 2L else 0L
-        } } + (overlay.biomes?.size ?: 0)
+        overlay.blockEntityHistory.values.sumOf { entries -> entries.sumOf(::eventBytes) } + (overlay.biomes?.size ?: 0)
 
     private fun readBounded(input: java.io.InputStream, max: Int): ByteArray {
         val output = ByteArrayOutputStream(); val buffer = ByteArray(8192)
-        while (true) { val count = input.read(buffer); if (count < 0) break; if (output.size() + count > max) throw IOException("Chunk cache record exceeds limit"); output.write(buffer, 0, count) }
+        while (true) { val count = input.read(buffer); if (count < 0) break; if (output.size() + count > max) throw ChunkLimitException("Chunk cache record exceeds limit"); output.write(buffer, 0, count) }
         return output.toByteArray()
     }
 
@@ -529,7 +623,15 @@ class ClientChunkDeltaStore(root: Path) : AutoCloseable {
         if (failed) throw IOException("Chunk delta store is failed")
     }
 
+    /** A single chunk outgrew a cache bound; only that chunk is dropped, not the whole store. */
+    private class ChunkLimitException(message: String) : IOException(message)
+
     companion object {
+        private val logger = LogUtils.getLogger()
+
+        private fun isChunkLimit(failure: Throwable): Boolean =
+            failure is ChunkLimitException || failure is ClientChunkSnapshot.TooLargeException
+
         @Throws(IOException::class)
         private fun decodeTerrainSections(
             base: Snapshot,

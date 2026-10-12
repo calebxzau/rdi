@@ -3,6 +3,7 @@ package calebxzau.rdi.mc.zstdcodec
 import com.github.luben.zstd.Zstd
 import com.github.luben.zstd.ZstdDecompressCtx
 import io.netty.buffer.ByteBuf
+import io.netty.buffer.ByteBufUtil
 import io.netty.channel.ChannelHandlerContext
 import io.netty.handler.codec.ByteToMessageDecoder
 import io.netty.handler.codec.DecoderException
@@ -20,6 +21,9 @@ import java.nio.ByteBuffer
  *
  * With the Zstd stream extension it likewise accepts STREAM_START only after the client prepared for
  * it, and from then on decodes every compressed payload as the next segment of one stream.
+ *
+ * With the persistent packet extension it restores packets the client kept from earlier joins, once a
+ * [PersistentPacketClientSession] is attached to the channel.
  */
 internal class ZstdCompressionDecoder(
     private var threshold: Int,
@@ -66,6 +70,10 @@ internal class ZstdCompressionDecoder(
         }
         if (declaredSize == PacketRefFormat.CONTROL_MARKER) {
             consumeOnFailure(input) { decodeControl(input) }
+            return
+        }
+        if (declaredSize == PersistentPacketFormat.MARKER) {
+            consumeOnFailure(input) { decodePersistent(context, input, output) }
             return
         }
 
@@ -229,6 +237,91 @@ internal class ZstdCompressionDecoder(
         } catch (error: Throwable) {
             record.release()
             throw error
+        }
+    }
+
+    private fun decodePersistent(context: ChannelHandlerContext, input: ByteBuf, output: MutableList<Any>) {
+        val session = PersistentPacketSessions.client(context.channel())
+            ?: throw DecoderException("Received a persistent packet on a connection that did not negotiate persistent packets")
+        if (input.readableBytes() < 2 + PersistentPacketHash.BYTES) {
+            throw DecoderException("Persistent packet frame ended after ${input.readableBytes()} bytes")
+        }
+        val opcode = input.readUnsignedByte().toInt()
+        val kind = input.readUnsignedByte().toInt()
+        if (!PersistentPacketKind.isValid(kind)) throw DecoderException("Persistent packet frame names invalid kind ${kind}")
+        val named = PersistentPacketHash.read(input)
+        when (opcode) {
+            PersistentPacketFormat.OP_HIT -> {
+                if (input.isReadable) throw DecoderException("Persistent packet HIT carries ${input.readableBytes()} trailing bytes")
+                val content = session.content(named)
+                    ?: throw DecoderException("Persistent packet ${named} of ${PersistentPacketKind.name(kind)} is not held by this client")
+                val record = context.alloc().buffer(content.size, content.size)
+                record.writeBytes(content)
+                emit(record, output)
+            }
+            PersistentPacketFormat.OP_FULL -> {
+                val record = decodePersistentEnvelope(context, input)
+                val content = try {
+                    ByteBufUtil.getBytes(record).also { verifyPersistent(it, named, kind) }
+                } catch (error: Throwable) {
+                    record.release()
+                    throw error
+                }
+                session.received(kind, named, content)
+                emit(record, output)
+            }
+            PersistentPacketFormat.OP_DELTA -> {
+                val hash = PersistentPacketHash.read(input)
+                val size = readRefVarInt(input, "size", PERSISTENT_EXTENSION)
+                if (size <= 0 || size > ZstdCompressionPipeline.MAXIMUM_UNCOMPRESSED_LENGTH) {
+                    throw DecoderException("Persistent packet DELTA declares ${size} bytes")
+                }
+                val deltaBytes = input.readableBytes()
+                if (deltaBytes == 0 || deltaBytes > ZstdCompressionPipeline.MAXIMUM_COMPRESSED_LENGTH) {
+                    throw DecoderException("Persistent packet DELTA carries ${deltaBytes} bytes")
+                }
+                val base = session.content(named)
+                    ?: throw DecoderException("Persistent packet base ${named} of ${PersistentPacketKind.name(kind)} is not held by this client")
+                val delta = ByteArray(deltaBytes)
+                input.readBytes(delta)
+                val content = try {
+                    PersistentPacketDelta.decode(base, delta, size)
+                } catch (error: Exception) {
+                    throw DecoderException("Failed to restore persistent packet ${hash} from base ${named}", error)
+                }
+                verifyPersistent(content, hash, kind)
+                session.received(kind, hash, content)
+                val record = context.alloc().buffer(content.size, content.size)
+                record.writeBytes(content)
+                emit(record, output)
+            }
+            else -> throw DecoderException("Unsupported persistent packet opcode: ${opcode}")
+        }
+    }
+
+    /** The legacy envelope inside a FULL frame, decoded like a top-level one, the Zstd stream included. */
+    private fun decodePersistentEnvelope(context: ChannelHandlerContext, input: ByteBuf): ByteBuf {
+        val declaredSize = readRefVarInt(input, "envelope size", PERSISTENT_EXTENSION)
+        if (declaredSize == 0) {
+            val rawSize = input.readableBytes()
+            if (rawSize == 0 || rawSize > ZstdCompressionPipeline.MAXIMUM_UNCOMPRESSED_LENGTH) {
+                throw DecoderException("Persistent packet FULL carries ${rawSize} raw bytes")
+            }
+            return input.readRetainedSlice(rawSize)
+        }
+        if (declaredSize < 0 || declaredSize > ZstdCompressionPipeline.MAXIMUM_UNCOMPRESSED_LENGTH) {
+            throw DecoderException("Persistent packet FULL declares ${declaredSize} bytes")
+        }
+        val compressedSize = input.readableBytes()
+        if (compressedSize == 0 || compressedSize > ZstdCompressionPipeline.MAXIMUM_COMPRESSED_LENGTH) {
+            throw DecoderException("Persistent packet FULL carries ${compressedSize} compressed bytes")
+        }
+        return decompressFrame(context, input, compressedSize, declaredSize)
+    }
+
+    private fun verifyPersistent(content: ByteArray, hash: PersistentPacketHash, kind: Int) {
+        if (PersistentPacketHash.of(content) != hash) {
+            throw DecoderException("Restored persistent packet of ${PersistentPacketKind.name(kind)} does not match its hash ${hash}")
         }
     }
 
@@ -502,5 +595,6 @@ internal class ZstdCompressionDecoder(
     private companion object {
         const val REF_EXTENSION = "packet reference"
         const val STREAM_EXTENSION = "Zstd stream"
+        const val PERSISTENT_EXTENSION = "persistent packet"
     }
 }

@@ -25,6 +25,7 @@ object RServerBatching {
 
     private fun batchingEnabled(): Boolean = System.getProperty("rdi.batch.enabled", "true").toBoolean()
     private fun longWindowEnabled(): Boolean = System.getProperty("rdi.batch.longWindow", "false").toBoolean()
+    private fun entityBatchingEnabled(): Boolean = System.getProperty("rdi.batch.entity", "true").toBoolean()
 
     fun onPlayerJoined(player: ServerPlayer) {
         val connection = player.connection.connection
@@ -33,16 +34,17 @@ object RServerBatching {
             return
         }
         val channel = connection.channel()
-        PacketMetricsPipeline20.configureBatching(channel, longWindowEnabled(), verifiedChannels)
+        PacketMetricsPipeline20.configureBatching(channel, longWindowEnabled(), verifiedChannels, entityBatchingEnabled())
         ZstdCompressionPipeline.setOutboundBatching(channel, batchingEnabled())
-        logger.info("Player {} selective Zstd batching requested={}, long window={}, handlers={}",
-            player.gameProfile.name, batchingEnabled(), longWindowEnabled(),
+        logger.info("Player {} selective Zstd batching requested={}, long window={}, entity updates={}, handlers={}",
+            player.gameProfile.name, batchingEnabled(), longWindowEnabled(), entityBatchingEnabled(),
             ZstdCompressionPipeline.describeHandlers(channel))
     }
 
     fun flushAtTickEnd(server: MinecraftServer) {
         val enabled = batchingEnabled()
         val longWindow = longWindowEnabled()
+        val entityBatching = entityBatchingEnabled()
         for (player in server.playerList.players) {
             val connection = player.connection.connection
             if (!RdiBatchChannel.isRemotePresent(connection)) continue
@@ -50,7 +52,7 @@ object RServerBatching {
             // Policy updates and deadlines share one ordered Netty task.
             channel.eventLoop().execute {
                 if (!channel.isActive) return@execute
-                PacketMetricsPipeline20.configureBatching(channel, longWindow, verifiedChannels)
+                PacketMetricsPipeline20.configureBatching(channel, longWindow, verifiedChannels, entityBatching)
                 if (ZstdCompressionPipeline.isOutboundBatchingEnabled(channel) != enabled) {
                     ZstdCompressionPipeline.setOutboundBatching(channel, enabled)
                 }

@@ -4,6 +4,7 @@ import net.minecraft.SharedConstants
 import com.mojang.serialization.Lifecycle
 import net.neoforged.fml.loading.LoadingModList
 import net.minecraft.core.BlockPos
+import net.minecraft.core.Direction
 import net.minecraft.core.MappedRegistry
 import net.minecraft.core.RegistrationInfo
 import net.minecraft.core.registries.BuiltInRegistries
@@ -18,6 +19,7 @@ import net.minecraft.world.level.biome.Biomes
 import net.minecraft.world.level.biome.MobSpawnSettings
 import net.minecraft.world.level.block.Block
 import net.minecraft.world.level.block.Blocks
+import net.minecraft.world.level.block.ChestBlock
 import net.minecraft.world.level.chunk.LevelChunkSection
 import io.netty.buffer.Unpooled
 import net.minecraft.network.FriendlyByteBuf
@@ -88,14 +90,13 @@ class ClientChunkDeltaStoreTest {
             assertEquals(changedBiomes.toList(), combined.biomeData!!.toList())
             assertEquals(Blocks.CHEST.defaultBlockState(), combined.decodeSections(biomes).single().getBlockState(1, 0, 2))
             assertTrue(combined.heightmapsStale)
-            assertEquals(5, combined.replay.size)
-            assertIs<ClientChunkDeltaStore.ReplayEvent.Block>(combined.replay[0]) // removal
-            assertIs<ClientChunkDeltaStore.ReplayEvent.Block>(combined.replay[1]) // recreate
-            val first = assertIs<ClientChunkDeltaStore.ReplayEvent.BlockEntity>(combined.replay[2])
-            assertEquals(1, first.tag.getInt("partA"))
-            assertIs<ClientChunkDeltaStore.ReplayEvent.Block>(combined.replay[3]) // same-block state/property packet
-            val second = assertIs<ClientChunkDeltaStore.ReplayEvent.BlockEntity>(combined.replay[4])
-            assertEquals(2, second.tag.getInt("partB"))
+            // The latest full tag supersedes the removal, recreate and earlier tag; only the block it applied to remains.
+            assertEquals(2, combined.replay.size)
+            assertEquals(Block.getId(Blocks.CHEST.defaultBlockState()),
+                assertIs<ClientChunkDeltaStore.ReplayEvent.Block>(combined.replay[0]).stateId)
+            val latest = assertIs<ClientChunkDeltaStore.ReplayEvent.BlockEntity>(combined.replay[1])
+            assertEquals(2, latest.tag.getInt("partB"))
+            assertFalse(latest.tag.contains("partA"))
         }
     }
 
@@ -125,13 +126,12 @@ class ClientChunkDeltaStoreTest {
 
         ClientChunkDeltaStore(directory).use { reopened ->
             val combined = assertNotNull(reopened.read(key))
-            assertEquals(5, combined.replay.size)
-            assertEquals(1, assertIs<ClientChunkDeltaStore.ReplayEvent.BlockEntity>(combined.replay[0]).tag.getInt("before"))
-            assertIs<ClientChunkDeltaStore.ReplayEvent.Block>(combined.replay[1])
-            assertEquals(2, assertIs<ClientChunkDeltaStore.ReplayEvent.BlockEntity>(combined.replay[2]).tag.getInt("after"))
-            assertTrue(assertIs<ClientChunkDeltaStore.ReplayEvent.BlockEntity>(combined.replay[3]).tag.isEmpty)
+            // Empty tags never reach a block entity, so they and the superseded "before" tag are compacted away.
+            assertEquals(3, combined.replay.size)
+            assertIs<ClientChunkDeltaStore.ReplayEvent.Block>(combined.replay[0])
+            assertEquals(2, assertIs<ClientChunkDeltaStore.ReplayEvent.BlockEntity>(combined.replay[1]).tag.getInt("after"))
             assertEquals(Block.getId(Blocks.AIR.defaultBlockState()),
-                assertIs<ClientChunkDeltaStore.ReplayEvent.Block>(combined.replay[4]).stateId)
+                assertIs<ClientChunkDeltaStore.ReplayEvent.Block>(combined.replay[2]).stateId)
             assertEquals(Block.getId(Blocks.AIR.defaultBlockState()), combined.blockStates.getValue(position).stateId)
         }
     }
@@ -286,6 +286,127 @@ class ClientChunkDeltaStoreTest {
         ClientChunkDeltaStore(cleanDirectory).use { store ->
             val combined = assertNotNull(store.read(key))
             assertEquals(Block.getId(Blocks.STONE.defaultBlockState()), combined.blockStates.getValue(position).stateId)
+        }
+    }
+
+    @Test
+    fun repeatedBlockEntitySyncStaysBoundedAndKeepsLatestTagAcrossReopen(): Unit {
+        val key = key()
+        val position = BlockPos.asLong(1, 0, 2)
+        val payload = ByteArray(16 * 1024)
+        ClientChunkDeltaStore(directory).use { store ->
+            store.accept(write(key, 1, base = base(key, 1, position)))
+            // 2000 x 16KiB of history exceeded the 16MiB per-chunk bound before compaction.
+            for (sequence in 2L..2001L) {
+                store.accept(write(key, sequence, updates = listOf(
+                    ClientChunkCacheWrite.BlockEntityChange(position, "minecraft:chest", CompoundTag().apply {
+                        putLong("tick", sequence)
+                        putByteArray("data", payload)
+                    }),
+                )))
+            }
+            store.flush()
+        }
+
+        ClientChunkDeltaStore(directory).use { reopened ->
+            val tag = assertIs<ClientChunkDeltaStore.ReplayEvent.BlockEntity>(assertNotNull(reopened.read(key)).replay.single()).tag
+            assertEquals(2001L, tag.getLong("tick"))
+        }
+    }
+
+    @Test
+    fun blockChangesAfterLatestTagKeepFinalStateAndLastTypeChange(): Unit {
+        val key = key()
+        val position = BlockPos.asLong(1, 0, 2)
+        val chest = Blocks.CHEST.defaultBlockState()
+        val chestEast = chest.setValue(ChestBlock.FACING, Direction.EAST)
+        val chestWest = chest.setValue(ChestBlock.FACING, Direction.WEST)
+        val air = Blocks.AIR.defaultBlockState()
+        ClientChunkDeltaStore(directory).use { store ->
+            store.accept(write(key, 1, base = base(key, 1, position)))
+            store.accept(write(key, 2, updates = listOf(
+                ClientChunkCacheWrite.BlockEntityChange(position, "minecraft:chest", CompoundTag().apply { putInt("x", 1) }),
+            )))
+            var sequence = 3L
+            repeat(100) {
+                store.accept(write(key, sequence++, updates = listOf(ClientChunkCacheWrite.BlockChange(position, Block.getId(air), false))))
+                store.accept(write(key, sequence++, updates = listOf(ClientChunkCacheWrite.BlockChange(position, Block.getId(chest), true))))
+            }
+            repeat(50) {
+                store.accept(write(key, sequence++, updates = listOf(ClientChunkCacheWrite.BlockChange(position, Block.getId(chestWest), true))))
+                store.accept(write(key, sequence++, updates = listOf(ClientChunkCacheWrite.BlockChange(position, Block.getId(chestEast), true))))
+            }
+            val replay = assertNotNull(store.read(key)).replay
+            assertEquals(4, replay.size)
+            assertEquals(1, assertIs<ClientChunkDeltaStore.ReplayEvent.BlockEntity>(replay[0]).tag.getInt("x"))
+            // AIR -> CHEST is the last type change: the block entity is replaced, then only the facing changes.
+            assertEquals(listOf(Block.getId(air), Block.getId(chest), Block.getId(chestEast)),
+                replay.drop(1).map { assertIs<ClientChunkDeltaStore.ReplayEvent.Block>(it).stateId })
+        }
+    }
+
+    @Test
+    fun oversizedChunkIsDroppedWhileWriterKeepsSavingOtherChunks(): Unit {
+        val key = key()
+        val other = ClientChunkRegionSink.Key(key.dimension(), 1, 0)
+        val position = BlockPos.asLong(1, 0, 2)
+        val stone = Block.getId(Blocks.STONE.defaultBlockState())
+        val failures = Collections.synchronizedList(mutableListOf<Throwable>())
+        val writer = ClientChunkDeltaWriter(directory, failures::add, 8, 4096)
+        try {
+            assertTrue(writer.submit(write(key, 1, base = base(key, 1, position))))
+            assertTrue(writer.submit(write(other, 2, base = base(other, 2))))
+            assertTrue(writer.submit(write(key, 3, updates = listOf(
+                ClientChunkCacheWrite.BlockEntityChange(position, "minecraft:chest", CompoundTag().apply {
+                    putByteArray("data", ByteArray(ClientChunkSnapshot.MAX_SNAPSHOT_BYTES + 1))
+                }),
+            ))))
+            assertNull(writer.readTerrain(key).get(5, TimeUnit.SECONDS))
+            // Deltas for the dropped chunk have no base and are ignored; other chunks still save.
+            assertTrue(writer.submit(write(key, 4, updates = listOf(
+                ClientChunkCacheWrite.BlockChange(position, stone, false),
+            ))))
+            assertTrue(writer.submit(write(other, 5, updates = listOf(
+                ClientChunkCacheWrite.BlockChange(BlockPos.asLong(17, 0, 0), stone, false),
+            ))))
+            assertNull(writer.readTerrain(key).get(5, TimeUnit.SECONDS))
+            assertEquals(stone, assertNotNull(writer.readTerrain(other).get(5, TimeUnit.SECONDS)).blockStates.getValue(BlockPos.asLong(17, 0, 0)).stateId)
+            assertTrue(writer.stats().accepting)
+            // The next full chunk from the server starts it again.
+            assertTrue(writer.submit(write(key, 6, base = base(key, 6, position))))
+            assertNotNull(writer.readTerrain(key).get(5, TimeUnit.SECONDS))
+        } finally {
+            writer.closeAsync()
+            assertTrue(writer.awaitClosed(5_000))
+        }
+        assertTrue(failures.isEmpty(), failures.toString())
+        ClientChunkDeltaStore(directory).use { reopened ->
+            assertNotNull(reopened.readTerrain(key))
+            assertEquals(stone, assertNotNull(reopened.readTerrain(other)).blockStates.getValue(BlockPos.asLong(17, 0, 0)).stateId)
+        }
+    }
+
+    @Test
+    fun invalidateForgetsChunkOnDiskAndIgnoresUpdatesUntilNextBase(): Unit {
+        val key = key()
+        val other = ClientChunkRegionSink.Key(key.dimension(), 1, 0)
+        val position = BlockPos.asLong(1, 0, 2)
+        val stone = Block.getId(Blocks.STONE.defaultBlockState())
+        ClientChunkDeltaStore(directory).use { store ->
+            store.accept(write(key, 1, base = base(key, 1, position)))
+            store.accept(write(other, 2, base = base(other, 2)))
+            store.accept(write(key, 3, updates = listOf(ClientChunkCacheWrite.BlockChange(position, stone, false))))
+            store.flush()
+            store.accept(write(key, 4, updates = listOf(ClientChunkCacheWrite.Invalidate())))
+            assertNull(store.readTerrain(key))
+            store.accept(write(key, 5, updates = listOf(ClientChunkCacheWrite.BlockChange(position, stone, false))))
+            assertNull(store.readTerrain(key))
+            assertNotNull(store.readTerrain(other))
+        }
+        ClientChunkDeltaStore(directory).use { reopened ->
+            assertNull(reopened.readTerrain(key))
+            reopened.accept(write(key, 6, base = base(key, 6, position)))
+            assertTrue(assertNotNull(reopened.readTerrain(key)).blockStates.isEmpty())
         }
     }
 
