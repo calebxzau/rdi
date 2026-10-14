@@ -35,10 +35,11 @@ import calebxzhou.rdi.client.service.toUiMods
 import calebxzau.rdi.client.ui.themeNow
 import calebxzhou.rdi.client.ui.comp.Console
 import calebxzhou.rdi.client.ui.comp.ConsoleState
-import calebxzhou.rdi.client.ui.comp.ModGrid
-import calebxzhou.rdi.client.ui.comp.ModGridDragEvent
+import calebxzhou.rdi.client.ui.comp.ContentGrid
+import calebxzhou.rdi.client.ui.comp.ContentGridDragEvent
+import calebxzhou.rdi.client.ui.comp.ContentGridItem
+import calebxzhou.rdi.client.ui.comp.rememberModGridItems
 import calebxzhou.rdi.client.ui.comp.UiModIcon
-import calebxzhou.rdi.client.ui.comp.ModpackCard
 import calebxzhou.rdi.common.model.Host
 import calebxzhou.rdi.common.model.Mod
 import calebxzhou.rdi.common.service.ModService
@@ -49,19 +50,6 @@ import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.flowOn
 import org.bson.types.ObjectId
 import kotlin.math.roundToInt
-
-@Composable
-internal fun HostOverviewPane(
-    host: Host.DetailVo,
-    onOpenModpackInfo: (String) -> Unit
-) {
-    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-        host.modpack.ModpackCard(
-            modifier = Modifier.fillMaxWidth(),
-            onClick = { onOpenModpackInfo(host.modpack.id.toHexString()) }
-        )
-    }
-}
 
 @Composable
 internal fun HostModsPane(
@@ -106,8 +94,8 @@ internal fun HostModsPane(
         }
     }
 
-    fun handleDragEvent(source: HostModAreaType, event: ModGridDragEvent) {
-        if (event is ModGridDragEvent.Start && (!canManage || event.mod.key in pendingMutationKeys)) return
+    fun handleDragEvent(source: HostModAreaType, event: ContentGridDragEvent) {
+        if (event is ContentGridDragEvent.Start && (!canManage || event.item.key in pendingMutationKeys)) return
         val update = hostModDragUpdate(
             dragState = dragState,
             source = source,
@@ -373,25 +361,28 @@ internal fun hostModDropTarget(
 internal fun hostModDragUpdate(
     dragState: HostModDragState?,
     source: HostModAreaType,
-    event: ModGridDragEvent,
+    event: ContentGridDragEvent,
     enabledAreaBounds: Rect?,
     disabledAreaBounds: Rect?,
 ): HostModDragUpdate = when (event) {
-    is ModGridDragEvent.Start -> HostModDragUpdate(
-        state = HostModDragState(
-            mod = event.mod,
-            source = source,
-            pointerInWindow = event.pointerInWindow,
-            dropTarget = hostModDropTarget(
-                source,
-                event.pointerInWindow,
-                enabledAreaBounds,
-                disabledAreaBounds,
-            ),
+    // Host mod panes only hold mods; anything else is not draggable here.
+    is ContentGridDragEvent.Start -> (event.item as? ContentGridItem.ModItem)?.let { item ->
+        HostModDragUpdate(
+            state = HostModDragState(
+                mod = item.mod,
+                source = source,
+                pointerInWindow = event.pointerInWindow,
+                dropTarget = hostModDropTarget(
+                    source,
+                    event.pointerInWindow,
+                    enabledAreaBounds,
+                    disabledAreaBounds,
+                ),
+            )
         )
-    )
+    } ?: HostModDragUpdate(state = dragState)
 
-    is ModGridDragEvent.Move -> HostModDragUpdate(
+    is ContentGridDragEvent.Move -> HostModDragUpdate(
         state = dragState?.let { dragging ->
             dragging.copy(
                 pointerInWindow = event.pointerInWindow,
@@ -405,7 +396,7 @@ internal fun hostModDragUpdate(
         }
     )
 
-    is ModGridDragEvent.End -> {
+    is ContentGridDragEvent.End -> {
         if (dragState == null) {
             HostModDragUpdate(state = null)
         } else {
@@ -423,7 +414,7 @@ internal fun hostModDragUpdate(
         }
     }
 
-    ModGridDragEvent.Cancel -> HostModDragUpdate(state = null)
+    ContentGridDragEvent.Cancel -> HostModDragUpdate(state = null)
 }
 
 @Composable
@@ -696,15 +687,16 @@ internal fun HostExtraModsPane(
                 Text("正在补充附加Mod详细信息...", color = themeNow.onSurfaceVariant)
                 Spacer(Modifier.height(8.dp))
             }
-            ModGrid(
-                mods = extraUiMods,
+            ContentGrid(
+                items = rememberModGridItems(extraUiMods),
                 modifier = Modifier.fillMaxWidth().weight(1f),
-                selectedKeys = selectedExtraModKeys,
+                highlightedKeys = selectedExtraModKeys,
                 emptyText = "当前没有附加Mod",
-                onModClick = { uiMod ->
-                    val selected = uiMod.key in selectedExtraModKeys
-                    onToggleSelected(uiMod.mod, !selected)
-                }
+                onItemClick = { item ->
+                    val selected = item.key in selectedExtraModKeys
+                    onToggleSelected((item as ContentGridItem.ModItem).mod.mod, !selected)
+                },
+                showTypeFilters = false,
             )
         }
     }
@@ -718,18 +710,21 @@ internal fun HostModListPane(
     uiMods: List<UiMod>,
     iconOnly: Boolean,
     draggedKey: String?,
-    onDragEvent: (ModGridDragEvent) -> Unit,
+    onDragEvent: (ContentGridDragEvent) -> Unit,
 ) {
     if (baseVersionMods.isEmpty()) {
         Text("没有Mod", color = themeNow.onSurfaceVariant)
     } else {
-        ModGrid(
-            mods = uiMods,
+        ContentGrid(
+            items = rememberModGridItems(uiMods),
             modifier = Modifier.fillMaxSize(),
             draggedKey = draggedKey,
             emptyText = "当前整合包版本没有可显示的Mod",
             onDragEvent = if (canManage) onDragEvent else null,
-            initialIconOnly = iconOnly
+            initialIconOnly = iconOnly,
+            showTypeFilters = false,
+            topBar = true,
+            searchPlaceholder = "搜索已启用的Mod",
         )
     }
 }
@@ -741,17 +736,18 @@ internal fun HostDisabledModsPane(
     disabledMods: List<Mod>,
     uiMods: List<UiMod>,
     draggedKey: String?,
-    onDragEvent: (ModGridDragEvent) -> Unit,
+    onDragEvent: (ContentGridDragEvent) -> Unit,
 ) {
     if (disabledMods.isEmpty()) {
         Text("没有停用mod", color = themeNow.onSurfaceVariant)
     } else {
-        ModGrid(
-            mods = uiMods,
+        ContentGrid(
+            items = rememberModGridItems(uiMods),
             modifier = Modifier.fillMaxSize(),
             draggedKey = draggedKey,
             emptyText = "当前没有停用mod",
             onDragEvent = if (canManage) onDragEvent else null,
+            showTypeFilters = false,
         )
     }
 }

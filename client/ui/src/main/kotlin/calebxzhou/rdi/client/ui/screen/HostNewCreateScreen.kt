@@ -79,8 +79,6 @@ fun HostNewCreateScreen(
     var returnSuccessMessage by remember { mutableStateOf<String?>(null) }
     var staySuccessMessage by remember { mutableStateOf<String?>(null) }
     var showUpdateConfirm by remember { mutableStateOf(false) }
-    var showResetConfirm by remember { mutableStateOf(false) }
-    var resetName by remember { mutableStateOf("") }
     var showCustomLevelTypeDialog by remember { mutableStateOf(false) }
     var showBaseWorldSelection by remember { mutableStateOf(false) }
     LaunchedEffect(account._id, serverRoute) {
@@ -113,7 +111,6 @@ fun HostNewCreateScreen(
                     returnSuccessMessage = event.message
                 }
                 is HostCreateEvent.HostPackUpdateSubmitted -> staySuccessMessage = event.message
-                is HostCreateEvent.WorldReset -> staySuccessMessage = event.message
             }
         }
     }
@@ -161,36 +158,6 @@ fun HostNewCreateScreen(
         )
     }
 
-    if (showResetConfirm) {
-        val currentHost = state.editHost
-        AlertDialog(
-            onDismissRequest = { showResetConfirm = false },
-            title = { Text("重置存档") },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("这会删除房间存档且不可恢复。下次启动时将生成新存档。请输入房间名称确认。")
-                    OutlinedTextField(
-                        value = resetName,
-                        onValueChange = { resetName = it },
-                        label = { Text(currentHost?.name ?: "") },
-                        singleLine = true,
-                    )
-                }
-            },
-            confirmButton = {
-                TextButton(
-                    enabled = currentHost != null && resetName == currentHost.name,
-                    onClick = {
-                        showResetConfirm = false
-                        resetName = ""
-                        viewModel.resetWorld()
-                    },
-                ) { Text("重置") }
-            },
-            dismissButton = { TextButton(onClick = { showResetConfirm = false }) { Text("取消") } },
-        )
-    }
-
     MaxBox {
         ScreenContentSurface(size = ScreenContentSize.MEDIUM) {
             TitleRow(state.title, onBack) {
@@ -198,17 +165,6 @@ fun HostNewCreateScreen(
                     CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
                 }
                 if (state.editHost != null) {
-                    if (state.editHost?.version == 2) {
-                        CircleIconButton(
-                            icon = "\uDB85\uDC5E",
-                            label = "重置存档",
-                            bgColor = MaterialTheme.colorScheme.error,
-                            showText = true,
-                        ) {
-                            resetName = ""
-                            showResetConfirm = true
-                        }
-                    }
                     CircleIconButton(
                         icon = "\uDB80\uDFD5",
                         label = "更新整合包",

@@ -50,6 +50,8 @@ import calebxzhou.rdi.master.service.host.HostQueryService.getBriefHost
 import calebxzhou.rdi.master.service.host.HostQueryService.toDetailVo
 import calebxzhou.rdi.master.service.player
 import calebxzau.rdi.server.service.baseworld.BaseWorldService
+import calebxzau.rdi.server.service.hostrollback.hostRollbackRoutes
+import calebxzau.rdi.server.service.hostworlddownload.hostWorldDownloadRoutes
 import calebxzau.rdi.server.service.hostworldimport.hostWorldImportRoutes
 import calebxzhou.rdi.model.Role
 import com.github.dockerjava.api.exception.NotFoundException
@@ -103,6 +105,8 @@ fun Route.hostRoutes() = route("/host") {
     }
     route("/{hostId}") {
         hostWorldImportRoutes()
+        hostRollbackRoutes()
+        hostWorldDownloadRoutes()
         get("/status") {
             call.hostContext().host.status.let { response(data = it) }
         }

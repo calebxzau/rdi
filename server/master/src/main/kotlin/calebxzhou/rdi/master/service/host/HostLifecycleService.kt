@@ -28,6 +28,7 @@ import calebxzhou.rdi.master.service.host.HostService.needOwner
 import calebxzhou.rdi.master.service.host.HostRuntimeService.hostStates
 import calebxzhou.rdi.master.service.modpack.ModpackVersionMutationLock
 import calebxzau.rdi.server.service.baseworld.BaseWorldService
+import calebxzau.rdi.server.service.hostrollback.HostRollbackService
 import com.mongodb.client.model.Filters.eq
 import com.mongodb.client.model.Updates.combine
 import com.mongodb.client.model.Updates.set
@@ -113,6 +114,7 @@ object HostLifecycleService {
         if (current.realVersion != 2) throw RequestError("仅v2房间支持重置世界")
         if (current.worldId != null) throw RequestError("v2房间存档数据无效")
         if (current.status != HostStatus.STOPPED) throw RequestError("请先去后台停止房间后 再重置存档")
+        HostRollbackService.discardForReplacedWorld(current.dir.toPath())
         val worldPath = current.dir.resolve("world")
         var lease: BaseWorldService.SnapshotLease? = null
         var snapshot: java.io.File? = null

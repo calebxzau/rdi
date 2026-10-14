@@ -20,11 +20,13 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.dp
 import calebxzau.rdi.client.ui.CircleIconButton
 import calebxzau.rdi.client.ui.IconMarqueeCard
-import calebxzau.rdi.client.ui.MaxBox
 import calebxzau.rdi.client.ui.MarqueeIcon
 import calebxzau.rdi.client.ui.SimpleTooltip
 import calebxzau.rdi.client.RDIClient
 import calebxzau.rdi.client.ui.FlowRowV
+import calebxzau.rdi.client.ui.GlassNavBar
+import calebxzau.rdi.client.ui.GlassNavItem
+import calebxzau.rdi.client.ui.LocalAppBackgroundHazeState
 import calebxzau.rdi.client.ui.baseRoundCornerShape
 import calebxzau.rdi.client.ui.loadImageBitmap
 import calebxzhou.rdi.client.auth.LocalCredentials
@@ -42,6 +44,7 @@ import calebxzhou.rdi.client.ui.McPlayArgs
 import calebxzhou.rdi.client.ui.comp.HeadButton
 import calebxzhou.rdi.client.ui.comp.ModpackDownloadMethodDialog
 import calebxzhou.rdi.client.ui.comp.PlayerModel
+import calebxzhou.rdi.client.ui.comp.CardHintHost
 import calebxzhou.rdi.client.ui.comp.UnifiedHostCard
 import calebxzhou.rdi.common.exception.RequestError
 import calebxzhou.rdi.common.model.Host
@@ -53,6 +56,11 @@ import org.bson.types.ObjectId
 /**
  * calebxzhou @ 2026-02-25 17:51
  */
+
+private val MenuNavItems = listOf(
+    GlassNavItem("\uF0C0", "多人房间"),
+    GlassNavItem("\uF1B2", "整合包"),
+)
 
 @Composable
 fun MenuScreen(
@@ -77,6 +85,8 @@ fun MenuScreen(
     }
     val menuActionInteractionSource = remember { MutableInteractionSource() }
     val menuActionsHovered by menuActionInteractionSource.collectIsHoveredAsState()
+    // 顶部导航暂未接入切换逻辑，只切换选中胶囊
+    var selectedNavIndex by remember { mutableIntStateOf(0) }
     val taskEntries by ClientTaskManager.entries.collectAsState()
     val modMigrationInProgress = isClientModMigrationInProgress(taskEntries)
 
@@ -163,7 +173,7 @@ fun MenuScreen(
         )
     }
 
-    MaxBox {
+    CardHintHost(Modifier.fillMaxSize()) {
         /* PlayerPreviewCard(
              modifier = Modifier
                  .align(Alignment.BottomStart)
@@ -196,6 +206,16 @@ fun MenuScreen(
                 onStartHost = ::startHost
             )
         }
+
+        GlassNavBar(
+            hazeState = LocalAppBackgroundHazeState.current,
+            items = MenuNavItems,
+            selectedIndex = selectedNavIndex,
+            onSelect = { selectedNavIndex = it },
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .padding(top = 16.dp)
+        )
 
         Column(
             modifier = Modifier
@@ -414,10 +434,9 @@ private fun RecentHostMenuActionCard(
 ) {
     MenuActionCardTooltip(enabled) {
         UnifiedHostCard(
-            host = UnifiedHostBrief.fromLegacy(host).copy(name = "继续游玩·${host.name}"),
-            modifier = Modifier.width(320.dp),
-            onDirectClick = { onStartHost(host) },
-            onClick = { onStartHost(host) },
+            host = UnifiedHostBrief.fromLegacy(host).copy(name = "继续玩·${host.name}"),
+            modifier = Modifier.width(110.dp),
+            onPlay = { onStartHost(host) },
             playEnabled = enabled && launchingHostId == null,
             playLoading = launchingHostId == host._id.toHexString(),
         )

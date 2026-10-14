@@ -75,8 +75,6 @@ sealed interface HostCreateEvent {
     data class EditSaved(val message: String) : HostCreateEvent
 
     data class HostPackUpdateSubmitted(val message: String) : HostCreateEvent
-
-    data class WorldReset(val message: String) : HostCreateEvent
 }
 
 data class HostCreateUiState(
@@ -136,9 +134,6 @@ interface HostCreateGateway {
     suspend fun createOrUpdate(submission: HostCreateSubmission): Result<Unit>
 
     suspend fun requestHostPackUpdate(hostId: ObjectId): Result<Unit>
-
-    suspend fun resetWorld(hostId: ObjectId): Result<Unit> =
-        Result.failure(UnsupportedOperationException("世界重置暂不可用"))
 }
 
 class RdiHostCreateGateway : HostCreateGateway {
@@ -170,11 +165,6 @@ class RdiHostCreateGateway : HostCreateGateway {
             "modpack/$modpackId/detail",
         ).getOrThrow()
         detail.versions.firstOrNull { it.name == versionName }?.baseWorld
-    }
-
-    override suspend fun resetWorld(hostId: ObjectId): Result<Unit> = resultOf {
-        val response = server.makeRequest<Unit>("host/${hostId.toHexString()}/reset-world", io.ktor.http.HttpMethod.Post)
-        if (!response.ok) throw RequestError(response.msg)
     }
 
     override suspend fun createOrUpdate(submission: HostCreateSubmission): Result<Unit> = resultOf {
@@ -565,19 +555,6 @@ class HostCreateViewModel(
                 }
             } finally {
                 _uiState.update { it.copy(updatingPack = false) }
-            }
-        }
-    }
-
-    fun resetWorld() {
-        val hostId = _uiState.value.editHostId ?: return
-        viewModelScope.launch {
-            val result = gateway.resetWorld(hostId)
-            if (result.isSuccess) {
-                eventChannel.send(HostCreateEvent.WorldReset("世界已重置"))
-            } else {
-                val error = result.exceptionOrNull()
-                _uiState.update { it.copy(errorMessage = error?.message ?: "重置存档失败") }
             }
         }
     }

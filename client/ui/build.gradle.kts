@@ -98,6 +98,8 @@ dependencies {
     implementation(libs.koin.compose.viewmodel)
     implementation(libs.markdown.renderer)
     implementation(libs.markdown.renderer.m3)
+    implementation(libs.haze)
+    implementation(libs.haze.glass)
     implementation(libs.kotlinx.coroutines.swing)
     implementation(libs.kotlinx.coroutines.core)
     implementation(libs.jna)
@@ -253,6 +255,12 @@ idea {
 
 val hotRunBaseJvmArgs = listOf(
     "-Xmx1G",
+    // A larger initial heap avoids an early GC that can crash the hot reload agent at startup
+    // (ClassCircularityError on jdk/internal/vm/ContinuationSupport under JDK 25).
+    "-Xms512m",
+    // JBR's java.io-over-NIO records failed lookups in a WeakHashMap; cleaning it inside the
+    // hot reload agent's class transformer can hang startup before any window appears.
+    "-Djbr.java.io.use.nio=false",
     "-Drdi.debug=true",
     "-Drdi.noHttps=true",
    // "-Drdi.noUpdate=true",

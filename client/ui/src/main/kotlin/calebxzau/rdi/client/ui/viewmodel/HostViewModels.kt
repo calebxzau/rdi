@@ -43,6 +43,8 @@ interface HostGateway {
 
     suspend fun loadModpack(modpackId: ObjectId): Result<Modpack.DetailVo?>
 
+    suspend fun deleteHost(hostId: ObjectId, deleteWorld: Boolean): Result<Unit>
+
     suspend fun changeDisabledMods(hostId: ObjectId, mods: List<Mod>, disabled: Boolean): Result<List<Mod>>
 
     suspend fun addExtraMods(hostId: ObjectId, mods: List<Mod>): Result<Unit>
@@ -66,6 +68,17 @@ class RdiHostGateway : HostGateway {
 
     override suspend fun loadModpack(modpackId: ObjectId): Result<Modpack.DetailVo?> = resultOf {
         request<Modpack.DetailVo>("modpack/${modpackId.toHexString()}")
+    }
+
+    override suspend fun deleteHost(hostId: ObjectId, deleteWorld: Boolean): Result<Unit> = resultOf {
+        val response = server.makeRequest<Unit>(
+            path = "host/${hostId.toHexString()}",
+            method = HttpMethod.Delete,
+        ) {
+            json()
+            setBody(Host.DeleteDto(deleteWorld))
+        }
+        if (!response.ok) throw RequestError(response.msg)
     }
 
     override suspend fun changeDisabledMods(
@@ -132,7 +145,14 @@ data class HostInfoUiState(
     val host: Host.DetailVo? = null,
     val modpack: Modpack.DetailVo? = null,
     val errorMessage: String? = null,
+    val deleting: Boolean = false,
 )
+
+sealed interface HostInfoEvent {
+    data object Deleted : HostInfoEvent
+
+    data class DeleteFailed(val message: String) : HostInfoEvent
+}
 
 class HostInfoViewModel(
     private val hostId: ObjectId,
@@ -140,6 +160,8 @@ class HostInfoViewModel(
 ) : ViewModel() {
     private val _uiState = MutableStateFlow(HostInfoUiState())
     val uiState: StateFlow<HostInfoUiState> = _uiState.asStateFlow()
+    private val eventChannel = Channel<HostInfoEvent>(Channel.BUFFERED)
+    val events: Flow<HostInfoEvent> = eventChannel.receiveAsFlow()
     private var loadJob: Job? = null
 
     init {
@@ -172,6 +194,24 @@ class HostInfoViewModel(
                 if (currentCoroutineContext().isActive) {
                     _uiState.update { it.copy(loading = false) }
                 }
+            }
+        }
+    }
+
+    fun deleteHost(deleteWorld: Boolean) {
+        if (_uiState.value.deleting) return
+        _uiState.update { it.copy(deleting = true) }
+        viewModelScope.launch {
+            try {
+                withContext(Dispatchers.IO) { gateway.deleteHost(hostId, deleteWorld) }.fold(
+                    onSuccess = { eventChannel.send(HostInfoEvent.Deleted) },
+                    onFailure = { cause ->
+                        lgr.warn(cause) { "删除房间失败" }
+                        eventChannel.send(HostInfoEvent.DeleteFailed(cause.message ?: "删除房间失败"))
+                    },
+                )
+            } finally {
+                _uiState.update { it.copy(deleting = false) }
             }
         }
     }

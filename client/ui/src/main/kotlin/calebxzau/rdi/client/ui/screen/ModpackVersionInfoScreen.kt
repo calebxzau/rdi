@@ -53,7 +53,9 @@ import calebxzau.rdi.client.ui.viewmodel.ModpackVersionInfoViewModel
 import calebxzhou.rdi.client.model.UiMod
 import calebxzhou.rdi.client.net.loggedAccount
 import calebxzhou.rdi.client.ui.comp.HeadButton
-import calebxzhou.rdi.client.ui.comp.ModGrid
+import calebxzhou.rdi.client.ui.comp.ContentGrid
+import calebxzhou.rdi.client.ui.comp.ContentGridItem
+import calebxzhou.rdi.client.ui.comp.rememberModGridItems
 import calebxzhou.rdi.client.ui.screen.canManageModpackVersion
 import calebxzhou.rdi.client.ui.pickAwtOpenFilesAsync
 import io.github.oshai.kotlinlogging.KotlinLogging
@@ -349,21 +351,24 @@ fun ModpackVersionInfoScreen(
                                                 )
                                                 Spacer(Modifier.height(8.dp))
                                             }
-                                            ModGrid(
-                                                mods = uiState.uiMods,
+                                            ContentGrid(
+                                                items = rememberModGridItems(uiState.uiMods),
                                                 modifier = Modifier.fillMaxWidth().weight(1f),
-                                                selectedKeys = if (canManageVersion) selectedModKeys else emptySet(),
+                                                highlightedKeys = if (canManageVersion) selectedModKeys else emptySet(),
                                                 emptyText = "当前版本没有Mod",
-                                                onModClick = if (canManageVersion) {
-                                                    { uiMod ->
-                                                        selectedModKeys = if (uiMod.key in selectedModKeys) {
-                                                            selectedModKeys - uiMod.key
+                                                onItemClick = if (canManageVersion) {
+                                                    { item ->
+                                                        selectedModKeys = if (item.key in selectedModKeys) {
+                                                            selectedModKeys - item.key
                                                         } else {
-                                                            selectedModKeys + uiMod.key
+                                                            selectedModKeys + item.key
                                                         }
                                                     }
                                                 } else null,
-                                                initialIconOnly = true
+                                                initialIconOnly = true,
+                                                showTypeFilters = false,
+                                                topBar = true,
+                                                searchPlaceholder = "搜索Mod",
                                             )
                                         }
                                     }
@@ -414,17 +419,20 @@ fun ModpackVersionInfoScreen(
                             .fillMaxWidth()
                             .weight(1f)
                     ) {
-                        ModGrid(
-                            mods = uiState.pendingAddUiMods,
+                        ContentGrid(
+                            items = rememberModGridItems(uiState.pendingAddUiMods),
                             modifier = Modifier.fillMaxSize(),
-                            selectedKeys = uiState.selectedPendingAddKeys,
+                            highlightedKeys = uiState.selectedPendingAddKeys,
                             emptyText = "当前没有可添加的Mod",
-                            onModClick = viewModel::togglePendingAdd,
-                            onSideChange = if (uiState.addDialogLoading) {
+                            onItemClick = { item ->
+                                viewModel.togglePendingAdd((item as ContentGridItem.ModItem).mod)
+                            },
+                            onModSideChange = if (uiState.addDialogLoading) {
                                 null
                             } else {
                                 viewModel::changePendingAddSide
-                            }
+                            },
+                            showTypeFilters = false,
                         )
                     }
                     if (uiState.rejectedAddFiles.isNotEmpty<String>()) {

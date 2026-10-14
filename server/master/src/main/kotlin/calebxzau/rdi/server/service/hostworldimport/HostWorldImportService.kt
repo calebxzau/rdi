@@ -11,6 +11,7 @@ import calebxzau.rdi.common.model.HostWorldImportPrecheckVo
 import calebxzau.rdi.common.model.HostWorldImportSessionVo
 import calebxzau.rdi.server.service.upload.ChunkedUploadService
 import calebxzau.rdi.server.service.worldarchive.WorldArchiveExtractor
+import calebxzau.rdi.server.service.hostrollback.HostRollbackService
 import calebxzhou.rdi.common.exception.RequestError
 import calebxzhou.rdi.common.model.Host
 import calebxzhou.rdi.common.model.ModLoader
@@ -301,6 +302,7 @@ class HostWorldImportService(
                         verifyLevel(paths.stage, freshModpack)
                         swapStarted = true
                         swap.swap(claim, paths, store.journalStore(session)).getOrThrow()
+                            .also { HostRollbackService.discardForReplacedWorld(hosts.hostDir(fresh)) }
                     }
                 }
                 withContext(NonCancellable) { afterSwap(session, paths, outcome) }

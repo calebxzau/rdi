@@ -8,6 +8,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 
@@ -21,7 +22,8 @@ fun BoxScope.ScreenContentSurface(
 ) {
     Surface(
         modifier = screenContentSize(size, modifier),
-        shape = baseRoundCornerShape,
+        // A full-size surface meets the window edges, so rounded corners would expose the background.
+        shape = if (size == ScreenContentSize.FULL) RectangleShape else baseRoundCornerShape,
         color = MaterialTheme.colorScheme.surface.copy(alpha = containerAlpha),
         shadowElevation = shadowElevation
     ) {

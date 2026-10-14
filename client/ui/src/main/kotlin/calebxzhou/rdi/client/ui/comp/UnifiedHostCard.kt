@@ -1,219 +1,146 @@
 package calebxzhou.rdi.client.ui.comp
 
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import calebxzau.rdi.client.ui.CursorPositionBox
-import calebxzau.rdi.client.ui.DEFAULT_HOST_ICON
-import calebxzau.rdi.client.ui.OffsetFirstItemUnderCursor
-import calebxzau.rdi.client.ui.RDropdownMenuItem
-import calebxzau.rdi.client.ui.RRow
-import calebxzau.rdi.client.ui.Space8w
-import calebxzau.rdi.client.ui.baseRoundCornerShape
-import calebxzhou.rdi.client.net.loggedAccount
+import calebxzau.rdi.client.ui.SimpleTooltip
+import calebxzau.rdi.client.ui.comp.NameInitialIcon
+import calebxzhou.rdi.client.service.rememberPlayerHeadState
 import calebxzhou.rdi.client.service.rememberPlayerInfoPrefetch
 import calebxzhou.rdi.client.ui.screen.UnifiedHostBrief
 import calebxzhou.rdi.client.ui.screen.HostTarget
-import calebxzhou.rdi.model.Role
-import calebxzhou.rdi.common.model.isDav
+import calebxzhou.rdi.common.model.HostStatus
+import org.bson.types.ObjectId
 
-/** Shared room card. It deliberately accepts the UI projection, not either server DTO. */
+/** Shared room tile (icon on top, name below): left click plays, right click opens details; a cursor-following hint (drawn by [CardHintHost]) explains both. */
 @Composable
 fun UnifiedHostCard(
     host: UnifiedHostBrief,
     modifier: Modifier = Modifier,
-    onClick: (HostTarget) -> Unit,
-    onDirectClick: ((UnifiedHostBrief) -> Unit)? = null,
-    onPlay: ((UnifiedHostBrief) -> Unit)? = null,
-    onOpenMembers: ((HostTarget) -> Unit)? = null,
-    onOpenMods: ((HostTarget) -> Unit)? = null,
-    onOpenWorld: ((HostTarget) -> Unit)? = null,
-    onOpenFiles: ((HostTarget) -> Unit)? = null,
-    onOpenBackend: ((HostTarget) -> Unit)? = null,
-    onOpenSettings: ((HostTarget) -> Unit)? = null,
-    onDelete: ((UnifiedHostBrief) -> Unit)? = null,
+    onPlay: (UnifiedHostBrief) -> Unit,
+    onOpenDetail: ((HostTarget) -> Unit)? = null,
     playEnabled: Boolean = true,
     playLoading: Boolean = false,
 ) {
-    var menuExpanded by remember(host.target) { mutableStateOf(false) }
-    val isDav = loggedAccount.isDav
-    val isOwner = host.role == Role.OWNER || isDav
-    val canManage = host.role in setOf(Role.OWNER, Role.ADMIN) || isDav
-    val canUseMemberFeatures = host.isMember || isOwner
     rememberPlayerInfoPrefetch(host.onlinePlayerIds)
-    val onlinePlayerIds = host.onlinePlayerIds
-
-    CursorPositionBox(
-        cursorContent = {
-            DropdownMenu(
-                expanded = menuExpanded,
-                onDismissRequest = { menuExpanded = false },
-                offset = OffsetFirstItemUnderCursor,
-            ) {
-                onPlay?.let {
-                    RDropdownMenuItem(
-                        text = if (playLoading) "启动中..." else "开玩",
-                        icon = "\uF04B",
-                        enabled = host.playable && playEnabled && !playLoading,
-                        onClick = { menuExpanded = false; it(host) },
-                    )
-                }
-                RDropdownMenuItem(
-                    text = "详情",
-                    icon = "\uF05A",
-                    onClick = { menuExpanded = false; onClick(host.target) },
-                )
-                if (canUseMemberFeatures) {
-                    onOpenMembers?.let {
-                        RDropdownMenuItem("成员", "\uF0C0", onClick = { menuExpanded = false; it(host.target) })
-                    }
-                    onOpenMods?.let {
-                        RDropdownMenuItem("模组", "\uDB85\uDCD3", onClick = { menuExpanded = false; it(host.target) })
-                    }
-                    onOpenWorld?.let {
-                        RDropdownMenuItem("存档", "\uDB85\uDC5B", onClick = { menuExpanded = false; it(host.target) })
-                    }
-                }
-                if (canManage) {
-                    onOpenFiles?.let {
-                        RDropdownMenuItem("文件", "\uF07C", onClick = { menuExpanded = false; it(host.target) })
-                    }
-                    onOpenSettings?.let {
-                        RDropdownMenuItem("设置", "\uEAF8", onClick = { menuExpanded = false; it(host.target) })
-                    }
-                }
-                if (canUseMemberFeatures) {
-                    onOpenBackend?.let {
-                        RDropdownMenuItem("后台", "\uDB80\uDD8D", onClick = { menuExpanded = false; it(host.target) })
-                    }
-                }
-                if (isOwner && onDelete != null) {
-                    HorizontalDivider()
-                    RDropdownMenuItem(
-                        text = "删除",
-                        icon = "\uEA81",
-                        danger = true,
-                        onClick = { menuExpanded = false; onDelete(host) },
-                    )
-                }
-            }
-        },
+    val canPlay = host.playable && playEnabled && !playLoading
+    val hostName = host.name.ifBlank { "未命名房间" }
+    val hint = CardHint(
+        title = hostName,
+        detail = host.modpackName,
+        detailVersion = host.packVersion,
+        ownerId = host.ownerId,
+        actions = listOfNotNull(
+            CardHintAction(HintMouseButton.Left, if (playLoading) "启动中..." else "开玩", active = canPlay),
+            onOpenDetail?.let { CardHintAction(HintMouseButton.Right, "详情 设置") },
+        ),
+    )
+    IconTileCard(
+        title = hostName,
+        hint = hint,
+        modifier = modifier,
+        statusDotColor = host.status.statusDotColor(),
+        dimmed = !host.playable,
+        primaryEnabled = canPlay,
+        onPrimaryClick = { onPlay(host) },
+        onSecondaryClick = onOpenDetail?.let { { it(host.target) } },
     ) {
-        Surface(
-            modifier = modifier
-                .fillMaxWidth()
-                .clip(baseRoundCornerShape)
-                .clickable(
-                    enabled = onDirectClick == null || (host.playable && playEnabled && !playLoading),
-                ) {
-                    onDirectClick?.invoke(host) ?: run { menuExpanded = true }
-                },
-            color = MaterialTheme.colorScheme.surface,
-            shape = baseRoundCornerShape,
-            tonalElevation = 1.dp,
+        UnifiedHostIcon(
+            iconUrl = host.iconUrl,
+            fallbackName = host.modpackName.ifBlank { hostName },
+            onlinePlayerIds = host.onlinePlayerIds,
+            playLoading = playLoading,
+            modifier = Modifier.fillMaxSize(),
+        )
+    }
+}
+
+private val HOST_STARTING_COLOR = Color(0xFFFFC107)
+
+/** Green when players can join right now, yellow while the room is still booting; no dot otherwise. */
+private fun HostStatus.statusDotColor(): Color? = when (this) {
+    HostStatus.PLAYABLE -> TILE_ACTIVE_DOT_COLOR
+    HostStatus.STARTED -> HOST_STARTING_COLOR
+    else -> null
+}
+
+@Composable
+private fun UnifiedHostIcon(
+    iconUrl: String?,
+    fallbackName: String,
+    onlinePlayerIds: List<ObjectId>,
+    playLoading: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    val shape = RoundedCornerShape(16.dp)
+    Box(modifier) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .clip(shape)
+                .background(MaterialTheme.colorScheme.surfaceVariant, shape),
+            contentAlignment = Alignment.Center,
         ) {
-            Box(
+            if (!iconUrl.isNullOrBlank()) {
+                HttpImage(
+                    imgUrl = iconUrl,
+                    modifier = Modifier.fillMaxSize(),
+                    contentDescription = "房间图标",
+                    contentScale = ContentScale.Crop,
+                )
+            } else {
+                NameInitialIcon(fallbackName, Modifier.fillMaxSize())
+            }
+            if (playLoading) {
+                CircularProgressIndicator(modifier = Modifier.size(28.dp), strokeWidth = 3.dp)
+            }
+        }
+        // A room holds at most 10 players, so every online head fits; extra heads wrap downward.
+        if (onlinePlayerIds.isNotEmpty()) {
+            FlowRow(
                 modifier = Modifier
+                    .align(Alignment.TopStart)
                     .fillMaxWidth()
-                    .alpha(if (host.playable) 1f else 0.45f)
-                    .padding(8.dp),
+                    .offset(x = (-3).dp, y = (-3).dp),
+                horizontalArrangement = Arrangement.spacedBy(2.dp),
+                verticalArrangement = Arrangement.spacedBy(2.dp),
             ) {
-                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    UnifiedHostIcon(host.iconUrl, 48.dp)
-                    Space8w()
-                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                        RRow(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(4.dp),
-                        ) {
-                            host.ownerId?.let {
-                                HeadButton(it, avatarSize = 16.dp, showName = false)
-                            }
-                            Text(
-                                text = host.name.ifBlank { "未命名房间" },
-                                style = MaterialTheme.typography.titleMedium,
-                                fontWeight = FontWeight.Medium,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                            onlinePlayerIds.forEach {
-                                HeadButton(it, avatarSize = 16.dp, showName = false)
-                            }
-                            if (playLoading) {
-                                Spacer(Modifier.size(22.dp))
-                            }
-                        }
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Text(
-                                text = listOf(host.modpackName, host.packVersion).filter(String::isNotBlank).joinToString(" "),
-                                modifier = Modifier.weight(1f),
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                        }
-                    }
-                }
-                if (playLoading) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.align(Alignment.TopEnd).size(22.dp),
-                        strokeWidth = 2.dp,
-                    )
+                onlinePlayerIds.forEach { uid ->
+                    HeadBadge(uid)
                 }
             }
         }
     }
 }
 
+/** Player head pinned onto the icon; the surface-colored ring keeps it readable on any icon. */
 @Composable
-private fun UnifiedHostIcon(iconUrl: String?, size: androidx.compose.ui.unit.Dp) {
-    val shape = RoundedCornerShape(16.dp)
-    Box(
-        modifier = Modifier
-            .size(size)
-            .clip(shape)
-            .background(MaterialTheme.colorScheme.surfaceVariant, shape),
-        contentAlignment = Alignment.Center,
-    ) {
-        if (!iconUrl.isNullOrBlank()) {
-            HttpImage(
-                imgUrl = iconUrl,
-                modifier = Modifier.fillMaxSize(),
-                contentDescription = "房间图标",
-                contentScale = ContentScale.Crop,
-            )
-        } else {
-            Image(
-                bitmap = DEFAULT_HOST_ICON,
-                contentDescription = "房间图标",
-                modifier = Modifier.fillMaxSize(),
-                contentScale = ContentScale.Crop,
-            )
+private fun HeadBadge(uid: ObjectId, modifier: Modifier = Modifier) {
+    val state = rememberPlayerHeadState(uid)
+    val badgeShape = RoundedCornerShape(4.dp)
+    Box(modifier) {
+        SimpleTooltip(state.name) {
+            Box(
+                modifier = Modifier
+                    .size(18.dp)
+                    .clip(badgeShape)
+                    .background(MaterialTheme.colorScheme.surface, badgeShape)
+                    .padding(1.5.dp),
+            ) {
+                PlayerHead(
+                    skinImage = state.skinImage,
+                    modifier = Modifier.fillMaxSize().clip(RoundedCornerShape(2.dp)),
+                )
+            }
         }
     }
 }

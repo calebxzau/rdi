@@ -48,6 +48,7 @@ class HostRollbackServiceTest {
         assertEquals(emptyList(), status.points)
         assertNull(status.pending)
         assertNull(status.lastResult)
+        assertFalse(status.hostRunning)
         assertFailsWith<RequestError> { service.request(access.addHost(), owner, HostRollbackCreateDto("x"), ::stop) }
     }
 
@@ -59,6 +60,8 @@ class HostRollbackServiceTest {
         val created = service.request(host, owner, HostRollbackCreateDto(older), ::stop)
         assertTrue(created.stoppedHost)
         assertEquals(1, stops)
+        // The fake host stays running until the real stop would have finished.
+        assertTrue(service.status(host).hostRunning)
 
         val request = assertNotNull(SyncChunkRollbackFiles.readRequest(root(host)).getOrThrow())
         assertEquals(older, request.pointId)

@@ -7,6 +7,7 @@ import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.unit.sp
 
 private fun TextStyle.withUiFontFamily() = copy(fontFamily = UIFontFamily)
 
@@ -22,12 +23,13 @@ val AppTypography: Typography
             titleLarge = titleLarge.withUiFontFamily(),
             titleMedium = titleMedium.withUiFontFamily(),
             titleSmall = titleSmall.withUiFontFamily(),
-            bodyLarge = bodyLarge.withUiFontFamily(),
-            bodyMedium = bodyMedium.withUiFontFamily(),
-            bodySmall = bodySmall.withUiFontFamily(),
-            labelLarge = labelLarge.withUiFontFamily(),
-            labelMedium = labelMedium.withUiFontFamily(),
-            labelSmall = labelSmall.withUiFontFamily()
+            bodyLarge = bodyLarge.withUiFontFamily().copy(letterSpacing = 0.sp),
+            bodyMedium = bodyMedium.withUiFontFamily().copy(letterSpacing = 0.sp),
+            bodySmall = bodySmall.withUiFontFamily().copy(letterSpacing = 0.sp),
+            labelLarge = labelLarge.withUiFontFamily().copy(letterSpacing = 0.sp),
+            labelMedium = labelMedium.withUiFontFamily().copy(letterSpacing = 0.sp),
+            // M3's default 0.5sp tracking spreads CJK text apart at this size.
+            labelSmall = labelSmall.withUiFontFamily().copy(letterSpacing = 0.sp)
         )
     }
 

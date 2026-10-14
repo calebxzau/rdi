@@ -5,11 +5,11 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
@@ -30,21 +30,18 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import calebxzau.rdi.client.ui.AlertErr
-import calebxzau.rdi.client.ui.BottomSnakebarM3
 import calebxzau.rdi.client.ui.CircleIconButton
 import calebxzau.rdi.client.ui.ConfirmDialog
-import calebxzau.rdi.client.ui.ContentBody
-import calebxzau.rdi.client.ui.MaxBox
+import calebxzau.rdi.client.ui.RColumn
 import calebxzau.rdi.client.ui.RDropdownMenuItem
 import calebxzau.rdi.client.ui.RRow
-import calebxzau.rdi.client.ui.ScreenContentSize
-import calebxzau.rdi.client.ui.ScreenContentSurface
-import calebxzau.rdi.client.ui.ScrollableContentBody
-import calebxzau.rdi.client.ui.TitleRow
+import calebxzau.rdi.client.ui.Space8w
 import calebxzau.rdi.client.ui.asIconText
 import calebxzau.rdi.client.ui.baseRoundCornerShape
 import calebxzhou.rdi.client.net.loggedAccount
@@ -59,14 +56,15 @@ import calebxzhou.rdi.model.Role
 import io.ktor.http.HttpMethod
 import org.bson.types.ObjectId
 
+/** Members row of the host info screen; owns its own member list loading and dialogs. */
 @Composable
-fun HostMembersScreen(
+internal fun HostMembersPane(
     hostId: ObjectId,
-    onBack: () -> Unit,
-    onQuit: () -> Unit
+    snackbarHostState: SnackbarHostState,
+    onQuit: () -> Unit,
+    onHostChanged: () -> Unit,
 ) {
     val scope = rememberCoroutineScope()
-    val snackbarHostState = remember { SnackbarHostState() }
     var host by remember { mutableStateOf<Host.DetailVo?>(null) }
     var members by remember { mutableStateOf<List<Host.Member>>(emptyList()) }
     var loadingHost by remember { mutableStateOf(true) }
@@ -124,122 +122,108 @@ fun HostMembersScreen(
 
     errorMessage?.let { AlertErr(it) { errorMessage = null } }
 
-    MaxBox {
-        ScreenContentSurface(size = ScreenContentSize.MEDIUM) {
-            TitleRow(
-                title = currentHost?.let { "${it.name} - 成员" } ?: "房间成员",
-                onBack = onBack
-            ) {
-                if (meAdmin) {
-                    CircleIconButton(
-                        icon = "\uF067",
-                        label = "邀请",
-                    ) {
-                        inviteQq = ""
-                        showInviteDialog = true
-                    }
+    when {
+        loadingHost || loadingMembers -> CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp)
+        currentHost == null -> Text("无法加载房间信息", color = MaterialTheme.colorScheme.error)
+        !canView -> Text("仅房间成员可查看成员名单", color = MaterialTheme.colorScheme.error)
+        else ->
+            RColumn {
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text("成员列表", fontWeight = FontWeight.Bold)
+                    Text("仅房间成员可随时启动房间")
                 }
-            }
-            when {
-                loadingHost || loadingMembers -> ContentBody {
-                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        CircularProgressIndicator()
-                    }
-                }
-                currentHost == null -> ContentBody {
-                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        Text("无法加载房间信息", color = MaterialTheme.colorScheme.error)
-                    }
-                }
-                !canView -> ContentBody {
-                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        Text("仅房间成员可查看成员名单", color = MaterialTheme.colorScheme.error)
-                    }
-                }
-                else -> ScrollableContentBody {
-                    RRow(modifier = Modifier.fillMaxWidth()) {
-                        members.forEach { member ->
-                            key(member.id) {
-                                val canKick = member.role != Role.OWNER &&
+                RRow(modifier = Modifier.fillMaxWidth()) {
+                    members.forEach { member ->
+                        key(member.id) {
+                            val canKick = member.role != Role.OWNER &&
                                     (meOwner || member.role.level > Role.ADMIN.level)
-                                val canOpenMenu = (meOwner && member.role != Role.OWNER) ||
+                            val canOpenMenu = (meOwner && member.role != Role.OWNER) ||
                                     canKick || (!meOwner && member.id == loggedAccount._id)
-                                Box {
-                                    Surface(
-                                        modifier = Modifier.then(
+                            Box {
+                                Surface(
+                                    // Clip before clickable so the hover/press highlight follows the rounded corners.
+                                    modifier = Modifier
+                                        .clip(baseRoundCornerShape)
+                                        .then(
                                             if (canOpenMenu) Modifier.clickable { openedMemberId = member.id }
                                             else Modifier
                                         ),
-                                        shape = baseRoundCornerShape,
-                                        color = MaterialTheme.colorScheme.surfaceContainer
+                                    shape = baseRoundCornerShape,
+                                    color = MaterialTheme.colorScheme.surfaceContainer
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(8.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
                                     ) {
-                                        Row(
-                                            modifier = Modifier.padding(12.dp),
-                                            verticalAlignment = Alignment.CenterVertically,
-                                            horizontalArrangement = Arrangement.spacedBy(12.dp)
+                                        HeadButton(
+                                            uid = member.id,
+                                            avatarSize = 18.dp,
+                                            nameFontSize = 16.sp,
+                                            showName = true,
+                                        )
+                                        Box(
+                                            modifier = Modifier
+                                                .background(roleColor(member.role), baseRoundCornerShape)
+                                                .padding(horizontal = 8.dp, vertical = 2.dp)
                                         ) {
-                                            HeadButton(
-                                                uid = member.id,
-                                                avatarSize = 36.dp,
-                                                nameFontSize = 16.sp,
-                                                showName = true,
-                                                onClick = if (canOpenMenu) {
-                                                    { openedMemberId = member.id }
-                                                } else null
+                                            Text(
+                                                text = "${roleIcon(member.role).asIconText} ${roleLabel(member.role)}",
+                                                color = Color.White,
+                                                fontSize = 12.sp
                                             )
-                                            Box(
-                                                modifier = Modifier
-                                                    .background(roleColor(member.role), baseRoundCornerShape)
-                                                    .padding(horizontal = 10.dp, vertical = 3.dp)
-                                            ) {
-                                                Text(
-                                                    text = "${roleIcon(member.role).asIconText} ${roleLabel(member.role)}",
-                                                    color = Color.White,
-                                                    fontSize = 13.sp
-                                                )
-                                            }
                                         }
                                     }
-                                    DropdownMenu(
-                                        expanded = openedMemberId == member.id,
-                                        onDismissRequest = { openedMemberId = null }
-                                    ) {
-                                        if (meOwner && member.role != Role.OWNER) {
-                                            RDropdownMenuItem("转让房间", "\uF416", onClick = {
+                                }
+                                DropdownMenu(
+                                    expanded = openedMemberId == member.id,
+                                    onDismissRequest = { openedMemberId = null }
+                                ) {
+                                    if (meOwner && member.role != Role.OWNER) {
+                                        RDropdownMenuItem("转让房间", "\uF416", onClick = {
+                                            openedMemberId = null
+                                            transferConfirm = member.id
+                                        })
+                                        RDropdownMenuItem(
+                                            text = if (member.role == Role.ADMIN) "取消管理员" else "设为管理员",
+                                            icon = "\uEFA6",
+                                            onClick = {
                                                 openedMemberId = null
-                                                transferConfirm = member.id
-                                            })
-                                            RDropdownMenuItem(
-                                                text = if (member.role == Role.ADMIN) "取消管理员" else "设为管理员",
-                                                icon = "\uEFA6",
-                                                onClick = {
-                                                    openedMemberId = null
-                                                    val role = if (member.role == Role.ADMIN) Role.MEMBER else Role.ADMIN
-                                                    roleChangeConfirm = MemberRoleChange(member.id, role)
-                                                }
-                                            )
-                                        }
-                                        if (canKick) {
-                                            RDropdownMenuItem("踢出成员", "\uEE8B", danger = true, onClick = {
-                                                openedMemberId = null
-                                                kickConfirm = member.id
-                                            })
-                                        }
-                                        if (!meOwner && member.id == loggedAccount._id) {
-                                            RDropdownMenuItem("退出房间", "\uEF69", danger = true, onClick = {
-                                                openedMemberId = null
-                                                quitConfirm = true
-                                            })
-                                        }
+                                                val role = if (member.role == Role.ADMIN) Role.MEMBER else Role.ADMIN
+                                                roleChangeConfirm = MemberRoleChange(member.id, role)
+                                            }
+                                        )
+                                    }
+                                    if (canKick) {
+                                        RDropdownMenuItem("踢出成员", "\uEE8B", danger = true, onClick = {
+                                            openedMemberId = null
+                                            kickConfirm = member.id
+                                        })
+                                    }
+                                    if (!meOwner && member.id == loggedAccount._id) {
+                                        RDropdownMenuItem("退出房间", "\uEF69", danger = true, onClick = {
+                                            openedMemberId = null
+                                            quitConfirm = true
+                                        })
                                     }
                                 }
                             }
                         }
                     }
+                    if (meAdmin) {
+                        CircleIconButton(
+                            icon = "\uF067",
+                            label = "邀请",
+                        ) {
+                            inviteQq = ""
+                            showInviteDialog = true
+                        }
+                    }
                 }
-            }
         }
-        BottomSnakebarM3(snackbarHostState)
     }
 
     if (showInviteDialog) {
@@ -306,6 +290,7 @@ fun HostMembersScreen(
                     onOk = {
                         okMessage = "已转让"
                         reload()
+                        onHostChanged()
                     },
                     onErr = { errorMessage = it.message ?: "转让失败" }
                 )
@@ -350,17 +335,6 @@ fun HostMembersScreen(
             },
             onDismiss = { quitConfirm = false }
         )
-    }
-}
-
-@Composable
-fun HostMembersScreen(
-    target: HostTarget,
-    onBack: () -> Unit,
-    onQuit: () -> Unit,
-) {
-    LegacyHostRoute(target, onBack) { objectId ->
-        HostMembersScreen(objectId, onBack, onQuit)
     }
 }
 

@@ -2,7 +2,7 @@ package calebxzhou.rdi.client.ui.comp
 
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.Image
+import calebxzau.rdi.client.ui.comp.NameInitialIcon
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -15,7 +15,6 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import calebxzau.rdi.client.ui.DEFAULT_MODPACK_ICON
 import calebxzau.rdi.client.ui.asIconText
 import calebxzau.rdi.client.ui.baseRoundCornerShape
 import calebxzhou.rdi.common.model.Modpack
@@ -79,19 +78,23 @@ internal fun formatModpackCardSupportingText(presentation: ModpackCardPresentati
 @Composable
 fun Modpack.BriefVo.ModpackCard(
     modifier: Modifier = Modifier,
+    compact: Boolean = false,
     onClick: (() -> Unit)? = null
 ) {
     ModpackCard(
         presentation = toModpackCardPresentation(),
         modifier = modifier,
+        compact = compact,
         onClick = onClick,
     )
 }
 
+/** [compact] shows only a smaller icon and the name, for tight spots such as title rows. */
 @Composable
 fun ModpackCard(
     presentation: ModpackCardPresentation,
     modifier: Modifier = Modifier,
+    compact: Boolean = false,
     onClick: (() -> Unit)? = null,
 ) {
     val clickableModifier = if (onClick != null) {
@@ -109,14 +112,14 @@ fun ModpackCard(
         tonalElevation = 2.dp
     ) {
         Row(
-            modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-            verticalAlignment = Alignment.Top
+            modifier = Modifier.padding(horizontal = if (compact) 10.dp else 14.dp, vertical = if (compact) 6.dp else 10.dp),
+            horizontalArrangement = Arrangement.spacedBy(if (compact) 10.dp else 12.dp),
+            verticalAlignment = if (compact) Alignment.CenterVertically else Alignment.Top
         ) {
             val iconUrl = presentation.iconUrl?.takeIf { it.isNotBlank() }
             Surface(
-                modifier = Modifier.size(54.dp),
-                shape = RoundedCornerShape(14.dp),
+                modifier = Modifier.size(if (compact) 32.dp else 54.dp),
+                shape = RoundedCornerShape(if (compact) 10.dp else 14.dp),
                 color = MaterialTheme.colorScheme.surfaceVariant
             ) {
                 if (iconUrl != null) {
@@ -127,12 +130,7 @@ fun ModpackCard(
                         contentScale = ContentScale.Crop
                     )
                 } else {
-                    Image(
-                        bitmap = DEFAULT_MODPACK_ICON,
-                        contentDescription = "Modpack Icon",
-                        modifier = Modifier.fillMaxSize(),
-                        contentScale = ContentScale.Crop
-                    )
+                    NameInitialIcon(presentation.name, Modifier.fillMaxSize())
                 }
             }
 
@@ -148,14 +146,16 @@ fun ModpackCard(
                     overflow = TextOverflow.Ellipsis,
                     color = MaterialTheme.colorScheme.onSurface
                 )
-                Text(
-                    text = formatModpackCardSupportingText(presentation).asIconText,
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.fillMaxWidth()
-                )
+                if (!compact) {
+                    Text(
+                        text = formatModpackCardSupportingText(presentation).asIconText,
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
             }
         }
     }

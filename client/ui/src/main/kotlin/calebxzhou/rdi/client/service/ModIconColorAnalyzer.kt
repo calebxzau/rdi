@@ -10,7 +10,7 @@ import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.sin
 
-/** Broad color groups used when ModGrid is in icon-only mode. */
+/** Broad color groups used by ContentGrid's icon-color sort. */
 enum class ModIconColorCategory(val order: Int) {
     CHROMATIC(0),
     ACHROMATIC(1),

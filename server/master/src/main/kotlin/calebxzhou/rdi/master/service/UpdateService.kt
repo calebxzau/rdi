@@ -134,8 +134,8 @@ fun Route.updateRoutes() = route("/update") {
 object UpdateService {
     suspend fun RoutingContext.mcCoreModFile(): File {
         var ver = param("ver")
-        //rdi 5.16 compatible
-        if (ver=="1.19.2-forge" || ver=="1.12.2-cleanroom") ver = "1.20.1-forge"
+        //rdi 5.1x compatible
+        if (ver=="1.19.2-forge" || ver=="1.18.2-forge" || ver=="1.16.5-forge" || ver=="1.12.2-cleanroom") ver = "1.20.1-forge"
         val jarFile = CLIENT_LIBS_DIR.resolve("$mcCoreFilePrefix-$ver.jar")
         if (!jarFile.exists()) throw RequestError("无此版本的MC核心库")
         return jarFile

@@ -293,8 +293,8 @@ fun FlowRowV(
 
 @Composable
 inline fun RColumn(
-    modifier: Modifier = Modifier.padding(24.dp),
-    verticalArrangement: Arrangement.Vertical = space16,
+    modifier: Modifier = Modifier,
+    verticalArrangement: Arrangement.Vertical = space8,
     horizontalAlignment: Alignment.Horizontal = Alignment.Start,
     content: @Composable ColumnScope.() -> Unit,
 ) {

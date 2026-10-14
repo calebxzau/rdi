@@ -11,6 +11,7 @@ import calebxzhou.rdi.common.model.Modpack
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import org.bson.types.ObjectId
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -41,6 +42,37 @@ class HostViewModelsTest {
 
         assertNull(state.host)
         assertTrue(state.errorMessage.orEmpty().contains("offline"))
+    }
+
+    @Test
+    fun `host info delete success emits deleted event`() = runBlocking {
+        val gateway = FakeHostGateway(host = testHost(), modpack = testModpack())
+        val viewModel = HostInfoViewModel(HOST_ID, gateway)
+        viewModel.uiState.filter { !it.loading }.first()
+
+        viewModel.deleteHost(deleteWorld = true)
+
+        assertEquals(HostInfoEvent.Deleted, withTimeout(5_000) { viewModel.events.first() })
+        assertEquals(listOf(true), gateway.deletedWorldFlags)
+        withTimeout(5_000) { viewModel.uiState.filter { !it.deleting }.first() }
+    }
+
+    @Test
+    fun `host info delete failure keeps host and reports message`() = runBlocking {
+        val gateway = FakeHostGateway(
+            host = testHost(),
+            modpack = testModpack(),
+            deleteFailure = IllegalStateException("没有权限"),
+        )
+        val viewModel = HostInfoViewModel(HOST_ID, gateway)
+        viewModel.uiState.filter { !it.loading }.first()
+
+        viewModel.deleteHost(deleteWorld = false)
+
+        assertEquals(HostInfoEvent.DeleteFailed("没有权限"), withTimeout(5_000) { viewModel.events.first() })
+        val state = withTimeout(5_000) { viewModel.uiState.filter { !it.deleting }.first() }
+        assertEquals("测试房间", state.host?.name)
+        assertNull(state.errorMessage)
     }
 
     @Test
@@ -186,7 +218,9 @@ class HostViewModelsTest {
         private val githubFailure: Throwable? = null,
         private val addFailure: Throwable? = null,
         private val removeFailure: Throwable? = null,
+        private val deleteFailure: Throwable? = null,
     ) : HostGateway {
+        val deletedWorldFlags = mutableListOf<Boolean>()
         val disabledChanges = mutableListOf<Pair<List<Mod>, Boolean>>()
         val addedMods = mutableListOf<List<Mod>>()
         val removedProjectIds = mutableListOf<List<String>>()
@@ -196,6 +230,11 @@ class HostViewModelsTest {
 
         override suspend fun loadModpack(modpackId: ObjectId): Result<Modpack.DetailVo?> =
             Result.success(modpack)
+
+        override suspend fun deleteHost(hostId: ObjectId, deleteWorld: Boolean): Result<Unit> {
+            deletedWorldFlags += deleteWorld
+            return deleteFailure?.let { Result.failure(it) } ?: Result.success(Unit)
+        }
 
         override suspend fun changeDisabledMods(
             hostId: ObjectId,

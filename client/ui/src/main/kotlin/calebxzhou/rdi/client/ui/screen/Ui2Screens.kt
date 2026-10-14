@@ -204,11 +204,11 @@ object MailListScreen
 @Serializable
 data class HostInfoRoute(val hostId: String, val fromAllHosts: Boolean = false, val kind: String = HostKind.Legacy.name)
 @Serializable
-data class HostMembersRoute(val hostId: String, val fromAllHosts: Boolean = false, val kind: String = HostKind.Legacy.name)
-@Serializable
 data class HostModsRoute(val hostId: String, val fromAllHosts: Boolean = false, val kind: String = HostKind.Legacy.name)
 @Serializable
 data class HostWorldRoute(val hostId: String, val fromAllHosts: Boolean = false, val kind: String = HostKind.Legacy.name)
+@Serializable
+data class HostRollbackRoute(val hostId: String)
 @Serializable
 data class HostSaveImportRoute(val hostId: String)
 @Serializable

@@ -68,6 +68,8 @@ data class HostRollbackStatusVo(
     val lastResult: HostRollbackResultVo?,
     val usedBytes: Long,
     val maxBytes: Long,
+    /** False only while the host is fully stopped; a rollback request then does not stop it first. */
+    val hostRunning: Boolean = false,
 )
 
 @Serializable

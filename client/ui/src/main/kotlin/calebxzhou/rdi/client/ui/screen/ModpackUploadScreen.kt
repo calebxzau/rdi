@@ -35,7 +35,8 @@ import calebxzau.rdi.modpacktest.CLIENT_TEST_SUCCESS_MARKER
 import calebxzau.rdi.modpacktest.ModpackTestStatus
 import calebxzhou.rdi.client.ui.comp.Console
 import calebxzhou.rdi.client.ui.comp.ConsoleState
-import calebxzhou.rdi.client.ui.comp.ModGrid
+import calebxzhou.rdi.client.ui.comp.ContentGrid
+import calebxzhou.rdi.client.ui.comp.rememberModGridItems
 import calebxzhou.rdi.client.ui.comp.ModpackCategorySelector
 import calebxzhou.rdi.client.ui.comp.Task2DetailDialog
 import calebxzau.rdi.client.ui.pickLocalZipFile
@@ -234,12 +235,13 @@ fun ModpackUploadScreen(
                                     }
                                 }
                                 Space8h()
-                                ModGrid(
-                                    mods = uiState.uiMods,
+                                ContentGrid(
+                                    items = rememberModGridItems(uiState.uiMods),
                                     modifier = Modifier.fillMaxWidth().weight(1f),
                                     emptyText = "没有可显示的mod",
-                                    onSideChange = viewModel::updateModSide,
+                                    onModSideChange = viewModel::updateModSide,
                                     initialIconOnly = true,
+                                    showTypeFilters = false,
                                 )
                             }
                         }

@@ -25,6 +25,9 @@ import calebxzau.rdi.client.lgr
 import calebxzhou.rdi.client.service.HttpImageState
 import calebxzau.rdi.playermodel.core.PlayerSkinTexture
 import calebxzau.rdi.playermodel.core.detectSlimSkin
+import dev.chrisbanes.haze.HazeState
+import dev.chrisbanes.haze.hazeSource
+import dev.chrisbanes.haze.rememberHazeState
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlin.math.roundToInt
@@ -35,6 +38,11 @@ val LocalAppBackgroundPainter = staticCompositionLocalOf<Painter> {
 
 val LocalBackgroundRenderer = staticCompositionLocalOf<BackgroundRenderSession> {
     error("LocalBackgroundRenderer is not provided")
+}
+
+/** App背景的haze来源，玻璃控件用它模糊/折射背景。 */
+val LocalAppBackgroundHazeState = staticCompositionLocalOf<HazeState> {
+    error("LocalAppBackgroundHazeState is not provided")
 }
 
 @Composable
@@ -50,6 +58,7 @@ fun AppBackgroundProvider(content: @Composable () -> Unit) {
     }
 
     val renderer = remember { BackgroundRenderer.openSession() }
+    val hazeState = rememberHazeState()
     val account by AccountSessionStore.account.collectAsState()
     val fallbackSkin = remember {
         loadImageBitmap("assets/skins/steve.png").onFailure { error ->
@@ -86,6 +95,7 @@ fun AppBackgroundProvider(content: @Composable () -> Unit) {
     CompositionLocalProvider(
         LocalAppBackgroundPainter provides background,
         LocalBackgroundRenderer provides renderer,
+        LocalAppBackgroundHazeState provides hazeState,
         content = content
     )
 }
@@ -108,6 +118,7 @@ private fun ImageBitmap.toCoreSkin(slim: Boolean? = null): PlayerSkinTexture {
 fun AppBackgroundImage(active: Boolean, modifier: androidx.compose.ui.Modifier = androidx.compose.ui.Modifier) {
     val fallback = LocalAppBackgroundPainter.current
     val renderer = LocalBackgroundRenderer.current
+    val hazeState = LocalAppBackgroundHazeState.current
     val frame by renderer.frame.collectAsState()
     val failure by renderer.failure.collectAsState()
     val lowPerformance by renderer.lowPerformance.collectAsState()
@@ -117,7 +128,7 @@ fun AppBackgroundImage(active: Boolean, modifier: androidx.compose.ui.Modifier =
     Image(
         painter = if (failure == null && !lowPerformance) frame ?: fallback else fallback,
         contentDescription = "rdi5 background",
-        modifier = modifier,
+        modifier = modifier.hazeSource(hazeState),
         contentScale = ContentScale.Crop
     )
 }

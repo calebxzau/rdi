@@ -287,43 +287,6 @@ class HostCreateViewModelTest {
     }
 
     @Test
-    fun `reset success emits world reset event`() = runBlocking {
-        val viewModel = createViewModel(
-            gateway = FakeHostCreateGateway(
-                initial = HostCreateInitialData(host = testHostDetail()),
-                resetResult = Result.success(Unit),
-            ),
-            hostId = HOST_ID,
-        )
-        awaitLoaded(viewModel)
-
-        viewModel.resetWorld()
-
-        val event = assertIs<HostCreateEvent.WorldReset>(viewModel.events.first())
-        assertEquals("世界已重置", event.message)
-        assertNull(viewModel.uiState.value.statusMessage)
-    }
-
-    @Test
-    fun `reset failure remains an error and error message can be cleared`() = runBlocking {
-        val viewModel = createViewModel(
-            gateway = FakeHostCreateGateway(
-                initial = HostCreateInitialData(host = testHostDetail()),
-                resetResult = Result.failure(IllegalStateException("重置失败")),
-            ),
-            hostId = HOST_ID,
-        )
-        awaitLoaded(viewModel)
-
-        viewModel.resetWorld()
-        withTimeout(5_000) { viewModel.uiState.filter { it.errorMessage != null }.first() }
-
-        assertEquals("重置失败", viewModel.uiState.value.errorMessage)
-        viewModel.clearErrorMessage()
-        assertNull(viewModel.uiState.value.errorMessage)
-    }
-
-    @Test
     fun `status message can be cleared`() = runBlocking {
         val viewModel = createViewModel(FakeHostCreateGateway())
         awaitLoaded(viewModel)
@@ -366,7 +329,6 @@ class HostCreateViewModelTest {
         private val initial: HostCreateInitialData = HostCreateInitialData(),
         private val submissionResult: Result<Unit> = Result.success(Unit),
         private val submissionGate: CompletableDeferred<Result<Unit>>? = null,
-        private val resetResult: Result<Unit> = Result.success(Unit),
         private val binding: Modpack.Version.BaseWorldBinding? = null,
         private val baseWorlds: List<BaseWorld> = emptyList(),
     ) : HostCreateGateway {
@@ -393,8 +355,6 @@ class HostCreateViewModelTest {
         }
 
         override suspend fun requestHostPackUpdate(hostId: ObjectId): Result<Unit> = Result.success(Unit)
-
-        override suspend fun resetWorld(hostId: ObjectId): Result<Unit> = resetResult
     }
 
     private companion object {

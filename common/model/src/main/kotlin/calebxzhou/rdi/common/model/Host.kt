@@ -93,6 +93,8 @@ data class Host(
         val isMember: Boolean = false,
         val role: Role? = null,
         val onlinePlayerIds: List<@Contextual ObjectId> = arrayListOf(),
+        /** Real run state, unlike [playable] which is also true for members of a stopped room. */
+        val status: HostStatus = HostStatus.UNKNOWN,
     ) {
         companion object {
             val TEST = BriefVo(

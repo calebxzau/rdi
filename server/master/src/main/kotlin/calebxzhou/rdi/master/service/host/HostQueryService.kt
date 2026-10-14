@@ -150,7 +150,8 @@ object HostQueryService {
             playable = playable,
             isMember = isMember,
             role = role,
-            onlinePlayerIds = onlinePlayers
+            onlinePlayerIds = onlinePlayers,
+            status = status,
         )
     }
 

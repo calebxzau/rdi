@@ -3,7 +3,8 @@ package calebxzhou.rdi.client.ui.screen
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import calebxzhou.rdi.client.model.UiMod
-import calebxzhou.rdi.client.ui.comp.ModGridDragEvent
+import calebxzhou.rdi.client.ui.comp.ContentGridDragEvent
+import calebxzhou.rdi.client.ui.comp.ContentGridItem
 import calebxzhou.rdi.common.model.Mod
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -47,7 +48,7 @@ class HostModDragTest {
         var dragState: HostModDragState? = null
         val mutations = mutableListOf<HostModDragMutation>()
 
-        fun dispatch(source: HostModAreaType, event: ModGridDragEvent) {
+        fun dispatch(source: HostModAreaType, event: ContentGridDragEvent) {
             val update = hostModDragUpdate(
                 dragState = dragState,
                 source = source,
@@ -61,25 +62,25 @@ class HostModDragTest {
 
         dispatch(
             HostModAreaType.Enabled,
-            ModGridDragEvent.Start(firstMod, Offset(250f, 250f)),
+            ContentGridDragEvent.Start(ContentGridItem.ModItem(firstMod), Offset(250f, 250f)),
         )
-        dispatch(HostModAreaType.Enabled, ModGridDragEvent.End(Offset(750f, 250f)))
+        dispatch(HostModAreaType.Enabled, ContentGridDragEvent.End(Offset(750f, 250f)))
         dispatch(
             HostModAreaType.Enabled,
-            ModGridDragEvent.Start(secondMod, Offset(250f, 250f)),
+            ContentGridDragEvent.Start(ContentGridItem.ModItem(secondMod), Offset(250f, 250f)),
         )
-        dispatch(HostModAreaType.Enabled, ModGridDragEvent.End(Offset(750f, 250f)))
+        dispatch(HostModAreaType.Enabled, ContentGridDragEvent.End(Offset(750f, 250f)))
 
         dispatch(
             HostModAreaType.Disabled,
-            ModGridDragEvent.Start(secondMod, Offset(750f, 250f)),
+            ContentGridDragEvent.Start(ContentGridItem.ModItem(secondMod), Offset(750f, 250f)),
         )
         assertEquals(HostModAreaType.Disabled, dragState?.source)
 
-        dispatch(HostModAreaType.Disabled, ModGridDragEvent.Move(Offset(250f, 250f)))
+        dispatch(HostModAreaType.Disabled, ContentGridDragEvent.Move(Offset(250f, 250f)))
         assertEquals(HostModAreaType.Enabled, dragState?.dropTarget)
 
-        dispatch(HostModAreaType.Disabled, ModGridDragEvent.End(Offset(250f, 250f)))
+        dispatch(HostModAreaType.Disabled, ContentGridDragEvent.End(Offset(250f, 250f)))
         assertEquals(listOf(true, true, false), mutations.map(HostModDragMutation::disabled))
         assertEquals(secondMod.mod, mutations.last().mod)
     }

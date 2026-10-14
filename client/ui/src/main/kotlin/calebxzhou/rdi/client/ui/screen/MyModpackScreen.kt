@@ -7,7 +7,6 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.FlowRow
-import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -22,6 +21,10 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.DropdownMenu
@@ -41,6 +44,8 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.TextUnit
@@ -61,7 +66,6 @@ import calebxzau.rdi.client.ui.AlertErr
 import calebxzau.rdi.client.ui.CircleIconButton
 import calebxzau.rdi.client.ui.ContentBody
 import calebxzau.rdi.client.ui.CursorPositionBox
-import calebxzau.rdi.client.ui.FlowRowV
 import calebxzau.rdi.client.ui.MaxBox
 import calebxzau.rdi.client.ui.RDropdownMenuItem
 import calebxzau.rdi.client.ui.ScreenContentSize
@@ -73,8 +77,15 @@ import calebxzau.rdi.client.ui.themeNow
 import calebxzau.rdi.client.codeeditor.CodeEditorValidation
 import calebxzau.rdi.client.codeeditor.CodeLanguage
 import calebxzau.rdi.client.codeeditor.validateCodeContent
+import calebxzhou.rdi.client.ui.comp.CardHint
+import calebxzhou.rdi.client.ui.comp.CardHintAction
+import calebxzhou.rdi.client.ui.comp.CardHintHost
 import calebxzhou.rdi.client.ui.comp.CodeEditor
-import calebxzhou.rdi.client.ui.comp.ModpackManageCard
+import calebxzhou.rdi.client.ui.comp.HintMouseButton
+import calebxzhou.rdi.client.ui.comp.HttpImage
+import calebxzhou.rdi.client.ui.comp.IconTileCard
+import calebxzhou.rdi.client.ui.comp.TILE_ACTIVE_DOT_COLOR
+import calebxzau.rdi.client.ui.comp.NameInitialIcon
 import calebxzhou.rdi.client.ui.McPlayArgs
 import calebxzhou.rdi.common.isExcludedConfigPath
 import calebxzhou.rdi.common.model.Modpack
@@ -86,6 +97,9 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.nio.file.Files
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 
 private sealed interface InstalledResourceItem {
     val key: String
@@ -130,6 +144,7 @@ fun ModpackLocalListScreen(
     onOpenPlay: (McPlayArgs) -> Unit = {},
     onOpenContent: (ModpackLocalDir, ModpackContentType) -> Unit = { _, _ -> },
     onOpenOptions: (ModpackLocalDir) -> Unit = {},
+    onOpenModpackInfo: (ModpackLocalDir) -> Unit = {},
     onOpenLocalInstall: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
@@ -347,23 +362,21 @@ fun ModpackLocalListScreen(
                                 Text("还没有整合包")
                             }
                         } else {
-                            FlowRowV(
-                                modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()),
-                                horizontalArrangement = Arrangement.spacedBy(10.dp),
-                                verticalArrangement = Arrangement.spacedBy(10.dp),
-                            ) {
-                                items.forEach { item ->
-                                    Box(
-                                        modifier = Modifier
-                                            .width(IntrinsicSize.Max)
-                                            .widthIn(max = 350.dp),
-                                    ) {
+                            CardHintHost(Modifier.fillMaxSize()) {
+                                LazyVerticalGrid(
+                                    columns = GridCells.Adaptive(minSize = 110.dp),
+                                    modifier = Modifier.fillMaxSize(),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                                ) {
+                                    items(items, key = { it.key }) { item ->
                                         when (item) {
                                             is InstalledResourceItem.Legacy -> InstalledCard(
                                                 pack = item.pack,
                                                 onOpenPlay = {
                                                     onOpenPlay(item.pack.toPlayArgs())
                                                 },
+                                                onOpenModpackInfo = { onOpenModpackInfo(item.pack) },
                                                 isRunning = McPlayStore.aliveCount(item.pack.versionId) > 0,
                                                 onOpenContent = { type -> onOpenContent(item.pack, type) },
                                                 onOpenConfig = {
@@ -836,10 +849,15 @@ fun ModpackLocalListScreen(
     }
 }
 
+private val INSTALL_TIME_FORMAT: DateTimeFormatter =
+    DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm").withZone(ZoneId.systemDefault())
+
+/** Modpack tile: left click opens the action menu at the cursor, right click plays singleplayer, middle click opens its plaza page. */
 @Composable
 private fun InstalledCard(
     pack: ModpackLocalDir,
     onOpenPlay: () -> Unit,
+    onOpenModpackInfo: () -> Unit,
     isRunning: Boolean,
     onOpenContent: (ModpackContentType) -> Unit,
     onOpenConfig: () -> Unit,
@@ -852,11 +870,20 @@ private fun InstalledCard(
     onDelete: () -> Unit,
 ) {
     var expanded by remember(pack.versionId) { mutableStateOf(false) }
+    val hint = remember(pack.name, pack.verName, pack.createTime) {
+        CardHint(
+            title = pack.name,
+            titleVersion = pack.verName,
+            detail = "安装于${INSTALL_TIME_FORMAT.format(Instant.ofEpochMilli(pack.createTime))}",
+            actions = listOf(
+                CardHintAction(HintMouseButton.Left, "菜单"),
+                CardHintAction(HintMouseButton.Right, "单机玩"),
+                CardHintAction(HintMouseButton.Middle, "发布页"),
+            ),
+        )
+    }
     CursorPositionBox(
-        modifier = Modifier.widthIn(max = 350.dp),
-        onSecondaryPress = { expanded = true },
         cursorContent = {
-
             DropdownMenu(expanded, { expanded = false }) {
                 RDropdownMenuItem("单机", "\uEB9B", onClick = {
                     expanded = false
@@ -907,12 +934,28 @@ private fun InstalledCard(
             }
         },
     ) {
-        ModpackManageCard(
-            modifier = Modifier.fillMaxWidth(),
-            packdir = pack,
-            isRunning = isRunning,
-            onClick = { expanded = true },
-        )
+        IconTileCard(
+            title = pack.name,
+            hint = hint,
+            statusDotColor = TILE_ACTIVE_DOT_COLOR.takeIf { isRunning },
+            showHint = !expanded,
+            onPrimaryClick = { expanded = true },
+            onSecondaryClick = onOpenPlay,
+            onTertiaryClick = onOpenModpackInfo,
+        ) {
+            val iconModifier = Modifier.fillMaxSize().clip(RoundedCornerShape(16.dp))
+            val iconUrl = pack.iconUrl?.takeIf(String::isNotBlank)
+            if (iconUrl != null) {
+                HttpImage(
+                    imgUrl = iconUrl,
+                    modifier = iconModifier,
+                    contentDescription = "整合包图标",
+                    contentScale = ContentScale.Crop,
+                )
+            } else {
+                NameInitialIcon(pack.name, iconModifier)
+            }
+        }
     }
 }
 

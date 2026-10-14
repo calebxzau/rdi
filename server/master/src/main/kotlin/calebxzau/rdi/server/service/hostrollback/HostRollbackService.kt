@@ -98,6 +98,7 @@ class HostRollbackService(
             },
             usedBytes = index?.usedBytes ?: 0,
             maxBytes = index?.maxBytes ?: SyncChunkBackupStore.MAX_BYTES,
+            hostRunning = !hosts.isStopped(host),
         )
     }
 

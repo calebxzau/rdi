@@ -224,6 +224,7 @@ fun main() {
                     WindowChrome(
                         windowState = windowState,
                         minimumSize = minimumSize,
+                        appIcon = windowIcon,
                         onCloseRequest = requestClose,
                         onOpenHome = {
                             navController.navigateRoot(if (AccountSessionStore.isLoggedIn) MenuRoute else LoginRoute)

@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.sizeIn
@@ -25,9 +26,16 @@ import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
+import androidx.compose.material3.SingleChoiceSegmentedButtonRowScope
 import androidx.compose.material3.Text
 import androidx.compose.material3.TooltipDefaults
 import androidx.compose.runtime.Composable
@@ -56,16 +64,22 @@ import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
+import calebxzau.rdi.client.lgr
 import calebxzau.rdi.client.ui.CircleIconButton
+import calebxzau.rdi.client.ui.IconFontFamily
 import calebxzau.rdi.client.ui.RVerticalScrollbar as SharedRVerticalScrollbar
 import calebxzau.rdi.client.ui.SearchField
 import calebxzhou.rdi.client.model.UiMod
+import calebxzhou.rdi.client.service.ModIconColorSortKey
+import calebxzhou.rdi.client.service.analyzeModIconColors
+import calebxzhou.rdi.client.service.sortModsByIconColor
 import calebxzhou.rdi.common.model.Mod
 import java.util.Locale
 import kotlin.math.roundToInt
@@ -216,8 +230,72 @@ data class ContentGridContextAction(
 )
 
 /**
+ * Orderings the grid can apply.  [IconColor] is only offered when the grid
+ * contains mods, because only mod icons are colour-analysed.
+ */
+enum class ContentGridSort(val displayName: String) {
+    Type("类型"),
+    NameAsc("名称(A-Z)"),
+    NameDesc("名称(Z-A)"),
+    IconColor("图标颜色"),
+}
+
+/** Sort choices that make sense for [items]; the first entry is the default. */
+internal fun contentGridSortOptions(items: List<ContentGridItem>): List<ContentGridSort> = buildList {
+    if (items.distinctBy(ContentGridItem::type).size > 1) add(ContentGridSort.Type)
+    add(ContentGridSort.NameAsc)
+    add(ContentGridSort.NameDesc)
+    if (items.any { it is ContentGridItem.ModItem }) add(ContentGridSort.IconColor)
+}
+
+/** Ordering used without the top bar: colour mosaic in icon mode, otherwise the default choice. */
+internal fun implicitContentGridSort(iconOnly: Boolean, options: List<ContentGridSort>): ContentGridSort =
+    if (iconOnly && ContentGridSort.IconColor in options) ContentGridSort.IconColor else options.first()
+
+/**
+ * [modColors] is only consulted for [ContentGridSort.IconColor]; while it is
+ * still being analysed the grid keeps name order.  Non-mod items follow the
+ * colour-sorted mods in type/name order.
+ */
+internal fun sortContentGridItems(
+    items: List<ContentGridItem>,
+    sort: ContentGridSort,
+    modColors: Map<String, ModIconColorSortKey>? = null,
+): List<ContentGridItem> {
+    val byName = compareBy<ContentGridItem> { it.name.lowercase(Locale.ROOT) }
+    val byType = compareBy<ContentGridItem> { it.type.ordinal }.then(byName)
+    return when (sort) {
+        ContentGridSort.Type -> items.sortedWith(byType)
+        ContentGridSort.NameAsc -> items.sortedWith(byName)
+        ContentGridSort.NameDesc -> items.sortedWith(byName.reversed())
+        ContentGridSort.IconColor -> {
+            if (modColors == null) return items.sortedWith(byName)
+            val (mods, others) = items.partition { it is ContentGridItem.ModItem }
+            val modItems = mods.map { it as ContentGridItem.ModItem }
+            val itemsByModKey = modItems.associateBy { it.mod.key }
+            sortModsByIconColor(modItems.map { it.mod }, modColors)
+                .map { itemsByModKey.getValue(it.key) } + others.sortedWith(byType)
+        }
+    }
+}
+
+/** Wraps mods as grid items, keeping item identity stable across recompositions. */
+@Composable
+fun rememberModGridItems(mods: List<UiMod>): List<ContentGridItem> =
+    remember(mods) { mods.map { ContentGridItem.ModItem(it) } }
+
+/** Label shown under an icon in icon-only mode. */
+private fun ContentGridItem.labelName(): String = when (this) {
+    is ContentGridItem.ModItem -> name
+    is ContentGridItem.ContentItem -> toCardPresentation().name
+}
+
+/**
  * Shared archive-content grid.  Selection is deliberately a value on each
  * item; the grid only reports the requested new value and never owns it.
+ *
+ * With [topBar] the search field, sort menu and icon/list switch sit in a bar
+ * above the grid; otherwise compact buttons float over its top-right corner.
  */
 @Composable
 fun ContentGrid(
@@ -235,25 +313,22 @@ fun ContentGrid(
     draggedKey: String? = null,
     initialIconOnly: Boolean = false,
     showTypeFilters: Boolean = true,
+    topBar: Boolean = false,
+    searchPlaceholder: String = "名称、文件名或安装路径",
     stateKey: String? = null,
     isResolving: Boolean = false,
     resolvingModName: String? = null,
     emptySource: Boolean = false,
-    /**
-     * Replaces the default type/name ordering. An adapter can return the
-     * supplied list unchanged when its caller already owns ordering.
-     */
-    sortItems: ((List<ContentGridItem>, Boolean) -> List<ContentGridItem>)? = null,
     onModSideChange: ((UiMod, Mod.Side) -> Unit)? = null,
-    legacySelectedKeys: Set<String> = emptySet(),
-    legacySelectedHighlight: Boolean = false,
-    onIconOnlyChange: ((Boolean) -> Unit)? = null,
+    /** Keys drawn with the selected background without per-item selection buttons. */
+    highlightedKeys: Set<String> = emptySet(),
     onModItemSideChange: ((ContentGridItem.ModItem, Mod.Side) -> Unit)? = null,
 ) {
     var search by rememberSaveable(stateKey) { mutableStateOf("") }
     var showSearch by rememberSaveable(stateKey) { mutableStateOf(false) }
     var iconOnly by rememberSaveable(stateKey, initialIconOnly) { mutableStateOf(initialIconOnly) }
     var selectedType by rememberSaveable(stateKey) { mutableStateOf<ContentGridType?>(null) }
+    var selectedSort by rememberSaveable(stateKey) { mutableStateOf<ContentGridSort?>(null) }
     var tooltipAnchor by remember { mutableStateOf<ContentGridTooltipAnchor?>(null) }
     var gridBoundsInWindow by remember { mutableStateOf<Rect?>(null) }
     val clipboard = LocalClipboardManager.current
@@ -267,7 +342,21 @@ fun ContentGrid(
         if (tooltipAnchor?.key == key) tooltipAnchor = null
     }
 
-    LaunchedEffect(iconOnly) { onIconOnlyChange?.invoke(iconOnly) }
+    val sortOptions = remember(items) { contentGridSortOptions(items) }
+    val sort = if (topBar) {
+        selectedSort?.takeIf { it in sortOptions } ?: sortOptions.first()
+    } else {
+        implicitContentGridSort(iconOnly, sortOptions)
+    }
+    var modColors by remember(items) { mutableStateOf<Map<String, ModIconColorSortKey>?>(null) }
+    val colorSortActive = sort == ContentGridSort.IconColor
+    LaunchedEffect(items, colorSortActive) {
+        if (!colorSortActive || modColors != null) return@LaunchedEffect
+        val mods = items.mapNotNull { (it as? ContentGridItem.ModItem)?.mod }
+        analyzeModIconColors(mods)
+            .onFailure { lgr.warn(it) { "ContentGrid图标颜色分析失败，将保持名称顺序" } }
+            .onSuccess { modColors = it }
+    }
 
     val counts = remember(items) {
         ContentGridType.entries.associateWith { type -> items.count { it.type == type } }
@@ -277,10 +366,7 @@ fun ContentGrid(
             items.count { it.type == type && it.selectionState.isSelected() }
         }
     }
-    val ordered = remember(items, sortItems, iconOnly) {
-        sortItems?.invoke(items, iconOnly)
-            ?: items.sortedWith(compareBy<ContentGridItem>({ it.type.ordinal }, { it.name.lowercase(Locale.ROOT) }))
-    }
+    val ordered = remember(items, sort, modColors) { sortContentGridItems(items, sort, modColors) }
     val query = search.trim().lowercase(Locale.ROOT)
     val visible = remember(ordered, query, selectedType) {
         ordered.filter { item ->
@@ -294,168 +380,350 @@ fun ContentGrid(
         if (!iconOnly || tooltipAnchor?.key !in visibleKeys) tooltipAnchor = null
     }
 
-    LaunchedEffect(query, selectedType) {
+    LaunchedEffect(query, selectedType, selectedSort) {
         gridState.scrollToItem(0)
     }
 
-    Box(
-        modifier = modifier
-            .fillMaxWidth()
-            .onGloballyPositioned { gridBoundsInWindow = it.boundsInWindow() },
-    ) {
-        LazyVerticalGrid(
-            state = gridState,
-            columns = GridCells.Adaptive(if (iconOnly) 64.dp else 320.dp),
-            horizontalArrangement = Arrangement.spacedBy(if (iconOnly) 4.dp else 12.dp),
-            verticalArrangement = Arrangement.spacedBy(if (iconOnly) 8.dp else 20.dp),
-            contentPadding = PaddingValues(
-                end = 18.dp,
-                bottom = 12.dp,
-            ),
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            if (visible.isEmpty()) {
-                item(key = "content-grid-empty", span = { GridItemSpan(maxLineSpan) }) {
-                    Text(
-                        text = if (emptySource) noSourceEmptyText else emptyText,
-                        modifier = Modifier.padding(vertical = 12.dp),
-                    )
-                }
-            }
-            items(visible, key = ContentGridItem::key) { item ->
-                ContentGridEntry(
-                    item = item,
-                    iconOnly = iconOnly,
-                    dragged = draggedKey == item.key,
-                    onSelectionChange = onSelectionChange,
-                    onItemClick = onItemClick,
-                    onDelete = onDelete,
-                    canDelete = canDelete,
-                    contextActions = contextActions(item),
-                    onModSideChange = onModSideChange,
-                    onModItemSideChange = onModItemSideChange,
-                    onDragEvent = currentDragEvent,
-                    clipboard = { value -> clipboard.setText(AnnotatedString(value)) },
-                    legacySelected = legacySelectedHighlight && item.key in legacySelectedKeys,
-                    onTooltipEnter = publishTooltip,
-                    onTooltipExit = clearTooltip,
-                )
-            }
-        }
+    val filterItems: @Composable () -> Unit = {
+        ContentGridFilterItems(
+            items = items,
+            counts = counts,
+            selectedCounts = selectedCounts,
+            selectedType = selectedType,
+            onTypeSelect = { selectedType = it },
+            showTypeFilters = showTypeFilters,
+            isResolving = isResolving,
+            resolvingModName = resolvingModName,
+        )
+    }
+
+    val gridArea: @Composable (Modifier) -> Unit = { areaModifier ->
         Box(
-            modifier = Modifier
-                .align(Alignment.CenterEnd)
-                .fillMaxHeight()
-                .width(12.dp)
-                .padding(bottom = 12.dp),
+            modifier = areaModifier.onGloballyPositioned { gridBoundsInWindow = it.boundsInWindow() },
         ) {
-            SharedRVerticalScrollbar(
-                gridState,
-                Modifier.fillMaxHeight().padding(vertical = 2.dp),
-            )
-        }
-        FlowRow(
-            modifier = Modifier
-                .align(Alignment.TopEnd)
-                .padding(
-                    top = 8.dp,
-                    end = 18.dp + 32.dp + 8.dp + if (showSearch) 220.dp + 8.dp else 0.dp,
-                )
-                .fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-            itemVerticalAlignment = Alignment.CenterVertically,
-        ) {
-            if (showTypeFilters) {
-                ContentTypeFilterChip(
-                    selected = selectedType == null,
-                    label = "全部",
-                    count = items.size,
-                    selectedCount = items.count { it.selectionState.isSelected() },
-                    allNone = items.all { it.selectionState == ContentSelectionState.NONE },
-                    onClick = { selectedType = null },
-                )
-                ContentGridType.entries.filter { counts[it] != 0 }.forEach { type ->
-                    ContentTypeFilterChip(
-                        selected = selectedType == type,
-                        label = type.displayName,
-                        count = counts.getValue(type),
-                        selectedCount = selectedCounts.getValue(type),
-                        onClick = { selectedType = type },
-                    )
-                }
-            }
-            if (isResolving) {
-                Column(modifier = Modifier.width(180.dp)) {
-                    LinearProgressIndicator(Modifier.fillMaxWidth())
-                    resolvingModName?.let {
+            LazyVerticalGrid(
+                state = gridState,
+                columns = GridCells.Adaptive(if (iconOnly) 84.dp else 320.dp),
+                horizontalArrangement = Arrangement.spacedBy(if (iconOnly) 4.dp else 12.dp),
+                verticalArrangement = Arrangement.spacedBy(if (iconOnly) 4.dp else 20.dp),
+                contentPadding = PaddingValues(
+                    end = 18.dp,
+                    bottom = 12.dp,
+                ),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                if (visible.isEmpty()) {
+                    item(key = "content-grid-empty", span = { GridItemSpan(maxLineSpan) }) {
                         Text(
-                            "正在识别$it",
-                            style = MaterialTheme.typography.labelSmall,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
+                            text = if (emptySource) noSourceEmptyText else emptyText,
+                            modifier = Modifier.padding(vertical = 12.dp),
                         )
                     }
                 }
-            }
-        }
-        Column(
-            modifier = Modifier
-                .align(Alignment.TopEnd)
-                .padding(top = 8.dp, end = 18.dp),
-            horizontalAlignment = Alignment.End,
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                if (showSearch) {
-                    SearchField(
-                        value = search,
-                        onValueChange = { search = it },
-                        placeholder = "名称、文件名或安装路径",
-                        onSearch = null,
-                        modifier = Modifier.width(220.dp),
+                items(visible, key = ContentGridItem::key) { item ->
+                    ContentGridEntry(
+                        item = item,
+                        iconOnly = iconOnly,
+                        dragged = draggedKey == item.key,
+                        onSelectionChange = onSelectionChange,
+                        onItemClick = onItemClick,
+                        onDelete = onDelete,
+                        canDelete = canDelete,
+                        contextActions = contextActions(item),
+                        onModSideChange = onModSideChange,
+                        onModItemSideChange = onModItemSideChange,
+                        onDragEvent = currentDragEvent,
+                        clipboard = { value -> clipboard.setText(AnnotatedString(value)) },
+                        highlighted = item.key in highlightedKeys,
+                        onTooltipEnter = publishTooltip,
+                        onTooltipExit = clearTooltip,
                     )
                 }
-                CircleIconButton(
-                    icon = if (showSearch) "\uF00D" else "\uF002",
-                    tooltip = if (showSearch) "隐藏搜索" else "搜索",
-                    bgColor = MaterialTheme.colorScheme.primary,
-                    size = 32.dp,
-                    showText = false,
+            }
+            Box(
+                modifier = Modifier
+                    .align(Alignment.CenterEnd)
+                    .fillMaxHeight()
+                    .width(12.dp)
+                    .padding(bottom = 12.dp),
+            ) {
+                SharedRVerticalScrollbar(
+                    gridState,
+                    Modifier.fillMaxHeight().padding(vertical = 2.dp),
+                )
+            }
+            if (!topBar) {
+                FlowRow(
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(
+                            top = 8.dp,
+                            end = 18.dp + 32.dp + 8.dp + if (showSearch) 220.dp + 8.dp else 0.dp,
+                        )
+                        .fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                    itemVerticalAlignment = Alignment.CenterVertically,
                 ) {
-                    if (showSearch) {
-                        showSearch = false
-                        search = ""
-                    } else {
-                        showSearch = true
-                    }
+                    filterItems()
+                }
+                ContentGridOverlayToolbar(
+                    search = search,
+                    onSearchChange = { search = it },
+                    searchPlaceholder = searchPlaceholder,
+                    showSearch = showSearch,
+                    onShowSearchChange = { show ->
+                        showSearch = show
+                        if (!show) search = ""
+                    },
+                    iconOnly = iconOnly,
+                    onIconOnlyChange = { iconOnly = it },
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(top = 8.dp, end = 18.dp),
+                )
+            }
+            val anchor = tooltipAnchor?.takeIf { iconOnly && it.key in visibleKeys }
+            val gridBounds = gridBoundsInWindow
+            if (anchor != null && gridBounds != null) {
+                ContentGridInlineTooltip(
+                    text = anchor.text,
+                    anchorBounds = Rect(
+                        left = anchor.boundsInWindow.left - gridBounds.left,
+                        top = anchor.boundsInWindow.top - gridBounds.top,
+                        right = anchor.boundsInWindow.right - gridBounds.left,
+                        bottom = anchor.boundsInWindow.bottom - gridBounds.top,
+                    ),
+                    gap = 4.dp,
+                    modifier = Modifier.fillMaxSize().zIndex(1f),
+                )
+            }
+        }
+    }
+
+    if (topBar) {
+        Column(
+            modifier = modifier.fillMaxWidth(),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            ContentGridTopBar(
+                search = search,
+                onSearchChange = { search = it },
+                searchPlaceholder = searchPlaceholder,
+                sort = sort,
+                sortOptions = sortOptions,
+                onSortChange = { selectedSort = it },
+                iconOnly = iconOnly,
+                onIconOnlyChange = { iconOnly = it },
+                modifier = Modifier.fillMaxWidth().padding(end = 18.dp),
+            )
+            if ((showTypeFilters && items.isNotEmpty()) || isResolving) {
+                FlowRow(
+                    modifier = Modifier.fillMaxWidth().padding(end = 18.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                    itemVerticalAlignment = Alignment.CenterVertically,
+                ) {
+                    filterItems()
                 }
             }
+            gridArea(Modifier.fillMaxWidth().weight(1f))
+        }
+    } else {
+        gridArea(modifier.fillMaxWidth())
+    }
+}
+
+@Composable
+private fun ContentGridFilterItems(
+    items: List<ContentGridItem>,
+    counts: Map<ContentGridType, Int>,
+    selectedCounts: Map<ContentGridType, Int>,
+    selectedType: ContentGridType?,
+    onTypeSelect: (ContentGridType?) -> Unit,
+    showTypeFilters: Boolean,
+    isResolving: Boolean,
+    resolvingModName: String?,
+) {
+    if (showTypeFilters) {
+        ContentTypeFilterChip(
+            selected = selectedType == null,
+            label = "全部",
+            count = items.size,
+            selectedCount = items.count { it.selectionState.isSelected() },
+            allNone = items.all { it.selectionState == ContentSelectionState.NONE },
+            onClick = { onTypeSelect(null) },
+        )
+        ContentGridType.entries.filter { counts[it] != 0 }.forEach { type ->
+            ContentTypeFilterChip(
+                selected = selectedType == type,
+                label = type.displayName,
+                count = counts.getValue(type),
+                selectedCount = selectedCounts.getValue(type),
+                onClick = { onTypeSelect(type) },
+            )
+        }
+    }
+    if (isResolving) {
+        Column(modifier = Modifier.width(180.dp)) {
+            LinearProgressIndicator(Modifier.fillMaxWidth())
+            resolvingModName?.let {
+                Text(
+                    "正在识别$it",
+                    style = MaterialTheme.typography.labelSmall,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun ContentGridOverlayToolbar(
+    search: String,
+    onSearchChange: (String) -> Unit,
+    searchPlaceholder: String,
+    showSearch: Boolean,
+    onShowSearchChange: (Boolean) -> Unit,
+    iconOnly: Boolean,
+    onIconOnlyChange: (Boolean) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier = modifier,
+        horizontalAlignment = Alignment.End,
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            if (showSearch) {
+                SearchField(
+                    value = search,
+                    onValueChange = onSearchChange,
+                    placeholder = searchPlaceholder,
+                    onSearch = null,
+                    modifier = Modifier.width(220.dp),
+                )
+            }
             CircleIconButton(
-                icon = if (iconOnly) "\uF03A" else "\uF00A",
-                tooltip = if (iconOnly) "卡片模式" else "仅图标模式",
+                icon = if (showSearch) "" else "",
+                tooltip = if (showSearch) "隐藏搜索" else "搜索",
                 bgColor = MaterialTheme.colorScheme.primary,
                 size = 32.dp,
                 showText = false,
-            ) { iconOnly = !iconOnly }
+            ) { onShowSearchChange(!showSearch) }
         }
-        val anchor = tooltipAnchor?.takeIf { iconOnly && it.key in visibleKeys }
-        val gridBounds = gridBoundsInWindow
-        if (anchor != null && gridBounds != null) {
-            ContentGridInlineTooltip(
-                text = anchor.text,
-                anchorBounds = Rect(
-                    left = anchor.boundsInWindow.left - gridBounds.left,
-                    top = anchor.boundsInWindow.top - gridBounds.top,
-                    right = anchor.boundsInWindow.right - gridBounds.left,
-                    bottom = anchor.boundsInWindow.bottom - gridBounds.top,
-                ),
-                gap = 4.dp,
-                modifier = Modifier.fillMaxSize().zIndex(1f),
+        CircleIconButton(
+            icon = if (iconOnly) "" else "",
+            tooltip = if (iconOnly) "卡片模式" else "仅图标模式",
+            bgColor = MaterialTheme.colorScheme.primary,
+            size = 32.dp,
+            showText = false,
+        ) { onIconOnlyChange(!iconOnly) }
+    }
+}
+
+@Composable
+private fun ContentGridTopBar(
+    search: String,
+    onSearchChange: (String) -> Unit,
+    searchPlaceholder: String,
+    sort: ContentGridSort,
+    sortOptions: List<ContentGridSort>,
+    onSortChange: (ContentGridSort) -> Unit,
+    iconOnly: Boolean,
+    onIconOnlyChange: (Boolean) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Row(
+        modifier = modifier,
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        SearchField(
+            value = search,
+            onValueChange = onSearchChange,
+            placeholder = searchPlaceholder,
+            onSearch = null,
+            modifier = Modifier.weight(1f),
+        )
+        if (sortOptions.size > 1) {
+            ContentGridSortMenu(sort = sort, sortOptions = sortOptions, onSortChange = onSortChange)
+        }
+        SingleChoiceSegmentedButtonRow {
+            ContentGridModeButton(
+                glyph = "",
+                selected = iconOnly,
+                index = 0,
+                onClick = { onIconOnlyChange(true) },
             )
+            ContentGridModeButton(
+                glyph = "",
+                selected = !iconOnly,
+                index = 1,
+                onClick = { onIconOnlyChange(false) },
+            )
+        }
+    }
+}
+
+@Composable
+private fun SingleChoiceSegmentedButtonRowScope.ContentGridModeButton(
+    glyph: String,
+    selected: Boolean,
+    index: Int,
+    onClick: () -> Unit,
+) {
+    SegmentedButton(
+        selected = selected,
+        onClick = onClick,
+        shape = SegmentedButtonDefaults.itemShape(index = index, count = 2),
+        modifier = Modifier.height(42.dp),
+        icon = {},
+        label = { Text(glyph, fontFamily = IconFontFamily) },
+    )
+}
+
+@Composable
+private fun ContentGridSortMenu(
+    sort: ContentGridSort,
+    sortOptions: List<ContentGridSort>,
+    onSortChange: (ContentGridSort) -> Unit,
+) {
+    var expanded by remember { mutableStateOf(false) }
+    Box {
+        OutlinedButton(
+            onClick = { expanded = true },
+            modifier = Modifier.height(42.dp),
+            contentPadding = PaddingValues(horizontal = 14.dp),
+        ) {
+            Text("排序：${sort.displayName}", maxLines = 1)
+            Text(
+                "",
+                fontFamily = IconFontFamily,
+                fontSize = 12.sp,
+                modifier = Modifier.padding(start = 8.dp),
+            )
+        }
+        DropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false },
+        ) {
+            sortOptions.forEach { option ->
+                DropdownMenuItem(
+                    text = { Text(option.displayName) },
+                    trailingIcon = if (option == sort) {
+                        { Text("", fontFamily = IconFontFamily) }
+                    } else null,
+                    onClick = {
+                        expanded = false
+                        onSortChange(option)
+                    },
+                )
+            }
         }
     }
 }
@@ -541,7 +809,7 @@ private fun ContentGridEntry(
     onModItemSideChange: ((ContentGridItem.ModItem, Mod.Side) -> Unit)?,
     onDragEvent: ((ContentGridDragEvent) -> Unit)?,
     clipboard: (String) -> Unit,
-    legacySelected: Boolean,
+    highlighted: Boolean,
     onTooltipEnter: (String, String, Rect) -> Unit,
     onTooltipExit: (String) -> Unit,
 ) {
@@ -640,11 +908,11 @@ private fun ContentGridEntry(
             .fillMaxWidth()
             .alpha(
                 if (dragged ||
-                    (item.selectionState == ContentSelectionState.UNSELECTED && !legacySelected)
+                    (item.selectionState == ContentSelectionState.UNSELECTED && !highlighted)
                 ) 0.6f else 1f
             )
             .background(
-                if (legacySelected ||
+                if (highlighted ||
                     item.selectionState == ContentSelectionState.SELECTED ||
                     item.selectionState == ContentSelectionState.REQUIRED
                 ) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent,
@@ -657,24 +925,41 @@ private fun ContentGridEntry(
             .then(dragModifier),
     ) {
         if (iconOnly) {
-            Box(
+            Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .size(64.dp)
-                    .onGloballyPositioned { iconBoundsInWindow = it.boundsInWindow() }
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(MaterialTheme.colorScheme.surfaceVariant),
-                contentAlignment = Alignment.Center,
+                    .padding(top = 6.dp, bottom = 4.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
             ) {
-                when (item) {
-                    is ContentGridItem.ModItem -> UiModIcon(item.mod, Modifier.fillMaxSize())
-                    is ContentGridItem.ContentItem -> ContentIcon(item, Modifier.fillMaxSize())
+                Box(
+                    modifier = Modifier
+                        .size(64.dp)
+                        .onGloballyPositioned { iconBoundsInWindow = it.boundsInWindow() }
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(MaterialTheme.colorScheme.surfaceVariant),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    when (item) {
+                        is ContentGridItem.ModItem -> UiModIcon(item.mod, Modifier.fillMaxSize())
+                        is ContentGridItem.ContentItem -> ContentIcon(item, Modifier.fillMaxSize())
+                    }
+                    Text(
+                        text = item.type.icon,
+                        modifier = Modifier.align(Alignment.BottomEnd).padding(3.dp),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = MaterialTheme.typography.labelSmall,
+                    )
                 }
                 Text(
-                    text = item.type.icon,
-                    modifier = Modifier.align(Alignment.BottomEnd).padding(3.dp),
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    text = item.labelName(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(start = 4.dp, top = 4.dp, end = 4.dp),
+                    color = MaterialTheme.colorScheme.onSurface,
                     style = MaterialTheme.typography.labelSmall,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    textAlign = TextAlign.Center,
                 )
             }
         } else {
@@ -774,22 +1059,22 @@ private fun ContentGridContextMenu(
     onDelete: (() -> Unit)?,
     contextActions: List<ContentGridContextAction>,
 ) {
-    androidx.compose.material3.DropdownMenu(
+    DropdownMenu(
         expanded = expanded,
         onDismissRequest = onDismissRequest,
     ) {
-        androidx.compose.material3.DropdownMenuItem(
+        DropdownMenuItem(
             text = { Text("复制文件名") },
             onClick = { onCopy(item.fileName) },
         )
         if (item.targetPath.isNotBlank()) {
-            androidx.compose.material3.DropdownMenuItem(
+            DropdownMenuItem(
                 text = { Text("复制安装路径") },
                 onClick = { onCopy(item.targetPath) },
             )
         }
         contextActions.forEach { action ->
-            androidx.compose.material3.DropdownMenuItem(
+            DropdownMenuItem(
                 text = { Text(action.label) },
                 enabled = action.enabled,
                 onClick = {
@@ -799,7 +1084,7 @@ private fun ContentGridContextMenu(
             )
         }
         onDelete?.let { delete ->
-            androidx.compose.material3.DropdownMenuItem(
+            DropdownMenuItem(
                 text = { Text("删除") },
                 onClick = delete,
             )

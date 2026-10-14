@@ -184,98 +184,6 @@ class HostListViewModelTest {
     }
 
     @Test
-    fun `delete success queues ok message behind a pagination error`() = runBlocking {
-        val deleteGate = CompletableDeferred<Result<Unit>>()
-        val gateway = FakeHostListGateway(
-            unavailableResults = ArrayDeque(
-                listOf(
-                    Result.success(listOf(brief("000000000000000000000010", "待删除房间"))),
-                    Result.failure(IllegalStateException("分页错误")),
-                    Result.success(emptyList()),
-                )
-            ),
-            deleteGate = deleteGate,
-        )
-        val viewModel = HostListViewModel(gateway, useMockData = false)
-        awaitLoaded(viewModel)
-        val host = viewModel.uiState.value.hosts.single()
-        viewModel.deleteHost(host, deleteWorld = false)
-        viewModel.loadMore()
-
-        withTimeout(5_000) {
-            viewModel.uiState.filter { it.errorMessage?.contains("分页错误") == true }.first()
-        }
-        deleteGate.complete(Result.success(Unit))
-        withTimeout(5_000) {
-            viewModel.uiState.filter {
-                it.hosts.isEmpty() && it.errorMessage?.contains("分页错误") == true &&
-                    it.okMessage == null && it.retryLoadOnError
-            }.first()
-        }
-
-        viewModel.clearError()
-        awaitCalls(gateway, 4)
-        withTimeout(5_000) {
-            viewModel.uiState.filter { it.okMessage == "已删除" && !it.loadingMore }.first()
-        }
-        assertEquals(2, gateway.calls.count { it == "legacy-page-1" })
-        viewModel.clearOkMessage()
-        assertEquals(null, viewModel.uiState.value.okMessage)
-    }
-
-    @Test
-    fun `delete success removes host and emits event`() = runBlocking {
-        val gateway = FakeHostListGateway(mine = listOf(brief("000000000000000000000006", "待删除")))
-        val viewModel = HostListViewModel(gateway, useMockData = false)
-        awaitLoaded(viewModel)
-        val host = viewModel.uiState.value.hosts.single()
-
-        viewModel.deleteHost(host, deleteWorld = true)
-
-        assertEquals("已删除", withTimeout(5_000) { viewModel.uiState.filter { it.okMessage != null }.first() }.okMessage)
-        assertTrue(viewModel.uiState.value.hosts.isEmpty())
-        assertEquals(host.target to true, gateway.deleted.single())
-        assertEquals(HostListEvent.HostDeleted(host.target), viewModel.events.first())
-    }
-
-    @Test
-    fun `delete failure keeps host and clears deleting state`() = runBlocking {
-        val gateway = FakeHostListGateway(
-            mine = listOf(brief("000000000000000000000009", "保留房间")),
-            deleteResult = Result.failure(IllegalStateException("删除失败")),
-        )
-        val viewModel = HostListViewModel(gateway, useMockData = false)
-        awaitLoaded(viewModel)
-
-        viewModel.deleteHost(viewModel.uiState.value.hosts.single(), deleteWorld = false)
-        val state = withTimeout(5_000) {
-            viewModel.uiState.filter { it.errorMessage != null && it.deletingHost == null }.first()
-        }
-        assertEquals(1, state.hosts.size)
-    }
-
-    @Test
-    fun `error and success messages remain mutually exclusive`() = runBlocking {
-        val gateway = FakeHostListGateway(mine = listOf(brief("00000000000000000000000f", "消息房间")))
-        val viewModel = HostListViewModel(gateway, useMockData = false)
-        awaitLoaded(viewModel)
-        val host = viewModel.uiState.value.hosts.single()
-
-        viewModel.deleteHost(host, deleteWorld = false)
-        withTimeout(5_000) { viewModel.uiState.filter { it.okMessage != null }.first() }
-        viewModel.showError("新的错误")
-        assertEquals("新的错误", viewModel.uiState.value.errorMessage)
-        assertEquals(null, viewModel.uiState.value.okMessage)
-        viewModel.clearError()
-        assertEquals(null, viewModel.uiState.value.errorMessage)
-
-        viewModel.deleteHost(host, deleteWorld = false)
-        withTimeout(5_000) { viewModel.uiState.filter { it.okMessage != null }.first() }
-        viewModel.clearOkMessage()
-        assertEquals(null, viewModel.uiState.value.okMessage)
-    }
-
-    @Test
     fun `start need mod reports error and clears launching host`() = runBlocking {
         val gateway = FakeHostListGateway(
             mine = listOf(brief("000000000000000000000007", "启动测试")),
@@ -389,12 +297,9 @@ class HostListViewModelTest {
         private val mineResult: Result<List<Host.BriefVo>> = Result.success(mine),
         private val mineGate: CompletableDeferred<Result<List<Host.BriefVo>>>? = null,
         private val startResult: Result<StartPlayResult> = Result.failure(IllegalStateException("未配置启动结果")),
-        private val deleteResult: Result<Unit> = Result.success(Unit),
         private val pageGate: CompletableDeferred<Result<List<Host.BriefVo>>>? = null,
-        private val deleteGate: CompletableDeferred<Result<Unit>>? = null,
     ) : HostListGateway {
         val calls = CopyOnWriteArrayList<String>()
-        val deleted = CopyOnWriteArrayList<Pair<HostTarget, Boolean>>()
         val remembered = CopyOnWriteArrayList<Pair<HostTarget, String>>()
         private val callEvents = Channel<String>(Channel.BUFFERED)
         private var mineCalls = 0
@@ -424,11 +329,6 @@ class HostListViewModelTest {
             pageGate?.let { return it.await() }
             unavailableResults?.let { return it.removeFirst() }
             return Result.success(unavailablePages[page] ?: if (page == 0) unavailable else emptyList())
-        }
-
-        override suspend fun deleteHost(target: HostTarget, deleteWorld: Boolean): Result<Unit> {
-            deleted += target to deleteWorld
-            return deleteGate?.await() ?: deleteResult
         }
 
         override suspend fun startHost(host: UnifiedHostBrief): Result<StartPlayResult> = startResult

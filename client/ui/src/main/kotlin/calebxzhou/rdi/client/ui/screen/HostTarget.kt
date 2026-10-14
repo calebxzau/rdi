@@ -71,7 +71,7 @@ data class UnifiedHostBrief(
                 playable = host.playable,
                 isMember = host.isMember,
                 role = host.role,
-                status = if (host.playable) HostStatus.PLAYABLE else HostStatus.UNKNOWN,
+                status = host.status,
                 version = host.version,
             )
 

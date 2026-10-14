@@ -36,6 +36,8 @@ dependencies {
     implementation(project(":net"))
     implementation(project(":archive"))
     implementation(project(":anvilrw"))
+    // Sync chunk backup (回档点) files, shared with the host mods; see the source dir below.
+    implementation(libs.gson)
     implementation(libs.logback.classic)
     implementation(libs.bundles.ktor.server)
     implementation("io.netty:netty-tcnative-boringssl-static:${libs.versions.netty.tcnative.get()}:linux-x86_64")
@@ -95,6 +97,9 @@ val runDir = layout.projectDirectory.dir("run").asFile
 
 kotlin {
     jvmToolchain(25)
+    sourceSets.named("main") {
+        kotlin.srcDir("../../mc/syncchunk/src/main/kotlin")
+    }
 }
 
 tasks.named<Test>("test") {
@@ -154,6 +159,26 @@ tasks.register<Test>("hostWorldImportTest") {
     classpath = sourceSets["test"].runtimeClasspath
     include("**/calebxzau/rdi/server/service/hostworldimport/*Test.class")
     include("**/calebxzau/rdi/server/service/player/*Test.class")
+    useJUnitPlatform()
+}
+
+tasks.register<Test>("hostRollbackTest") {
+    group = "verification"
+    description = "Runs focused host rollback (回档) tests."
+    dependsOn(tasks.named("testClasses"))
+    testClassesDirs = sourceSets["test"].output.classesDirs
+    classpath = sourceSets["test"].runtimeClasspath
+    include("**/calebxzau/rdi/server/service/hostrollback/*Test.class")
+    useJUnitPlatform()
+}
+
+tasks.register<Test>("hostWorldDownloadTest") {
+    group = "verification"
+    description = "Runs focused host save download (下载房间存档) tests."
+    dependsOn(tasks.named("testClasses"))
+    testClassesDirs = sourceSets["test"].output.classesDirs
+    classpath = sourceSets["test"].runtimeClasspath
+    include("**/calebxzau/rdi/server/service/hostworlddownload/*Test.class")
     useJUnitPlatform()
 }
 

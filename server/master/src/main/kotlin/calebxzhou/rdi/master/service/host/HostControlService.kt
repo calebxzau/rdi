@@ -1,5 +1,6 @@
 package calebxzhou.rdi.master.service.host
 
+import calebxzau.rdi.server.service.hostworlddownload.HostWorldDownloadService
 import calebxzau.rdi.server.service.hostworldimport.HostWorldImportGuard
 import calebxzau.rdi.common.logging.Loggers
 import calebxzhou.rdi.common.DL_MOD_DIR
@@ -143,6 +144,8 @@ object HostControlService {
             throw RequestError("请先为此房间安装kotlinforforge模组才能启动")
         }
         DockerService.deleteContainer(current._id.str)
+        // The world changes from here on, so a packed save download of it is out of date.
+        HostWorldDownloadService.discardForStart(current.dir.toPath())
         current.writeServerProperties()
         current.deleteTransientStartupDirs()
         current.makeContainer(current.worldId, modpack, version)

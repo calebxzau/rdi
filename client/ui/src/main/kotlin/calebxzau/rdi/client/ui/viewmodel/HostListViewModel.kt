@@ -12,10 +12,6 @@ import calebxzhou.rdi.client.ui.McPlayArgs
 import calebxzhou.rdi.client.ui.screen.*
 import calebxzhou.rdi.common.exception.RequestError
 import calebxzhou.rdi.common.model.Host
-import calebxzhou.rdi.common.net.json
-import calebxzhou.rdi.common.serdesJson
-import io.ktor.client.request.*
-import io.ktor.http.*
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
@@ -27,9 +23,7 @@ data class HostListUiState(
     val initialLoading: Boolean = true,
     val loadingMore: Boolean = false,
     val launchingHost: HostTarget? = null,
-    val deletingHost: HostTarget? = null,
     val errorMessage: String? = null,
-    val okMessage: String? = null,
     val retryLoadOnError: Boolean = false,
 )
 
@@ -37,13 +31,11 @@ sealed interface HostListEvent {
     data class OpenMcPlay(val args: McPlayArgs) : HostListEvent
     data class NeedInstall(val result: StartPlayResult.NeedInstall) : HostListEvent
     data class OpenTaskList(val runId: String) : HostListEvent
-    data class HostDeleted(val target: HostTarget) : HostListEvent
 }
 
 interface HostListGateway {
     suspend fun loadLegacyMine(): Result<List<Host.BriefVo>>
     suspend fun loadLegacyUnavailable(page: Int): Result<List<Host.BriefVo>>
-    suspend fun deleteHost(target: HostTarget, deleteWorld: Boolean): Result<Unit>
     suspend fun startHost(host: UnifiedHostBrief): Result<StartPlayResult>
     fun rememberLastPlayed(target: HostTarget, hostName: String): Result<Unit>
 }
@@ -59,19 +51,6 @@ class RdiHostListGateway : HostListGateway {
         val response = server.makeRequest<List<Host.BriefVo>>("host/list/$page")
         if (!response.ok) throw RequestError(response.msg)
         response.data.orEmpty()
-    }
-
-    override suspend fun deleteHost(target: HostTarget, deleteWorld: Boolean): Result<Unit> = resultOf {
-        val path = "${target.apiRoot}/${target.id}"
-        if (target.kind != HostKind.Legacy) {
-            throw RequestError("该房间类型暂不可用")
-        }
-        val body = serdesJson.encodeToString(Host.DeleteDto(deleteWorld))
-        val response = server.makeRequest<Unit>(path, HttpMethod.Delete) {
-            json()
-            setBody(body)
-        }
-        if (!response.ok) throw RequestError(response.msg)
     }
 
     override suspend fun startHost(host: UnifiedHostBrief): Result<StartPlayResult> = resultOf {
@@ -102,7 +81,6 @@ class HostListViewModel(
     private var nextErrorId = 0L
     private var activeErrorId: Long? = null
     private var retryLoadAfterCurrentErrorId: Long? = null
-    private var pendingOkMessage: String? = null
 
     init {
         refresh()
@@ -117,7 +95,6 @@ class HostListViewModel(
         loadJob = null
         activeErrorId = null
         retryLoadAfterCurrentErrorId = null
-        pendingOkMessage = null
         _uiState.value = HostListUiState(initialLoading = true)
 
         if (useMockData) {
@@ -242,36 +219,6 @@ class HostListViewModel(
         }
     }
 
-    fun deleteHost(host: UnifiedHostBrief, deleteWorld: Boolean) {
-        if (_uiState.value.deletingHost != null) return
-        val target = host.target
-        _uiState.update { it.copy(deletingHost = target) }
-        viewModelScope.launch {
-            try {
-                resultOf { gateway.deleteHost(target, deleteWorld).getOrThrow() }.fold(
-                    onSuccess = {
-                        _uiState.update {
-                            it.copy(
-                                hosts = it.hosts.filterNot { brief -> brief.target == target },
-                            )
-                        }
-                        showOk("已删除")
-                        eventChannel.trySend(HostListEvent.HostDeleted(target))
-                    },
-                    onFailure = { showError(it.message ?: "删除房间失败") },
-                )
-            } catch (cancel: CancellationException) {
-                throw cancel
-            } catch (cause: Throwable) {
-                showError(cause.message ?: "删除房间失败")
-            } finally {
-                _uiState.update { state ->
-                    if (state.deletingHost == target) state.copy(deletingHost = null) else state
-                }
-            }
-        }
-    }
-
     fun clearError() {
         val retry = _uiState.value.retryLoadOnError
         val dismissedErrorId = activeErrorId
@@ -280,7 +227,6 @@ class HostListViewModel(
             it.copy(
                 errorMessage = null,
                 retryLoadOnError = false,
-                okMessage = pendingOkMessage,
             )
         }
         if (retry && dismissedErrorId != null) {
@@ -288,15 +234,10 @@ class HostListViewModel(
         }
     }
 
-    fun clearOkMessage() {
-        pendingOkMessage = null
-        _uiState.update { it.copy(okMessage = null) }
-    }
-
     fun showError(message: String) {
         activeErrorId = ++nextErrorId
         retryLoadAfterCurrentErrorId = null
-        _uiState.update { it.copy(errorMessage = message, okMessage = null, retryLoadOnError = false) }
+        _uiState.update { it.copy(errorMessage = message, retryLoadOnError = false) }
     }
 
     private fun showSourceError(prefix: String, cause: Throwable) {
@@ -304,16 +245,8 @@ class HostListViewModel(
         _uiState.update {
             it.copy(
                 errorMessage = "$prefix：${cause.message ?: "未知错误"}",
-                okMessage = null,
                 retryLoadOnError = true,
             )
-        }
-    }
-
-    private fun showOk(message: String) {
-        pendingOkMessage = message
-        if (_uiState.value.errorMessage == null) {
-            _uiState.update { it.copy(okMessage = message) }
         }
     }
 

@@ -17,6 +17,7 @@ import calebxzau.rdi.client.modcatalog.CatalogMod
 import calebxzau.rdi.client.ui.screen.PlayerInfoScreen
 import calebxzau.rdi.client.ui.screen.BaseWorldListScreen
 import calebxzau.rdi.client.ui.screen.BaseWorldUploadScreen
+import calebxzau.rdi.client.ui.screen.HostRollbackScreen
 import calebxzau.rdi.client.ui.screen.HostSaveImportScreen
 import calebxzhou.rdi.client.auth.AccountSessionStore
 import calebxzau.rdi.client.modcatalog.ModCatalog
@@ -246,24 +247,6 @@ fun AppNavigation(
                 onOpenHostInfo = { target, fromAllHosts ->
                     navController.navigate(HostInfoRoute(target.id, fromAllHosts, target.kind.name))
                 },
-                onOpenHostMembers = { target, fromAllHosts ->
-                    navController.navigate(HostMembersRoute(target.id, fromAllHosts, target.kind.name))
-                },
-                onOpenHostMods = { target, fromAllHosts ->
-                    navController.navigate(HostModsRoute(target.id, fromAllHosts, target.kind.name))
-                },
-                onOpenHostWorld = { target, fromAllHosts ->
-                    navController.navigate(HostWorldRoute(target.id, fromAllHosts, target.kind.name))
-                },
-                onOpenHostFiles = { target, fromAllHosts ->
-                    navController.navigate(HostFilesRoute(target.id, fromAllHosts, target.kind.name))
-                },
-                onOpenHostBackend = { target, fromAllHosts ->
-                    navController.navigate(HostBackendRoute(target.id, fromAllHosts, target.kind.name))
-                },
-                onOpenHostSettings = { target, fromAllHosts ->
-                    navController.navigate(HostCreateRoute(target.id, fromAllHosts, target.kind.name))
-                },
                 onOpenMcPlay = { args, _ ->
                     openMcPlay(args) { navController.navigateAbsolute(HostListRoute) }
                 },
@@ -314,15 +297,21 @@ fun AppNavigation(
                 onOpenPlay = { args ->
                     openMcPlay(args) { navController.navigateAbsolute(HostListRoute) }
                 },
-            )
-        }
-        composable<HostMembersRoute> {
-            val route = it.toRoute<HostMembersRoute>()
-            val kind = HostKind.fromRouteValue(route.kind)
-            HostMembersScreen(
-                target = HostTarget(kind, route.hostId),
-                onBack = returnToHostList,
-                onQuit = returnToHostList
+                onOpenMods = {
+                    navController.navigate(HostModsRoute(route.hostId, route.fromAllHosts, route.kind))
+                },
+                onOpenWorld = {
+                    navController.navigate(HostWorldRoute(route.hostId, route.fromAllHosts, route.kind))
+                },
+                onOpenFiles = {
+                    navController.navigate(HostFilesRoute(route.hostId, route.fromAllHosts, route.kind))
+                },
+                onOpenBackend = {
+                    navController.navigate(HostBackendRoute(route.hostId, route.fromAllHosts, route.kind))
+                },
+                onOpenSettings = {
+                    navController.navigate(HostCreateRoute(route.hostId, route.fromAllHosts, route.kind))
+                },
             )
         }
         composable<HostModsRoute> {
@@ -351,8 +340,10 @@ fun AppNavigation(
         composable<HostWorldRoute> {
             val route = it.toRoute<HostWorldRoute>()
             HostWorldScreen(
+                hostId = route.hostId,
                 onBack = returnToHostList,
                 onImportSave = { navController.navigate(HostSaveImportRoute(route.hostId)) },
+                onRollback = { navController.navigate(HostRollbackRoute(route.hostId)) },
             )
         }
         composable<HostSaveImportRoute> {
@@ -364,14 +355,16 @@ fun AppNavigation(
                 onOpenTask = onOpenTask,
             )
         }
+        composable<HostRollbackRoute> {
+            val route = it.toRoute<HostRollbackRoute>()
+            HostRollbackScreen(hostId = route.hostId, onBack = { navController.popBackStack() })
+        }
         composable<HostFilesRoute> {
             val route = it.toRoute<HostFilesRoute>()
             val kind = HostKind.fromRouteValue(route.kind)
             HostFilesScreen(
                 target = HostTarget(kind, route.hostId),
-                onBack = {
-                    navController.navigateAbsolute(HostListRoute)
-                },
+                onBack = returnToHostList,
                 onOpenTaskList = { runId ->
                     onOpenTask(runId)
                 }
@@ -408,7 +401,7 @@ fun AppNavigation(
                         navController.navigateAbsolute(ModpackPlazaRoute())
                     }
                 } else {
-                    navController.navigateAbsolute(HostListRoute)
+                    returnToHostList()
                 }
             }
             if (kind == HostKind.Host2) {
@@ -515,6 +508,11 @@ fun AppNavigation(
                             versionName = pack.verName,
                         )
                     )
+                },
+                onOpenModpackInfo = { pack ->
+                    pack.vo?.let { vo ->
+                        navController.navigate(ModpackInfoRoute(modpackId = vo.id.toHexString()))
+                    }
                 },
                 onOpenPlay = { args ->
                     openMcPlay(args) { navController.navigateAbsolute(ModpackLocalListRoute) }

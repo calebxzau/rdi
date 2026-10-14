@@ -10,6 +10,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.material3.RadioButton as M3RadioButton
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -22,6 +23,7 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import calebxzau.rdi.client.ui.AlertErr
 import calebxzau.rdi.client.ui.BottomSnakebarM3
+import calebxzau.rdi.client.ui.CircleIconButton
 import calebxzau.rdi.client.ui.ConfirmDialog
 import calebxzau.rdi.client.ui.ContentBody
 import calebxzau.rdi.client.ui.MaxBox
@@ -35,7 +37,9 @@ import calebxzau.rdi.client.modcatalog.ModCatalog
 import calebxzau.rdi.client.ui.themeNow
 import calebxzhou.rdi.client.net.loggedAccount
 import calebxzhou.rdi.client.service.GithubReleaseAsset
+import calebxzhou.rdi.client.ui.comp.ModpackCard
 import calebxzau.rdi.client.ui.viewmodel.ExtraModDraft
+import calebxzau.rdi.client.ui.viewmodel.HostInfoEvent
 import calebxzau.rdi.client.ui.viewmodel.HostInfoViewModel
 import calebxzau.rdi.client.ui.viewmodel.HostModsEvent
 import calebxzau.rdi.client.ui.viewmodel.HostModsViewModel
@@ -55,29 +59,156 @@ fun HostInfoScreen(
     hostId: ObjectId,
     onBack: () -> Unit = {},
     onOpenModpackInfo: (String) -> Unit,
+    onOpenMods: () -> Unit = {},
+    onOpenWorld: () -> Unit = {},
+    onOpenFiles: () -> Unit = {},
+    onOpenBackend: () -> Unit = {},
+    onOpenSettings: () -> Unit = {},
     viewModel: HostInfoViewModel = koinViewModel(key = "host-info:$hostId") {
         parametersOf(hostId)
     },
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
+    val snackbarHostState = remember { SnackbarHostState() }
+    var showDeleteDialog by remember { mutableStateOf(false) }
+
+    // Coming back from settings or other host pages may have changed the room, so refresh it.
+    var visited by rememberSaveable { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        if (visited) viewModel.reload() else visited = true
+    }
+    LaunchedEffect(viewModel) {
+        viewModel.events.collect { event ->
+            when (event) {
+                // The room no longer exists, so leave its page.
+                HostInfoEvent.Deleted -> onBack()
+                is HostInfoEvent.DeleteFailed -> snackbarHostState.showSnackbar(event.message)
+            }
+        }
+    }
+
+    val host = state.host
+    val isOwner = host != null && (host.ownerId == loggedAccount._id || loggedAccount.isDav)
+    val canManage = host != null && (isOwner || host.isAdmin(loggedAccount))
     HostDetailSurface(
-        size = ScreenContentSize.SMALL,
-        title = state.host?.name ?: "房间详情",
-        loading = state.loading,
+        size = ScreenContentSize.LARGE,
+        title = host?.name ?: "房间详情",
+        // Background refreshes (e.g. after an ownership transfer) keep the members row on screen.
+        loading = state.loading && host == null,
         errorMessage = state.errorMessage,
         onBack = onBack,
         titleActions = {
-            state.host?.let {
+            host?.let {
+                it.modpack.ModpackCard(
+                    modifier = Modifier.widthIn(max = 280.dp),
+                    compact = true,
+                    onClick = { onOpenModpackInfo(it.modpack.id.toHexString()) },
+                )
                 Column {
                     TinyClickCopyText("hid", it._id.toHexString())
                     TinyClickCopyText("mid", it.modpack.id.toHexString())
                     TinyClickCopyText("wid", it.worldId?.toHexString())
                 }
+                if (canManage) {
+                    Space8w()
+                    CircleIconButton(icon = "\uEAF8", label = "设置", showText = false, onClick = onOpenSettings)
+                }
+                if (isOwner) {
+                    Space8w()
+                    CircleIconButton(
+                        icon = "\uEA81",
+                        label = "删除房间",
+                        bgColor = MaterialTheme.colorScheme.error,
+                        iconColor = MaterialTheme.colorScheme.onError,
+                        enabled = !state.deleting,
+                        showText = false,
+                        onClick = { showDeleteDialog = true },
+                    )
+                }
             }
         },
+        snackbarHostState = snackbarHostState,
     ) {
-        state.host?.let { HostOverviewPane(it, onOpenModpackInfo) }
+        if (host == null) return@HostDetailSurface
+        val canViewMembers = host.ownerId == loggedAccount._id ||
+            host.members.any { member -> member.id == loggedAccount._id } ||
+            loggedAccount.isDav
+        if (canViewMembers) {
+            HostMembersPane(
+                hostId = hostId,
+                snackbarHostState = snackbarHostState,
+                onQuit = onBack,
+                onHostChanged = viewModel::reload,
+            )
+            Spacer(Modifier.height(12.dp))
+            Row(
+                modifier = Modifier.padding(horizontal = 12.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                CircleIconButton(icon = "\uDB85\uDCD3", label = "模组", onClick = onOpenMods)
+                CircleIconButton(icon = "\uDB85\uDC5B", label = "存档", onClick = onOpenWorld)
+                if (canManage) {
+                    CircleIconButton(icon = "\uF07C", label = "文件", onClick = onOpenFiles)
+                }
+                CircleIconButton(icon = "\uDB80\uDD8D", label = "后台", onClick = onOpenBackend)
+            }
+        }
     }
+    if (showDeleteDialog && host != null) {
+        HostDeleteDialog(
+            host = host,
+            deleting = state.deleting,
+            onDismiss = { showDeleteDialog = false },
+            onConfirm = { deleteWorld ->
+                showDeleteDialog = false
+                viewModel.deleteHost(deleteWorld)
+            },
+        )
+    }
+}
+
+@Composable
+private fun HostDeleteDialog(
+    host: Host.DetailVo,
+    deleting: Boolean,
+    onDismiss: () -> Unit,
+    onConfirm: (deleteWorld: Boolean) -> Unit,
+) {
+    var deleteWorld by remember { mutableStateOf(false) }
+    var confirmName by remember { mutableStateOf("") }
+    // Newer rooms always delete their save, so they ask for the room name instead of a checkbox.
+    val needsName = host.version >= 2
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("确认删除") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text("确认删除房间吗？所有的数据，包括存档都会丢失（不可恢复）")
+                if (needsName) {
+                    Text("请输入房间名称确认。")
+                    OutlinedTextField(
+                        value = confirmName,
+                        onValueChange = { confirmName = it },
+                        label = { Text(host.name) },
+                        singleLine = true,
+                    )
+                } else {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Checkbox(checked = deleteWorld, onCheckedChange = { deleteWorld = it })
+                        Text("同时删除关联存档")
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                enabled = !deleting && (!needsName || confirmName == host.name),
+                onClick = { onConfirm(deleteWorld) },
+            ) { Text("删除") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
+    )
 }
 
 /** Shared route entry for the released Legacy room contract. */
@@ -87,9 +218,23 @@ fun HostInfoScreen(
     onBack: () -> Unit = {},
     onOpenModpackInfo: (String) -> Unit = {},
     onOpenPlay: ((calebxzhou.rdi.client.ui.McPlayArgs) -> Unit)? = null,
+    onOpenMods: () -> Unit = {},
+    onOpenWorld: () -> Unit = {},
+    onOpenFiles: () -> Unit = {},
+    onOpenBackend: () -> Unit = {},
+    onOpenSettings: () -> Unit = {},
 ) {
     LegacyHostRoute(target, onBack) { objectId ->
-        HostInfoScreen(objectId, onBack, onOpenModpackInfo)
+        HostInfoScreen(
+            hostId = objectId,
+            onBack = onBack,
+            onOpenModpackInfo = onOpenModpackInfo,
+            onOpenMods = onOpenMods,
+            onOpenWorld = onOpenWorld,
+            onOpenFiles = onOpenFiles,
+            onOpenBackend = onOpenBackend,
+            onOpenSettings = onOpenSettings,
+        )
     }
 }
 
@@ -242,7 +387,7 @@ private fun HostDetailSurface(
     onBack: () -> Unit,
     titleActions: @Composable RowScope.() -> Unit,
     snackbarHostState: SnackbarHostState = remember { SnackbarHostState() },
-    content: @Composable () -> Unit,
+    content: @Composable ColumnScope.() -> Unit,
 ) {
     MaxBox {
         ScreenContentSurface(size) {

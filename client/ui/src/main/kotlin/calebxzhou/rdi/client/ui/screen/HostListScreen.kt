@@ -14,11 +14,9 @@ import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.*
@@ -37,10 +35,8 @@ import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.unit.dp
 import calebxzau.rdi.client.ui.AlertErr
-import calebxzau.rdi.client.ui.AlertOk
 import calebxzau.rdi.client.ui.CircleIconButton
 import calebxzau.rdi.client.ui.ContentBody
-import calebxzau.rdi.client.ui.MaxBox
 import calebxzau.rdi.client.ui.RVerticalScrollbar
 import calebxzau.rdi.client.ui.ScreenContentSize
 import calebxzau.rdi.client.ui.ScreenContentSurface
@@ -51,6 +47,7 @@ import calebxzhou.rdi.client.service.StartPlayResult
 import calebxzhou.rdi.client.service.rememberPlayerInfoPrefetch
 import calebxzhou.rdi.client.ui.McPlayArgs
 import calebxzhou.rdi.client.ui.comp.ModpackDownloadMethodDialog
+import calebxzhou.rdi.client.ui.comp.CardHintHost
 import calebxzhou.rdi.client.ui.comp.UnifiedHostCard
 import calebxzau.rdi.client.ui.viewmodel.HostListEvent
 import calebxzau.rdi.client.ui.viewmodel.HostListViewModel
@@ -63,12 +60,6 @@ fun HostListScreen(
     onBack: () -> Unit,
     onOpenModpackPlaza: () -> Unit,
     onOpenHostInfo: (HostTarget, Boolean) -> Unit,
-    onOpenHostMembers: (HostTarget, Boolean) -> Unit,
-    onOpenHostMods: (HostTarget, Boolean) -> Unit,
-    onOpenHostWorld: (HostTarget, Boolean) -> Unit,
-    onOpenHostFiles: (HostTarget, Boolean) -> Unit,
-    onOpenHostBackend: (HostTarget, Boolean) -> Unit,
-    onOpenHostSettings: (HostTarget, Boolean) -> Unit,
     onOpenMcPlay: (McPlayArgs, Boolean) -> Unit,
     onOpenTaskList: (String) -> Unit,
     onOpenWorlds: () -> Unit,
@@ -81,7 +72,7 @@ fun HostListScreen(
         screenFocusRequester.requestFocus()
     }
 
-    MaxBox {
+    CardHintHost(Modifier.fillMaxSize()) {
         ScreenContentSurface(
             size = ScreenContentSize.LARGE,
             modifier = Modifier
@@ -101,17 +92,8 @@ fun HostListScreen(
             }
             ContentBody {
                 val onOpenHostInfo1 = { it: HostTarget -> onOpenHostInfo(it, false) }
-                val onOpenHostMembers1 = { it: HostTarget -> onOpenHostMembers(it, false) }
-                val onOpenHostMods1 = { it: HostTarget -> onOpenHostMods(it, false) }
-                val onOpenHostWorld1 = { it: HostTarget -> onOpenHostWorld(it, false) }
-                val onOpenHostFiles1 = { it: HostTarget -> onOpenHostFiles(it, false) }
-                val onOpenHostBackend1 = { it: HostTarget -> onOpenHostBackend(it, false) }
-                val onOpenHostSettings1 = { it: HostTarget -> onOpenHostSettings(it, false) }
                 val state by viewModel.uiState.collectAsStateWithLifecycle()
                 var installConfirmTask by remember<MutableState<StartPlayResult.NeedInstall?>> { mutableStateOf(null) }
-                var deleteHost by remember<MutableState<UnifiedHostBrief?>> { mutableStateOf(null) }
-                var deleteWorld by remember { mutableStateOf(true) }
-                var deleteName by remember { mutableStateOf("") }
                 val gridState = rememberLazyGridState()
                 LaunchedEffect(key1 = viewModel) {
                     viewModel.events.collect { event ->
@@ -122,9 +104,6 @@ fun HostListScreen(
 
                             is HostListEvent.NeedInstall -> installConfirmTask = event.result
                             is HostListEvent.OpenTaskList -> onOpenTaskList(event.runId)
-                            is HostListEvent.HostDeleted -> {
-                                if (deleteHost?.target == event.target) deleteHost = null
-                            }
                         }
                     }
                 }
@@ -151,15 +130,8 @@ fun HostListScreen(
                         val hostCard: @Composable (UnifiedHostBrief) -> Unit = { host ->
                             UnifiedHostCard(
                                 host = host,
-                                onClick = onOpenHostInfo1,
                                 onPlay = viewModel::startHost,
-                                onOpenMembers = onOpenHostMembers1,
-                                onOpenMods = onOpenHostMods1,
-                                onOpenWorld = onOpenHostWorld1,
-                                onOpenFiles = onOpenHostFiles1,
-                                onOpenBackend = onOpenHostBackend1,
-                                onOpenSettings = onOpenHostSettings1,
-                                onDelete = { deleteHost = it; deleteWorld = false; deleteName = "" },
+                                onOpenDetail = onOpenHostInfo1,
                                 playEnabled = state.launchingHost == null,
                                 playLoading = state.launchingHost == host.target,
                             )
@@ -167,7 +139,7 @@ fun HostListScreen(
                         Box(Modifier.fillMaxWidth().weight(1f)) {
                             LazyVerticalGrid(
                                 state = gridState,
-                                columns = Adaptive(minSize = 300.dp),
+                                columns = Adaptive(minSize = 110.dp),
                                 modifier = Modifier.fillMaxSize().padding(end = 12.dp),
                                 contentPadding = PaddingValues(8.dp),
                                 horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -213,7 +185,6 @@ fun HostListScreen(
                 }
                 when {
                     state.errorMessage != null -> AlertErr(state.errorMessage!!, viewModel::clearError)
-                    state.okMessage != null -> AlertOk(state.okMessage!!, viewModel::clearOkMessage)
                     installConfirmTask != null -> {
                         val install = installConfirmTask!!
                         ModpackDownloadMethodDialog(
@@ -231,43 +202,6 @@ fun HostListScreen(
                             },
                             onOpenTaskList = onOpenTaskList,
                             onImportError = viewModel::showError,
-                        )
-                    }
-
-                    deleteHost != null -> {
-                        val host = deleteHost!!
-                        AlertDialog(
-                            onDismissRequest = { deleteHost = null },
-                            title = { Text("确认删除") },
-                            text = {
-                                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                                    Text("确认删除房间吗？所有的数据，包括存档都会丢失（不可恢复）")
-                                    if (host.target.kind == HostKind.Legacy) {
-                                        if (host.version >= 2) {
-                                            Text("请输入房间名称确认。")
-                                            OutlinedTextField(
-                                                value = deleteName,
-                                                onValueChange = { deleteName = it },
-                                                label = { Text(host.name) },
-                                                singleLine = true,
-                                            )
-                                        } else {
-                                            Checkbox(checked = deleteWorld, onCheckedChange = { deleteWorld = it })
-                                            Text("同时删除关联存档")
-                                        }
-                                    }
-                                }
-                            },
-                            confirmButton = {
-                                TextButton(
-                                            enabled = state.deletingHost == null &&
-                                            (host.target.kind != HostKind.Legacy ||
-                                                    (host.version >= 2 && deleteName == host.name) ||
-                                                    host.version < 2),
-                                    onClick = { viewModel.deleteHost(host, deleteWorld) },
-                                ) { Text("删除") }
-                            },
-                            dismissButton = { TextButton(onClick = { deleteHost = null }) { Text("取消") } },
                         )
                     }
                 }
