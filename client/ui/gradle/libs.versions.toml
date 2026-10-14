@@ -6,11 +6,11 @@ knbt = "0.11.9"
 okhttp = "5.4.0"
 java = "25"
 kotlin = "2.4.10"
-compose-plugin = "1.12.0"
+compose-plugin = "1.12.1"
 zstd = "1.5.7-16"
 netty = "4.2.9.Final"
 ktor = "3.5.2"
-compose = "1.12.0"
+compose = "1.12.1"
 compose-material3 = "1.12.0-alpha03"
 markdown-renderer = "0.45.0"
 bson = "5.11.0"
@@ -38,6 +38,7 @@ fastutil = "8.5.19"
 sqldelight = "2.3.2"
 sqlite = "3.53.4.0"
 pinyin-pro = "0.1.0"
+haze = "2.0.1"
 [libraries]
 annotations = { module = "org.jetbrains:annotations", version.ref = "annotations" }
 commons-compress = { module = "org.apache.commons:commons-compress", version.ref = "commons-compress" }
@@ -74,6 +75,8 @@ koin-compose = { module = "io.insert-koin:koin-compose", version.ref = "koin" }
 koin-compose-viewmodel = { module = "io.insert-koin:koin-compose-viewmodel", version.ref = "koin" }
 compose-material3 = { module = "org.jetbrains.compose.material3:material3", version.ref = "compose-material3" }
 compose-material3-desktop = { module = "org.jetbrains.compose.material3:material3-desktop", version.ref = "compose-material3" }
+haze = { module = "dev.chrisbanes.haze:haze", version.ref = "haze" }
+haze-glass = { module = "dev.chrisbanes.haze:haze-glass", version.ref = "haze" }
 okhttp = { module = "com.squareup.okhttp3:okhttp", version.ref = "okhttp" }
 tomlkt = { module = "net.peanuuutz.tomlkt:tomlkt", version.ref = "tomlkt" }
 oshi-core-desktop = { module = "com.github.oshi:oshi-core", version.ref = "oshi-desktop" }

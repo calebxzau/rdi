@@ -1,7 +1,9 @@
 package calebxzau.rdi.client.ui.window
 
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.hoverable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -20,6 +22,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.RectangleShape
+import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.input.pointer.*
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
@@ -63,6 +66,10 @@ private val windowButtonWidth = 46.dp
 private val edgeResizeThickness = 6.dp
 private val cornerResizeSize = 10.dp
 private val chromeIconButtonSize = 28.dp
+private val appIconSize = 24.dp
+
+/** The window's corner radius scaled down to the title-bar icon. */
+private val appIconShape = RoundedCornerShape(6.dp)
 
 private val titleBarBackground = Color(0xFFF7F8FA)
 private val titleBarDivider = Color(0xFFE1E4EA)
@@ -70,12 +77,16 @@ private val titleTextColor = Color(0xFF171A1F)
 private val windowButtonColor = Color(0xFF3F4652)
 private val windowButtonHover = Color(0xFFE9ECF2)
 private val closeButtonHover = Color(0xFFE81123)
+
+/** Keeps the floating window's edge visible against a white desktop. */
+private val windowBorderColor = Color.Black.copy(alpha = 0.12f)
 private const val MCMOD_BROWSER_URL = "https://play.mcmod.cn/sv20188037.html"
 
 @Composable
 fun FrameWindowScope.WindowChrome(
     windowState: WindowState,
     minimumSize: Dimension,
+    appIcon: Painter,
     onCloseRequest: () -> Unit,
     onOpenHome: () -> Unit,
     onOpenMail: () -> Unit,
@@ -94,7 +105,8 @@ fun FrameWindowScope.WindowChrome(
         { runId: String -> selectedTaskRunId = runId }
     }
     val selectedTaskEntry = taskEntries.firstOrNull { it.runId == selectedTaskRunId }
-    val windowShape = if (windowState.placement == WindowPlacement.Floating) {
+    val floating = windowState.placement == WindowPlacement.Floating
+    val windowShape = if (floating) {
         RoundedCornerShape(baseShapeRadius.dp)
     } else {
         RectangleShape
@@ -110,11 +122,13 @@ fun FrameWindowScope.WindowChrome(
             .fillMaxSize()
             .clip(windowShape)
             .background(Color.White)
+            .then(if (floating) Modifier.border(1.dp, windowBorderColor, windowShape) else Modifier)
     ) {
         Column(Modifier.fillMaxSize()) {
             TitleBar(
                 window = window,
                 windowState = windowState,
+                appIcon = appIcon,
                 loggedIn = account._id != RAccount.DEFAULT._id,
                 onCloseRequest = onCloseRequest,
                 onOpenHome = onOpenHome,
@@ -136,7 +150,7 @@ fun FrameWindowScope.WindowChrome(
             }
         }
 
-        if (windowState.placement == WindowPlacement.Floating) {
+        if (floating) {
             ResizeOverlay(window)
         }
 
@@ -154,6 +168,7 @@ fun FrameWindowScope.WindowChrome(
 private fun TitleBar(
     window: Window,
     windowState: WindowState,
+    appIcon: Painter,
     loggedIn: Boolean,
     onCloseRequest: () -> Unit,
     onOpenHome: () -> Unit,
@@ -191,15 +206,25 @@ private fun TitleBar(
                         .padding(start = 14.dp),
                     contentAlignment = Alignment.Center
                 ) {
-                    Text(
-                        text = buildAnnotatedString {
-                            //append("start")
-                            withStyle(SpanStyle(fontWeight = FontWeight.Bold)) { append("rdi") }
-                        },
-                        color = titleTextColor,
-                        fontFamily = UIFontFamily,
-                        fontSize = 18.sp
-                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Image(
+                            painter = appIcon,
+                            contentDescription = null,
+                            modifier = Modifier
+                                .size(appIconSize)
+                                .clip(appIconShape)
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            text = buildAnnotatedString {
+                                //append("start")
+                                withStyle(SpanStyle(fontWeight = FontWeight.Bold)) { append("rdi") }
+                            },
+                            color = titleTextColor,
+                            fontFamily = UIFontFamily,
+                            fontSize = 18.sp
+                        )
+                    }
                 }
                 Spacer(Modifier.width(8.dp))
                 ChromeIconButton("\uF015", "主页", onOpenHome)
