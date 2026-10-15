@@ -1,5 +1,6 @@
 package calebxzau.rdi.mclaunch
 
+import calebxzau.rdi.common.logging.Loggers
 import calebxzhou.rdi.common.util.sha1
 import calebxzhou.rdi.common.model.McVersion
 import calebxzhou.rdi.common.serdesJson
@@ -13,6 +14,7 @@ import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
+import java.io.ByteArrayOutputStream
 import java.io.File
 import java.nio.charset.StandardCharsets
 import java.nio.file.AtomicMoveNotSupportedException
@@ -20,13 +22,16 @@ import java.nio.file.Files
 import java.nio.file.StandardCopyOption
 import java.util.zip.ZipEntry
 import java.util.zip.ZipFile
+import java.util.zip.ZipInputStream
 import java.util.zip.ZipOutputStream
 import kotlin.coroutines.Continuation
 import kotlinx.coroutines.Job
 
 //用RDI的mc运行库，不用各个Mod提供的
 object GameKotlinRuntime {
-    private const val CACHE_SCHEMA = "v2"
+    private val lgr by Loggers
+    private const val CACHE_SCHEMA = "v3"
+    private const val MAX_NESTED_DEPTH = 4
     private const val JARJAR_METADATA = "META-INF/jarjar/metadata.json"
     private const val KFF_GROUP = "thedarkcolour"
     private val kffArtifacts = setOf("kfflang", "kfflib", "kffmod")
@@ -42,6 +47,8 @@ object GameKotlinRuntime {
         // KFF5.11 uses an empty group and the module name as the artifact.
         ":kotlinx.serialization.core",
         ":kotlinx.serialization.json",
+        // RdiZstdRuntime已加入启动classpath，Mod自带的会导致JPMS模块重名
+        "com.github.luben:zstd-jni",
        /* "io.heapy.kotaml:kotaml",
         "io.heapy.kotaml:kotaml-jvm",
         "com.squareup.okio:okio-jvm",
@@ -103,10 +110,8 @@ object GameKotlinRuntime {
 
     private data class KotlinArchive(
         val file: File,
-        val metadata: JsonObject,
-        val removedEntries: Set<String>,
+        val plan: JarPlan,
         val isKff: Boolean,
-        val needsNormalization: Boolean,
     )
 
     private data class JarJarDependency(
@@ -114,6 +119,61 @@ object GameKotlinRuntime {
         val group: String,
         val artifact: String,
     )
+
+    // 一层jar（顶层Mod或jarjar嵌套jar）需要做的精简
+    private class JarPlan(
+        val metadata: JsonObject?,
+        val removedEntries: Set<String>,
+        val stripShadedRuntime: Boolean,
+        val nested: Map<String, NestedJar>,
+    ) {
+        val needsNormalization: Boolean
+            get() = removedEntries.isNotEmpty() || stripShadedRuntime || nested.isNotEmpty()
+    }
+
+    private class NestedJar(val content: InMemoryJarContent, val plan: JarPlan)
+
+    private interface JarContent {
+        val entryNames: List<String>
+        fun contains(name: String): Boolean
+        fun read(name: String): ByteArray?
+        fun copyTo(name: String, output: ZipOutputStream)
+    }
+
+    private class ZipFileContent(private val zip: ZipFile) : JarContent {
+        override val entryNames: List<String> =
+            zip.entries().asSequence().filterNot { it.isDirectory }.map { it.name }.toList()
+
+        override fun contains(name: String): Boolean = zip.getEntry(name) != null
+
+        override fun read(name: String): ByteArray? =
+            zip.getEntry(name)?.let { entry -> zip.getInputStream(entry).use { it.readBytes() } }
+
+        override fun copyTo(name: String, output: ZipOutputStream) {
+            val entry = zip.getEntry(name) ?: return
+            zip.getInputStream(entry).use { it.copyTo(output) }
+        }
+    }
+
+    private class InMemoryJarContent(bytes: ByteArray) : JarContent {
+        private val entries = LinkedHashMap<String, ByteArray>().apply {
+            ZipInputStream(bytes.inputStream()).use { input ->
+                generateSequence { input.nextEntry }
+                    .filterNot { it.isDirectory }
+                    .forEach { entry -> putIfAbsent(entry.name, input.readBytes()) }
+            }
+        }
+
+        override val entryNames: List<String> get() = entries.keys.toList()
+
+        override fun contains(name: String): Boolean = name in entries
+
+        override fun read(name: String): ByteArray? = entries[name]
+
+        override fun copyTo(name: String, output: ZipOutputStream) {
+            entries[name]?.let(output::write)
+        }
+    }
 
     private fun detectKotlinArchives(modsDir: File): List<KotlinArchive> {
         if (!modsDir.isDirectory) return emptyList()
@@ -127,28 +187,49 @@ object GameKotlinRuntime {
 
     private fun inspectKotlinArchive(file: File): KotlinArchive? = runCatching {
         ZipFile(file).use { zip ->
-            val metadataEntry = zip.getEntry(JARJAR_METADATA) ?: return@use null
-            val metadata = serdesJson.parseToJsonElement(
-                zip.getInputStream(metadataEntry).bufferedReader(StandardCharsets.UTF_8).readText()
-            ).jsonObject
-            val dependencies = metadata.dependencies()
-            val providedRuntimeDependencies = dependencies.filter(::isProvidedRuntime)
-            val hasShadedRuntime = zip.entries().asSequence().any { entry ->
-                !entry.isDirectory && isShadedKotlinEntry(entry.name)
-            }
-            if (providedRuntimeDependencies.isEmpty() && !hasShadedRuntime) return@use null
-            if (providedRuntimeDependencies.any { zip.getEntry(it.path) == null }) return@use null
-            val kffDependencies = dependencies.filter { it.group == KFF_GROUP && it.artifact in kffArtifacts }
+            val plan = planJar(ZipFileContent(zip), topLevel = true, depth = 0) ?: return@use null
+            if (!plan.needsNormalization) return@use null
+            val kffDependencies = plan.metadata?.dependencies().orEmpty()
+                .filter { it.group == KFF_GROUP && it.artifact in kffArtifacts }
             KotlinArchive(
                 file = file,
-                metadata = metadata,
-                removedEntries = providedRuntimeDependencies.mapTo(linkedSetOf()) { it.path },
+                plan = plan,
                 isKff = kffDependencies.size == kffArtifacts.size &&
                     kffDependencies.map { it.artifact }.toSet() == kffArtifacts,
-                needsNormalization = providedRuntimeDependencies.isNotEmpty() || hasShadedRuntime,
             )
         }
     }.getOrNull()
+
+    // 嵌套jar只看jarjar声明的运行库，不按kotlin/包名剥离，避免误删kotlinx-datetime这类非RDI提供的库
+    private fun planJar(jar: JarContent, topLevel: Boolean, depth: Int): JarPlan? {
+        val metadata = jar.read(JARJAR_METADATA)?.let { bytes ->
+            serdesJson.parseToJsonElement(bytes.toString(StandardCharsets.UTF_8)).jsonObject
+        }
+        if (topLevel && metadata == null) return null
+        val dependencies = metadata?.dependencies().orEmpty()
+        val providedRuntimeDependencies = dependencies.filter(::isProvidedRuntime)
+        if (providedRuntimeDependencies.any { !jar.contains(it.path) }) return null
+        val nested = if (depth >= MAX_NESTED_DEPTH) emptyMap() else dependencies
+            .filterNot(::isProvidedRuntime)
+            .mapNotNull { dependency ->
+                val bytes = jar.read(dependency.path) ?: return@mapNotNull null
+                val content = runCatching { InMemoryJarContent(bytes) }.getOrElse { error ->
+                    lgr.warn(error) { "无法读取嵌套jar，跳过Kotlin运行库检查: ${dependency.path}" }
+                    return@mapNotNull null
+                }
+                val plan = planJar(content, topLevel = false, depth = depth + 1)
+                    ?.takeIf { it.needsNormalization }
+                    ?: return@mapNotNull null
+                dependency.path to NestedJar(content, plan)
+            }
+            .toMap()
+        return JarPlan(
+            metadata = metadata,
+            removedEntries = providedRuntimeDependencies.mapTo(linkedSetOf()) { it.path },
+            stripShadedRuntime = topLevel && jar.entryNames.any(::isShadedKotlinEntry),
+            nested = nested,
+        )
+    }
 
     private fun JsonObject.dependencies(): List<JarJarDependency> =
         (this["jars"] as? JsonArray).orEmpty().mapNotNull { element ->
@@ -164,7 +245,6 @@ object GameKotlinRuntime {
         "${dependency.group}:${dependency.artifact}" in providedRuntimeArtifacts
 
     private fun normalizeKotlinMod(archive: KotlinArchive, cacheRoot: File) {
-        if (!archive.needsNormalization) return
         val sourceSha1 = archive.file.sha1.lowercase()
         val root = cacheRoot.resolve("thin-kotlin-mod").apply { mkdirs() }
         val originalRoot = cacheRoot.resolve("original-kotlin-mod").apply { mkdirs() }
@@ -197,40 +277,61 @@ object GameKotlinRuntime {
         target.parentFile?.mkdirs()
         ZipFile(archive.file).use { source ->
             ZipOutputStream(target.outputStream().buffered()).use { output ->
-                val written = HashSet<String>()
-                source.entries().asSequence()
-                    .filter { shouldPreserve(it.name, archive.removedEntries) }
-                    .forEach { writeEntry(source, it, output, written) }
-                val filteredMetadata = buildJsonObject {
-                    archive.metadata.forEach { (key, value) ->
-                        put(key, if (key == "jars") {
-                            JsonArray(
-                                archive.metadata.dependencies()
-                                    .filter { it.path !in archive.removedEntries }
-                                    .mapNotNull { dependency ->
-                                        archive.metadata["jars"]?.jsonArray?.firstOrNull { element ->
-                                            element.jsonObject["path"]?.jsonPrimitive?.contentOrNull == dependency.path
-                                        }
-                                    }
-                            )
-                        } else {
-                            value
-                        })
-                    }
-                }
-                output.putNextEntry(ZipEntry(JARJAR_METADATA))
-                output.write(filteredMetadata.toString().toByteArray(StandardCharsets.UTF_8))
-                output.closeEntry()
+                writeThinJar(ZipFileContent(source), archive.plan, output)
             }
         }
     }
 
-    private fun shouldPreserve(name: String, removedEntries: Set<String>): Boolean = when {
+    private fun writeThinJar(jar: JarContent, plan: JarPlan, output: ZipOutputStream) {
+        val written = HashSet<String>()
+        jar.entryNames
+            .filter { shouldPreserve(it, plan) }
+            .forEach { name ->
+                if (!written.add(name)) return@forEach
+                output.putNextEntry(ZipEntry(name))
+                val nested = plan.nested[name]
+                if (nested != null) {
+                    output.write(thinNestedJar(nested))
+                } else {
+                    jar.copyTo(name, output)
+                }
+                output.closeEntry()
+            }
+        val metadata = plan.metadata ?: return
+        val filteredMetadata = buildJsonObject {
+            metadata.forEach { (key, value) ->
+                put(key, if (key == "jars") {
+                    JsonArray(
+                        metadata.dependencies()
+                            .filter { it.path !in plan.removedEntries }
+                            .mapNotNull { dependency ->
+                                metadata["jars"]?.jsonArray?.firstOrNull { element ->
+                                    element.jsonObject["path"]?.jsonPrimitive?.contentOrNull == dependency.path
+                                }
+                            }
+                    )
+                } else {
+                    value
+                })
+            }
+        }
+        output.putNextEntry(ZipEntry(JARJAR_METADATA))
+        output.write(filteredMetadata.toString().toByteArray(StandardCharsets.UTF_8))
+        output.closeEntry()
+    }
+
+    private fun thinNestedJar(nested: NestedJar): ByteArray {
+        val bytes = ByteArrayOutputStream()
+        ZipOutputStream(bytes).use { output -> writeThinJar(nested.content, nested.plan, output) }
+        return bytes.toByteArray()
+    }
+
+    private fun shouldPreserve(name: String, plan: JarPlan): Boolean = when {
         name == "META-INF/MANIFEST.MF" -> true
         name == JARJAR_METADATA -> false
-        name in removedEntries -> false
+        name in plan.removedEntries -> false
         isSignatureEntry(name) -> false
-        isShadedKotlinEntry(name) -> false
+        plan.stripShadedRuntime && isShadedKotlinEntry(name) -> false
         else -> true
     }
 
@@ -249,28 +350,12 @@ object GameKotlinRuntime {
             .uppercase() in setOf("SF", "RSA", "DSA")
     }
 
-    private fun writeEntry(
-        source: ZipFile,
-        entry: ZipEntry,
-        output: ZipOutputStream,
-        written: MutableSet<String>,
-    ) {
-        if (entry.isDirectory || !written.add(entry.name)) return
-        output.putNextEntry(ZipEntry(entry.name))
-        source.getInputStream(entry).use { it.copyTo(output) }
-        output.closeEntry()
-    }
-
     private fun isThinKotlinMod(file: File): Boolean = runCatching {
         ZipFile(file).use { zip ->
-            val metadataEntry = zip.getEntry(JARJAR_METADATA) ?: return@use false
-            val metadata = serdesJson.parseToJsonElement(
-                zip.getInputStream(metadataEntry).bufferedReader(StandardCharsets.UTF_8).readText()
-            ).jsonObject
-            val dependencies = metadata.dependencies()
-            dependencies.none(::isProvidedRuntime) &&
-                dependencies.all { zip.getEntry(it.path) != null } &&
-                zip.entries().asSequence().none { !it.isDirectory && isShadedKotlinEntry(it.name) }
+            val content = ZipFileContent(zip)
+            val plan = planJar(content, topLevel = true, depth = 0) ?: return@use false
+            !plan.needsNormalization &&
+                plan.metadata?.dependencies().orEmpty().all { content.contains(it.path) }
         }
     }.getOrDefault(false)
 

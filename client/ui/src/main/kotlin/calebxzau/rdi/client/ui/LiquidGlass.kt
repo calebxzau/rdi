@@ -146,8 +146,8 @@ fun Modifier.liquidGlass(
         expandLayerBounds = false,
     )
 
-/** 只画出haze捕获的背景，折射交给外层[LiquidGlassNode]。 */
-private val LiquidGlassInputFactory = HazeEffectFactory {
+/** 只画出haze捕获的背景，折射交给外层的玻璃节点。 */
+internal val LiquidGlassInputFactory = HazeEffectFactory {
     object : HazeEffectRenderer<Unit> {
         override fun HazeEffectDrawScope.draw(style: Unit) {
             drawInput()
@@ -231,8 +231,8 @@ internal data class LiquidGlassUniforms(
     val glowIntensity: Float,
 )
 
-private val TAPER_MAX = 8.dp
-private const val MIN_OPTICAL_PX = 0.001f
+internal val TAPER_MAX = 8.dp
+internal const val MIN_OPTICAL_PX = 0.001f
 private const val GLOW_RADIUS_FRACTION = 0.8f
 
 internal fun LiquidGlassStyle.resolveUniforms(
@@ -299,35 +299,19 @@ internal fun LiquidGlassUniforms.toImageFilter(): ImageFilter {
     return ImageFilter.makeRuntimeShader(builder, "content", frostFilter)
 }
 
-private fun RuntimeShaderBuilder.colorUniform(name: String, color: Color) {
+internal fun RuntimeShaderBuilder.colorUniform(name: String, color: Color) {
     val srgb = color.convert(ColorSpaces.Srgb)
     uniform(name, srgb.red, srgb.green, srgb.blue, srgb.alpha)
 }
 
 /**
- * 坐标为图层局部像素。斜面内：
+ * 液态玻璃shader的公共函数，单块玻璃与[GlassTileGrid]共用。坐标为图层局部像素。斜面内：
  * - 高度曲线h(t) = (1 - (1 - t)^4)^(1/4)，t为离边距离/斜面宽
  * - 斯涅尔定律求偏折角，位移 = tan(θ1 - θ2) × 斜面宽，方向朝中心（只采样玻璃内部，边缘无透明缝）
  * - 斜面内外两侧smoothstep渐隐，避免台阶
  * - 高光取|N·L|^shininess，对角两侧对称，另有随斜率变化的细亮边
  */
-private const val LIQUID_GLASS_SKSL = """
-uniform shader content;
-uniform float4 shapeRect;
-uniform float cornerRadius;
-uniform float bevel;
-uniform float taper;
-uniform float refractiveIndex;
-uniform float2 lightDirection;
-uniform float specularIntensity;
-uniform float shininess;
-uniform float4 tint;
-uniform float4 hairline;
-uniform float hairlineWidth;
-uniform float2 glowCenter;
-uniform float glowRadius;
-uniform float glowIntensity;
-
+internal const val LIQUID_GLASS_SKSL_FUNCTIONS = """
 float sdRoundedRect(float2 p, float2 halfSize, float r) {
     float2 q = abs(p) - (halfSize - r);
     return length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - r;
@@ -350,6 +334,52 @@ float4 over(float4 src, float4 dst) {
     return src + dst * (1.0 - src.a);
 }
 
+// 斜面光学：xy为朝中心的采样位移，z为镜面高光强度；dist为离边距离，n为外法线
+float3 bevelOptics(
+    float dist, float2 n, float bevel, float taper, float refractiveIndex,
+    float2 lightDirection, float specularIntensity, float shininess
+) {
+    if (dist >= bevel) {
+        return float3(0.0);
+    }
+    float t = max(dist / bevel, 0.02);
+    float u = 1.0 - t;
+    float u3 = u * u * u;
+    float slope = u3 / pow(1.0 - u3 * u, 0.75);
+    float theta1 = atan(slope);
+    float theta2 = asin(clamp(sin(theta1) / refractiveIndex, -1.0, 1.0));
+    float fade = smoothstep(0.0, 1.0, (bevel - dist) / taper) * smoothstep(0.0, 1.0, dist);
+    float2 displacement = -n * (tan(theta1 - theta2) * bevel * fade);
+    float sinT = sin(theta1);
+    float directional = pow(abs(dot(n * sinT, lightDirection)), shininess);
+    float rim = max(directional, sinT * 0.06) * specularIntensity * min(1.0, sinT * 1.8);
+    return float3(displacement, clamp(rim * fade, 0.0, 1.0));
+}
+
+// 发丝描边：离边hairlineWidth内的一圈
+float4 withHairline(float4 color, float dist, float4 hairline, float hairlineWidth) {
+    float hair = hairline.a * clamp(hairlineWidth + 0.5 - dist, 0.0, 1.0);
+    return over(float4(hairline.rgb * hair, hair), color);
+}
+"""
+
+private const val LIQUID_GLASS_SKSL = """
+uniform shader content;
+uniform float4 shapeRect;
+uniform float cornerRadius;
+uniform float bevel;
+uniform float taper;
+uniform float refractiveIndex;
+uniform float2 lightDirection;
+uniform float specularIntensity;
+uniform float shininess;
+uniform float4 tint;
+uniform float4 hairline;
+uniform float hairlineWidth;
+uniform float2 glowCenter;
+uniform float glowRadius;
+uniform float glowIntensity;
+""" + LIQUID_GLASS_SKSL_FUNCTIONS + """
 half4 main(float2 coord) {
     float2 halfSize = (shapeRect.zw - shapeRect.xy) * 0.5;
     float2 p = coord - (shapeRect.xy + halfSize);
@@ -360,33 +390,19 @@ half4 main(float2 coord) {
         return half4(0.0);
     }
     float dist = max(-d, 0.0);
-    float2 displacement = float2(0.0);
-    float specular = 0.0;
-    if (dist < bevel) {
-        float t = max(dist / bevel, 0.02);
-        float u = 1.0 - t;
-        float u3 = u * u * u;
-        float slope = u3 / pow(1.0 - u3 * u, 0.75);
-        float theta1 = atan(slope);
-        float theta2 = asin(clamp(sin(theta1) / refractiveIndex, -1.0, 1.0));
-        float fade = smoothstep(0.0, 1.0, (bevel - dist) / taper) * smoothstep(0.0, 1.0, dist);
-        float2 n = outwardNormal(p, halfSize, r);
-        displacement = -n * (tan(theta1 - theta2) * bevel * fade);
-        float sinT = sin(theta1);
-        float directional = pow(abs(dot(n * sinT, lightDirection)), shininess);
-        float rim = max(directional, sinT * 0.06) * specularIntensity * min(1.0, sinT * 1.8);
-        specular = clamp(rim * fade, 0.0, 1.0);
-    }
-    float4 color = float4(content.eval(coord + displacement));
+    float3 optics = bevelOptics(
+        dist, outwardNormal(p, halfSize, r), bevel, taper, refractiveIndex,
+        lightDirection, specularIntensity, shininess
+    );
+    float4 color = float4(content.eval(coord + optics.xy));
     color = over(float4(tint.rgb * tint.a, tint.a), color);
     if (glowIntensity > 0.0) {
         float2 g = (coord - glowCenter) / glowRadius;
         float glow = clamp(glowIntensity * exp(-dot(g, g)), 0.0, 1.0);
         color = over(float4(glow), color);
     }
-    color = over(float4(specular), color);
-    float hair = hairline.a * clamp(hairlineWidth + 0.5 - dist, 0.0, 1.0);
-    color = over(float4(hairline.rgb * hair, hair), color);
+    color = over(float4(optics.z), color);
+    color = withHairline(color, dist, hairline, hairlineWidth);
     return half4(color * coverage);
 }
 """

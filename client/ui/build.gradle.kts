@@ -108,8 +108,8 @@ dependencies {
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.joml)
     /* RMCP运行库暂时继续由各个MinecraftMod使用Jar-in-Jar提供。
-    implementation("io.heapy.kotaml:kotaml-jvm:0.108.0")
-    implementation("com.squareup.okio:okio-jvm:3.17.0")
+    implementation("io.heapy.kotaml:kotaml-jvm:0.111.0")
+    implementation("com.squareup.okio:okio-jvm:3.18.2")
     implementation("it.krzeminski:snakeyaml-engine-kmp-jvm:4.0.1")
     implementation("net.thauvin.erik.urlencoder:urlencoder-lib-jvm:1.6.0")
     implementation("io.fusionauth:java-http:1.4.0")
@@ -126,9 +126,7 @@ dependencies {
     implementation(libs.bundles.mongodb)
     implementation(libs.caffeine)
     implementation(libs.maven.artifact)
-    implementation(libs.zstd.jni) {
-        artifact { classifier = "win_amd64" }
-    }
+    implementation(libs.zstd.jni)
 
     implementation(project(":assets"))
     implementation(project(":theme"))
@@ -179,6 +177,12 @@ allprojects {
     configurations.all {
         resolutionStrategy {
             force("org.slf4j:slf4j-api:${libs.versions.slf4j.api.get()}")
+            // The launcher only ships on Windows x64; the default zstd-jni jar bundles natives for every platform.
+            dependencySubstitution {
+                substitute(module("com.github.luben:zstd-jni"))
+                    .using(module("com.github.luben:zstd-jni:${libs.versions.zstd.get()}"))
+                    .withClassifier("win_amd64")
+            }
         }
     }
 }
@@ -254,10 +258,10 @@ idea {
 }
 
 val hotRunBaseJvmArgs = listOf(
-    "-Xmx1G",
+    "-Xmx2G",
     // A larger initial heap avoids an early GC that can crash the hot reload agent at startup
     // (ClassCircularityError on jdk/internal/vm/ContinuationSupport under JDK 25).
-    "-Xms512m",
+    "-Xms1024m",
     // JBR's java.io-over-NIO records failed lookups in a WeakHashMap; cleaning it inside the
     // hot reload agent's class transformer can hang startup before any window appears.
     "-Djbr.java.io.use.nio=false",

@@ -1,11 +1,12 @@
 package calebxzau.rdi.bgrenderer
 
 import kotlin.math.cos
-import kotlin.math.sin
-import kotlin.math.sqrt
+import kotlin.math.exp
 import kotlin.math.floor
 import kotlin.math.pow
-import kotlin.random.Random
+import kotlin.math.sin
+import kotlin.math.sqrt
+import kotlin.math.tan
 
 enum class BlockMaterial(
     val red: Float,
@@ -14,15 +15,31 @@ enum class BlockMaterial(
     val texturePath: String?,
     val alphaCutout: Boolean = false,
     val textureVScale: Float = 1f,
-    val emissive: Boolean = false
+    val emissive: Boolean = false,
+    /** Drawn without back-face culling so leaves and grass show their far side through cutout holes. */
+    val doubleSided: Boolean = false
 ) {
-    SAND(1.0f, 0.94f, 0.72f, "assets/minecraft/textures/block/sand.png"),
-    OAK_PLANKS(0.88f, 0.68f, 0.44f, "assets/minecraft/textures/block/oak_planks.png"),
-    OAK_LOG(0.88f, 0.68f, 0.44f, "assets/minecraft/textures/block/oak_log.png"),
-    OAK_LOG_TOP(0.95f, 0.78f, 0.56f, "assets/minecraft/textures/block/oak_log_top.png"),
-    CACTUS_SIDE(0.70f, 0.92f, 0.58f, "assets/minecraft/textures/block/cactus_side.png", alphaCutout = true),
-    CACTUS_TOP(0.74f, 0.96f, 0.62f, "assets/minecraft/textures/block/cactus_top.png", alphaCutout = true),
-    CACTUS_BOTTOM(0.62f, 0.84f, 0.48f, "assets/minecraft/textures/block/cactus_bottom.png", alphaCutout = true),
+    GRASS_TOP(0.62f, 0.80f, 0.38f, "assets/minecraft/textures/block/grass_block_top.png"),
+    GRASS_SIDE(1.0f, 1.0f, 1.0f, "assets/minecraft/textures/block/grass_block_side.png"),
+    DIRT(1.0f, 1.0f, 1.0f, "assets/minecraft/textures/block/dirt.png"),
+    STONE(1.0f, 1.0f, 1.0f, "assets/minecraft/textures/block/stone.png"),
+    SNOW(1.0f, 1.0f, 1.0f, "assets/minecraft/textures/block/snow.png"),
+    SAND(1.0f, 1.0f, 1.0f, "assets/minecraft/textures/block/sand.png"),
+    GRAVEL(1.0f, 1.0f, 1.0f, "assets/minecraft/textures/block/gravel.png"),
+    OAK_PLANKS(1.0f, 1.0f, 1.0f, "assets/minecraft/textures/block/oak_planks.png"),
+    OAK_LOG(1.0f, 1.0f, 1.0f, "assets/minecraft/textures/block/oak_log.png"),
+    OAK_LOG_TOP(1.0f, 1.0f, 1.0f, "assets/minecraft/textures/block/oak_log_top.png"),
+    BIRCH_LOG(1.0f, 1.0f, 1.0f, "assets/minecraft/textures/block/birch_log.png"),
+    SPRUCE_LOG(1.0f, 1.0f, 1.0f, "assets/minecraft/textures/block/spruce_log.png"),
+    /** Leaf and grass textures are grayscale; the colors are Minecraft's plains/birch/spruce foliage tints. */
+    OAK_LEAVES(0.47f, 0.67f, 0.18f, "assets/minecraft/textures/block/oak_leaves.png", alphaCutout = true, doubleSided = true),
+    BIRCH_LEAVES(0.50f, 0.66f, 0.33f, "assets/minecraft/textures/block/birch_leaves.png", alphaCutout = true, doubleSided = true),
+    SPRUCE_LEAVES(0.38f, 0.60f, 0.38f, "assets/minecraft/textures/block/spruce_leaves.png", alphaCutout = true, doubleSided = true),
+    SHORT_GRASS(0.62f, 0.80f, 0.38f, "assets/minecraft/textures/block/short_grass.png", alphaCutout = true, doubleSided = true),
+    SPRUCE_PLANKS(1.0f, 1.0f, 1.0f, "assets/minecraft/textures/block/spruce_planks.png"),
+    COBBLESTONE(1.0f, 1.0f, 1.0f, "assets/minecraft/textures/block/cobblestone.png"),
+    /** Lit house windows. */
+    GLOWSTONE(1.0f, 0.90f, 0.70f, "assets/minecraft/textures/block/glowstone.png", emissive = true),
     LANTERN(
         1.0f,
         0.86f,
@@ -37,17 +54,27 @@ enum class BlockMaterial(
     fun linearColor(): SkyColor = SkyColor(red, green, blue).toLinear()
 }
 
-data class CameraPose(val yawRadians: Float, val height: Float, val distance: Float)
+/** A world-space eye and look target; the renderer builds its view matrix from these two points. */
+data class CameraPose(
+    val eyeX: Float,
+    val eyeY: Float,
+    val eyeZ: Float,
+    val targetX: Float,
+    val targetY: Float,
+    val targetZ: Float,
+    val yawRadians: Float
+)
 
-data class DesertDune(val x: Float, val z: Float, val radius: Float, val height: Float)
-data class Cactus(val x: Float, val z: Float, val height: Float, val groundY: Float = 1.2f)
-data class BoatPose(val x: Float, val y: Float, val z: Float, val yawRadians: Float, val rollRadians: Float)
-data class PlayerAnchor(val x: Float, val y: Float, val z: Float)
+/** Bone angles (radians) of the standing player's idle motion. */
+data class PlayerIdlePose(
+    val headYaw: Float,
+    val armRoll: Float,
+    val armPitch: Float,
+    val capePitch: Float
+)
 
+/** The fixed golden-hour sun; [directionX]..[directionZ] point from the sun toward the scene. */
 data class SunState(
-    val offsetX: Float,
-    val offsetY: Float,
-    val offsetZ: Float,
     val directionX: Float,
     val directionY: Float,
     val directionZ: Float
@@ -78,48 +105,70 @@ const val WATER_LEVEL = 2.35f
 const val TARGET_FPS = 20
 const val RENDER_WIDTH = 1280
 const val RENDER_HEIGHT = 720
-const val CLOUD_HEIGHT = 38f
-const val CLOUD_HORIZONTAL_SCALE = 8f
-const val CLOUD_THICKNESS = 3f
+
+/** Minecraft 1.21.1 `LevelRenderer.renderClouds`: 12-block cells and 4-block layers. */
+/** A multiple of the 4-block cloud layer, so the layer splits like Minecraft's; it clears the highest peak. */
+const val CLOUD_HEIGHT = 220f
+const val CLOUD_HORIZONTAL_SCALE = 12f
+const val CLOUD_THICKNESS = 4f
 const val CLOUD_TILE_MIN = -6
 const val CLOUD_TILE_MAX = 6
-const val CLOUD_FOG_START = 300f
-const val CLOUD_FOG_END = 400f
+/** Clouds fade to transparent over this horizontal range so the gradient sky shows through. */
+const val CLOUD_FADE_START = 360f
+const val CLOUD_FADE_END = 560f
 const val CLOUD_COORDINATE_WRAP = 2048
 const val CLOUD_TEXTURE_COORDINATE_SCALE = 0.00390625f
 const val CLOUD_TIME_SPEED = 0.6
 const val CLOUD_COLOR_REBUILD_THRESHOLD = 2.0e-4f
+/** A clear sky: only this fraction of the vanilla clouds (whole clouds, never parts) is kept. */
+internal const val CLOUD_COVER_KEEP_FRACTION = 0.45f
+internal const val CLOUD_COVER_SEED = 0xC10D
+
+/** The player stands on the summit column; the camera orbits a short arc behind them. */
+const val HILL_TOP_Y = 84
+const val PLAYER_X = 0.5f
+const val PLAYER_Z = 0.5f
+const val PLAYER_FEET_Y = HILL_TOP_Y.toFloat()
+internal const val PLAYER_VISUAL_SCALE = 1.8f / 32f
+const val PLAYER_LOOK_PERIOD_SECONDS = 16.0
+const val PLAYER_LOOK_AMPLITUDE = 0.30
+const val PLAYER_CAPE_PERIOD_SECONDS = 5.0
+const val PLAYER_CAPE_REST_PITCH = 0.12
+
 const val CAMERA_CYCLE_SECONDS = 60.0
-const val CAMERA_DISTANCE = 50f
-const val CAMERA_BASE_HEIGHT = 8f
+const val CAMERA_ORBIT_RADIUS = 13.5f
+const val CAMERA_HEIGHT_ABOVE_PLAYER = 6.5f
 const val CAMERA_HEIGHT_SWING = 0.25f
-const val CAMERA_TARGET_X = 0f
-const val CAMERA_TARGET_Y = 5f
-const val CAMERA_TARGET_Z = -25f
-const val CAMERA_FOV_DEGREES = 60f
-const val CAMERA_CENTER_YAW_RADIANS = 1.5707964f
-const val CAMERA_SWING_RADIANS = 0.045f
-const val CAMERA_FAR_PLANE = 400f
-const val CAMERA_NEAR_PLANE = 0.1f
-internal const val SUN_BILLBOARD_HALF_SIZE = 4.45f
-internal const val SCENE_VERTEX_BUDGET = 14_000
+const val CAMERA_PITCH_DEGREES = -16f
+const val CAMERA_LOOK_DISTANCE = 100f
+const val CAMERA_SWING_RADIANS = 0.06f
+const val CAMERA_FOV_DEGREES = 84f
+const val CAMERA_FAR_PLANE = 1000f
+const val CAMERA_NEAR_PLANE = 0.25f
 const val REFLECTION_WIDTH = RENDER_WIDTH / 2
 const val REFLECTION_HEIGHT = RENDER_HEIGHT / 2
-const val BOAT_SLIDE_PERIOD_SECONDS = 18.0
-const val BOAT_CENTER_X = -7f
-const val BOAT_CENTER_Z = 25f
-internal const val BOAT_VISUAL_SCALE = 1.25f
-internal const val PLAYER_VISUAL_SCALE = 0.08f
-const val BOAT_SLIDE_DISTANCE = 1.2f
-const val BOAT_WATERLINE = WATER_LEVEL + 0.12f
-const val BOAT_MODEL_BASE_Y = WATER_LEVEL - 2.18f
-const val PLAYER_SEAT_LOCAL_Y = 1.65f
+
+/**
+ * Clockwise from the camera's forward direction (-Z) toward +X: ahead and to the right, just outside
+ * the right edge of the frame, so its glow and the golden band warm the right side of the sky.
+ */
+const val SUN_AZIMUTH_DEGREES = 72f
+const val SUN_ELEVATION_DEGREES = 20f
+/** The sun billboard is placed relative to each pass eye, so it behaves like an object at infinity. */
+internal const val SUN_BILLBOARD_DISTANCE = 600f
+internal const val SUN_BILLBOARD_HALF_SIZE = 40f
+
+/** Exponential height fog: density(y) = density * exp(-falloff * (y - WATER_LEVEL)). */
+const val ATMOSPHERE_DENSITY = 0.0026f
+const val ATMOSPHERE_HEIGHT_FALLOFF = 1f / 40f
+/** Terrain and water dissolve into the sky behind them over this distance, before the far plane cuts them. */
+const val WORLD_FADE_START = 650f
+const val WORLD_FADE_END = 950f
+
 const val WATER_ANIMATION_PERIOD_SECONDS = 31.41592653589793
 const val WATER_NORMAL_SCROLL_SPEED = 1.10 * 0.018 * 2.5
 const val WATER_NORMAL_SCROLL_PERIOD = 20.0
-const val WATER_EXTENT = 640f
-const val WATER_HORIZON_FOG_START = 260f
-const val WATER_HORIZON_FOG_END = 360f
+const val WATER_EXTENT = 1100f
 internal const val WATER_WAVE_X_FREQUENCY = 0.8f
 internal const val WATER_WAVE_X_TIME_SPEED = 1.4f
 internal const val WATER_WAVE_X_AMPLITUDE = 0.07f
@@ -128,40 +177,20 @@ internal const val WATER_WAVE_Z_TIME_SPEED = 1.0f
 internal const val WATER_WAVE_Z_AMPLITUDE = 0.04f
 
 internal fun waterVertexOffset(x: Float, z: Float, waterTimeSeconds: Float): Float =
-    sin((x * WATER_WAVE_X_FREQUENCY + waterTimeSeconds * WATER_WAVE_X_TIME_SPEED).toDouble()).toFloat() * WATER_WAVE_X_AMPLITUDE +
-        cos((z * WATER_WAVE_Z_FREQUENCY + waterTimeSeconds * WATER_WAVE_Z_TIME_SPEED).toDouble()).toFloat() * WATER_WAVE_Z_AMPLITUDE
+    sin(x * WATER_WAVE_X_FREQUENCY + waterTimeSeconds * WATER_WAVE_X_TIME_SPEED) * WATER_WAVE_X_AMPLITUDE +
+        cos(z * WATER_WAVE_Z_FREQUENCY + waterTimeSeconds * WATER_WAVE_Z_TIME_SPEED) * WATER_WAVE_Z_AMPLITUDE
 
-internal fun waterSurfaceHeightAt(x: Float, z: Float, waterTimeSeconds: Float): Float {
-    val s = WATER_EXTENT
-    val u = (x + s) / (2f * s)
-    val v = (s - z) / (2f * s)
-    val h0 = waterVertexOffset(-s, s, waterTimeSeconds)
-    val h1 = waterVertexOffset(s, s, waterTimeSeconds)
-    val h2 = waterVertexOffset(s, -s, waterTimeSeconds)
-    val h3 = waterVertexOffset(-s, -s, waterTimeSeconds)
-    val offset = if (u >= v) {
-        (1f - u) * h0 + (u - v) * h1 + v * h2
-    } else {
-        (1f - v) * h0 + u * h2 + (v - u) * h3
-    }
-    return WATER_LEVEL + offset
-}
-
-/** Mirrors a world-space height around the water plane for the planar reflection camera. */
 fun reflectedY(y: Float): Float = 2f * WATER_LEVEL - y
 
-/** Converts a cloud layer offset relative to the main eye into reflection-eye space. */
+/** Keeps the fractional cloud layer while moving the cloud plane into the mirrored camera's view. */
 fun reflectionCloudHeight(mainEyeY: Float, reflectedEyeY: Float, fractionY: Float): Float =
     fractionY + mainEyeY - reflectedEyeY
 
-val NOON_SKY_COLOR = SkyColor(0.14f, 0.40f, 0.78f)
-val NOON_WATER_HORIZON_COLOR = SkyColor(0.34f, 0.62f, 0.84f)
-val NOON_CLOUD_FOG_COLOR = SkyColor(0.86f, 0.90f, 0.96f)
-val NOON_CLOUD_COLOR = SkyColor(1.0f, 1.0f, 1.0f)
-val NOON_SKY_COLOR_LINEAR = NOON_SKY_COLOR.toLinear()
-val NOON_WATER_HORIZON_COLOR_LINEAR = NOON_WATER_HORIZON_COLOR.toLinear()
-val NOON_CLOUD_FOG_COLOR_LINEAR = NOON_CLOUD_FOG_COLOR.toLinear()
-val NOON_CLOUD_COLOR_LINEAR = NOON_CLOUD_COLOR.toLinear()
+/** Authored display-space colors of the golden-hour scene. */
+val GOLDEN_HORIZON_COLOR = SkyColor(0.72f, 0.79f, 0.90f)
+val GOLDEN_CLOUD_COLOR = SkyColor(1.0f, 1.0f, 1.0f)
+val GOLDEN_HORIZON_COLOR_LINEAR = GOLDEN_HORIZON_COLOR.toLinear()
+val GOLDEN_CLOUD_COLOR_LINEAR = GOLDEN_CLOUD_COLOR.toLinear()
 
 data class CloudCoordinates(
     val x: Double,
@@ -175,223 +204,78 @@ data class CloudCoordinates(
     val floorZ: Int
 )
 
-internal enum class HarborGroup {
-    Foreground, Midground, Background,
-    LeftDock, RightDock, LeftShelter, RightShelter,
-    LeftPavilion, CenterMarket, RightLighthouse
+/**
+ * Optical depth of the exponential height fog between two points; the shader's
+ * `atmosphereOpticalDepth` evaluates the same closed-form integral.
+ */
+internal fun atmosphereOpticalDepth(
+    fromX: Float,
+    fromY: Float,
+    fromZ: Float,
+    toX: Float,
+    toY: Float,
+    toZ: Float
+): Float {
+    val dx = toX - fromX
+    val dy = toY - fromY
+    val dz = toZ - fromZ
+    val distance = sqrt(dx * dx + dy * dy + dz * dz)
+    val startDensity = ATMOSPHERE_DENSITY * exp(-ATMOSPHERE_HEIGHT_FALLOFF * (fromY - WATER_LEVEL))
+    val climb = ATMOSPHERE_HEIGHT_FALLOFF * dy
+    val profile = if (kotlin.math.abs(climb) > 1.0e-4f) (1f - exp(-climb)) / climb else 1f - climb * 0.5f
+    return startDensity * distance * profile
 }
 
-internal data class HarborBlock(
-    val group: HarborGroup,
-    val x: Float,
-    val y: Float,
-    val z: Float,
-    val material: BlockMaterial,
-    val sizeX: Float,
-    val sizeY: Float,
-    val sizeZ: Float,
-    val topMaterial: BlockMaterial = material,
-    val bottomMaterial: BlockMaterial = material
-)
-
-/** Deterministic, deliberately small scene data that can be checked without a GPU. */
+/** Deterministic scene data and animation that can be checked without a GPU. */
 object BackgroundScene {
-    internal fun harborBlocks(): List<HarborBlock> = buildList {
-        fun addTerrace(
-            group: HarborGroup,
-            cx: Float,
-            cz: Float,
-            width: Float,
-            depth: Float,
-            layers: Int,
-            layerHeight: Float,
-            shrinkX: Float,
-            shrinkZ: Float,
-            driftX: Float,
-            driftZ: Float,
-            zigzagX: Float,
-            zigzagZ: Float
-        ) {
-            repeat(layers) { layer ->
-                val alternating = if (layer % 2 == 0) 1f else -1f
-                val offsetX = if (layer == 0) 0f else layer * driftX + alternating * zigzagX
-                val offsetZ = if (layer == 0) 0f else layer * driftZ + alternating * zigzagZ
-                val sizeX = width - layer * shrinkX - (layer % 3) * 0.7f
-                val sizeZ = depth - layer * shrinkZ - ((layer + 1) % 3) * 0.5f
-                check(sizeX > 0f && sizeZ > 0f)
-                add(HarborBlock(group, cx + offsetX, WATER_LEVEL + layerHeight * (layer + 0.5f), cz + offsetZ, BlockMaterial.SAND, sizeX, layerHeight, sizeZ))
-            }
-        }
-        fun addPier(group: HarborGroup, centerX: Float) {
-            listOf(-13f, -11f, -9f, -7f, -5f, -3f).forEach { z -> add(HarborBlock(group, centerX, WATER_LEVEL + 0.15f, z, BlockMaterial.OAK_PLANKS, 6f, 0.3f, 2f)) }
-            listOf(-13f, -9f, -5f, -2f).forEach { z ->
-                listOf(centerX - 2.6f, centerX + 2.6f).forEach { x -> add(HarborBlock(group, x, 1.65f, z, BlockMaterial.OAK_LOG, 0.28f, 3f, 0.28f)) }
-            }
-            listOf(centerX - 2.6f, centerX + 2.6f).forEach { x -> add(HarborBlock(group, x, 3.55f, -2f, BlockMaterial.LANTERN, 0.3f, 0.3f, 0.3f)) }
-            listOf(centerX - 2.8f, centerX + 2.8f).forEach { x -> add(HarborBlock(group, x, 3.05f, -8f, BlockMaterial.OAK_LOG, 0.2f, 1f, 10f)) }
-            add(HarborBlock(group, centerX, 3.05f, -13.9f, BlockMaterial.OAK_LOG, 5.8f, 1f, 0.2f))
-            listOf(centerX - 1.5f, centerX + 1.5f).forEach { x -> add(HarborBlock(group, x, 3f, -5f, BlockMaterial.OAK_PLANKS, 1.2f, 1f, 1.2f)) }
-        }
-        fun addShelter(group: HarborGroup, cx: Float, baseY: Float, cz: Float) {
-            add(HarborBlock(group, cx, baseY + 0.15f, cz, BlockMaterial.OAK_PLANKS, 10f, 0.3f, 7f))
-            listOf(-4f to -2.5f, -4f to 2.5f, 4f to -2.5f, 4f to 2.5f).forEach { (dx, dz) -> add(HarborBlock(group, cx + dx, baseY + 2f, cz + dz, BlockMaterial.OAK_LOG, 0.3f, 4f, 0.3f)) }
-            listOf(-1.8f, 1.8f).forEach { dz -> add(HarborBlock(group, cx, baseY + 4.25f, cz + dz, BlockMaterial.OAK_PLANKS, 12f, 0.35f, 4.2f)) }
-            listOf(-3f, 3f).forEach { dx -> add(HarborBlock(group, cx + dx, baseY + 2.6f, cz - 2.7f, BlockMaterial.LANTERN, 0.3f, 0.3f, 0.3f)) }
-            add(HarborBlock(group, cx, baseY + 2f, cz - 3.15f, BlockMaterial.OAK_PLANKS, 7.2f, 3.5f, 0.3f))
-            listOf(cx - 4.15f, cx + 4.15f).forEach { x -> add(HarborBlock(group, x, baseY + 1.5f, cz, BlockMaterial.OAK_PLANKS, 0.3f, 2.7f, 5.4f)) }
-            listOf(cx - 2.5f, cx + 2.5f).forEach { x -> add(HarborBlock(group, x, baseY + 1f, cz + 3f, BlockMaterial.OAK_LOG, 4f, 0.7f, 0.25f)) }
-            listOf(cx - 2.5f, cx + 2.2f).forEach { x -> add(HarborBlock(group, x, baseY + 0.75f, cz + 1.8f, BlockMaterial.OAK_PLANKS, 1.4f, 1.2f, 1.4f)) }
-        }
-
-        addTerrace(HarborGroup.Foreground, -48f, -12f, 28f, 12f, 3, 1f, 4f, 2f, .7f, .2f, .6f, .3f)
-        addTerrace(HarborGroup.Foreground, -62f, -9f, 18f, 10f, 2, 1f, 3f, 2f, -.5f, .4f, .4f, -.2f)
-        addTerrace(HarborGroup.Foreground, 46f, -12f, 30f, 12f, 3, 1f, 4f, 2f, -.6f, .25f, .7f, .2f)
-        addTerrace(HarborGroup.Foreground, 62f, -10f, 18f, 10f, 2, 1f, 3f, 2f, .45f, .35f, -.5f, .25f)
-        addTerrace(HarborGroup.Midground, -50f, -30f, 26f, 16f, 5, 1f, 3.5f, 2f, .8f, .35f, .7f, -.25f)
-        addTerrace(HarborGroup.Midground, -24f, -34f, 22f, 18f, 4, 1f, 3f, 2f, -.65f, .4f, .6f, .2f)
-        addTerrace(HarborGroup.Midground, 5f, -36f, 30f, 18f, 4, 1f, 3f, 2f, .35f, .45f, .8f, -.3f)
-        addTerrace(HarborGroup.Midground, 34f, -32f, 25f, 17f, 5, 1f, 3f, 2f, -.7f, .3f, .5f, .35f)
-        addTerrace(HarborGroup.Midground, 57f, -30f, 18f, 15f, 4, 1f, 2.5f, 2f, .55f, .4f, .6f, -.25f)
-        addTerrace(HarborGroup.Background, -54f, -54f, 34f, 22f, 8, 1.1f, 3.2f, 2f, .9f, .45f, .8f, .3f)
-        addTerrace(HarborGroup.Background, -24f, -60f, 34f, 24f, 7, 1.1f, 3.2f, 2f, -.75f, .5f, .7f, -.35f)
-        addTerrace(HarborGroup.Background, 10f, -64f, 40f, 24f, 6, 1.1f, 3.5f, 2f, .55f, .55f, .9f, .25f)
-        addTerrace(HarborGroup.Background, 42f, -56f, 34f, 22f, 8, 1.1f, 3.2f, 2f, -.85f, .45f, .6f, -.3f)
-        addTerrace(HarborGroup.Background, 64f, -50f, 22f, 18f, 6, 1.1f, 2.8f, 2f, .65f, .5f, .7f, .3f)
-
-        // Phase2B foreground shoulders.
-        addTerrace(HarborGroup.Foreground, -44f, -18f, 8f, 4f, 3, 0.8f, 1.4f, 0.9f, 0.35f, 0.10f, 0.30f, 0.15f)
-        addTerrace(HarborGroup.Foreground, -33f, -19f, 10f, 5f, 3, 0.8f, 1.8f, 1.0f, 0.35f, 0.12f, 0.30f, 0.16f)
-        addTerrace(HarborGroup.Foreground, 26f, -19f, 3f, 5f, 3, 0.8f, 0.5f, 1.0f, -0.12f, 0.12f, 0.10f, 0.16f)
-
-        // Phase2B midground banks.
-        addTerrace(HarborGroup.Midground, -37f, -31f, 10f, 8f, 4, 0.9f, 1.8f, 1.2f, 0.45f, 0.18f, 0.35f, 0.20f)
-        addTerrace(HarborGroup.Midground, -28f, -34f, 6f, 7f, 4, 0.9f, 1.0f, 1.0f, -0.30f, 0.22f, 0.20f, 0.18f)
-        addTerrace(HarborGroup.Midground, 26f, -34f, 3f, 7f, 4, 0.9f, 0.5f, 1.0f, 0.22f, 0.20f, 0.10f, 0.18f)
-        addTerrace(HarborGroup.Midground, 37f, -31f, 10f, 8f, 4, 0.9f, 1.8f, 1.2f, -0.45f, 0.18f, 0.35f, 0.20f)
-
-        // Phase2B background silhouette: side peaks above the existing banks, center lower.
-        addTerrace(HarborGroup.Background, -50f, -54f, 20f, 16f, 10, 1.05f, 1.5f, 1.1f, 0.55f, 0.30f, 0.45f, 0.22f)
-        addTerrace(HarborGroup.Background, 48f, -54f, 18f, 16f, 10, 1.05f, 1.35f, 1.1f, -0.50f, 0.30f, 0.40f, 0.22f)
-        addTerrace(HarborGroup.Background, 0f, -66f, 18f, 12f, 8, 1.0f, 1.7f, 1.1f, 0.30f, 0.25f, 0.35f, 0.18f)
-
-        addPier(HarborGroup.LeftDock, -43f)
-        addPier(HarborGroup.RightDock, 43f)
-        addShelter(HarborGroup.LeftShelter, -47f, 5.35f, -16f)
-        addShelter(HarborGroup.RightShelter, 47f, 5.35f, -16f)
-
-        add(HarborBlock(HarborGroup.LeftPavilion, -34f, 7.65f, -30f, BlockMaterial.OAK_PLANKS, 18f, 0.3f, 10f))
-        listOf(-41f, -27f).forEach { x -> listOf(-33.5f, -26.5f).forEach { z -> add(HarborBlock(HarborGroup.LeftPavilion, x, 10f, z, BlockMaterial.OAK_LOG, 0.35f, 5f, 0.35f)) } }
-        listOf(-34f).forEach { x -> listOf(-34f, -30f, -26f).forEach { z -> add(HarborBlock(HarborGroup.LeftPavilion, x, 12.7f, z, BlockMaterial.OAK_PLANKS, 20f, 0.4f, 4.3f)) } }
-        listOf(-41f, -27f).forEach { x -> listOf(-33.5f, -26.5f).forEach { z -> add(HarborBlock(HarborGroup.LeftPavilion, x, 10.6f, z, BlockMaterial.LANTERN, 0.3f, 0.3f, 0.3f)) } }
-        listOf(-39f, -34f, -29f).forEach { x -> add(HarborBlock(HarborGroup.LeftPavilion, x, 10f, -34.6f, BlockMaterial.OAK_PLANKS, 4.5f, 4.2f, 0.3f)) }
-        listOf(-41.2f, -26.8f).forEach { x -> add(HarborBlock(HarborGroup.LeftPavilion, x, 9f, -30f, BlockMaterial.OAK_PLANKS, 0.3f, 2.4f, 6.5f)) }
-        listOf(-39f, -34f, -29f).forEach { x -> add(HarborBlock(HarborGroup.LeftPavilion, x, 8.45f, -25.3f, BlockMaterial.OAK_LOG, 4f, 0.7f, 0.25f)) }
-        listOf(-38f, -35f, -31f).forEach { x -> add(HarborBlock(HarborGroup.LeftPavilion, x, 8.35f, -28f, BlockMaterial.OAK_PLANKS, 1.5f, 1.4f, 1.5f)) }
-
-        listOf(-12f, 0f, 12f).forEach { cx ->
-            val baseY = 6.35f
-            add(HarborBlock(HarborGroup.CenterMarket, cx, baseY + 0.15f, -31f, BlockMaterial.OAK_PLANKS, 8f, 0.3f, 6f))
-            listOf(-3f to -2f, -3f to 2f, 3f to -2f, 3f to 2f).forEach { (dx, dz) -> add(HarborBlock(HarborGroup.CenterMarket, cx + dx, baseY + 2f, -31f + dz, BlockMaterial.OAK_LOG, 0.25f, 4f, 0.25f)) }
-            add(HarborBlock(HarborGroup.CenterMarket, cx, baseY + 4.25f, -31f, BlockMaterial.OAK_PLANKS, 9f, 0.35f, 7f))
-            listOf(-2.5f, 2.5f).forEach { dx -> add(HarborBlock(HarborGroup.CenterMarket, cx + dx, baseY + 2.6f, -28.8f, BlockMaterial.LANTERN, 0.25f, 0.25f, 0.25f)) }
-            add(HarborBlock(HarborGroup.CenterMarket, cx, baseY + 2f, -34.1f, BlockMaterial.OAK_PLANKS, 6f, 3.2f, 0.3f))
-            listOf(cx - 3.2f, cx + 3.2f).forEach { x -> add(HarborBlock(HarborGroup.CenterMarket, x, baseY + 1.5f, -31f, BlockMaterial.OAK_PLANKS, 0.3f, 2.6f, 4.5f)) }
-            add(HarborBlock(HarborGroup.CenterMarket, cx, baseY + 1f, -27.8f, BlockMaterial.OAK_PLANKS, 5.5f, 1.2f, 0.7f))
-            add(HarborBlock(HarborGroup.CenterMarket, cx - 2f, baseY + 0.8f, -29f, BlockMaterial.OAK_PLANKS, 1.4f, 1.3f, 1.4f))
-        }
-
-        add(HarborBlock(HarborGroup.RightLighthouse, 18.5f, 3.85f, -34f, BlockMaterial.SAND, 8f, 1f, 9f))
-        add(HarborBlock(HarborGroup.RightLighthouse, 18.3f, 4.85f, -34f, BlockMaterial.SAND, 7.5f, 1f, 8.5f))
-        add(HarborBlock(HarborGroup.RightLighthouse, 18.1f, 5.85f, -34f, BlockMaterial.SAND, 7f, 1f, 8f))
-        add(HarborBlock(HarborGroup.RightLighthouse, 18f, 6.85f, -34f, BlockMaterial.SAND, 6.5f, 1f, 7.5f))
-        add(HarborBlock(HarborGroup.RightLighthouse, 18f, 7.95f, -34f, BlockMaterial.OAK_PLANKS, 6f, 1.2f, 6f))
-        listOf(16f, 20f).forEach { x -> listOf(-36f, -32f).forEach { z -> add(HarborBlock(HarborGroup.RightLighthouse, x, 12f, z, BlockMaterial.OAK_LOG, 0.45f, 8f, 0.45f)) } }
-        add(HarborBlock(HarborGroup.RightLighthouse, 18f, 12.4f, -34f, BlockMaterial.OAK_PLANKS, 7f, 0.35f, 7f))
-        add(HarborBlock(HarborGroup.RightLighthouse, 18f, 16.2f, -34f, BlockMaterial.OAK_PLANKS, 9f, 0.4f, 9f))
-        add(HarborBlock(HarborGroup.RightLighthouse, 18f, 18f, -34f, BlockMaterial.OAK_LOG_TOP, 6f, 0.45f, 6f))
-        add(HarborBlock(HarborGroup.RightLighthouse, 18f, 17f, -34f, BlockMaterial.LANTERN, 1.2f, 1.2f, 1.2f))
-        listOf(15f, 21f).forEach { x -> listOf(-37f, -31f).forEach { z -> add(HarborBlock(HarborGroup.RightLighthouse, x, 16.8f, z, BlockMaterial.LANTERN, 0.3f, 0.3f, 0.3f)) } }
-        add(HarborBlock(HarborGroup.RightLighthouse, 18f, 12f, -34f, BlockMaterial.OAK_PLANKS, 3.6f, 7.2f, 3.6f))
-        listOf(15f, 21f).forEach { x -> add(HarborBlock(HarborGroup.RightLighthouse, x, 16.9f, -34f, BlockMaterial.OAK_LOG, 0.3f, 1f, 7.5f)) }
-        listOf(-37f, -31f).forEach { z -> add(HarborBlock(HarborGroup.RightLighthouse, 18f, 16.9f, z, BlockMaterial.OAK_LOG, 6.3f, 1f, 0.3f)) }
-    }
-
-    /** Generates a bounded far shoreline. The protected center keeps the boat unobscured. */
-    fun dunes(seed: Long): List<DesertDune> {
-        val random = Random(seed)
-        return buildList {
-            repeat(24) {
-                val x = random.nextFloat() * 116f - 58f
-                val z = -44f - random.nextFloat() * 22f
-                val radius = 3.5f + random.nextFloat() * 4.5f
-                val height = 2f + random.nextFloat() * 4.5f
-                // The far bank is intentionally behind the water and boat view.
-                add(DesertDune(x, z, radius, height))
-            }
-        }
-    }
-
-    fun cacti(seed: Long): List<Cactus> {
-        val random = Random(seed xor 0x5deece66dL)
-        val anchors = listOf(
-                -57f to (-16f to 5.35f), -32f to (-13f to 5.35f), 32f to (-13f to 5.35f), 58f to (-16f to 5.35f),
-                -55f to (-30f to 7.35f), -43f to (-33f to 7.35f), -18f to (-35f to 6.35f), 22f to (-31f to 7.35f),
-                56f to (-38f to 6.35f), -60f to (-52f to 11.15f), -48f to (-56f to 10f), -28f to (-59f to 10f),
-                -12f to (-61f to 9f), 22f to (-60f to 9f), 42f to (-55f to 11f), 58f to (-50f to 8f)
-            )
-        return anchors.map { (x, zAndGround) ->
-            Cactus(x, zAndGround.first, 1.8f + random.nextFloat() * 2.4f, zAndGround.second)
-        }
-    }
-
-    fun camera(timeSeconds: Float): CameraPose = camera(timeSeconds.toDouble())
-
-    /** Smoothly sweeps a narrow arc around the front-facing shoreline view. */
+    /** Slowly orbits a short arc behind the player and keeps the view direction perpendicular to the arc. */
     fun camera(timeSeconds: Double): CameraPose {
         val phase = positiveModulo(timeSeconds, CAMERA_CYCLE_SECONDS) / CAMERA_CYCLE_SECONDS
-        val swing = kotlin.math.sin(phase * Math.PI * 2.0).toFloat() * CAMERA_SWING_RADIANS
+        val wave = sin(phase * Math.PI * 2.0).toFloat()
+        val yaw = wave * CAMERA_SWING_RADIANS
+        val eyeX = PLAYER_X + sin(yaw) * CAMERA_ORBIT_RADIUS
+        val eyeY = PLAYER_FEET_Y + CAMERA_HEIGHT_ABOVE_PLAYER + wave * CAMERA_HEIGHT_SWING
+        val eyeZ = PLAYER_Z + cos(yaw) * CAMERA_ORBIT_RADIUS
+        val drop = CAMERA_LOOK_DISTANCE * tan(Math.toRadians(CAMERA_PITCH_DEGREES.toDouble())).toFloat()
         return CameraPose(
-            yawRadians = CAMERA_CENTER_YAW_RADIANS + swing,
-            height = CAMERA_BASE_HEIGHT + sin((phase * Math.PI * 2.0)).toFloat() * CAMERA_HEIGHT_SWING,
-            distance = CAMERA_DISTANCE
+            eyeX = eyeX,
+            eyeY = eyeY,
+            eyeZ = eyeZ,
+            targetX = eyeX - sin(yaw) * CAMERA_LOOK_DISTANCE,
+            targetY = eyeY + drop,
+            targetZ = eyeZ - cos(yaw) * CAMERA_LOOK_DISTANCE,
+            yawRadians = yaw
         )
     }
-
-    fun boat(timeSeconds: Float): BoatPose = boat(timeSeconds.toDouble())
-
-    fun boat(timeSeconds: Double): BoatPose = boat(timeSeconds, waterAnimationTime(timeSeconds))
-
-    private fun boat(timeSeconds: Double, waterTimeSeconds: Float): BoatPose {
-        val phase = positiveModulo(timeSeconds, BOAT_SLIDE_PERIOD_SECONDS) / BOAT_SLIDE_PERIOD_SECONDS
-        val wave = kotlin.math.sin(phase * Math.PI * 2.0)
-        val x = BOAT_CENTER_X + wave.toFloat() * BOAT_SLIDE_DISTANCE
-        return BoatPose(
-            x = x,
-            y = BOAT_WATERLINE + (waterSurfaceHeightAt(x, BOAT_CENTER_Z, waterTimeSeconds) - WATER_LEVEL),
-            z = BOAT_CENTER_Z,
-            yawRadians = (wave * 0.035).toFloat(),
-            rollRadians = (kotlin.math.cos(phase * Math.PI * 2.0) * 0.018).toFloat()
-        )
-    }
-
-    fun playerAnchor(boat: BoatPose): PlayerAnchor = PlayerAnchor(boat.x, boat.y + 0.05f, boat.z)
 
     data class FrameState(
         val camera: CameraPose,
-        val boat: BoatPose,
         val waterTimeSeconds: Float,
         val waterNormalOffset: Float,
-        val cloudTimeSeconds: Double
+        val cloudTimeSeconds: Double,
+        val playerPose: PlayerIdlePose
     )
 
-    fun frameState(elapsedSeconds: Double): FrameState {
-        val waterTimeSeconds = waterAnimationTime(elapsedSeconds)
-        return FrameState(
-            camera = camera(elapsedSeconds),
-            boat = boat(elapsedSeconds, waterTimeSeconds),
-            waterTimeSeconds = waterTimeSeconds,
-            waterNormalOffset = waterNormalOffset(elapsedSeconds),
-            cloudTimeSeconds = elapsedSeconds
+    fun frameState(elapsedSeconds: Double): FrameState = FrameState(
+        camera = camera(elapsedSeconds),
+        waterTimeSeconds = waterAnimationTime(elapsedSeconds),
+        waterNormalOffset = waterNormalOffset(elapsedSeconds),
+        cloudTimeSeconds = elapsedSeconds,
+        playerPose = playerIdlePose(elapsedSeconds)
+    )
+
+    /**
+     * Minecraft's `HumanoidModel` arm bob (per tick: roll `cos(0.09t)*0.05+0.05`, pitch `sin(0.067t)*0.05`),
+     * plus a slow look across the valley and a cape stirring in the breeze. Evaluated in Double so it
+     * stays smooth for any uptime.
+     */
+    fun playerIdlePose(elapsedSeconds: Double): PlayerIdlePose {
+        val ticks = elapsedSeconds * 20.0
+        return PlayerIdlePose(
+            headYaw = (sin(elapsedSeconds * Math.PI * 2.0 / PLAYER_LOOK_PERIOD_SECONDS) * PLAYER_LOOK_AMPLITUDE).toFloat(),
+            armRoll = (cos(ticks * 0.09) * 0.05 + 0.05).toFloat(),
+            armPitch = (sin(ticks * 0.067) * 0.05).toFloat(),
+            capePitch = (PLAYER_CAPE_REST_PITCH + sin(elapsedSeconds * Math.PI * 2.0 / PLAYER_CAPE_PERIOD_SECONDS) * 0.05).toFloat()
         )
     }
 
@@ -404,28 +288,28 @@ object BackgroundScene {
 
     private fun positiveModulo(value: Double, period: Double): Double = ((value % period) + period) % period
 
-    /** Fixed, high noon sun. The light direction points from the sun at the scene target. */
-    @Suppress("UNUSED_PARAMETER")
-    fun sun(timeSeconds: Float): SunState {
-        val x = 0f
-        val y = 26.7f
-        val z = -6f
-        val directionX = CAMERA_TARGET_X - x
-        val directionY = CAMERA_TARGET_Y - y
-        val directionZ = CAMERA_TARGET_Z - z
-        val length = sqrt(directionX * directionX + directionY * directionY + directionZ * directionZ)
-        return SunState(x, y, z, directionX / length, directionY / length, directionZ / length)
+    /** Fixed low golden-hour sun to the right of the view; the single source for sky, light and shadows. */
+    fun sun(): SunState {
+        val azimuth = Math.toRadians(SUN_AZIMUTH_DEGREES.toDouble())
+        val elevation = Math.toRadians(SUN_ELEVATION_DEGREES.toDouble())
+        val towardSunX = (sin(azimuth) * cos(elevation)).toFloat()
+        val towardSunY = sin(elevation).toFloat()
+        val towardSunZ = (-cos(azimuth) * cos(elevation)).toFloat()
+        return SunState(-towardSunX, -towardSunY, -towardSunZ)
     }
 
-    /** Camera-facing basis for the sun quad; avoids edge-on disappearance during camera orbit. */
-    fun sunBillboardBasis(eyeX: Float, eyeY: Float, eyeZ: Float, sun: SunState): SunBillboardBasis {
-        var normalX = eyeX - sun.offsetX
-        var normalY = eyeY - sun.offsetY
-        var normalZ = eyeZ - sun.offsetZ
-        val normalLength = sqrt(normalX * normalX + normalY * normalY + normalZ * normalZ)
-        normalX /= normalLength
-        normalY /= normalLength
-        normalZ /= normalLength
+    /** Places the billboard at a fixed distance toward the sun from the pass eye. */
+    fun sunBillboardCenter(eyeX: Float, eyeY: Float, eyeZ: Float, sun: SunState): FloatArray = floatArrayOf(
+        eyeX - sun.directionX * SUN_BILLBOARD_DISTANCE,
+        eyeY - sun.directionY * SUN_BILLBOARD_DISTANCE,
+        eyeZ - sun.directionZ * SUN_BILLBOARD_DISTANCE
+    )
+
+    /** Camera-facing basis for the sun quad; because the quad is eye-relative it always faces the eye. */
+    fun sunBillboardBasis(sun: SunState): SunBillboardBasis {
+        val normalX = sun.directionX
+        val normalY = sun.directionY
+        val normalZ = sun.directionZ
 
         // Cross with world-up except near the pole, where Z-up keeps the basis stable.
         val nearPole = kotlin.math.abs(normalY) > 0.99f
@@ -489,6 +373,48 @@ object BackgroundScene {
         return red * red + green * green + blue * blue > CLOUD_COLOR_REBUILD_THRESHOLD
     }
 }
+
+/**
+ * Clears the sky by removing whole clouds from the vanilla cloud texture: every 4-connected group of
+ * covered texels (connected across the tiling edges) is kept or dropped as one, by a seeded hash.
+ */
+internal fun thinCloudCover(rgba: ByteArray, width: Int, height: Int, keepFraction: Float, seed: Int) {
+    val count = width * height
+    fun covered(index: Int) = (rgba[index * 4 + 3].toInt() and 0xFF) >= CLOUD_ALPHA_THRESHOLD
+    val visited = BooleanArray(count)
+    val queue = IntArray(count)
+    for (start in 0 until count) {
+        if (visited[start] || !covered(start)) continue
+        var head = 0
+        var tail = 0
+        queue[tail++] = start
+        visited[start] = true
+        while (head < tail) {
+            val index = queue[head++]
+            val x = index % width
+            val y = index / width
+            val neighbors = intArrayOf(
+                y * width + (x + 1) % width,
+                y * width + (x + width - 1) % width,
+                ((y + 1) % height) * width + x,
+                ((y + height - 1) % height) * width + x
+            )
+            neighbors.forEach { neighbor ->
+                if (!visited[neighbor] && covered(neighbor)) {
+                    visited[neighbor] = true
+                    queue[tail++] = neighbor
+                }
+            }
+        }
+        // Scanning in index order makes `start` the group's smallest index, a stable identity for the hash.
+        if (TerrainNoise.hash01(start % width, start / width, seed) >= keepFraction) {
+            for (member in 0 until tail) rgba[queue[member] * 4 + 3] = 0
+        }
+    }
+}
+
+/** Matches the cloud shader's `texel.a < 0.1` discard. */
+private const val CLOUD_ALPHA_THRESHOLD = 26
 
 /** Counter-clockwise when viewed from above, matching the +Y normal. */
 internal fun waterPlaneCornerPositions(size: Float, y: Float): FloatArray = floatArrayOf(

@@ -17,7 +17,6 @@ data class HostCreateRoute(
     val displayName: String? = null,
     val legacyMcVersion: String? = null,
 )
-@Serializable object ModpackLocalListRoute
 @Serializable
 data class ModpackPlazaRoute(
     val requiredMcVer: String? = null,
@@ -180,7 +179,12 @@ data class ModpackUploadRoute(
 )
 /* @Serializable data class Modpack2ContentRoute(val versionId: String) */
 @Serializable object LoginRoute
-@Serializable object MenuRoute
+/** 主菜单的标签页，顺序与顶部导航一致。 */
+enum class MenuTab { Hosts, Modpacks }
+
+/** [tab]为[MenuTab]的名称，返回主菜单时落在对应标签页。 */
+@Serializable
+data class MenuRoute(val tab: String = MenuTab.Hosts.name)
 @Serializable object BaseWorldListRoute
 @Serializable object BaseWorldUploadRoute
 /*@Serializable data class AiChat(
@@ -199,8 +203,6 @@ data class PlayerInfoRoute(val playerId: String? = null)
 object SettingRoute
 @Serializable
 object MailListScreen
-@Serializable object HostListRoute
-@Serializable object WorldRoute
 @Serializable
 data class HostInfoRoute(val hostId: String, val fromAllHosts: Boolean = false, val kind: String = HostKind.Legacy.name)
 @Serializable

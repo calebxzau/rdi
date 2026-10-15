@@ -42,6 +42,18 @@ tasks.withType<Test>().configureEach {
     useJUnitPlatform()
 }
 
+// Dev-only GPU check; needs a desktop GPU, so it is not part of `test`.
+// Optional: -PpreviewTimes=0,15,45 selects the elapsed seconds of the written frames.
+tasks.register<JavaExec>("renderPreview") {
+    description = "Renders background frames on the local GPU into build/bg-preview and prints frame timings."
+    group = "verification"
+    dependsOn("testClasses")
+    classpath = sourceSets["test"].runtimeClasspath
+    mainClass.set("calebxzau.rdi.bgrenderer.BackgroundPreviewKt")
+    args(layout.buildDirectory.dir("bg-preview").get().asFile.absolutePath)
+    (project.findProperty("previewTimes") as String?)?.split(',')?.let { args(it) }
+}
+
 base {
     archivesName.set("rdi-bg-renderer")
 }

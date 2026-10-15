@@ -258,7 +258,7 @@ private fun TitleBar(
             Spacer(Modifier.width(10.dp))
             WindowButton("\uF2D1", "最小化") { windowState.isMinimized = true }
             WindowButton(
-                icon = if (windowState.placement == WindowPlacement.Maximized) "\uF2D2" else "\uF2D0",
+                icon = if (windowState.placement == WindowPlacement.Maximized) "\uF2D2" else "\uEAB9",
                 description = if (windowState.placement == WindowPlacement.Maximized) "还原" else "最大化",
                 onClick = windowState::toggleMaximized
             )

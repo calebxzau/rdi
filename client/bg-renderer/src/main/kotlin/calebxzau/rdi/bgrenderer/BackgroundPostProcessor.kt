@@ -4,6 +4,7 @@ import org.lwjgl.BufferUtils
 import org.lwjgl.opengl.GL11.*
 import org.lwjgl.opengl.GL13.GL_TEXTURE0
 import org.lwjgl.opengl.GL13.GL_TEXTURE1
+import org.lwjgl.opengl.GL13.GL_TEXTURE2
 import org.lwjgl.opengl.GL13.glActiveTexture
 import org.lwjgl.opengl.GL15.GL_ARRAY_BUFFER
 import org.lwjgl.opengl.GL15.GL_STATIC_DRAW
@@ -31,6 +32,9 @@ internal class BackgroundPostProcessor(
     private val bloomProgram = createProgram(POST_VERTEX_SHADER, BLOOM_ATLAS_FRAGMENT_SHADER)
     private val finalProgram = createProgram(POST_VERTEX_SHADER, FINAL_TONEMAP_FRAGMENT_SHADER)
     private val hdrCopyInputLocation = glGetUniformLocation(hdrCopyProgram, "uRawHdr")
+    private val hdrCopyValleyFogLocation = glGetUniformLocation(hdrCopyProgram, "uValleyFog")
+    private val hdrCopySceneDepthLocation = glGetUniformLocation(hdrCopyProgram, "uSceneDepth")
+    private val hdrCopyDepthPlanesLocation = glGetUniformLocation(hdrCopyProgram, "uDepthPlanes")
     private val bloomInputLocation = glGetUniformLocation(bloomProgram, "uLinearHdr")
     private val finalColorLocation = glGetUniformLocation(finalProgram, "uLinearHdr")
     private val finalBloomLocation = glGetUniformLocation(finalProgram, "uBloomAtlas")
@@ -81,7 +85,8 @@ internal class BackgroundPostProcessor(
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE)
     }
 
-    fun process(rawHdrTexture: Int) {
+    /** Composites the half-resolution valley fog over the raw HDR scene, then runs Bloom and the tonemap. */
+    fun process(rawHdrTexture: Int, valleyFogTexture: Int, sceneDepthTexture: Int) {
         glDisable(GL_DEPTH_TEST)
         glDepthMask(false)
         glDisable(GL_BLEND)
@@ -92,9 +97,17 @@ internal class BackgroundPostProcessor(
         glViewport(0, 0, width, height)
         glActiveTexture(GL_TEXTURE0)
         glBindTexture(GL_TEXTURE_2D, rawHdrTexture)
+        glActiveTexture(GL_TEXTURE1)
+        glBindTexture(GL_TEXTURE_2D, valleyFogTexture)
+        glActiveTexture(GL_TEXTURE2)
+        glBindTexture(GL_TEXTURE_2D, sceneDepthTexture)
         glUseProgram(hdrCopyProgram)
         glUniform1i(hdrCopyInputLocation, 0)
+        glUniform1i(hdrCopyValleyFogLocation, 1)
+        glUniform1i(hdrCopySceneDepthLocation, 2)
+        glUniform2f(hdrCopyDepthPlanesLocation, CAMERA_NEAR_PLANE, CAMERA_FAR_PLANE)
         drawFullscreen()
+        glActiveTexture(GL_TEXTURE0)
 
         glBindTexture(GL_TEXTURE_2D, linearTexture)
         glGenerateMipmap(GL_TEXTURE_2D)
@@ -151,7 +164,7 @@ internal class BackgroundPostProcessor(
     }
 }
 
-private val FULLSCREEN_TRIANGLE = floatArrayOf(
+internal val FULLSCREEN_TRIANGLE = floatArrayOf(
     -1f, -1f,
     3f, -1f,
     -1f, 3f
@@ -171,10 +184,43 @@ internal const val HDR_COPY_FRAGMENT_SHADER = """
 #version 450 core
 in vec2 texCoord;
 uniform sampler2D uRawHdr;
+uniform sampler2D uValleyFog;
+uniform sampler2D uSceneDepth;
+uniform vec2 uDepthPlanes;
 out vec4 color;
+
+float linearDepth(float depth) {
+    float near = uDepthPlanes.x;
+    float far = uDepthPlanes.y;
+    return 2.0 * near * far / (far + near - (depth * 2.0 - 1.0) * (far - near));
+}
+
+// Joint bilateral upsample: bilinear weights, damped where a low-resolution texel lies at a different depth,
+// so fog does not bleed across tree and ridge silhouettes.
+vec4 upsampleValleyFog(vec2 uv) {
+    ivec2 lowSize = textureSize(uValleyFog, 0);
+    vec2 position = uv * vec2(lowSize) - 0.5;
+    ivec2 base = ivec2(floor(position));
+    vec2 fraction = position - vec2(base);
+    float centerDepth = linearDepth(texture(uSceneDepth, uv).r);
+    vec4 sum = vec4(0.0);
+    float weightSum = 0.0;
+    for (int i = 0; i < 4; i++) {
+        ivec2 offset = ivec2(i & 1, i >> 1);
+        ivec2 texel = clamp(base + offset, ivec2(0), lowSize - 1);
+        float bilinear = (offset.x == 1 ? fraction.x : 1.0 - fraction.x) * (offset.y == 1 ? fraction.y : 1.0 - fraction.y);
+        float texelDepth = linearDepth(texture(uSceneDepth, (vec2(texel) + 0.5) / vec2(lowSize)).r);
+        float weight = (bilinear + 1.0e-3) / (0.02 + abs(texelDepth - centerDepth) / centerDepth);
+        sum += texelFetch(uValleyFog, texel, 0) * weight;
+        weightSum += weight;
+    }
+    return sum / weightSum;
+}
+
 void main() {
     vec3 raw = texture(uRawHdr, texCoord).rgb;
-    color = vec4(max(raw, vec3(0.0)), 1.0);
+    vec4 fog = upsampleValleyFog(texCoord);
+    color = vec4(max(raw * fog.a + fog.rgb, vec3(0.0)), 1.0);
 }
 """
 
@@ -225,11 +271,11 @@ uniform sampler2D uLinearHdr;
 uniform sampler2D uBloomAtlas;
 out vec4 color;
 const float TM_EXPOSURE = 1.00;
-const float TM_CONTRAST = 1.05;
+const float TM_CONTRAST = 1.12;
 const float TM_WHITE_PATH = 1.00;
 const float TM_DARK_DESATURATION = 0.25;
-const float T_SATURATION = 1.00;
-const float T_VIBRANCE = 1.00;
+const float T_SATURATION = 1.04;
+const float T_VIBRANCE = 1.12;
 
 float GetLuminance(vec3 value) {
     return dot(value, vec3(0.299, 0.587, 0.114));

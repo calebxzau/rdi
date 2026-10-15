@@ -7,7 +7,7 @@ import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
 
-internal const val STATIC_SHADOW_MAP_SIZE = 1024
+internal const val STATIC_SHADOW_MAP_SIZE = 2048
 
 /** A world-space box used both for static occupancy/AO and shadow framing. */
 internal data class StaticAabb(

@@ -21,10 +21,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.grid.GridCells
-import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
-import androidx.compose.foundation.lazy.grid.items
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.DropdownMenu
@@ -64,12 +60,8 @@ import calebxzhou.rdi.client.service.getLocalPackDirs
 import calebxzhou.rdi.client.ui.McPlayStore
 import calebxzau.rdi.client.ui.AlertErr
 import calebxzau.rdi.client.ui.CircleIconButton
-import calebxzau.rdi.client.ui.ContentBody
 import calebxzau.rdi.client.ui.CursorPositionBox
-import calebxzau.rdi.client.ui.MaxBox
 import calebxzau.rdi.client.ui.RDropdownMenuItem
-import calebxzau.rdi.client.ui.ScreenContentSize
-import calebxzau.rdi.client.ui.ScreenContentSurface
 import calebxzau.rdi.client.ui.Space8w
 import calebxzau.rdi.client.ui.TitleRow
 import calebxzau.rdi.client.ui.openFolder
@@ -79,12 +71,12 @@ import calebxzau.rdi.client.codeeditor.CodeLanguage
 import calebxzau.rdi.client.codeeditor.validateCodeContent
 import calebxzhou.rdi.client.ui.comp.CardHint
 import calebxzhou.rdi.client.ui.comp.CardHintAction
-import calebxzhou.rdi.client.ui.comp.CardHintHost
 import calebxzhou.rdi.client.ui.comp.CodeEditor
 import calebxzhou.rdi.client.ui.comp.HintMouseButton
 import calebxzhou.rdi.client.ui.comp.HttpImage
 import calebxzhou.rdi.client.ui.comp.IconTileCard
 import calebxzhou.rdi.client.ui.comp.TILE_ACTIVE_DOT_COLOR
+import calebxzhou.rdi.client.ui.comp.TileIconShape
 import calebxzau.rdi.client.ui.comp.NameInitialIcon
 import calebxzhou.rdi.client.ui.McPlayArgs
 import calebxzhou.rdi.common.isExcludedConfigPath
@@ -95,20 +87,15 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import androidx.compose.runtime.Stable
+import androidx.compose.runtime.SideEffect
+import calebxzhou.rdi.client.ui.comp.TileGlass
+import kotlinx.coroutines.CoroutineScope
 import java.io.File
 import java.nio.file.Files
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
-
-private sealed interface InstalledResourceItem {
-    val key: String
-
-    data class Legacy(val pack: ModpackLocalDir) : InstalledResourceItem {
-        override val key: String = "legacy:${pack.versionId}"
-    }
-
-}
 
 private data class PersonalDataCopyEntry(
     val key: String,
@@ -133,45 +120,40 @@ private val localConfigEditableExtensions = setOf(
     "snbt", "toml", "txt", "yaml", "yml", "zs",
 )
 
+
 /**
- * The installed-pack entry point for the released legacy modpack workflow.
+ * 本地已安装整合包的列表、菜单操作与对话框状态，供“我的整合包”页面与主菜单共用。
+ * 状态与操作沿用原页面实现，搬入此类后两处共享同一份逻辑。
  */
-@Composable
-fun ModpackLocalListScreen(
-    onBack: () -> Unit = {},
-    onOpenPlaza: () -> Unit = {},
-    onOpenTask: (String) -> Unit = {},
-    onOpenPlay: (McPlayArgs) -> Unit = {},
-    onOpenContent: (ModpackLocalDir, ModpackContentType) -> Unit = { _, _ -> },
-    onOpenOptions: (ModpackLocalDir) -> Unit = {},
-    onOpenModpackInfo: (ModpackLocalDir) -> Unit = {},
-    onOpenLocalInstall: (() -> Unit)? = null,
-    modifier: Modifier = Modifier,
-) {
-    val scope = rememberCoroutineScope()
-    var legacyLoading by remember { mutableStateOf(true) }
-    var legacyError by remember { mutableStateOf<String?>(null) }
-    var legacyPacks by remember { mutableStateOf<List<ModpackLocalDir>>(emptyList()) }
-    var reloadToken by remember { mutableStateOf(0) }
-    var actionError by remember { mutableStateOf<String?>(null) }
-    var importPreparing by remember { mutableStateOf(false) }
-    var packActionMessage by remember { mutableStateOf<String?>(null) }
-    var deleteConfirmPack by remember { mutableStateOf<ModpackLocalDir?>(null) }
-    var reinstallConfirmPack by remember { mutableStateOf<ModpackLocalDir?>(null) }
-    var copyDataSourcePack by remember { mutableStateOf<ModpackLocalDir?>(null) }
-    var copyDataTargetVersionId by remember { mutableStateOf<String?>(null) }
-    var copyDataSelectedKeys by remember { mutableStateOf(personalDataCopyEntries.map { it.key }.toSet()) }
-    var configEditorPack by remember { mutableStateOf<ModpackLocalDir?>(null) }
-    var localConfigFilesLoading by remember { mutableStateOf(false) }
-    var localConfigContentLoading by remember { mutableStateOf(false) }
-    var localConfigSaving by remember { mutableStateOf(false) }
-    var localConfigFiles by remember { mutableStateOf<List<Host.ConfigFileEntry>>(emptyList()) }
-    var selectedLocalConfigPath by remember { mutableStateOf<String?>(null) }
-    var localConfigEditorText by remember { mutableStateOf("") }
-    var localConfigOriginalText by remember { mutableStateOf("") }
-    var localConfigSyntaxErrorMessage by remember { mutableStateOf<String?>(null) }
-    var localConfigStatusMessage by remember { mutableStateOf<String?>(null) }
-    val localConfigDirty = selectedLocalConfigPath != null && localConfigEditorText != localConfigOriginalText
+@Stable
+internal class LocalModpackManager(val scope: CoroutineScope) {
+    /** 提交下载、导出等任务后打开任务列表。 */
+    var onOpenTask: (String) -> Unit = {}
+
+    var legacyLoading by mutableStateOf(true)
+    var legacyError by mutableStateOf<String?>(null)
+    var legacyPacks by mutableStateOf<List<ModpackLocalDir>>(emptyList())
+    var reloadToken by mutableStateOf(0)
+    var actionError by mutableStateOf<String?>(null)
+    var importPreparing by mutableStateOf(false)
+    var packActionMessage by mutableStateOf<String?>(null)
+    var deleteConfirmPack by mutableStateOf<ModpackLocalDir?>(null)
+    var reinstallConfirmPack by mutableStateOf<ModpackLocalDir?>(null)
+    var copyDataSourcePack by mutableStateOf<ModpackLocalDir?>(null)
+    var copyDataTargetVersionId by mutableStateOf<String?>(null)
+    var copyDataSelectedKeys by mutableStateOf(personalDataCopyEntries.map { it.key }.toSet())
+    var configEditorPack by mutableStateOf<ModpackLocalDir?>(null)
+    var localConfigFilesLoading by mutableStateOf(false)
+    var localConfigContentLoading by mutableStateOf(false)
+    var localConfigSaving by mutableStateOf(false)
+    var localConfigFiles by mutableStateOf<List<Host.ConfigFileEntry>>(emptyList())
+    var selectedLocalConfigPath by mutableStateOf<String?>(null)
+    var localConfigEditorText by mutableStateOf("")
+    var localConfigOriginalText by mutableStateOf("")
+    var localConfigSyntaxErrorMessage by mutableStateOf<String?>(null)
+    var localConfigStatusMessage by mutableStateOf<String?>(null)
+    val localConfigDirty: Boolean
+        get() = selectedLocalConfigPath != null && localConfigEditorText != localConfigOriginalText
 
     fun copyPersonalData(sourceDir: File, targetDir: File, selectedKeys: Set<String>) {
         personalDataCopyEntries.filter { it.key in selectedKeys }.forEach { entry ->
@@ -303,17 +285,112 @@ fun ModpackLocalListScreen(
         reloadToken += 1
     }
 
-    LaunchedEffect(reloadToken) {
+    fun openConfigEditor(pack: ModpackLocalDir) {
+        resetLocalConfigEditorState()
+        configEditorPack = pack
+        loadLocalConfigFiles(pack)
+    }
+
+    fun openCopyData(pack: ModpackLocalDir) {
+        copyDataSourcePack = pack
+        copyDataTargetVersionId = legacyPacks.firstOrNull { it.versionId != pack.versionId }?.versionId
+        copyDataSelectedKeys = personalDataCopyEntries.map { it.key }.toSet()
+    }
+
+    fun openFolder(pack: ModpackLocalDir) {
+        openPackFolder(pack.dir, actionErrorSetter = { actionError = it })
+    }
+
+    fun export(pack: ModpackLocalDir) {
+        scope.launch {
+            runCatching {
+                val prepared = withContext(Dispatchers.IO) {
+                    exportRdiModpack2(pack)
+                }.getOrThrow() ?: return@runCatching
+                onOpenTask(ClientTaskManager.submit(prepared.task, prepared.dedupeKey))
+            }.onFailure { actionError = it.message ?: "导出失败" }
+        }
+    }
+
+    fun exportLogs(pack: ModpackLocalDir) {
+        scope.launch {
+            exportLogsPack(pack)
+                .onFailure { actionError = it.message ?: "导出日志失败" }
+        }
+    }
+
+    fun importRdiPack2() {
+        if (importPreparing) return
+        importPreparing = true
+        actionError = null
+        scope.launch {
+            try {
+                val prepared = prepareRdiPack2ImportFromPicker() ?: return@launch
+                val runId = ClientTaskManager.submit(prepared.task, prepared.dedupeKey)
+                onOpenTask(runId)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (exception: Exception) {
+                lgr.error(exception) { "导入rdipack2失败" }
+                actionError = exception.message ?: "导入整合包失败"
+            } finally {
+                importPreparing = false
+            }
+        }
+    }
+}
+
+/** 创建管理器并在[LocalModpackManager.reloadToken]变化时读取本地整合包。 */
+@Composable
+internal fun rememberLocalModpackManager(onOpenTask: (String) -> Unit): LocalModpackManager {
+    val scope = rememberCoroutineScope()
+    val manager = remember(scope) { LocalModpackManager(scope) }
+    SideEffect { manager.onOpenTask = onOpenTask }
+    LaunchedEffect(manager, manager.reloadToken) {
         val result = withContext(Dispatchers.IO) {
             runCatching { ModpackService.getLocalPackDirs() }
         }
-        result.onSuccess { legacyPacks = it }
-            .onFailure { legacyError = it.message ?: "读取已安装整合包失败" }
-        legacyLoading = false
+        result.onSuccess { manager.legacyPacks = it }
+            .onFailure {
+                lgr.error(it) { "读取已安装整合包失败" }
+                manager.legacyError = it.message ?: "读取已安装整合包失败"
+            }
+        manager.legacyLoading = false
     }
+    return manager
+}
 
-    val items = remember(legacyPacks) { legacyPacks.map(InstalledResourceItem::Legacy) }
-    val isLoading = legacyLoading
+/** 整合包瓷砖，菜单操作接到[LocalModpackManager]上；跳转类操作由调用方处理。 */
+@Composable
+internal fun LocalModpackManager.InstalledTile(
+    pack: ModpackLocalDir,
+    glass: TileGlass,
+    onOpenPlay: (McPlayArgs) -> Unit,
+    onOpenModpackInfo: (ModpackLocalDir) -> Unit,
+    onOpenContent: (ModpackLocalDir, ModpackContentType) -> Unit,
+    onOpenOptions: (ModpackLocalDir) -> Unit,
+) {
+    InstalledCard(
+        pack = pack,
+        glass = glass,
+        onOpenPlay = { onOpenPlay(pack.toPlayArgs()) },
+        onOpenModpackInfo = { onOpenModpackInfo(pack) },
+        isRunning = McPlayStore.aliveCount(pack.versionId) > 0,
+        onOpenContent = { type -> onOpenContent(pack, type) },
+        onOpenConfig = { openConfigEditor(pack) },
+        onOpenOptions = { onOpenOptions(pack) },
+        onOpenCopyData = { openCopyData(pack) },
+        onReinstall = { reinstallConfirmPack = pack },
+        onOpenFolder = { openFolder(pack) },
+        onExport = { export(pack) },
+        onExportLogs = { exportLogs(pack) },
+        onDelete = { deleteConfirmPack = pack },
+    )
+}
+
+/** 错误提示，以及配置编辑、删除、重装、迁移个人数据对话框。 */
+@Composable
+internal fun LocalModpackManager.Dialogs() {
     val errorMessage = listOf(legacyError, actionError)
         .filterNotNull()
         .filter(String::isNotBlank)
@@ -327,164 +404,6 @@ fun ModpackLocalListScreen(
         }
     }
 
-    MaxBox {
-        ScreenContentSurface(size = ScreenContentSize.LARGE) {
-            TitleRow("我的整合包", onBack) {
-                Text("点包管理mod/材质/光影等")
-                CircleIconButton("\uF021", "刷新", showText = false) {
-                    reloadLegacy()
-                }
-                CircleIconButton(
-                    icon = "\uDB86\uDDD5",
-                    label = "整合广场",
-                    onClick = onOpenPlaza,
-                )
-            }
-            ContentBody {
-                Column(modifier = modifier.fillMaxSize().padding(16.dp)) {
-
-                    Column(Modifier.fillMaxWidth().weight(1f)) {
-                        packActionMessage?.let {
-                            Text(
-                                it,
-                                color = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.padding(bottom = 8.dp),
-                            )
-                        }
-                        if (isLoading) {
-                            Text("正在读取整合包…")
-                        } else if (items.isEmpty()) {
-                            Column(
-                                modifier = Modifier.fillMaxSize(),
-                                verticalArrangement = Arrangement.Center,
-                                horizontalAlignment = Alignment.CenterHorizontally,
-                            ) {
-                                Text("还没有整合包")
-                            }
-                        } else {
-                            CardHintHost(Modifier.fillMaxSize()) {
-                                LazyVerticalGrid(
-                                    columns = GridCells.Adaptive(minSize = 110.dp),
-                                    modifier = Modifier.fillMaxSize(),
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                                ) {
-                                    items(items, key = { it.key }) { item ->
-                                        when (item) {
-                                            is InstalledResourceItem.Legacy -> InstalledCard(
-                                                pack = item.pack,
-                                                onOpenPlay = {
-                                                    onOpenPlay(item.pack.toPlayArgs())
-                                                },
-                                                onOpenModpackInfo = { onOpenModpackInfo(item.pack) },
-                                                isRunning = McPlayStore.aliveCount(item.pack.versionId) > 0,
-                                                onOpenContent = { type -> onOpenContent(item.pack, type) },
-                                                onOpenConfig = {
-                                                    resetLocalConfigEditorState()
-                                                    configEditorPack = item.pack
-                                                    loadLocalConfigFiles(item.pack)
-                                                },
-                                                onOpenOptions = { onOpenOptions(item.pack) },
-                                                onOpenCopyData = {
-                                                    copyDataSourcePack = item.pack
-                                                    copyDataTargetVersionId = legacyPacks.firstOrNull {
-                                                        it.versionId != item.pack.versionId
-                                                    }?.versionId
-                                                    copyDataSelectedKeys = personalDataCopyEntries.map { it.key }.toSet()
-                                                },
-                                                onOpenFolder = {
-                                                    openPackFolder(item.pack.dir, actionErrorSetter = { actionError = it })
-                                                },
-                                                onReinstall = { reinstallConfirmPack = item.pack },
-                                                onExport = {
-                                                    scope.launch {
-                                                        runCatching {
-                                                            val prepared = withContext(Dispatchers.IO) {
-                                                                exportRdiModpack2(item.pack)
-                                                            }.getOrThrow() ?: return@runCatching
-                                                            onOpenTask(ClientTaskManager.submit(prepared.task, prepared.dedupeKey))
-                                                        }.onFailure { actionError = it.message ?: "导出失败" }
-                                                    }
-                                                },
-                                                onExportLogs = {
-                                                    scope.launch {
-                                                        exportLogsPack(item.pack)
-                                                            .onFailure { actionError = it.message ?: "导出日志失败" }
-                                                    }
-                                                },
-                                                onDelete = { deleteConfirmPack = item.pack },
-                                            )
-
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    Row(
-                        modifier = Modifier.fillMaxWidth().padding(top = 16.dp),
-                        horizontalArrangement = Arrangement.End,
-                    ) {
-                        CircleIconButton(
-                            icon = "\uF019",
-                            label = "导入rdipack2",
-                            enabled = !importPreparing,
-                            onClick = {
-                                if (!importPreparing) {
-                                    importPreparing = true
-                                    actionError = null
-                                    scope.launch {
-                                        try {
-                                            val prepared = prepareRdiPack2ImportFromPicker() ?: return@launch
-                                            val runId = ClientTaskManager.submit(prepared.task, prepared.dedupeKey)
-                                            onOpenTask(runId)
-                                        } catch (cancelled: CancellationException) {
-                                            throw cancelled
-                                        } catch (exception: Exception) {
-                                            lgr.error(exception) { "导入rdipack2失败" }
-                                            actionError = exception.message ?: "导入整合包失败"
-                                        } finally {
-                                            importPreparing = false
-                                        }
-                                    }
-                                }
-                            },
-                        )
-                    }
-                }
-            }
-        }
-    }
-
-    /* reinstallRecord?.let { record ->
-        AlertDialog(
-            onDismissRequest = { reinstallRecord = null },
-            title = { Text("确认重装") },
-            text = { Text("将重新下载并覆盖${record.name}的客户端文件。") },
-            confirmButton = {
-                TextButton(onClick = {
-                    reinstallRecord = null
-                    onOpenTask(viewModel.installTask(record, reinstall = true))
-                }) { Text("确认重装") }
-            },
-            dismissButton = { TextButton(onClick = { reinstallRecord = null }) { Text("取消") } },
-        )
-    }
-    deleteRecord?.let { record ->
-        AlertDialog(
-            onDismissRequest = { deleteRecord = null },
-            title = { Text("删除${record.name}？") },
-            text = { Text("这会删除本地整合包及其记录，不能撤销。") },
-            confirmButton = {
-                TextButton(onClick = {
-                    deleteRecord = null
-                    viewModel.delete(record)
-                }) { Text("删除") }
-            },
-            dismissButton = { TextButton(onClick = { deleteRecord = null }) { Text("取消") } },
-        )
-    }
-    */
     configEditorPack?.let { pack ->
         Dialog(
             onDismissRequest = { resetLocalConfigEditorState(clearPack = true) },
@@ -701,7 +620,7 @@ fun ModpackLocalListScreen(
         val targetCandidates = legacyPacks.filter { it.versionId != sourcePack.versionId }
         val selectedTarget = targetCandidates.firstOrNull { it.versionId == copyDataTargetVersionId }
         Dialog(
-            onDismissRequest = ::resetCopyDialog,
+            onDismissRequest = { resetCopyDialog() },
             properties = DialogProperties(usePlatformDefaultWidth = false),
         ) {
             Surface(
@@ -821,7 +740,7 @@ fun ModpackLocalListScreen(
                     }
                     Spacer(Modifier.height(16.dp))
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                        TextButton(onClick = ::resetCopyDialog) { Text("取消") }
+                        TextButton(onClick = { resetCopyDialog() }) { Text("取消") }
                         Spacer(Modifier.width(8.dp))
                         TextButton(
                             enabled = selectedTarget != null && copyDataSelectedKeys.isNotEmpty(),
@@ -852,10 +771,11 @@ fun ModpackLocalListScreen(
 private val INSTALL_TIME_FORMAT: DateTimeFormatter =
     DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm").withZone(ZoneId.systemDefault())
 
-/** Modpack tile: left click opens the action menu at the cursor, right click plays singleplayer, middle click opens its plaza page. */
+/** Modpack tile ([glass] picks how its rim is drawn): left click opens the action menu at the cursor, right click plays singleplayer, middle click opens its plaza page. */
 @Composable
 private fun InstalledCard(
     pack: ModpackLocalDir,
+    glass: TileGlass,
     onOpenPlay: () -> Unit,
     onOpenModpackInfo: () -> Unit,
     isRunning: Boolean,
@@ -936,6 +856,7 @@ private fun InstalledCard(
     ) {
         IconTileCard(
             title = pack.name,
+            glass = glass,
             hint = hint,
             statusDotColor = TILE_ACTIVE_DOT_COLOR.takeIf { isRunning },
             showHint = !expanded,
@@ -943,7 +864,7 @@ private fun InstalledCard(
             onSecondaryClick = onOpenPlay,
             onTertiaryClick = onOpenModpackInfo,
         ) {
-            val iconModifier = Modifier.fillMaxSize().clip(RoundedCornerShape(16.dp))
+            val iconModifier = Modifier.fillMaxSize().clip(TileIconShape)
             val iconUrl = pack.iconUrl?.takeIf(String::isNotBlank)
             if (iconUrl != null) {
                 HttpImage(
@@ -959,7 +880,7 @@ private fun InstalledCard(
     }
 }
 
-private fun ModpackLocalDir.toPlayArgs(): McPlayArgs = McPlayArgs(
+internal fun ModpackLocalDir.toPlayArgs(): McPlayArgs = McPlayArgs(
     title = "单机 - ${vo?.name.orEmpty()}",
     mcVer = requireNotNull(vo).mcVer,
     modLoader = requireNotNull(vo).modloader,
@@ -970,106 +891,6 @@ private fun ModpackLocalDir.toPlayArgs(): McPlayArgs = McPlayArgs(
     modpackIconUrl = iconUrl,
     versionName = verName,
 )
-
-/* @Composable
-private fun UnlinkedModpackCard(
-    directory: Path,
-    onOpenFolder: () -> Unit,
-) {
-    Surface(
-        modifier = Modifier.fillMaxWidth(),
-        shape = MaterialTheme.shapes.medium,
-        tonalElevation = 2.dp,
-    ) {
-        Column(
-            modifier = Modifier.padding(14.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
-            Text("未关联本地数据", style = MaterialTheme.typography.titleMedium)
-            Text(
-                directory.fileName?.toString() ?: directory.toString(),
-                style = MaterialTheme.typography.bodyMedium,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            Text(
-                "这是可恢复的未关联本地数据，不能直接上传；如需发布，请重新选择CurseForge或Modrinth安装包。",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                TextButton(onClick = onOpenFolder) { Text("打开目录") }
-            }
-        }
-    }
-}
-
-@Composable
-private fun Modpack2InstalledCard(
-    record: LocalModpack2InstanceRecord,
-    isRunning: Boolean,
-    onOpenPlay: () -> Unit,
-    onReinstall: () -> Unit,
-    onOpenFolder: () -> Unit,
-    onCreateHost: (() -> Unit)?,
-    onDelete: () -> Unit,
-    onOpenContent: () -> Unit,
-) {
-    var expanded by remember(record.versionId) { mutableStateOf(false) }
-    fun closeAnd(action: () -> Unit): () -> Unit = {
-        expanded = false
-        action()
-    }
-
-    val versionLabel = "MC${record.mcVersion.mcVer} ${record.modLoader.name}"
-    CursorPositionBox(
-        modifier = Modifier.widthIn(max = 350.dp),
-        onSecondaryPress = { expanded = true },
-        cursorContent = {
-            DropdownMenu(expanded, { expanded = false }) {
-                RDropdownMenuItem("游玩", "\uEB9B", closeAnd(onOpenPlay))
-                RDropdownMenuItem("模组·材质·光影", "\uF1B2", closeAnd(onOpenContent))
-                onCreateHost?.let { createHost ->
-                    RDropdownMenuItem("创建多人房间", "\uF04B", closeAnd(createHost))
-                }
-                HorizontalDivider()
-                RDropdownMenuItem("目录", "\uEAED", closeAnd(onOpenFolder))
-                RDropdownMenuItem("重装", "\uF021", closeAnd(onReinstall))
-                HorizontalDivider()
-                RDropdownMenuItem("删除", "\uEA81", closeAnd(onDelete), enabled = !isRunning, danger = true)
-            }
-        },
-    ) {
-        ModpackManageCard(
-            modifier = Modifier.fillMaxWidth(),
-            presentation = ModpackManageCardPresentation(
-                name = record.name,
-                versionLabel = versionLabel,
-                iconUrl = record.iconUrl,
-            ),
-            isRunning = isRunning,
-            onClick = { expanded = true },
-        )
-    }
-}
-
-private fun LocalModpack2InstanceRecord.toPlayArgs(): McPlayArgs = McPlayArgs(
-    title = "单机 - $name",
-    mcVer = mcVersion,
-    modLoader = modLoader,
-    versionId = versionId.toString(),
-    playArg = "${server.hqUrl}\n127.0.0.1:55667\ntest\n55555\n${loggedAccount.uuid}\n${loggedAccount.name}",
-    modpackName = name,
-    versionDir = ClientDirs.versionsDir.resolve(versionId.toString()).absolutePath,
-)
-
-private fun calebxzhou.rdi.common.model.McVersion.supportsHost2Loader(
-    loader: calebxzhou.rdi.common.model.ModLoader,
-): Boolean = (this == calebxzhou.rdi.common.model.McVersion.V201 &&
-    loader == calebxzhou.rdi.common.model.ModLoader.forge) ||
-    (this == calebxzhou.rdi.common.model.McVersion.V211 &&
-        loader == calebxzhou.rdi.common.model.ModLoader.neoforge)
-*/
 
 private fun openPackFolder(packDir: java.io.File, actionErrorSetter: (String) -> Unit) {
     if (!packDir.exists()) {

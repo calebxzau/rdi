@@ -1,25 +1,48 @@
 package calebxzau.rdi.bgrenderer
 
+import kotlin.math.abs
+import kotlin.math.atan2
+import kotlin.math.cos
+import kotlin.math.exp
+import kotlin.math.pow
+import kotlin.math.sin
+import kotlin.math.sqrt
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
-import kotlin.math.abs
-import kotlin.math.atan2
-import kotlin.math.cos
-import kotlin.math.sin
-import kotlin.math.sqrt
-import kotlin.math.pow
 import org.joml.Matrix4f
 import org.joml.Vector3f
 import org.joml.Vector4f
 
 class BackgroundSceneTest {
+    private val trackTimes = listOf(
+        0.0,
+        CAMERA_CYCLE_SECONDS / 4.0,
+        CAMERA_CYCLE_SECONDS / 2.0,
+        CAMERA_CYCLE_SECONDS * 3.0 / 4.0,
+        CAMERA_CYCLE_SECONDS
+    )
+
+    private fun viewProjection(pose: CameraPose): Matrix4f {
+        val projection = Matrix4f().perspective(
+            Math.toRadians(CAMERA_FOV_DEGREES.toDouble()).toFloat(),
+            RENDER_WIDTH.toFloat() / RENDER_HEIGHT,
+            CAMERA_NEAR_PLANE,
+            CAMERA_FAR_PLANE
+        )
+        val view = Matrix4f().lookAt(
+            Vector3f(pose.eyeX, pose.eyeY, pose.eyeZ),
+            Vector3f(pose.targetX, pose.targetY, pose.targetZ),
+            Vector3f(0f, 1f, 0f)
+        )
+        return projection.mul(view)
+    }
+
     @Test
     fun reflectionUsesHalfResolutionAndMirrorsAroundWater() {
         assertEquals(640, REFLECTION_WIDTH)
         assertEquals(360, REFLECTION_HEIGHT)
-        assertEquals(0.1f, CAMERA_NEAR_PLANE)
         assertEquals(5.0f, reflectedY(reflectedY(5.0f)), absoluteTolerance = 0.000001f)
         assertTrue(reflectedY(5.0f) < WATER_LEVEL)
         assertEquals(
@@ -30,213 +53,154 @@ class BackgroundSceneTest {
     }
 
     @Test
-    fun dunesAreStablePerSeedAndBoundedAwayFromBoat() {
-        val first = BackgroundScene.dunes(17L)
-        assertEquals(first, BackgroundScene.dunes(17L))
-        assertTrue(first != BackgroundScene.dunes(18L))
-        assertEquals(24, first.size)
-        assertTrue(first.all { it.x in -58f..58f && it.z in -66f..-44f && it.radius in 3.5f..8f && it.height in 2f..6.5f })
-        val cacti = BackgroundScene.cacti(17L)
-        assertEquals(16, cacti.size)
-        assertEquals(cacti, BackgroundScene.cacti(17L))
-        assertTrue(cacti != BackgroundScene.cacti(18L))
-        assertTrue(cacti.all { it.height in 1.8f..4.2f })
-        assertTrue(cacti.none { it.x in -24f..24f && it.z > -24f })
-        assertTrue(cacti.any { it.x == -57f && it.z == -16f && it.groundY == 5.35f })
-    }
-
-    @Test
-    fun harborLayoutBuildsThreeDepthLayersAndLandmarksWithinBudget() {
-        val blocks = BackgroundScene.harborBlocks()
-        assertEquals(blocks, BackgroundScene.harborBlocks())
-        HarborGroup.entries.forEach { group -> assertTrue(blocks.any { it.group == group }) }
-        val foreground = blocks.filter { it.group == HarborGroup.Foreground }
-        assertTrue(foreground.minOf { it.x - it.sizeX / 2f } <= -60f)
-        assertTrue(foreground.maxOf { it.x + it.sizeX / 2f } >= 60f)
-        assertTrue(foreground.all { it.z > -22f })
-        val firstTerrace = foreground.filter { it.material == BlockMaterial.SAND }.take(3)
-        assertEquals(listOf(28f, 23.3f, 18.6f), firstTerrace.map { it.sizeX })
-        assertEquals(listOf(-48f, -47.9f, -46f), firstTerrace.map { it.x })
-        assertEquals(listOf(-12f, -12.1f, -11.3f), firstTerrace.map { it.z })
-        assertTrue(firstTerrace.map { it.x }.distinct().size == 3)
-        assertTrue(firstTerrace.map { it.z }.distinct().size == 3)
-        assertTrue(blocks.filter { it.group == HarborGroup.Midground }.all { it.z in -45f..-22f })
-        assertTrue(blocks.filter { it.group == HarborGroup.Background }.all { it.z < -42f })
-        val corridor = blocks.filter { it.material == BlockMaterial.SAND && it.group in setOf(HarborGroup.Foreground, HarborGroup.Midground) && it.z > -24f }
-        assertTrue(corridor.none { it.x + it.sizeX / 2f >= -24f && it.x - it.sizeX / 2f <= 24f && it.z + it.sizeZ / 2f >= -24f && it.z - it.sizeZ / 2f <= -8f })
-        assertEquals(19, foreground.size)
-        assertEquals(38, blocks.count { it.group == HarborGroup.Midground })
-        assertEquals(63, blocks.count { it.group == HarborGroup.Background })
-        val newForeground = foreground.drop(10).take(9)
-        val newMidground = blocks.filter { it.group == HarborGroup.Midground }.drop(22).take(16)
-        val newBackground = blocks.filter { it.group == HarborGroup.Background }.drop(35).take(28)
-        assertTrue((newForeground + newMidground + newBackground).all { it.material == BlockMaterial.SAND && it.sizeX > 0f && it.sizeZ > 0f })
-        val protectedBounds = { block: HarborBlock ->
-            block.x - block.sizeX / 2f <= 24f && block.x + block.sizeX / 2f >= -24f &&
-                block.z - block.sizeZ / 2f <= -8f && block.z + block.sizeZ / 2f >= -24f
-        }
-        assertTrue((newForeground + newMidground).none(protectedBounds))
-        val rightAdditions = (newForeground + newMidground).filter { it.x in 24f..30f }
-        assertTrue(rightAdditions.all { it.x - it.sizeX / 2f > 24f && it.x + it.sizeX / 2f <= 28f })
-        val newBackgroundTop = newBackground.map { it.y + it.sizeY / 2f }
-        assertEquals(12.85f, newBackgroundTop.take(10).maxOrNull()!!, absoluteTolerance = 0.00001f)
-        assertEquals(12.85f, newBackgroundTop.drop(10).take(10).maxOrNull()!!, absoluteTolerance = 0.00001f)
-        assertEquals(10.35f, newBackgroundTop.drop(20).take(8).maxOrNull()!!, absoluteTolerance = 0.00001f)
-        assertTrue(newBackgroundTop.drop(20).maxOrNull()!! < newBackgroundTop.take(20).maxOrNull()!!)
-        assertTrue(newBackgroundTop.maxOrNull()!! < blocks.filter { it.group == HarborGroup.RightLighthouse }.maxOf { it.y + it.sizeY / 2f })
-        val originalBackground = blocks.filter { it.group == HarborGroup.Background }.take(35)
-        val oldLeftBankTop = originalBackground.filter { it.x < 0f }.maxOf { it.y + it.sizeY / 2f }
-        val oldRightBankTop = originalBackground.filter { it.x > 30f }.maxOf { it.y + it.sizeY / 2f }
-        val oldCenterBankTop = originalBackground.filter { it.x in 0f..30f }.maxOf { it.y + it.sizeY / 2f }
-        assertTrue(newBackgroundTop.take(10).maxOrNull()!! > oldLeftBankTop)
-        assertTrue(newBackgroundTop.drop(10).take(10).maxOrNull()!! > oldRightBankTop)
-        assertTrue(newBackgroundTop.drop(20).take(8).maxOrNull()!! > oldCenterBankTop)
-        fun maxTop(group: HarborGroup) = blocks.filter { it.group == group }.maxOf { it.y + it.sizeY / 2f }
-        assertTrue(maxTop(HarborGroup.RightLighthouse) > maxTop(HarborGroup.LeftPavilion))
-        assertTrue(maxTop(HarborGroup.RightLighthouse) > maxTop(HarborGroup.LeftShelter))
-        assertEquals(21, blocks.count { it.group == HarborGroup.LeftDock })
-        assertEquals(21, blocks.count { it.group == HarborGroup.RightDock })
-        assertEquals(16, blocks.count { it.group == HarborGroup.LeftShelter })
-        assertEquals(16, blocks.count { it.group == HarborGroup.RightShelter })
-        assertEquals(23, blocks.count { it.group == HarborGroup.LeftPavilion })
-        assertEquals(39, blocks.count { it.group == HarborGroup.CenterMarket })
-        assertEquals(22, blocks.count { it.group == HarborGroup.RightLighthouse })
-        val lighthouseBlocks = blocks.filter { it.group == HarborGroup.RightLighthouse }
-        assertTrue(lighthouseBlocks.all { it.x in 15f..21f })
-        val lighthouseSupports = lighthouseBlocks.filter { it.material == BlockMaterial.SAND && it.sizeY == 1f }
-        assertEquals(listOf(4.35f, 5.35f, 6.35f, 7.35f), lighthouseSupports.map { it.y + it.sizeY / 2f })
-        lighthouseSupports.zipWithNext().forEach { (lower, upper) ->
-            assertEquals(lower.y + lower.sizeY / 2f, upper.y - upper.sizeY / 2f)
-        }
-        val lighthouseBase = lighthouseBlocks.first { it.material == BlockMaterial.OAK_PLANKS && it.sizeX == 6f && it.sizeY == 1.2f && it.sizeZ == 6f }
-        assertEquals(lighthouseBase.y - lighthouseBase.sizeY / 2f, lighthouseSupports.last().y + lighthouseSupports.last().sizeY / 2f)
-        assertTrue(blocks.any { it.group == HarborGroup.LeftShelter && it.material == BlockMaterial.OAK_PLANKS && it.sizeY == 3.5f })
-        assertTrue(blocks.any { it.group == HarborGroup.CenterMarket && it.material == BlockMaterial.OAK_PLANKS && it.sizeY == 3.2f })
-        assertTrue(blocks.any { it.group == HarborGroup.RightLighthouse && it.material == BlockMaterial.OAK_PLANKS && it.sizeY == 7.2f })
-        val mesh = buildSceneMesh(123L)
-        assertEquals(11_690, mesh.vertices.size / SCENE_VERTEX_FLOATS)
-        assertEquals(17_460, mesh.indices.size)
-        assertTrue(mesh.vertices.size / SCENE_VERTEX_FLOATS < SCENE_VERTEX_BUDGET)
-        assertTrue(mesh.vertices.size / SCENE_VERTEX_FLOATS < 13_182)
-        assertTrue(mesh.vertices.size / SCENE_VERTEX_FLOATS < 12_500)
-        assertTrue(mesh.indices.all { it in 0 until mesh.vertices.size / SCENE_VERTEX_FLOATS })
-        val referencedVertices = mesh.indices.toSet()
-        assertTrue((0 until mesh.vertices.size / SCENE_VERTEX_FLOATS).all { it in referencedVertices })
-        val kinds = mesh.vertices.asSequence().chunked(SCENE_VERTEX_FLOATS).map { it[9] }.toList()
-        assertTrue(kinds.all { it == 0f || it == 1f || it == 2f })
-        assertEquals(144, kinds.count { it == 2f })
-        assertEquals(6, kinds.count { it == 1f })
-        val vertexCount = mesh.vertices.size / SCENE_VERTEX_FLOATS
-        assertEquals(11_540, kinds.count { it == 0f })
-        assertEquals(17_310, mesh.indices.count { kinds[it] == 0f })
-        assertTrue(mesh.indices.all { it in 0 until vertexCount })
-    }
-
-    @Test
-    fun staticSceneUsesMinecraftCornerAoAndKeepsDynamicGeometryUnshaded() {
-        val source = staticAabb(0f, 0f, 0f, 1f, 1f, 1f)
-        val corner = floatArrayOf(0.5f, 0.5f, 0.5f)
-        assertEquals(1f, cornerAmbientOcclusion(source, corner[0], corner[1], corner[2], 0f, 1f, 0f, listOf(source)))
-
-        val sideA = staticAabb(1.05f, 0f, 0f, 1.1f, 1f, 1f)
-        assertEquals(
-            0.86f,
-            cornerAmbientOcclusion(source, corner[0], corner[1], corner[2], 0f, 1f, 0f, listOf(source, sideA)),
-            absoluteTolerance = 0.000001f
-        )
-        val boxBehindFace = staticAabb(0f, -1f, 0f, 2f, 1f, 2f)
-        assertEquals(
-            1f,
-            cornerAmbientOcclusion(source, corner[0], corner[1], corner[2], 0f, 1f, 0f, listOf(source, boxBehindFace)),
-            absoluteTolerance = 0.000001f
-        )
-        val sideB = staticAabb(0f, 0f, 1.05f, 2f, 1f, 1.1f)
-        assertEquals(
-            0.58f,
-            cornerAmbientOcclusion(source, corner[0], corner[1], corner[2], 0f, 1f, 0f, listOf(source, sideA, sideB)),
-            absoluteTolerance = 0.000001f
-        )
-
-        val mesh = buildSceneMesh(123L)
-        val vertices = mesh.vertices.asSequence().chunked(SCENE_VERTEX_FLOATS).toList()
-        assertTrue(vertices.all { it[12] in 0.58f..1f })
-        assertTrue(vertices.any { it[12] < 1f })
-        assertTrue(vertices.filter { it[9] == 1f || it[9] == 2f }.all { it[12] == 1f })
-    }
-
-    @Test
-    fun staticShadowFrameContainsEveryProductionAabbCorner() {
-        val mesh = buildSceneMesh(123L)
-        val frame = buildStaticShadowFrame(mesh.staticAabbs, BackgroundScene.sun(0f))
-        mesh.staticAabbs.flatMap { it.corners().asList() }.forEach { corner ->
-            val clip = Vector4f(corner, 1f).mul(frame.viewProjection)
-            assertTrue(clip.w > 0f)
-            assertTrue(clip.x / clip.w in -1f..1f)
-            assertTrue(clip.y / clip.w in -1f..1f)
-            assertTrue(clip.z / clip.w in -1f..1f)
-        }
-        assertEquals(frame.viewProjection, buildStaticShadowViewProjection(mesh.staticAabbs, BackgroundScene.sun(0f)))
-    }
-
-    @Test
-    fun cameraStaysInNarrowFrontFacingArcAndReturnsToSamePose() {
+    fun cameraOrbitsAShortArcBehindThePlayerAndReturnsToTheSamePose() {
         val start = BackgroundScene.camera(0.0)
-        val quarter = BackgroundScene.camera(CAMERA_CYCLE_SECONDS / 4.0)
-        val half = BackgroundScene.camera(CAMERA_CYCLE_SECONDS / 2.0)
-        val threeQuarter = BackgroundScene.camera(CAMERA_CYCLE_SECONDS * 3.0 / 4.0)
-        val repeat = BackgroundScene.camera(CAMERA_CYCLE_SECONDS)
-        val center = CAMERA_CENTER_YAW_RADIANS
+        assertEquals(0f, start.yawRadians)
+        assertEquals(PLAYER_X, start.eyeX, absoluteTolerance = 0.0001f)
+        assertEquals(PLAYER_FEET_Y + CAMERA_HEIGHT_ABOVE_PLAYER, start.eyeY, absoluteTolerance = 0.0001f)
+        assertEquals(PLAYER_Z + CAMERA_ORBIT_RADIUS, start.eyeZ, absoluteTolerance = 0.0001f)
+        assertEquals(CAMERA_SWING_RADIANS, BackgroundScene.camera(CAMERA_CYCLE_SECONDS / 4.0).yawRadians, absoluteTolerance = 0.000001f)
+        assertEquals(-CAMERA_SWING_RADIANS, BackgroundScene.camera(CAMERA_CYCLE_SECONDS * 3.0 / 4.0).yawRadians, absoluteTolerance = 0.000001f)
+        assertEquals(start, BackgroundScene.camera(CAMERA_CYCLE_SECONDS))
+        val before = BackgroundScene.camera(CAMERA_CYCLE_SECONDS - 0.001)
+        val after = BackgroundScene.camera(CAMERA_CYCLE_SECONDS + 0.001)
+        assertTrue(abs(before.yawRadians - after.yawRadians) < 0.001f)
+        val nearby = BackgroundScene.camera(0.1)
+        assertTrue(abs(nearby.eyeX - start.eyeX) < 0.01f)
+        assertTrue(abs(nearby.eyeY - start.eyeY) < 0.01f)
 
-        assertEquals(center, start.yawRadians)
-        assertEquals(center + CAMERA_SWING_RADIANS, quarter.yawRadians, absoluteTolerance = 0.000001f)
-        assertEquals(center, half.yawRadians, absoluteTolerance = 0.000001f)
-        assertEquals(center - CAMERA_SWING_RADIANS, threeQuarter.yawRadians, absoluteTolerance = 0.000001f)
-        listOf(start, quarter, half, threeQuarter, repeat).forEach { pose ->
-            assertTrue(pose.yawRadians in center - CAMERA_SWING_RADIANS..center + CAMERA_SWING_RADIANS)
+        trackTimes.forEach { time ->
+            val pose = BackgroundScene.camera(time)
+            val radialX = pose.eyeX - PLAYER_X
+            val radialZ = pose.eyeZ - PLAYER_Z
+            assertEquals(CAMERA_ORBIT_RADIUS, sqrt(radialX * radialX + radialZ * radialZ), absoluteTolerance = 0.001f)
+            val lookX = pose.targetX - pose.eyeX
+            val lookY = pose.targetY - pose.eyeY
+            val lookZ = pose.targetZ - pose.eyeZ
+            val horizontal = sqrt(lookX * lookX + lookZ * lookZ)
+            // The view keeps looking away from the orbit center, down by the fixed pitch.
+            assertEquals(-1f, (lookX * radialX + lookZ * radialZ) / (horizontal * CAMERA_ORBIT_RADIUS), absoluteTolerance = 0.0001f)
+            val pitch = Math.toDegrees(atan2(lookY.toDouble(), horizontal.toDouble())).toFloat()
+            assertEquals(CAMERA_PITCH_DEGREES, pitch, absoluteTolerance = 0.01f)
         }
-        assertEquals(start, repeat)
-        val beforeBoundary = BackgroundScene.camera(CAMERA_CYCLE_SECONDS - 0.001)
-        val afterBoundary = BackgroundScene.camera(CAMERA_CYCLE_SECONDS + 0.001)
-        assertTrue(abs(beforeBoundary.yawRadians - afterBoundary.yawRadians) < 0.001f)
-        assertEquals(50f, start.distance)
-        assertEquals(8f, start.height)
-        assertEquals(CAMERA_TARGET_X, 0f)
-        assertEquals(CAMERA_TARGET_Y, 5f)
-        assertEquals(CAMERA_TARGET_Z, -25f)
-        assertEquals(CAMERA_FOV_DEGREES, 60f)
     }
 
     @Test
-    fun boatAndPlayerStayInBoundedWaterAnchor() {
-        val poses = listOf(
-            0.0,
-            BOAT_SLIDE_PERIOD_SECONDS / 4.0,
-            BOAT_SLIDE_PERIOD_SECONDS / 2.0,
-            BOAT_SLIDE_PERIOD_SECONDS * 3.0 / 4.0
-        ).map(BackgroundScene::boat)
-        assertEquals(-7f, poses.first().x)
-        assertEquals(-7f, BOAT_CENTER_X)
-        assertEquals(25f, BOAT_CENTER_Z)
-        assertEquals(1.25f, BOAT_VISUAL_SCALE)
-        assertEquals(0.08f, PLAYER_VISUAL_SCALE)
-        assertEquals(BOAT_CENTER_X + BOAT_SLIDE_DISTANCE, poses[1].x, absoluteTolerance = 0.000001f)
-        assertEquals(BOAT_CENTER_X, poses[2].x, absoluteTolerance = 0.000001f)
-        assertEquals(BOAT_CENTER_X - BOAT_SLIDE_DISTANCE, poses[3].x, absoluteTolerance = 0.000001f)
-        assertEquals(0.035f, poses[1].yawRadians, absoluteTolerance = 0.000001f)
-        assertEquals(0f, poses[2].yawRadians, absoluteTolerance = 0.000001f)
-        assertEquals(-0.035f, poses[3].yawRadians, absoluteTolerance = 0.000001f)
-        assertEquals(0f, poses[1].rollRadians, absoluteTolerance = 0.000001f)
-        assertEquals(-0.018f, poses[2].rollRadians, absoluteTolerance = 0.000001f)
-        assertEquals(0f, poses[3].rollRadians, absoluteTolerance = 0.000001f)
-        assertTrue(poses.all { it.x in BOAT_CENTER_X - BOAT_SLIDE_DISTANCE..BOAT_CENTER_X + BOAT_SLIDE_DISTANCE && it.y > WATER_LEVEL })
-        assertTrue(poses.all { it.z == BOAT_CENTER_Z })
-        poses.forEach { boat ->
-            val anchor = BackgroundScene.playerAnchor(boat)
-            assertEquals(boat.x, anchor.x)
-            assertEquals(boat.z, anchor.z)
-            assertEquals(0.05f, anchor.y - boat.y, absoluteTolerance = 0.000001f)
-            assertTrue(anchor.y > WATER_LEVEL)
+    fun playerStaysInTheLowerCenterOfTheFrameAcrossTheCameraTrack() {
+        assertEquals(1.8f, 32f * PLAYER_VISUAL_SCALE, absoluteTolerance = 0.0001f)
+        trackTimes.forEach { time ->
+            val clipFeet = Vector4f(PLAYER_X, PLAYER_FEET_Y, PLAYER_Z, 1f).mul(viewProjection(BackgroundScene.camera(time)))
+            val clipHead = Vector4f(PLAYER_X, PLAYER_FEET_Y + 1.8f, PLAYER_Z, 1f).mul(viewProjection(BackgroundScene.camera(time)))
+            assertTrue(clipFeet.w > 0f && clipHead.w > 0f)
+            val feetY = clipFeet.y / clipFeet.w
+            val headY = clipHead.y / clipHead.w
+            assertTrue(abs(clipFeet.x / clipFeet.w) < 0.05f, "player drifted sideways at t=$time")
+            // The high, wide view: the player stands a little below the frame center, small against the valley.
+            assertTrue(feetY in -0.3f..-0.1f, "player feet at NDC y=$feetY at t=$time")
+            val pixelHeight = (headY - feetY) * RENDER_HEIGHT / 2f
+            assertTrue(pixelHeight in 35f..60f, "player is $pixelHeight px tall at t=$time")
         }
+    }
+
+    @Test
+    fun playerIdlePoseFollowsMinecraftArmBobAndStaysSubtle() {
+        val start = BackgroundScene.playerIdlePose(0.0)
+        assertEquals(0f, start.headYaw)
+        assertEquals(0.1f, start.armRoll, absoluteTolerance = 1e-6f)
+        assertEquals(0f, start.armPitch)
+        listOf(0.0, 3.3, 17.0, 600.0, 86_400.0 * 30).forEach { time ->
+            val pose = BackgroundScene.playerIdlePose(time)
+            assertTrue(abs(pose.headYaw) <= PLAYER_LOOK_AMPLITUDE.toFloat() + 1e-6f)
+            assertTrue(pose.armRoll in -1e-6f..0.1f + 1e-6f)
+            assertTrue(abs(pose.armPitch) <= 0.05f + 1e-6f)
+            assertTrue(pose.capePitch in 0.07f - 1e-6f..0.17f + 1e-6f)
+            val next = BackgroundScene.playerIdlePose(time + 0.05)
+            assertTrue(abs(next.headYaw - pose.headYaw) < 0.01f && abs(next.armRoll - pose.armRoll) < 0.01f)
+        }
+        assertEquals(BackgroundScene.playerIdlePose(42.0), BackgroundScene.frameState(42.0).playerPose)
+    }
+
+    @Test
+    fun goldenHourSunIsLowNormalizedAndJustOutsideTheRightEdge() {
+        val sun = BackgroundScene.sun()
+        val length = sqrt(sun.directionX * sun.directionX + sun.directionY * sun.directionY + sun.directionZ * sun.directionZ)
+        assertEquals(1f, length, absoluteTolerance = 0.0001f)
+        val horizontal = sqrt(sun.directionX * sun.directionX + sun.directionZ * sun.directionZ)
+        val elevation = Math.toDegrees(atan2((-sun.directionY).toDouble(), horizontal.toDouble())).toFloat()
+        assertEquals(SUN_ELEVATION_DEGREES, elevation, absoluteTolerance = 0.01f)
+        // The sun lights the scene from the right (+X), a little ahead of the view direction.
+        assertTrue(-sun.directionX > 0.85f)
+        assertTrue(-sun.directionZ < 0f)
+        trackTimes.forEach { time ->
+            val pose = BackgroundScene.camera(time)
+            val center = BackgroundScene.sunBillboardCenter(pose.eyeX, pose.eyeY, pose.eyeZ, sun)
+            val clip = Vector4f(center[0], center[1], center[2], 1f).mul(viewProjection(pose))
+            // Behind the image plane or beyond the right edge: the disc itself never shows, only its sky glow.
+            assertTrue(clip.w <= 0f || clip.x / clip.w > 1f)
+        }
+        assertEquals(SUN_BILLBOARD_DISTANCE, BackgroundScene.sunBillboardCenter(0f, 0f, 0f, sun).let {
+            sqrt(it[0] * it[0] + it[1] * it[1] + it[2] * it[2])
+        }, absoluteTolerance = 0.01f)
+        assertTrue(SUN_BILLBOARD_DISTANCE < CAMERA_FAR_PLANE)
+    }
+
+    @Test
+    fun sunBillboardBasisIsOrthonormalAndFacesTheEye() {
+        val sun = BackgroundScene.sun()
+        val basis = BackgroundScene.sunBillboardBasis(sun)
+        val rightLength = sqrt(basis.rightX * basis.rightX + basis.rightY * basis.rightY + basis.rightZ * basis.rightZ)
+        val upLength = sqrt(basis.upX * basis.upX + basis.upY * basis.upY + basis.upZ * basis.upZ)
+        val dot = basis.rightX * basis.upX + basis.rightY * basis.upY + basis.rightZ * basis.upZ
+        assertEquals(1f, rightLength, absoluteTolerance = 0.0001f)
+        assertEquals(1f, upLength, absoluteTolerance = 0.0001f)
+        assertEquals(0f, dot, absoluteTolerance = 0.0001f)
+        val normalX = basis.rightY * basis.upZ - basis.rightZ * basis.upY
+        val normalY = basis.rightZ * basis.upX - basis.rightX * basis.upZ
+        val normalZ = basis.rightX * basis.upY - basis.rightY * basis.upX
+        // The quad normal points from the billboard back toward the eye.
+        assertTrue(normalX * sun.directionX + normalY * sun.directionY + normalZ * sun.directionZ > 0.999f)
+    }
+
+    @Test
+    fun atmosphereOpticalDepthMatchesNumericIntegration() {
+        fun numeric(from: FloatArray, to: FloatArray): Double {
+            val steps = 20_000
+            var sum = 0.0
+            val dx = (to[0] - from[0]).toDouble()
+            val dy = (to[1] - from[1]).toDouble()
+            val dz = (to[2] - from[2]).toDouble()
+            val length = sqrt(dx * dx + dy * dy + dz * dz)
+            for (step in 0 until steps) {
+                val t = (step + 0.5) / steps
+                val y = from[1] + dy * t
+                sum += ATMOSPHERE_DENSITY * exp(-ATMOSPHERE_HEIGHT_FALLOFF * (y - WATER_LEVEL))
+            }
+            return sum / steps * length
+        }
+        listOf(
+            floatArrayOf(0.5f, 30.5f, 14f) to floatArrayOf(150f, 84f, -410f),
+            floatArrayOf(0.5f, 30.5f, 14f) to floatArrayOf(60f, 2.35f, -120f),
+            floatArrayOf(-20f, 10f, 0f) to floatArrayOf(300f, 10f, -300f),
+            floatArrayOf(0f, 2.35f, -100f) to floatArrayOf(0f, 60f, -400f)
+        ).forEach { (from, to) ->
+            val expected = numeric(from, to)
+            val actual = atmosphereOpticalDepth(from[0], from[1], from[2], to[0], to[1], to[2])
+            assertEquals(expected, actual.toDouble(), absoluteTolerance = expected * 1.0e-3 + 1.0e-6)
+        }
+        assertEquals(0f, atmosphereOpticalDepth(1f, 2f, 3f, 1f, 2f, 3f), absoluteTolerance = 0f)
+    }
+
+    @Test
+    fun atmosphereKeepsTheForegroundClearAndHazesTheFarRange() {
+        val eye = BackgroundScene.camera(0.0)
+        fun transmittance(x: Float, y: Float, z: Float) =
+            exp(-atmosphereOpticalDepth(eye.eyeX, eye.eyeY, eye.eyeZ, x, y, z))
+        assertTrue(transmittance(PLAYER_X, PLAYER_FEET_Y, PLAYER_Z) > 0.95f)
+        assertTrue(transmittance(LAKE_CENTER_X.toFloat(), WATER_LEVEL, LAKE_CENTER_Z.toFloat()) in 0.65f..0.9f)
+        assertTrue(transmittance(150f, 80f, -410f) in 0.7f..0.95f)
+        assertTrue(transmittance(-150f, 20f, -520f) < transmittance(150f, 80f, -410f))
+        // The haze thins quickly with height, so snowy summits keep their contrast over a hazy valley floor.
+        assertTrue(transmittance(150f, 110f, -410f) > transmittance(150f, 10f, -410f) + 0.1f)
     }
 
     @Test
@@ -255,124 +219,32 @@ class BackgroundSceneTest {
     }
 
     @Test
-    fun waterSurfaceHeightMatchesEachCornerAndBothTriangleInterpolations() {
-        val time = 7.25f
-        val s = WATER_EXTENT
-        val corners = listOf(-s to s, s to s, s to -s, -s to -s)
-        corners.forEach { (x, z) ->
-            assertEquals(
-                WATER_LEVEL + waterVertexOffset(x, z, time),
-                waterSurfaceHeightAt(x, z, time),
-                absoluteTolerance = 0.000001f
-            )
-        }
-
-        fun point(u: Float, v: Float): Pair<Float, Float> = (2f * s * u - s) to (s - 2f * s * v)
-        val h0 = waterVertexOffset(-s, s, time)
-        val h1 = waterVertexOffset(s, s, time)
-        val h2 = waterVertexOffset(s, -s, time)
-        val h3 = waterVertexOffset(-s, -s, time)
-        val first = point(0.75f, 0.25f)
-        assertEquals(
-            WATER_LEVEL + (1f - 0.75f) * h0 + (0.75f - 0.25f) * h1 + 0.25f * h2,
-            waterSurfaceHeightAt(first.first, first.second, time),
-            absoluteTolerance = 0.00001f
-        )
-        val second = point(0.25f, 0.75f)
-        assertEquals(
-            WATER_LEVEL + (1f - 0.75f) * h0 + 0.25f * h2 + (0.75f - 0.25f) * h3,
-            waterSurfaceHeightAt(second.first, second.second, time),
-            absoluteTolerance = 0.00001f
-        )
-    }
-
-    @Test
-    fun waterSurfaceIsContinuousAcrossTheSharedDiagonalAndAnimationPeriod() {
-        val time = 12.5f
-        val s = WATER_EXTENT
-        val u = 0.5f
-        val v = 0.5f
-        val h0 = waterVertexOffset(-s, s, time)
-        val h1 = waterVertexOffset(s, s, time)
-        val h2 = waterVertexOffset(s, -s, time)
-        val h3 = waterVertexOffset(-s, -s, time)
-        val firstDiagonal = (1f - u) * h0 + (u - v) * h1 + v * h2
-        val secondDiagonal = (1f - v) * h0 + u * h2 + (v - u) * h3
-        assertEquals(firstDiagonal, secondDiagonal, absoluteTolerance = 0.000001f)
-        val diagonalX = 2f * s * u - s
-        val diagonalZ = s - 2f * s * v
-        assertEquals(WATER_LEVEL + firstDiagonal, waterSurfaceHeightAt(diagonalX, diagonalZ, time), absoluteTolerance = 0.000001f)
-        val epsilon = 0.0001f
-        val belowDiagonal = waterSurfaceHeightAt(2f * s * (u - epsilon) - s, diagonalZ, time)
-        val aboveDiagonal = waterSurfaceHeightAt(2f * s * (u + epsilon) - s, diagonalZ, time)
-        assertTrue(abs(belowDiagonal - aboveDiagonal) < 0.0001f)
-
-        val before = waterSurfaceHeightAt(BOAT_CENTER_X, BOAT_CENTER_Z, WATER_ANIMATION_PERIOD_SECONDS.toFloat() - 0.001f)
-        val after = waterSurfaceHeightAt(BOAT_CENTER_X, BOAT_CENTER_Z, 0.001f)
-        assertTrue(abs(before - after) < 0.0003f)
-    }
-
-    @Test
-    fun frameStateAndBoatShareTheWrappedWaterTimeAndSurfaceHeight() {
-        val elapsedTimes = listOf(0.0, 7.25, 18.0, -1.0, 12345.678, WATER_ANIMATION_PERIOD_SECONDS - 0.001, WATER_ANIMATION_PERIOD_SECONDS + 0.001)
-        elapsedTimes.forEach { elapsed ->
-            val state = BackgroundScene.frameState(elapsed)
-            val expectedY = BOAT_WATERLINE + (
-                waterSurfaceHeightAt(state.boat.x, BOAT_CENTER_Z, state.waterTimeSeconds) - WATER_LEVEL
-                )
-            assertEquals(expectedY, state.boat.y, absoluteTolerance = 0.000001f)
-            assertEquals(state.boat, BackgroundScene.boat(elapsed))
-            assertEquals(BOAT_CENTER_Z, state.boat.z)
-            assertEquals(0.05f, BackgroundScene.playerAnchor(state.boat).y - state.boat.y, absoluteTolerance = 0.000001f)
-        }
-    }
-
-    @Test
-    fun boatAndPlayerAnchorsAreTwiceAsCloseAndStayInFrustum() {
-        val projection = Matrix4f().perspective(
-            Math.toRadians(CAMERA_FOV_DEGREES.toDouble()).toFloat(),
-            RENDER_WIDTH.toFloat() / RENDER_HEIGHT,
-            CAMERA_NEAR_PLANE,
-            CAMERA_FAR_PLANE
-        )
-        val target = Vector3f(CAMERA_TARGET_X, CAMERA_TARGET_Y, CAMERA_TARGET_Z)
-        val times = listOf(0.0, 15.0, 30.0, 45.0, 60.0)
-        times.forEach { time ->
-            val camera = BackgroundScene.camera(time)
-            val eye = Vector3f(
-                camera.distance * cos(camera.yawRadians),
-                camera.height,
-                camera.distance * sin(camera.yawRadians)
-            )
-            val view = Matrix4f().lookAt(eye, target, Vector3f(0f, 1f, 0f))
-            val viewProjection = Matrix4f(projection).mul(view)
-            val boat = BackgroundScene.boat(time)
-            val player = BackgroundScene.playerAnchor(boat)
-            val newViewPosition = Vector4f(boat.x, boat.y, boat.z, 1f).mul(view)
-            val legacyViewPosition = Vector4f(-14f, boat.y, 0f, 1f).mul(view)
-            val depthRatio = (-legacyViewPosition.z) / (-newViewPosition.z)
-            assertTrue(depthRatio in 1.95f..2.05f)
-            listOf(boat.x to boat.y, player.x to player.y).forEach { (x, y) ->
-                val clip = Vector4f(x, y, boat.z, 1f).mul(viewProjection)
-                assertTrue(clip.w > 0f)
-                assertTrue(clip.x / clip.w in -1f..1f)
-                assertTrue(clip.y / clip.w in -1f..1f)
-                assertTrue(clip.z / clip.w in -1f..1f)
-            }
-        }
-    }
-
-    @Test
     fun frameStateKeepsIndependentPeriodicAnimationsContinuousAtCameraBoundary() {
         val before = BackgroundScene.frameState(CAMERA_CYCLE_SECONDS - 0.001)
         val after = BackgroundScene.frameState(CAMERA_CYCLE_SECONDS + 0.001)
         assertTrue(abs(before.camera.yawRadians - after.camera.yawRadians) < 0.001f)
-        assertTrue(abs(before.boat.x - after.boat.x) < 0.01f)
         assertTrue(abs(before.waterTimeSeconds - after.waterTimeSeconds) < 0.01f)
         assertTrue(abs(before.waterNormalOffset - after.waterNormalOffset) < 0.01f)
-        val cloudBefore = BackgroundScene.cloudCoordinates(CAMERA_CYCLE_SECONDS - 0.001, CAMERA_DISTANCE.toDouble(), CAMERA_BASE_HEIGHT.toDouble(), 0.0)
-        val cloudAfter = BackgroundScene.cloudCoordinates(CAMERA_CYCLE_SECONDS + 0.001, CAMERA_DISTANCE.toDouble(), CAMERA_BASE_HEIGHT.toDouble(), 0.0)
+        assertEquals(BackgroundScene.waterAnimationTime(12345.678), BackgroundScene.frameState(12345.678).waterTimeSeconds)
+        val cloudBefore = BackgroundScene.cloudCoordinates(CAMERA_CYCLE_SECONDS - 0.001, 0.5, 30.5, 14.0)
+        val cloudAfter = BackgroundScene.cloudCoordinates(CAMERA_CYCLE_SECONDS + 0.001, 0.5, 30.5, 14.0)
         assertTrue(abs(cloudBefore.fractionX - cloudAfter.fractionX) < 0.01f)
+    }
+
+    @Test
+    fun waterNormalOffsetHasStablePeriodAndContinuousWrap() {
+        assertEquals(0f, BackgroundScene.waterNormalOffset(0.0), absoluteTolerance = 0.000001f)
+        assertTrue(BackgroundScene.waterNormalOffset(1.0e15) in 0f..WATER_NORMAL_SCROLL_PERIOD.toFloat())
+        val periodSeconds = WATER_NORMAL_SCROLL_PERIOD / WATER_NORMAL_SCROLL_SPEED
+        assertEquals(
+            BackgroundScene.waterNormalOffset(0.0),
+            BackgroundScene.waterNormalOffset(periodSeconds),
+            absoluteTolerance = 0.0001f
+        )
+        val before = BackgroundScene.waterNormalOffset(periodSeconds - 0.001)
+        val after = BackgroundScene.waterNormalOffset(periodSeconds + 0.001)
+        assertTrue(before > WATER_NORMAL_SCROLL_PERIOD.toFloat() - 0.01f)
+        assertTrue(after < 0.01f)
     }
 
     @Test
@@ -402,20 +274,34 @@ class BackgroundSceneTest {
             val offset = vertex * SCENE_VERTEX_FLOATS + 6
             return SkyColor(mesh.vertices[offset], mesh.vertices[offset + 1], mesh.vertices[offset + 2])
         }
-        assertEquals(BlockMaterial.SAND.linearColor(), firstVertexColor(BlockMaterial.SAND))
+        assertEquals(BlockMaterial.GRASS_SIDE.linearColor(), firstVertexColor(BlockMaterial.GRASS_SIDE))
         assertEquals(BlockMaterial.WATER.linearColor(), firstVertexColor(BlockMaterial.WATER))
-        assertTrue(firstVertexColor(BlockMaterial.SAND).green != BlockMaterial.SAND.green)
+        // Grass tops carry a gentle tint around the linear biome color, never the raw sRGB value.
+        val grass = firstVertexColor(BlockMaterial.GRASS_TOP)
+        val linearGrass = BlockMaterial.GRASS_TOP.linearColor()
+        val tint = grass.green / linearGrass.green
+        assertTrue(tint in 0.93f..1.07f)
+        assertEquals(linearGrass.red * tint, grass.red, absoluteTolerance = 0.0001f)
+        assertTrue(abs(grass.blue - BlockMaterial.GRASS_TOP.blue) > 0.1f)
     }
 
     @Test
     fun materialTraitsDescribeShaderSemanticsExplicitly() {
-        assertTrue(BlockMaterial.CACTUS_SIDE.alphaCutout)
-        assertTrue(BlockMaterial.CACTUS_TOP.alphaCutout)
-        assertTrue(BlockMaterial.CACTUS_BOTTOM.alphaCutout)
         assertTrue(BlockMaterial.LANTERN.alphaCutout)
         assertEquals(1f / 3f, BlockMaterial.LANTERN.textureVScale)
         assertTrue(BlockMaterial.LANTERN.emissive)
-        listOf(BlockMaterial.SAND, BlockMaterial.OAK_PLANKS, BlockMaterial.OAK_LOG).forEach { material ->
+        assertTrue(BlockMaterial.GLOWSTONE.emissive && !BlockMaterial.GLOWSTONE.alphaCutout)
+        listOf(BlockMaterial.OAK_LEAVES, BlockMaterial.BIRCH_LEAVES, BlockMaterial.SPRUCE_LEAVES, BlockMaterial.SHORT_GRASS).forEach { material ->
+            assertTrue(material.alphaCutout && material.doubleSided && !material.emissive, "$material")
+        }
+        assertEquals(
+            setOf(BlockMaterial.OAK_LEAVES, BlockMaterial.BIRCH_LEAVES, BlockMaterial.SPRUCE_LEAVES, BlockMaterial.SHORT_GRASS),
+            BlockMaterial.entries.filter { it.doubleSided }.toSet()
+        )
+        listOf(
+            BlockMaterial.GRASS_TOP, BlockMaterial.GRASS_SIDE, BlockMaterial.DIRT, BlockMaterial.STONE,
+            BlockMaterial.SNOW, BlockMaterial.SAND, BlockMaterial.GRAVEL, BlockMaterial.OAK_PLANKS, BlockMaterial.OAK_LOG
+        ).forEach { material ->
             assertTrue(!material.alphaCutout)
             assertEquals(1f, material.textureVScale)
             assertTrue(!material.emissive)
@@ -423,81 +309,64 @@ class BackgroundSceneTest {
     }
 
     @Test
-    fun waterNormalOffsetHasStablePeriodAndContinuousWrap() {
-        assertEquals(0f, BackgroundScene.waterNormalOffset(0.0), absoluteTolerance = 0.000001f)
-        assertTrue(BackgroundScene.waterNormalOffset(1.0e15) in 0f..WATER_NORMAL_SCROLL_PERIOD.toFloat())
-        val periodSeconds = WATER_NORMAL_SCROLL_PERIOD / WATER_NORMAL_SCROLL_SPEED
-        assertEquals(
-            BackgroundScene.waterNormalOffset(0.0),
-            BackgroundScene.waterNormalOffset(periodSeconds),
-            absoluteTolerance = 0.0001f
-        )
-        val before = BackgroundScene.waterNormalOffset(periodSeconds - 0.001)
-        val after = BackgroundScene.waterNormalOffset(periodSeconds + 0.001)
-        assertTrue(before > WATER_NORMAL_SCROLL_PERIOD.toFloat() - 0.01f)
-        assertTrue(after < 0.01f)
-    }
-
-    @Test
-    fun faceUvUsesBothVaryingAxesForEachFaceOrientation() {
-        val front = listOf(
-            faceUv(-1f, 0f, 2f, 0f, 0f, 1f),
-            faceUv(1f, 3f, 2f, 0f, 0f, 1f)
-        )
-        val side = listOf(
-            faceUv(2f, 0f, -1f, 1f, 0f, 0f),
-            faceUv(2f, 3f, 1f, 1f, 0f, 0f)
-        )
-        assertTrue(front[0][0] != front[1][0] && front[0][1] != front[1][1])
-        assertTrue(side[0][0] != side[1][0] && side[0][1] != side[1][1])
-        assertEquals(faceUv(0f, 1f, -1f, 0f, 1f, 0f).toList(), faceUv(0f, 1f, -1f, 0f, -1f, 0f).toList())
+    fun faceUvRepeatsOncePerBlockAndKeepsTheImageTopAtTheBlockTop() {
+        assertEquals(listOf(2.5f, -3f), faceUv(2.5f, 7f, -3f, 0f, 1f, 0f).toList())
+        assertEquals(listOf(4f, -7f), faceUv(1f, 7f, 4f, 1f, 0f, 0f).toList())
+        assertEquals(listOf(1f, -7f), faceUv(1f, 7f, 4f, 0f, 0f, -1f).toList())
+        // A block spanning y=6..7: v runs from fract(-7)=0 (image top row) at the top to ~1 at the bottom.
+        val top = faceUv(0f, 7f, 0f, 1f, 0f, 0f)[1]
+        val nearBottom = faceUv(0f, 6.01f, 0f, 1f, 0f, 0f)[1]
+        assertEquals(0f, top - kotlin.math.floor(top), absoluteTolerance = 0.0001f)
+        assertTrue(nearBottom - kotlin.math.floor(nearBottom) > 0.98f)
     }
 
     @Test
     fun sceneMaterialBatchesAreContiguousAndCoverEveryVertex() {
         val mesh = buildSceneMesh(123L)
+        val vertexCount = mesh.vertices.size / SCENE_VERTEX_FLOATS
         assertEquals(0, mesh.vertices.size % SCENE_VERTEX_FLOATS)
+        assertTrue(vertexCount < SCENE_VERTEX_BUDGET, "scene has $vertexCount vertices")
         assertEquals(mesh.indices.size, mesh.batches.sumOf { it.indexCount })
         assertEquals(BlockMaterial.entries.toList(), mesh.batches.map { it.material })
         var nextIndex = 0
         mesh.batches.forEach { batch ->
             assertEquals(nextIndex, batch.firstIndex)
-            assertTrue(batch.indexCount > 0)
-            assertTrue(batch.firstIndex + batch.indexCount <= mesh.indices.size)
             nextIndex += batch.indexCount
         }
         assertEquals(mesh.indices.size, nextIndex)
-        assertTrue(mesh.indices.toSet().all { it in 0 until mesh.vertices.size / SCENE_VERTEX_FLOATS })
+        // Every material is used: terrain, forest, village and water.
+        BlockMaterial.entries.filter { it != BlockMaterial.OAK_LOG_TOP }.forEach { material ->
+            assertTrue(mesh.batches.single { it.material == material }.indexCount > 0, "$material is empty")
+        }
+        assertTrue(mesh.indices.all { it in 0 until vertexCount })
+        val referenced = BooleanArray(vertexCount)
+        mesh.indices.forEach { referenced[it] = true }
+        assertTrue(referenced.all { it })
+        val kinds = (0 until vertexCount).map { mesh.vertices[it * SCENE_VERTEX_FLOATS + 9] }
+        assertTrue(kinds.all { it == 0f || it == 1f || it == FOLIAGE_SWAY_KIND.toFloat() })
+        assertEquals(6, kinds.count { it == 1f })
+        // Only grass tips sway: two crossed quads per tuft, two top corners each.
+        val swaying = (0 until vertexCount).filter { kinds[it] == FOLIAGE_SWAY_KIND.toFloat() }
+        assertTrue(swaying.isNotEmpty() && swaying.size % 4 == 0)
+        val grassBatch = mesh.batches.single { it.material == BlockMaterial.SHORT_GRASS }
+        val grassVertices = (grassBatch.firstIndex until grassBatch.firstIndex + grassBatch.indexCount).map { mesh.indices[it] }.toSet()
+        assertTrue(swaying.all { it in grassVertices })
+        assertEquals(6, mesh.batches.single { it.material == BlockMaterial.WATER }.indexCount)
+        val aoValues = (0 until vertexCount).map { mesh.vertices[it * SCENE_VERTEX_FLOATS + 12] }
+        assertTrue(aoValues.all { it in 0.58f..1f })
+        assertTrue(aoValues.any { it < 1f })
     }
 
     @Test
-    fun infiniteWaterCoversConservativeFarPlaneCornersWithOneQuad() {
-        assertEquals(38f, CLOUD_HEIGHT)
-        assertEquals(8f, CLOUD_HORIZONTAL_SCALE)
-        assertEquals(3f, CLOUD_THICKNESS)
-        assertEquals(-6, CLOUD_TILE_MIN)
-        assertEquals(6, CLOUD_TILE_MAX)
-        assertEquals(400f, CAMERA_FAR_PLANE)
-        assertEquals(260f, WATER_HORIZON_FOG_START)
-        assertEquals(360f, WATER_HORIZON_FOG_END)
-        assertTrue(WATER_HORIZON_FOG_START < WATER_HORIZON_FOG_END)
-        assertEquals(640f, WATER_EXTENT)
-        assertTrue(WATER_EXTENT >= CAMERA_DISTANCE + CAMERA_FAR_PLANE * 1.25f)
-        val mesh = buildSceneMesh(123L)
-        val waterBatch = mesh.batches.single { it.material == BlockMaterial.WATER }
-        assertEquals(6, waterBatch.indexCount)
-    }
-
-    @Test
-    fun cameraMovesVerySlowlyBetweenAdjacentSamples() {
-        val start = BackgroundScene.camera(0f)
-        val nearby = BackgroundScene.camera(0.1f)
-        assertTrue(abs(nearby.yawRadians - start.yawRadians) < 0.002f)
-        assertTrue(abs(nearby.height - start.height) < 0.01f)
-        assertEquals(50f, start.distance)
-        assertEquals(8f, start.height)
-        assertEquals(0.25f, CAMERA_HEIGHT_SWING)
-        assertEquals(60f, CAMERA_FOV_DEGREES)
+    fun waterPlaneCoversTheLakesAndItsNormalPointsUp() {
+        // The water plane runs past where the atmosphere dissolves everything into the sky.
+        assertTrue(WATER_EXTENT > WORLD_FADE_END + BackgroundScene.camera(0.0).eyeZ)
+        val points = waterPlaneCornerPositions(1f, WATER_LEVEL)
+        val ax = points[3] - points[0]
+        val az = points[5] - points[2]
+        val bx = points[6] - points[0]
+        val bz = points[8] - points[2]
+        assertTrue(az * bx - ax * bz > 0f)
     }
 
     @Test
@@ -509,139 +378,15 @@ class BackgroundSceneTest {
     }
 
     @Test
-    fun waterPlaneNormalPointsUp() {
-        val points = waterPlaneCornerPositions(1f, WATER_LEVEL)
-        val ax = points[3] - points[0]
-        val az = points[5] - points[2]
-        val bx = points[6] - points[0]
-        val bz = points[8] - points[2]
-        val crossY = az * bx - ax * bz
-        assertTrue(crossY > 0f)
-    }
-
-    @Test
-    fun sunStaysFixedAtNoonAndItsLightingDirectionIsNormalized() {
-        val first = BackgroundScene.sun(0f)
-        val later = BackgroundScene.sun(60f)
-        assertEquals(first, later)
-        assertEquals(0f, first.offsetX)
-        assertEquals(26.7f, first.offsetY)
-        assertEquals(-6f, first.offsetZ)
-        val directionX = CAMERA_TARGET_X - first.offsetX
-        val directionY = CAMERA_TARGET_Y - first.offsetY
-        val directionZ = CAMERA_TARGET_Z - first.offsetZ
-        val expectedDirectionLength = sqrt(directionX * directionX + directionY * directionY + directionZ * directionZ)
-        assertEquals(directionX / expectedDirectionLength, first.directionX, absoluteTolerance = 0.000001f)
-        assertEquals(directionY / expectedDirectionLength, first.directionY, absoluteTolerance = 0.000001f)
-        assertEquals(directionZ / expectedDirectionLength, first.directionZ, absoluteTolerance = 0.000001f)
-        val directionLength = sqrt(
-            first.directionX * first.directionX +
-                first.directionY * first.directionY +
-                first.directionZ * first.directionZ
-        )
-        assertTrue(abs(directionLength - 1f) < 0.0001f)
-        val horizontalDirectionLength = sqrt(first.directionX * first.directionX + first.directionZ * first.directionZ)
-        val lightingElevationDegrees = Math.toDegrees(
-            atan2((-first.directionY).toDouble(), horizontalDirectionLength.toDouble())
-        ).toFloat()
-        assertEquals(48.8f, lightingElevationDegrees, absoluteTolerance = 0.2f)
-    }
-
-    @Test
-    fun sunBillboardBasisRemainsOrthonormalAroundCameraOrbit() {
-        val sun = BackgroundScene.sun(0f)
-        repeat(8) { step ->
-            val angle = step * Math.PI / 4.0
-            val basis = BackgroundScene.sunBillboardBasis(
-                (CAMERA_DISTANCE * cos(angle)).toFloat(),
-                CAMERA_BASE_HEIGHT,
-                (CAMERA_DISTANCE * sin(angle)).toFloat(),
-                sun
-            )
-            val rightLength = sqrt(basis.rightX * basis.rightX + basis.rightY * basis.rightY + basis.rightZ * basis.rightZ)
-            val upLength = sqrt(basis.upX * basis.upX + basis.upY * basis.upY + basis.upZ * basis.upZ)
-            val dot = basis.rightX * basis.upX + basis.rightY * basis.upY + basis.rightZ * basis.upZ
-            val cameraFacingX = (CAMERA_DISTANCE * cos(angle)).toFloat() - sun.offsetX
-            val cameraFacingY = CAMERA_BASE_HEIGHT - sun.offsetY
-            val cameraFacingZ = (CAMERA_DISTANCE * sin(angle)).toFloat() - sun.offsetZ
-            val cameraFacingLength = sqrt(
-                cameraFacingX * cameraFacingX + cameraFacingY * cameraFacingY + cameraFacingZ * cameraFacingZ
-            )
-            val normalFacingCamera =
-                basis.rightY * basis.upZ - basis.rightZ * basis.upY
-            val normalFacingCameraY = basis.rightZ * basis.upX - basis.rightX * basis.upZ
-            val normalFacingCameraZ = basis.rightX * basis.upY - basis.rightY * basis.upX
-            val facingDot = (
-                normalFacingCamera * cameraFacingX +
-                    normalFacingCameraY * cameraFacingY +
-                    normalFacingCameraZ * cameraFacingZ
-                ) / cameraFacingLength
-            assertTrue(abs(rightLength - 1f) < 0.0001f)
-            assertTrue(abs(upLength - 1f) < 0.0001f)
-            assertTrue(abs(dot) < 0.0001f)
-            assertTrue(facingDot > 0.999f)
-        }
-
-        val projection = Matrix4f().perspective(
-            Math.toRadians(CAMERA_FOV_DEGREES.toDouble()).toFloat(),
-            RENDER_WIDTH.toFloat() / RENDER_HEIGHT,
-            CAMERA_NEAR_PLANE,
-            CAMERA_FAR_PLANE
-        )
-        val target = Vector3f(CAMERA_TARGET_X, CAMERA_TARGET_Y, CAMERA_TARGET_Z)
-        val worldUp = Vector3f(0f, 1f, 0f)
-        val size = SUN_BILLBOARD_HALF_SIZE
-        listOf(
-            0.0,
-            CAMERA_CYCLE_SECONDS / 4.0,
-            CAMERA_CYCLE_SECONDS / 2.0,
-            CAMERA_CYCLE_SECONDS * 3.0 / 4.0,
-            CAMERA_CYCLE_SECONDS
-        ).forEach { time ->
-            val pose = BackgroundScene.camera(time)
-            val eye = Vector3f(
-                pose.distance * cos(pose.yawRadians),
-                pose.height,
-                pose.distance * sin(pose.yawRadians)
-            )
-            val view = Matrix4f().lookAt(eye, target, worldUp)
-            val viewProjection = Matrix4f(projection).mul(view)
-            val basis = BackgroundScene.sunBillboardBasis(eye.x, eye.y, eye.z, sun)
-            listOf(-size to -size, size to -size, size to size, -size to size).forEach { (right, up) ->
-                val clip = Vector4f(
-                    sun.offsetX + right * basis.rightX + up * basis.upX,
-                    sun.offsetY + right * basis.rightY + up * basis.upY,
-                    sun.offsetZ + right * basis.rightZ + up * basis.upZ,
-                    1f
-                ).mul(viewProjection)
-                assertTrue(clip.w > 0f)
-                assertTrue(clip.x / clip.w in -1f..1f)
-                assertTrue(clip.y / clip.w in -1f..1f)
-            }
-            fun projectedY(localUp: Float): Float {
-                val clip = Vector4f(
-                    sun.offsetX + localUp * basis.upX,
-                    sun.offsetY + localUp * basis.upY,
-                    sun.offsetZ + localUp * basis.upZ,
-                    1f
-                ).mul(viewProjection)
-                return clip.y / clip.w
-            }
-            val pixelDiameter = abs(projectedY(SUN_BILLBOARD_HALF_SIZE * 0.54f) - projectedY(-SUN_BILLBOARD_HALF_SIZE * 0.54f)) * RENDER_HEIGHT / 2f
-            assertTrue(pixelDiameter in 50f..70f, "Projected sun disc diameter was $pixelDiameter pixels at t=$time")
-        }
-    }
-
-    @Test
-    fun skyColorStaysFixed() {
-        assertEquals(SkyColor(0.14f, 0.40f, 0.78f), NOON_SKY_COLOR)
-        assertEquals(SkyColor(0.34f, 0.62f, 0.84f), NOON_WATER_HORIZON_COLOR)
-        assertEquals(SkyColor(0.86f, 0.90f, 0.96f), NOON_CLOUD_FOG_COLOR)
-        assertEquals(300f, CLOUD_FOG_START)
-        assertEquals(400f, CLOUD_FOG_END)
-        assertTrue(CLOUD_FOG_START < CLOUD_FOG_END)
-        assertTrue(CLOUD_FOG_START != WATER_HORIZON_FOG_START)
-        assertTrue(CLOUD_FOG_END != WATER_HORIZON_FOG_END)
+    fun cloudsFollowMinecraft121CellsAndFadeInsideTheirCoverage() {
+        assertEquals(12f, CLOUD_HORIZONTAL_SCALE)
+        assertEquals(4f, CLOUD_THICKNESS)
+        assertEquals(-6, CLOUD_TILE_MIN)
+        assertEquals(6, CLOUD_TILE_MAX)
+        assertTrue(CLOUD_HEIGHT > 118f + 4f, "clouds must clear the highest peak")
+        assertTrue(CLOUD_FADE_START < CLOUD_FADE_END)
+        // The mesh reaches -CLOUD_TILE_MIN tiles of 8 cells to the -X/-Z side; the fade must finish first.
+        assertTrue(CLOUD_FADE_END <= -CLOUD_TILE_MIN * 8 * CLOUD_HORIZONTAL_SCALE)
     }
 
     @Test
@@ -653,46 +398,38 @@ class BackgroundSceneTest {
         val wrapped = BackgroundScene.cloudCoordinates(CLOUD_COORDINATE_WRAP * CLOUD_HORIZONTAL_SCALE / CLOUD_TIME_SPEED, 0.0, 0.0, 0.0)
         assertEquals(start.x, wrapped.x, absoluteTolerance = 0.000001)
         assertEquals(start.z, wrapped.z, absoluteTolerance = 0.000001)
-        assertEquals(12, start.floorY)
-        assertEquals(2.33f, start.fractionY, absoluteTolerance = 0.0001f)
+        assertEquals(0f, CLOUD_HEIGHT % CLOUD_THICKNESS, "cloud height on the 4-block layer grid")
+        assertEquals((CLOUD_HEIGHT / CLOUD_THICKNESS).toInt(), start.floorY)
+        assertEquals(0.33f, start.fractionY, absoluteTolerance = 0.0001f)
     }
 
     @Test
     fun cloudColorRebuildUsesMinecraftThreshold() {
-        assertTrue(BackgroundScene.cloudColorChanged(null, NOON_CLOUD_COLOR))
-        assertTrue(!BackgroundScene.cloudColorChanged(NOON_CLOUD_COLOR, SkyColor(1.0001f, 1f, 1f)))
-        assertTrue(BackgroundScene.cloudColorChanged(NOON_CLOUD_COLOR, SkyColor(1.02f, 1f, 1f)))
+        assertTrue(BackgroundScene.cloudColorChanged(null, GOLDEN_CLOUD_COLOR))
+        assertTrue(!BackgroundScene.cloudColorChanged(GOLDEN_CLOUD_COLOR, SkyColor(1.0001f, 1f, 1f)))
+        assertTrue(BackgroundScene.cloudColorChanged(GOLDEN_CLOUD_COLOR, SkyColor(1.02f, 1f, 1f)))
     }
 
     @Test
     fun fancyCloudMeshUsesConfiguredCoverageAndVertexFormatWhenTopFacesAreVisible() {
         val coordinates = BackgroundScene.cloudCoordinates(0.0, 25.0, CLOUD_HEIGHT.toDouble() - 4.0, 0.0)
-        val vertices = buildFancyCloudVertices(coordinates, NOON_CLOUD_COLOR)
+        val vertices = buildFancyCloudVertices(coordinates, GOLDEN_CLOUD_COLOR_LINEAR)
         assertEquals(0, vertices.size % 12)
-        assertTrue(vertices.isNotEmpty())
         assertEquals(20748, vertices.size / 12)
         assertTrue(vertices.asList().windowed(12, 12).all { it[8] == 0.8f })
     }
 
     @Test
     fun fancyCloudMeshOmitsTopFacesAlongTheRuntimeCameraTrack() {
-        val times = listOf(
-            0.0,
-            CAMERA_CYCLE_SECONDS / 4.0,
-            CAMERA_CYCLE_SECONDS / 2.0,
-            CAMERA_CYCLE_SECONDS * 3.0 / 4.0,
-            CAMERA_CYCLE_SECONDS
-        )
-        times.forEach { time ->
+        trackTimes.forEach { time ->
             val pose = BackgroundScene.camera(time)
-            val yaw = pose.yawRadians.toDouble()
             val coordinates = BackgroundScene.cloudCoordinates(
                 time,
-                pose.distance.toDouble() * cos(yaw),
-                pose.height.toDouble(),
-                pose.distance.toDouble() * sin(yaw)
+                pose.eyeX.toDouble(),
+                pose.eyeY.toDouble(),
+                pose.eyeZ.toDouble()
             )
-            val vertices = buildFancyCloudVertices(coordinates, NOON_CLOUD_COLOR)
+            val vertices = buildFancyCloudVertices(coordinates, GOLDEN_CLOUD_COLOR_LINEAR)
             assertEquals(19734, vertices.size / 12)
             assertTrue(vertices.asList().windowed(12, 12).none { vertex ->
                 vertex[9] == 0f && vertex[10] == 1f && vertex[11] == 0f
@@ -703,7 +440,7 @@ class BackgroundSceneTest {
     @Test
     fun fancyCloudMeshPreservesVanillaUvNormalsAndHeightBoundary() {
         val coordinates = BackgroundScene.cloudCoordinates(0.0, 0.0, 0.0, 0.0)
-        val bottomOnly = buildFancyCloudVertices(coordinates, NOON_CLOUD_COLOR)
+        val bottomOnly = buildFancyCloudVertices(coordinates, GOLDEN_CLOUD_COLOR_LINEAR)
         val first = bottomOnly.take(12)
         val firstTile = CLOUD_TILE_MIN * 8f
         assertEquals(firstTile * CLOUD_TEXTURE_COORDINATE_SCALE, first[3], absoluteTolerance = 0.000001f)
@@ -711,31 +448,16 @@ class BackgroundSceneTest {
         assertEquals(0f, first[9])
         assertEquals(-1f, first[10])
         assertEquals(0f, first[11])
-        assertTrue(bottomOnly.asList().windowed(12, 12).all { vertex ->
-            vertex[5] == 1.0f && vertex[6] == 1.0f && vertex[7] == 1.0f && vertex[8] == 0.8f
-        })
 
         val topCoordinates = BackgroundScene.cloudCoordinates(0.0, 0.0, CLOUD_HEIGHT.toDouble() - 4.0, 0.0)
-        val withTop = buildFancyCloudVertices(topCoordinates, NOON_CLOUD_COLOR)
+        val withTop = buildFancyCloudVertices(topCoordinates, GOLDEN_CLOUD_COLOR_LINEAR)
         val topBaseY = topCoordinates.floorY * CLOUD_THICKNESS
-        assertTrue(withTop.asList().windowed(12, 12).any { vertex ->
-            vertex[9] == 0f && vertex[10] == 1f && vertex[11] == 0f &&
-                vertex[5] == 1.0f && vertex[6] == 1.0f && vertex[7] == 1.0f
-        })
-        assertTrue(withTop.asList().windowed(12, 12).any { vertex ->
-            kotlin.math.abs(vertex[9]) == 1f && vertex[5] == 1.0f && vertex[6] == 1.0f && vertex[7] == 1.0f
-        })
-        assertTrue(withTop.asList().windowed(12, 12).any { vertex ->
-            vertex[9] == 0f && vertex[10] == -1f && vertex[11] == 0f &&
-                vertex[5] == 1.0f && vertex[6] == 1.0f && vertex[7] == 1.0f
-        })
-        assertTrue(withTop.asList().windowed(12, 12).any { vertex ->
-            kotlin.math.abs(vertex[11]) == 1f && vertex[5] == 1.0f && vertex[6] == 1.0f && vertex[7] == 1.0f
-        })
         assertTrue(withTop.asList().windowed(12, 12).any { vertex ->
             abs(vertex[1] - (topBaseY + CLOUD_THICKNESS - 0.0009765625f)) < 0.000001f &&
                 vertex[9] == 0f && vertex[10] == 1f && vertex[11] == 0f
         })
+        assertTrue(withTop.asList().windowed(12, 12).any { vertex -> abs(vertex[9]) == 1f })
+        assertTrue(withTop.asList().windowed(12, 12).any { vertex -> abs(vertex[11]) == 1f })
     }
 
     @Test

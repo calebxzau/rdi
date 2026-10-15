@@ -64,21 +64,7 @@ fun GlassNavBar(
     modifier: Modifier = Modifier,
 ) {
     val surface = MaterialTheme.colorScheme.surface
-    val glassStyle = remember(surface) {
-        GlassStyle.regular.then {
-            shape(GlassNavPillShape)
-            tint(surface.copy(alpha = 0.35f))
-            // regular在短边<64dp时depth<1会保留背景细节；固定depth=1完全漫射，其余沿用GlassDefaults.optics
-            optics(
-                blurRadius = 20.dp,
-                depth = 1f,
-                refractionDisplacement = 48.dp,
-                refractionProfile = RefractionProfile.Edge(20.dp),
-                refractionHeightFraction = 0.15f,
-                refractionDetailIntensity = 0f,
-            )
-        }
-    }
+    val glassStyle = rememberNavGlassStyle(GlassNavPillShape)
     // 选中胶囊用液态玻璃透镜：斜面折射+对称高光，着色保证选中文字对比度
     val indicatorStyle = remember(surface) { LiquidGlassStyle(tint = surface.copy(alpha = 0.35f)) }
     val input = remember(hazeState) { HazeInput.Sources(hazeState) }
@@ -137,6 +123,30 @@ fun GlassNavBar(
                     }
                 )
             }
+        }
+    }
+}
+
+/**
+ * 导航栏同款磨砂玻璃：模糊并折射背景，叠加表面色保证前景对比度。[GlassIconButton]等直接放在App背景上的控件共用。
+ */
+@OptIn(ExperimentalHazeApi::class)
+@Composable
+internal fun rememberNavGlassStyle(glassShape: RoundedCornerShape): GlassStyle {
+    val surface = MaterialTheme.colorScheme.surface
+    return remember(surface, glassShape) {
+        GlassStyle.regular.then {
+            shape(glassShape)
+            tint(surface.copy(alpha = 0.35f))
+            // regular在短边<64dp时depth<1会保留背景细节；固定depth=1完全漫射，其余沿用GlassDefaults.optics
+            optics(
+                blurRadius = 20.dp,
+                depth = 1f,
+                refractionDisplacement = 48.dp,
+                refractionProfile = RefractionProfile.Edge(20.dp),
+                refractionHeightFraction = 0.15f,
+                refractionDetailIntensity = 0f,
+            )
         }
     }
 }

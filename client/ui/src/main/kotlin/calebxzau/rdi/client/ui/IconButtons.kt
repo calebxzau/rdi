@@ -1,6 +1,16 @@
 package calebxzau.rdi.client.ui
 
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.clickable
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.TextStyle
+import dev.chrisbanes.haze.ExperimentalHazeApi
+import dev.chrisbanes.haze.HazeInput
+import dev.chrisbanes.haze.HazeState
+import dev.chrisbanes.haze.glass.GlassStyle
+import dev.chrisbanes.haze.glass.hazeGlass
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -43,34 +53,8 @@ fun CircleIconButton(
 
     if (showText && inlineLabel != null) {
         BoxWithConstraints {
-            val density = LocalDensity.current
-            val layoutDirection = LocalLayoutDirection.current
-            val textMeasurer = rememberTextMeasurer()
             val labelStyle = MaterialTheme.typography.bodyMedium
-            val labelWidthPx = remember(inlineLabel, labelStyle) {
-                textMeasurer.measure(
-                    text = AnnotatedString(inlineLabel),
-                    style = labelStyle,
-                    maxLines = 1,
-                    softWrap = false
-                ).size.width
-            }
-            val availableWidthPx = if (maxWidth == Dp.Infinity) {
-                Int.MAX_VALUE
-            } else {
-                with(density) { maxWidth.roundToPx() }
-            }
-            val iconBoxPx = with(density) { size.roundToPx() }
-            val gapPx = with(density) { 8.dp.roundToPx() }
-            val horizontalPaddingPx = with(density) {
-                val horizontalPadding = contentPadding.calculateStartPadding(layoutDirection) +
-                    contentPadding.calculateEndPadding(layoutDirection)
-                horizontalPadding.roundToPx()
-            }
-            val requiredWidthPx = iconBoxPx + gapPx + labelWidthPx + horizontalPaddingPx
-            val canShowInlineText = availableWidthPx >= requiredWidthPx
-
-            if (canShowInlineText) {
+            if (canShowInlineLabel(inlineLabel, labelStyle, maxWidth, size, contentPadding)) {
                 TextButton(
                     onClick = onClick,
                     shape = RoundedCornerShape(percent = 50),
@@ -137,6 +121,129 @@ fun CircleIconButton(
     }
 }
 
+
+/** 能否在[maxWidth]内放下“图标+间距+文字+左右内边距”的胶囊按钮；放不下时退回圆形图标按钮。 */
+@Composable
+private fun canShowInlineLabel(
+    label: String,
+    labelStyle: TextStyle,
+    maxWidth: Dp,
+    size: Dp,
+    contentPadding: PaddingValues,
+): Boolean {
+    val density = LocalDensity.current
+    val layoutDirection = LocalLayoutDirection.current
+    val textMeasurer = rememberTextMeasurer()
+    val labelWidthPx = remember(label, labelStyle) {
+        textMeasurer.measure(
+            text = AnnotatedString(label),
+            style = labelStyle,
+            maxLines = 1,
+            softWrap = false
+        ).size.width
+    }
+    if (maxWidth == Dp.Infinity) return true
+    return with(density) {
+        val horizontalPadding = contentPadding.calculateStartPadding(layoutDirection) +
+            contentPadding.calculateEndPadding(layoutDirection)
+        maxWidth.roundToPx() >= size.roundToPx() + 8.dp.roundToPx() + labelWidthPx + horizontalPadding.roundToPx()
+    }
+}
+
+private val GlassPillShape = RoundedCornerShape(percent = 50)
+
+/**
+ * 与[CircleIconButton]用法一致，背景换成[GlassNavBar]同款磨砂玻璃，用于直接放在App背景上的按钮。
+ * 宽度够时显示图标+文字的胶囊，否则只显示圆形图标并以[tooltip]提示。
+ * 每个按钮各自捕获并模糊背景，适合少量按钮；放在不透明面板上会透出面板背后的背景，不要那样用。
+ */
+@Composable
+fun GlassIconButton(
+    icon: String,
+    label: String? = null,
+    tooltip: String? = label,
+    tooltipAnchorPosition: TooltipAnchorPosition = TooltipAnchorPosition.Below,
+    size: Dp = 36.dp,
+    iconFontScale: Float = 0.5f,
+    contentPadding: PaddingValues = ButtonDefaults.TextButtonContentPadding,
+    iconColor: Color = MaterialTheme.colorScheme.onSurface,
+    hazeState: HazeState = LocalAppBackgroundHazeState.current,
+    enabled: Boolean = true,
+    showText: Boolean = true,
+    onClick: () -> Unit
+) {
+    val inlineLabel = label?.takeIf { it.isNotBlank() }
+    val iconFontSize = remember(size, iconFontScale) { (size.value * iconFontScale).sp }
+    val contentColor = if (enabled) iconColor else iconColor.copy(alpha = 0.38f)
+    val input = remember(hazeState) { HazeInput.Sources(hazeState) }
+
+    if (showText && inlineLabel != null) {
+        BoxWithConstraints {
+            val labelStyle = MaterialTheme.typography.bodyMedium
+            if (canShowInlineLabel(inlineLabel, labelStyle, maxWidth, size, contentPadding)) {
+                Row(
+                    modifier = Modifier
+                        .height(size)
+                        .glassButtonBackground(input, rememberNavGlassStyle(GlassPillShape), GlassPillShape, enabled, onClick)
+                        .padding(contentPadding),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    IconText(icon = icon, fontSize = iconFontSize, color = contentColor)
+                    Text(
+                        text = inlineLabel,
+                        style = labelStyle,
+                        color = contentColor,
+                        maxLines = 1,
+                        softWrap = false,
+                        overflow = TextOverflow.Clip
+                    )
+                }
+                return@BoxWithConstraints
+            }
+            GlassCircleIconButton(icon, tooltip, tooltipAnchorPosition, size, iconFontSize, contentColor, input, enabled, onClick)
+        }
+        return
+    }
+    GlassCircleIconButton(icon, tooltip, tooltipAnchorPosition, size, iconFontSize, contentColor, input, enabled, onClick)
+}
+
+@Composable
+private fun GlassCircleIconButton(
+    icon: String,
+    tooltip: String?,
+    tooltipAnchorPosition: TooltipAnchorPosition,
+    size: Dp,
+    iconFontSize: TextUnit,
+    contentColor: Color,
+    input: HazeInput,
+    enabled: Boolean,
+    onClick: () -> Unit,
+) {
+    IconButtonBase(tooltip = tooltip, tooltipAnchorPosition = tooltipAnchorPosition, size = size) {
+        Box(
+            modifier = Modifier
+                .size(size)
+                .glassButtonBackground(input, rememberNavGlassStyle(CircleShape), CircleShape, enabled, onClick),
+            contentAlignment = Alignment.Center
+        ) {
+            IconText(icon = icon, fontSize = iconFontSize, color = contentColor)
+        }
+    }
+}
+
+/** 玻璃背景加可点击区域，水波纹裁剪在[shape]内。 */
+@OptIn(ExperimentalHazeApi::class)
+private fun Modifier.glassButtonBackground(
+    input: HazeInput,
+    style: GlassStyle,
+    shape: Shape,
+    enabled: Boolean,
+    onClick: () -> Unit,
+): Modifier = this
+    .hazeGlass(input = input, style = style)
+    .clip(shape)
+    .clickable(enabled = enabled, role = Role.Button, onClick = onClick)
 
 @Composable
 private fun IconButtonBase(

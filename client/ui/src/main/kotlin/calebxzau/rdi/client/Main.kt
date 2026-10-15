@@ -227,7 +227,7 @@ fun main() {
                         appIcon = windowIcon,
                         onCloseRequest = requestClose,
                         onOpenHome = {
-                            navController.navigateRoot(if (AccountSessionStore.isLoggedIn) MenuRoute else LoginRoute)
+                            navController.navigateRoot(if (AccountSessionStore.isLoggedIn) MenuRoute() else LoginRoute)
                         },
                         onOpenMail = { navController.navigate(MailListScreen) { launchSingleTop = true } },
                         onOpenSettings = {

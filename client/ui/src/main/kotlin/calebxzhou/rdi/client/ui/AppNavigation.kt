@@ -24,6 +24,7 @@ import calebxzau.rdi.client.modcatalog.ModCatalog
 import calebxzau.rdi.client.ui.screen.ModpackVersionInfoScreen
 import calebxzau.rdi.client.ui.screen.ModpackVersionBaseWorldManageScreen
 import calebxzhou.rdi.client.ui.screen.*
+import calebxzhou.rdi.client.service.ModpackLocalDir
 import calebxzhou.rdi.common.model.McVersion
 import org.koin.compose.viewmodel.koinViewModel
 import org.koin.core.parameter.parametersOf
@@ -62,8 +63,8 @@ private fun ModCatalogInfoRoute.toBrowseRouteOrNull(clearLocalTarget: Boolean = 
 
 private fun NavHostController.returnFromModCatalogInfo(route: ModCatalogInfoRoute, clearLocalTarget: Boolean) {
     route.toBrowseRouteOrNull(clearLocalTarget)?.let(::navigateAbsolute) ?: when {
-        !clearLocalTarget && route.localCatalogTarget() != null -> navigateAbsolute(ModpackLocalListRoute)
-        else -> navigateAbsolute(MenuRoute)
+        !clearLocalTarget && route.localCatalogTarget() != null -> navigateAbsolute(MenuRoute(MenuTab.Modpacks.name))
+        else -> navigateAbsolute(MenuRoute())
     }
 }
 
@@ -78,8 +79,8 @@ private fun NavHostController.returnFromModCatalog(route: ModCatalogRoute) {
                 navigateAbsolute(HostInfoRoute(hostId, route.fromAllHosts, HostKind.Legacy.name))
             }
         }
-        route.localCatalogTarget() != null -> navigateAbsolute(ModpackLocalListRoute)
-        else -> navigateAbsolute(MenuRoute)
+        route.localCatalogTarget() != null -> navigateAbsolute(MenuRoute(MenuTab.Modpacks.name))
+        else -> navigateAbsolute(MenuRoute())
     }
 }
 
@@ -93,7 +94,7 @@ private fun NavHostController.returnFromModpackPlaza(route: ModpackPlazaRoute) {
                 navigateAbsolute(HostInfoRoute(route.fromHostId, route.fromAllHosts, HostKind.Legacy.name))
             }
         }
-        else -> navigateAbsolute(ModpackLocalListRoute)
+        else -> navigateAbsolute(MenuRoute(MenuTab.Modpacks.name))
     }
 }
 
@@ -102,6 +103,45 @@ inline fun <reified T : Any> NavHostController.navigateAbsolute(route: T) {
         popUpTo<T> { inclusive = true }
         launchSingleTop = true
         restoreState = false
+    }
+}
+
+/** 打开本地整合包的mod、资源包或光影管理。 */
+private fun NavHostController.openLocalModpackContent(pack: ModpackLocalDir, contentType: ModpackContentType) {
+    when (contentType) {
+        ModpackContentType.Mods -> navigate(
+            ModCatalogRoute(
+                requiredMcVer = pack.mcVersion.mcVer,
+                requiredLoader = pack.modLoader.name,
+                targetLocalVersionId = pack.versionId,
+            )
+        )
+
+        ModpackContentType.ResourcePacks,
+        ModpackContentType.Shaders -> navigate(
+            ModpackContentRoute(
+                type = contentType.name,
+                requiredMcVer = pack.mcVersion.mcVer,
+                requiredLoader = pack.modLoader.name,
+                targetLocalVersionId = pack.versionId,
+            )
+        )
+    }
+}
+
+private fun NavHostController.openLocalModpackOptions(pack: ModpackLocalDir) {
+    navigate(
+        ModpackLocalAdvanceOptionsRoute(
+            versionId = pack.versionId,
+            modpackName = pack.name,
+            versionName = pack.verName,
+        )
+    )
+}
+
+private fun NavHostController.openLocalModpackInfo(pack: ModpackLocalDir) {
+    pack.vo?.let { vo ->
+        navigate(ModpackInfoRoute(modpackId = vo.id.toHexString()))
     }
 }
 
@@ -129,7 +169,7 @@ fun AppNavigation(
     }
     val returnToHostList: () -> Unit = {
         if (!navController.popBackStack()) {
-            navController.navigateAbsolute(HostListRoute)
+            navController.navigateAbsolute(MenuRoute())
         }
     }
 
@@ -145,7 +185,7 @@ fun AppNavigation(
         composable<LoginRoute> {
             LoginScreen(
                 onLoginSuccess = {
-                    navController.navigate(MenuRoute) {
+                    navController.navigate(MenuRoute()) {
                         popUpTo(LoginRoute) { inclusive = true }
                     }
                 },
@@ -154,15 +194,22 @@ fun AppNavigation(
             )
         }
         composable<MenuRoute> {
+            val route = it.toRoute<MenuRoute>()
             MenuScreen(
-                onOpenModpacks = { navController.navigate(ModpackLocalListRoute) },
-                onOpenHostLobby = { navController.navigate(HostListRoute) },
+                initialTab = MenuTab.entries.firstOrNull { tab -> tab.name == route.tab } ?: MenuTab.Hosts,
                 onOpenMcPlay = { args ->
-                    openMcPlay(args) { navController.navigateAbsolute(MenuRoute) }
+                    openMcPlay(args) { navController.navigateAbsolute(MenuRoute()) }
                 },
                 onOpenTaskList = { runId ->
                     onOpenTask(runId)
-                }
+                },
+                onOpenHostInfo = { target ->
+                    navController.navigate(HostInfoRoute(target.id, false, target.kind.name))
+                },
+                onOpenModpackPlaza = { navController.navigate(ModpackPlazaRoute()) },
+                onOpenModpackInfo = navController::openLocalModpackInfo,
+                onOpenModpackContent = navController::openLocalModpackContent,
+                onOpenModpackOptions = navController::openLocalModpackOptions,
             )
         }
         composable<BaseWorldListRoute> {
@@ -209,7 +256,7 @@ fun AppNavigation(
         composable<WardrobeRoute> {
             WardrobeScreen(
                 blessingSkin = blessingSkin,
-                onBack = { navController.navigateAbsolute(MenuRoute) },
+                onBack = { navController.navigateAbsolute(MenuRoute()) },
                 onOpenSkinPreview = { textureId ->
                     navController.navigate(SkinPreviewRoute(textureId))
                 }
@@ -234,45 +281,7 @@ fun AppNavigation(
             MailListScreen(
                 onBack = {
                     if (!navController.popBackStack()) {
-                        navController.navigateRoot(if (AccountSessionStore.isLoggedIn) MenuRoute else LoginRoute)
-                    }
-                }
-            )
-        }
-        composable<HostListRoute> {
-            HostListScreen(
-                onBack = { navController.navigateAbsolute(MenuRoute) },
-                onOpenModpackPlaza = { navController.navigate(ModpackPlazaRoute()) },
-                onOpenWorlds = { navController.navigate(WorldRoute) },
-                onOpenHostInfo = { target, fromAllHosts ->
-                    navController.navigate(HostInfoRoute(target.id, fromAllHosts, target.kind.name))
-                },
-                onOpenMcPlay = { args, _ ->
-                    openMcPlay(args) { navController.navigateAbsolute(HostListRoute) }
-                },
-                /*
-                onOpenBirdView = { worldId ->
-                    WorldBirdViewStore.current = WorldBirdViewSourceSpec.Remote(worldId)
-                    navController.navigate(WorldBirdView(worldId))
-                },
-                onOpenLocalBirdView = {
-                    scope.launch {
-                        val rootPath = pickLocalMinecraftWorldDir() ?: return@launch
-                        WorldBirdViewStore.current = WorldBirdViewSourceSpec.Local(rootPath)
-                        navController.navigate(WorldBirdView(LOCAL_WORLD_BIRD_VIEW_ROUTE_ID))
-                    }
-                },
-                */
-                onOpenTaskList = { runId ->
-                    onOpenTask(runId)
-                }
-            )
-        }
-        composable<WorldRoute> {
-            WorldListScreen(
-                onBack = {
-                    if (!navController.popBackStack()) {
-                        navController.navigateAbsolute(HostListRoute)
+                        navController.navigateRoot(if (AccountSessionStore.isLoggedIn) MenuRoute() else LoginRoute)
                     }
                 }
             )
@@ -283,7 +292,7 @@ fun AppNavigation(
             HostInfoScreen(
                 target = HostTarget(kind, route.hostId),
                 onBack = {
-                    navController.navigateAbsolute(HostListRoute)
+                    navController.navigateAbsolute(MenuRoute())
                 },
                 onOpenModpackInfo = { modpackId ->
                     navController.navigate(
@@ -295,7 +304,7 @@ fun AppNavigation(
                     )
                 },
                 onOpenPlay = { args ->
-                    openMcPlay(args) { navController.navigateAbsolute(HostListRoute) }
+                    openMcPlay(args) { navController.navigateAbsolute(MenuRoute()) }
                 },
                 onOpenMods = {
                     navController.navigate(HostModsRoute(route.hostId, route.fromAllHosts, route.kind))
@@ -389,7 +398,7 @@ fun AppNavigation(
             }
             WorldBirdViewScreen(
                 sourceSpec = sourceSpec,
-                onBack = { navController.navigateAbsolute(WorldRoute) }
+                onBack = { navController.navigateAbsolute(MenuRoute()) }
             )
         }*/
         composable<HostCreateRoute> {
@@ -433,7 +442,7 @@ fun AppNavigation(
                     if (callback != null) {
                         callback()
                     } else {
-                        navController.navigate(HostListRoute)
+                        navController.navigateAbsolute(MenuRoute())
                     }
                 }
             )
@@ -442,7 +451,7 @@ fun AppNavigation(
             SettingScreen(
                 onBack = {
                     if (!navController.popBackStack()) {
-                        navController.navigateRoot(if (AccountSessionStore.isLoggedIn) MenuRoute else LoginRoute)
+                        navController.navigateRoot(if (AccountSessionStore.isLoggedIn) MenuRoute() else LoginRoute)
                     }
                 },
             )
@@ -455,7 +464,7 @@ fun AppNavigation(
                 versionName = route.versionName,
                 onBack = {
                     if (!navController.popBackStack()) {
-                        navController.navigateAbsolute(ModpackLocalListRoute)
+                        navController.navigateAbsolute(MenuRoute(MenuTab.Modpacks.name))
                     }
                 }
             )
@@ -466,58 +475,9 @@ fun AppNavigation(
                 playerId = route.playerId,
                 onBack = {
                     if (!navController.popBackStack()) {
-                        navController.navigateRoot(if (AccountSessionStore.isLoggedIn) MenuRoute else LoginRoute)
+                        navController.navigateRoot(if (AccountSessionStore.isLoggedIn) MenuRoute() else LoginRoute)
                     }
                 }
-            )
-        }
-        composable<ModpackLocalListRoute> {
-            ModpackLocalListScreen(
-                onBack = {
-                    if (!navController.popBackStack()) {
-                        navController.navigateAbsolute(MenuRoute)
-                    }
-                },
-                onOpenPlaza = { navController.navigate(ModpackPlazaRoute()) },
-                onOpenContent = { pack, contentType ->
-                    when (contentType) {
-                        ModpackContentType.Mods -> navController.navigate(
-                            ModCatalogRoute(
-                                requiredMcVer = pack.mcVersion.mcVer,
-                                requiredLoader = pack.modLoader.name,
-                                targetLocalVersionId = pack.versionId,
-                            )
-                        )
-
-                        ModpackContentType.ResourcePacks,
-                        ModpackContentType.Shaders -> navController.navigate(
-                            ModpackContentRoute(
-                                type = contentType.name,
-                                requiredMcVer = pack.mcVersion.mcVer,
-                                requiredLoader = pack.modLoader.name,
-                                targetLocalVersionId = pack.versionId,
-                            )
-                        )
-                    }
-                },
-                onOpenOptions = { pack ->
-                    navController.navigate(
-                        ModpackLocalAdvanceOptionsRoute(
-                            versionId = pack.versionId,
-                            modpackName = pack.name,
-                            versionName = pack.verName,
-                        )
-                    )
-                },
-                onOpenModpackInfo = { pack ->
-                    pack.vo?.let { vo ->
-                        navController.navigate(ModpackInfoRoute(modpackId = vo.id.toHexString()))
-                    }
-                },
-                onOpenPlay = { args ->
-                    openMcPlay(args) { navController.navigateAbsolute(ModpackLocalListRoute) }
-                },
-                onOpenTask = onOpenTask,
             )
         }
         /* Friends navigation is archived with the friend system. */
@@ -543,7 +503,7 @@ fun AppNavigation(
             val contentType = ModpackContentType.valueOf(route.type)
             val onBack = {
                 if (!navController.popBackStack()) {
-                    navController.navigateAbsolute(ModpackLocalListRoute)
+                    navController.navigateAbsolute(MenuRoute(MenuTab.Modpacks.name))
                 }
             }
             when (contentType) {
@@ -613,15 +573,15 @@ fun AppNavigation(
                 modCatalog = modCatalog,
                 onBack = {
                     if (!navController.popBackStack()) {
-                        navController.navigateAbsolute(ModpackLocalListRoute)
+                        navController.navigateAbsolute(MenuRoute(MenuTab.Modpacks.name))
                     }
                 },
                 onOpenTaskList = onOpenTask,
                 onTargetUnavailable = {
                     if (route.localCatalogTarget() != null) {
-                        navController.navigateAbsolute(ModpackLocalListRoute)
+                        navController.navigateAbsolute(MenuRoute(MenuTab.Modpacks.name))
                     } else if (!navController.popBackStack()) {
-                        navController.navigateAbsolute(ModpackLocalListRoute)
+                        navController.navigateAbsolute(MenuRoute(MenuTab.Modpacks.name))
                     }
                 }
             )
@@ -689,7 +649,7 @@ fun AppNavigation(
             val route = it.toRoute<ModCatalogRoute>()
             if (isDisabledCatalogLocalTargetKind(route.targetLocalKind)) {
                 LaunchedEffect(route) {
-                    navController.navigateAbsolute(ModpackLocalListRoute)
+                    navController.navigateAbsolute(MenuRoute(MenuTab.Modpacks.name))
                 }
             } else {
                 ModCatalogScreen(
@@ -722,7 +682,7 @@ fun AppNavigation(
                 onOpenTaskList = onOpenTask,
                 onTargetUnavailable = {
                     if (route.hasDisabledCatalogLocalTargetKind()) {
-                        navController.navigateAbsolute(ModpackLocalListRoute)
+                        navController.navigateAbsolute(MenuRoute(MenuTab.Modpacks.name))
                     } else if (route.localCatalogTarget() != null) {
                         navController.returnFromModCatalogInfo(route, clearLocalTarget = true)
                     } else if (!navController.popBackStack()) {

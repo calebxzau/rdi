@@ -21,7 +21,10 @@ import calebxzhou.rdi.client.ui.screen.HostTarget
 import calebxzhou.rdi.common.model.HostStatus
 import org.bson.types.ObjectId
 
-/** Shared room tile (icon on top, name below): left click plays, right click opens details; a cursor-following hint (drawn by [CardHintHost]) explains both. */
+/**
+ * Shared room tile (icon on top, name below): left click plays, right click opens details; a cursor-following hint (drawn by [CardHintHost]) explains both.
+ * [glass] is passed through to [IconTileCard]; see [TileGlass].
+ */
 @Composable
 fun UnifiedHostCard(
     host: UnifiedHostBrief,
@@ -30,6 +33,7 @@ fun UnifiedHostCard(
     onOpenDetail: ((HostTarget) -> Unit)? = null,
     playEnabled: Boolean = true,
     playLoading: Boolean = false,
+    glass: TileGlass,
 ) {
     rememberPlayerInfoPrefetch(host.onlinePlayerIds)
     val canPlay = host.playable && playEnabled && !playLoading
@@ -51,6 +55,7 @@ fun UnifiedHostCard(
         statusDotColor = host.status.statusDotColor(),
         dimmed = !host.playable,
         primaryEnabled = canPlay,
+        glass = glass,
         onPrimaryClick = { onPlay(host) },
         onSecondaryClick = onOpenDetail?.let { { it(host.target) } },
     ) {
@@ -81,7 +86,7 @@ private fun UnifiedHostIcon(
     playLoading: Boolean,
     modifier: Modifier = Modifier,
 ) {
-    val shape = RoundedCornerShape(16.dp)
+    val shape = TileIconShape
     Box(modifier) {
         Box(
             modifier = Modifier

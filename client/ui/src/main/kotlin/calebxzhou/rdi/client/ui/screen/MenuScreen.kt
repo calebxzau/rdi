@@ -1,5 +1,13 @@
 package calebxzhou.rdi.client.ui.screen
 
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.hoverable
@@ -7,6 +15,7 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsHoveredAsState
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
@@ -14,44 +23,47 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
-import calebxzau.rdi.client.ui.CircleIconButton
-import calebxzau.rdi.client.ui.IconMarqueeCard
-import calebxzau.rdi.client.ui.MarqueeIcon
-import calebxzau.rdi.client.ui.SimpleTooltip
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import calebxzau.rdi.client.RDIClient
-import calebxzau.rdi.client.ui.FlowRowV
+import calebxzau.rdi.client.ui.AlertErr
+import calebxzau.rdi.client.ui.CircleIconButton
+import calebxzau.rdi.client.ui.EdgeAutoScrollBox
+import calebxzau.rdi.client.ui.GlassIconButton
 import calebxzau.rdi.client.ui.GlassNavBar
 import calebxzau.rdi.client.ui.GlassNavItem
+import calebxzau.rdi.client.ui.GlassTileGrid
+import calebxzau.rdi.client.ui.GlassTileGridState
 import calebxzau.rdi.client.ui.LocalAppBackgroundHazeState
 import calebxzau.rdi.client.ui.baseRoundCornerShape
 import calebxzau.rdi.client.ui.loadImageBitmap
-import calebxzhou.rdi.client.auth.LocalCredentials
-import calebxzhou.rdi.client.auth.updateLastPlayHost
-import calebxzhou.rdi.client.net.loggedAccount
+import calebxzau.rdi.client.ui.rememberGlassTileGridState
+import calebxzau.rdi.client.ui.viewmodel.HostListEvent
+import calebxzau.rdi.client.ui.viewmodel.HostListViewModel
 import calebxzhou.rdi.client.net.lgr
-import calebxzhou.rdi.client.net.server
+import calebxzhou.rdi.client.net.loggedAccount
 import calebxzhou.rdi.client.service.ClientTaskManager
-import calebxzhou.rdi.client.service.HttpImageState
+import calebxzhou.rdi.client.service.ModpackLocalDir
 import calebxzhou.rdi.client.service.StartPlayResult
 import calebxzhou.rdi.client.service.content.isClientModMigrationInProgress
 import calebxzhou.rdi.client.service.rememberPlayerInfoPrefetch
-import calebxzhou.rdi.client.service.startHostPlay
 import calebxzhou.rdi.client.ui.McPlayArgs
-import calebxzhou.rdi.client.ui.comp.HeadButton
+import calebxzhou.rdi.client.ui.comp.CardHintHost
 import calebxzhou.rdi.client.ui.comp.ModpackDownloadMethodDialog
 import calebxzhou.rdi.client.ui.comp.PlayerModel
-import calebxzhou.rdi.client.ui.comp.CardHintHost
+import calebxzhou.rdi.client.ui.comp.TILE_GRID_SPACING
+import calebxzhou.rdi.client.ui.comp.TileGlass
+import calebxzhou.rdi.client.ui.comp.TileGridGlassStyle
 import calebxzhou.rdi.client.ui.comp.UnifiedHostCard
-import calebxzhou.rdi.common.exception.RequestError
-import calebxzhou.rdi.common.model.Host
-import calebxzhou.rdi.common.model.Modpack
-import kotlinx.coroutines.coroutineScope
-import kotlinx.coroutines.launch
-import org.bson.types.ObjectId
+import calebxzhou.rdi.client.ui.comp.iconTileSize
+import calebxzhou.rdi.common.model.isDav
+import org.koin.compose.viewmodel.koinViewModel
 
 /**
  * calebxzhou @ 2026-02-25 17:51
@@ -62,92 +74,75 @@ private val MenuNavItems = listOf(
     GlassNavItem("\uF1B2", "整合包"),
 )
 
+private const val MENU_TILE_ROWS = 3
+private val MenuTileSize = iconTileSize(110.dp)
+private val MenuGridPadding = PaddingValues(horizontal = 16.dp, vertical = 16.dp)
+
+/** 与[GlassTileGrid]自身高度一致，加载中、空列表时占位不跳动。 */
+private val MenuGridHeight = MenuTileSize.height * MENU_TILE_ROWS + TILE_GRID_SPACING * (MENU_TILE_ROWS - 1) +
+    MenuGridPadding.calculateTopPadding() + MenuGridPadding.calculateBottomPadding()
+
+/** 切换标签时卡片区的平移与淡入淡出。 */
+private val TabSlideSpec = tween<IntOffset>(durationMillis = 350, easing = FastOutSlowInEasing)
+private val TabFadeSpec = tween<Float>(durationMillis = 350, easing = FastOutSlowInEasing)
+
+/** 滚到离末尾不足这么多张瓷砖时加载更多房间。 */
+private const val HOST_LOAD_MORE_THRESHOLD = MENU_TILE_ROWS * 2
+
+/**
+ * 主菜单：顶部导航在“多人房间”和“整合包”之间切换，中间是3行横向滚动的玻璃瓷砖网格，
+ * 两侧箭头翻页；底部是创建房间与整合广场入口。
+ */
 @Composable
 fun MenuScreen(
-    onOpenModpacks: () -> Unit,
-    onOpenHostLobby: () -> Unit,
+    initialTab: MenuTab,
     onOpenMcPlay: (McPlayArgs) -> Unit,
-    onOpenTaskList: (String) -> Unit
+    onOpenTaskList: (String) -> Unit,
+    onOpenHostInfo: (HostTarget) -> Unit,
+    onOpenModpackPlaza: () -> Unit,
+    onOpenModpackInfo: (ModpackLocalDir) -> Unit,
+    onOpenModpackContent: (ModpackLocalDir, ModpackContentType) -> Unit,
+    onOpenModpackOptions: (ModpackLocalDir) -> Unit,
+    hostListViewModel: HostListViewModel = koinViewModel(),
 ) {
-    val lastPlayHost = remember { LocalCredentials.read().lastPlayHost }
-    val scope = rememberCoroutineScope()
-    var lastPlayHostBrief by remember { mutableStateOf<Host.BriefVo?>(null) }
-    var menuModpackBriefs by remember { mutableStateOf<List<Modpack.ListSimpleVo>>(emptyList()) }
-    var menuSkinHeads by remember { mutableStateOf<List<MarqueeIcon.SkinHead>>(emptyList()) }
-    var launchingHostId by remember { mutableStateOf<String?>(null) }
-    var installConfirmTask by remember { mutableStateOf<StartPlayResult.NeedInstall?>(null) }
-    var playError by remember { mutableStateOf<String?>(null) }
     var showOldMainWarning by remember { mutableStateOf(RDIClient.OLD_MAIN) }
+    var showCreateRoomGuide by remember { mutableStateOf(false) }
+    var installConfirmTask by remember { mutableStateOf<StartPlayResult.NeedInstall?>(null) }
     val sponsorBitmap = remember {
         loadImageBitmap("assets/sponsor.avif")
             .onFailure { lgr.warn(it) { "加载赞助图片失败" } }
             .getOrNull()
     }
-    val menuActionInteractionSource = remember { MutableInteractionSource() }
-    val menuActionsHovered by menuActionInteractionSource.collectIsHoveredAsState()
-    // 顶部导航暂未接入切换逻辑，只切换选中胶囊
-    var selectedNavIndex by remember { mutableIntStateOf(0) }
+    val gridHoverSource = remember { MutableInteractionSource() }
+    val gridHovered by gridHoverSource.collectIsHoveredAsState()
+    var selectedTab by remember { mutableStateOf(initialTab) }
     val taskEntries by ClientTaskManager.entries.collectAsState()
     val modMigrationInProgress = isClientModMigrationInProgress(taskEntries)
+    val hostState by hostListViewModel.uiState.collectAsStateWithLifecycle()
+    val modpacks = rememberLocalModpackManager(onOpenTaskList)
+    val hostGrid = rememberGlassTileGridState()
+    val modpackGrid = rememberGlassTileGridState()
+    val activeGrid = if (selectedTab == MenuTab.Hosts) hostGrid else modpackGrid
 
-    LaunchedEffect(lastPlayHost?.id) {
-        lastPlayHostBrief = null
-        val hostId = lastPlayHost?.id ?: return@LaunchedEffect
-        runCatching {
-            server.makeRequest<Host.BriefVo>("host/$hostId/brief").let { response ->
-                if (!response.ok) throw RequestError(response.msg)
-                response.data
+    LaunchedEffect(hostListViewModel) {
+        hostListViewModel.events.collect { event ->
+            when (event) {
+                is HostListEvent.OpenMcPlay -> onOpenMcPlay(event.args)
+                is HostListEvent.NeedInstall -> installConfirmTask = event.result
+                is HostListEvent.OpenTaskList -> onOpenTaskList(event.runId)
             }
-        }.onSuccess { host ->
-            lastPlayHostBrief = host
-        }.onFailure { error ->
-            lgr.warn(error) { "加载最近游玩房间失败" }
         }
     }
 
-
-    LaunchedEffect(Unit) {
-        menuModpackBriefs = runCatching {
-            loadMenuModpackBriefs()
-        }.onFailure { error ->
-            lgr.warn(error) { "加载整合包推荐失败" }
-        }.getOrDefault(emptyList())
+    // 可玩的房间在前，暂不可玩的排在后面并变暗
+    val shownHosts = remember(hostState.hosts, loggedAccount.isDav) {
+        val (playable, nonPlayable) = groupUnifiedHosts(applyDavPlayableOverride(hostState.hosts, loggedAccount.isDav))
+        playable + nonPlayable
     }
-
-    LaunchedEffect(Unit) {
-        runCatching {
-            loadMenuSkinHeads { heads ->
-                menuSkinHeads = heads
-            }
-        }.onFailure { error ->
-            lgr.warn(error) { "加载多人房间皮肤失败" }
-        }
-    }
-
-    fun startHost(host: Host.BriefVo) {
-        if (launchingHostId != null) return
-        val hostId = host._id.toHexString()
-        launchingHostId = hostId
-        scope.launch {
-            startHostPlay(hostId)
-                .onSuccess { result ->
-                    when (result) {
-                        is StartPlayResult.Ready -> {
-                            LocalCredentials.read().updateLastPlayHost(hostId, host.name)
-                            onOpenMcPlay(result.args)
-                        }
-                        is StartPlayResult.NeedMod -> {
-                            playError = "房间缺少必要Mod：${result.modSlugs.joinToString("、")}。请先前往模组界面添加。"
-                        }
-                        is StartPlayResult.NeedInstall -> installConfirmTask = result
-                        is StartPlayResult.Installing -> {
-                            playError = "整合包正在下载，请等待下载完成后再启动"
-                            onOpenTaskList(result.runId)
-                        }
-                    }
-                }
-                .onFailure { playError = it.message ?: "无法开始游玩" }
-            launchingHostId = null
+    rememberPlayerInfoPrefetch(shownHosts.flatMap { listOfNotNull(it.ownerId) + it.onlinePlayerIds })
+    LaunchedEffect(hostGrid, shownHosts.size) {
+        snapshotFlow { hostGrid.lazyGridState.layoutInfo.visibleItemsInfo.lastOrNull()?.index }.collect { index ->
+            if (index != null && index >= shownHosts.size - HOST_LOAD_MORE_THRESHOLD) hostListViewModel.loadMore()
         }
     }
 
@@ -181,41 +176,114 @@ fun MenuScreen(
                  .size(320.dp),
              onClick = onOpenWardrobe
          )*/
-        Box(
+        EdgeAutoScrollBox(
+            scrollState = activeGrid.lazyGridState,
             modifier = Modifier
-                .align(Alignment.CenterEnd)
-                .fillMaxHeight()
-                .fillMaxWidth(1f / 3f),
-            contentAlignment = Alignment.CenterStart
+                .align(Alignment.Center)
+                .fillMaxWidth()
+                .height(MenuGridHeight),
         ) {
-            MenuActionButtons(
+            Box(
                 modifier = Modifier
-                    .widthIn(min = 220.dp)
-                    .alpha(
-                        if (modMigrationInProgress) 0.38f
-                        else if (menuActionsHovered) 1f else 0.6f
-                    )
-                    .hoverable(menuActionInteractionSource),
-                enabled = !modMigrationInProgress,
-                modpackBriefs = menuModpackBriefs,
-                skinHeads = menuSkinHeads,
-                onOpenModpacks = onOpenModpacks,
-                onOpenHostLobby = onOpenHostLobby,
-                lastPlayHostBrief = lastPlayHostBrief,
-                launchingHostId = launchingHostId,
-                onStartHost = ::startHost
-            )
+                    .fillMaxSize()
+                    .hoverable(gridHoverSource),
+                contentAlignment = Alignment.Center,
+            ) {
+                Box(
+                    modifier = Modifier.fillMaxSize().alpha(if (modMigrationInProgress) 0.38f else 1f),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    // 切换标签时卡片区整体平移：往右边的标签切换时新内容从右侧滑入，反之从左侧
+                    AnimatedContent(
+                        targetState = selectedTab,
+                        modifier = Modifier.fillMaxSize(),
+                        transitionSpec = {
+                            val direction = if (targetState.ordinal > initialState.ordinal) 1 else -1
+                            (slideInHorizontally(TabSlideSpec) { width -> width * direction } + fadeIn(TabFadeSpec)) togetherWith
+                                (slideOutHorizontally(TabSlideSpec) { width -> -width * direction } + fadeOut(TabFadeSpec))
+                        },
+                        contentAlignment = Alignment.Center,
+                        label = "menuTabContent",
+                    ) { tab ->
+                        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                            if (tab == MenuTab.Hosts) {
+                                when {
+                                    hostState.initialLoading -> CircularProgressIndicator()
+                                    shownHosts.isEmpty() -> MenuEmptyText("暂无可展示的房间，等待朋友邀请")
+                                    else -> MenuTileGrid(items = shownHosts, grid = hostGrid, key = { "${it.target.kind}:${it.target.id}" }) { index, host ->
+                                        UnifiedHostCard(
+                                            host = host,
+                                            onPlay = hostListViewModel::startHost,
+                                            onOpenDetail = onOpenHostInfo,
+                                            playEnabled = hostState.launchingHost == null,
+                                            playLoading = hostState.launchingHost == host.target,
+                                            glass = TileGlass.Shared(hostGrid, index),
+                                        )
+                                    }
+                                }
+                                if (hostState.loadingMore) {
+                                    CircularProgressIndicator(Modifier.align(Alignment.CenterEnd).padding(end = 16.dp).size(24.dp))
+                                }
+                            } else {
+                                when {
+                                    modpacks.legacyLoading -> CircularProgressIndicator()
+                                    modpacks.legacyPacks.isEmpty() -> MenuEmptyText("还没有整合包，去整合广场看看吧")
+                                    else -> MenuTileGrid(items = modpacks.legacyPacks, grid = modpackGrid, key = { it.versionId }) { index, pack ->
+                                        modpacks.InstalledTile(
+                                            pack = pack,
+                                            glass = TileGlass.Shared(modpackGrid, index),
+                                            onOpenPlay = onOpenMcPlay,
+                                            onOpenModpackInfo = onOpenModpackInfo,
+                                            onOpenContent = onOpenModpackContent,
+                                            onOpenOptions = onOpenModpackOptions,
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                if (modMigrationInProgress) {
+                    MigrationBlocker(Modifier.matchParentSize())
+                }
+            }
         }
 
         GlassNavBar(
             hazeState = LocalAppBackgroundHazeState.current,
             items = MenuNavItems,
-            selectedIndex = selectedNavIndex,
-            onSelect = { selectedNavIndex = it },
+            selectedIndex = selectedTab.ordinal,
+            onSelect = { selectedTab = MenuTab.entries[it] },
             modifier = Modifier
                 .align(Alignment.TopCenter)
                 .padding(top = 16.dp)
         )
+
+        Column(
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .padding(bottom = 24.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            modpacks.packActionMessage?.let { message ->
+                Text(message, color = Color.White, style = MaterialTheme.typography.bodyMedium)
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                if (selectedTab == MenuTab.Modpacks) {
+                    GlassIconButton(icon = "\uDB86\uDDD5", label = "整合广场", onClick = onOpenModpackPlaza)
+                    GlassIconButton(
+                        icon = "\uF019",
+                        label = "导入rdipack2",
+                        enabled = !modpacks.importPreparing,
+                        onClick = modpacks::importRdiPack2,
+                    )
+                }else{
+                    GlassIconButton(icon = "\uF067", label = "创建房间") { showCreateRoomGuide = true }
+
+                }
+            }
+        }
 
         Column(
             modifier = Modifier
@@ -224,7 +292,7 @@ fun MenuScreen(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(4.dp)
         ) {
-            if (menuActionsHovered) {
+            if (gridHovered) {
                 sponsorBitmap?.let { bitmap ->
                     Text(
                         "支持rdi继续走下去",
@@ -235,7 +303,7 @@ fun MenuScreen(
                         bitmap = bitmap,
                         contentDescription = null,
                         modifier = Modifier
-                            .size(112.dp)
+                            .size(96.dp)
                             .alpha(0.85f)
                             .clip(baseRoundCornerShape),
                         contentScale = ContentScale.Fit
@@ -245,21 +313,7 @@ fun MenuScreen(
         }
     }
 
-    playError?.let { error ->
-        AlertDialog(
-            onDismissRequest = { playError = null },
-            title = { Text("无法开始游玩") },
-            text = { Text(error) },
-            confirmButton = {
-                CircleIconButton(
-                    icon = "\uF00C",
-                    label = "知道了"
-                ) {
-                    playError = null
-                }
-            }
-        )
-    }
+    hostState.errorMessage?.let { AlertErr(it, hostListViewModel::clearError) }
 
     installConfirmTask?.let { install ->
         ModpackDownloadMethodDialog(
@@ -275,185 +329,66 @@ fun MenuScreen(
                 onOpenTaskList(runId)
             },
             onOpenTaskList = onOpenTaskList,
-            onImportError = { playError = it }
+            onImportError = hostListViewModel::showError,
+        )
+    }
+
+    modpacks.Dialogs()
+
+    if (showCreateRoomGuide) {
+        CreateRoomGuideDialog(
+            onDismiss = { showCreateRoomGuide = false },
+            onOpenModpackPlaza = onOpenModpackPlaza,
         )
     }
 }
 
-private suspend fun loadMenuModpackBriefs(): List<Modpack.ListSimpleVo> {
-    val response = server.makeRequest<List<Modpack.ListSimpleVo>>(
-        path = "modpack/list-simple",
-        params = mapOf("hasIconOnly" to true)
+@Composable
+private fun <T> MenuTileGrid(
+    items: List<T>,
+    grid: GlassTileGridState,
+    key: (T) -> Any,
+    tile: @Composable (index: Int, item: T) -> Unit,
+) {
+    GlassTileGrid(
+        items = items,
+        state = grid,
+        hazeState = LocalAppBackgroundHazeState.current,
+        tileSize = MenuTileSize,
+        modifier = Modifier.fillMaxWidth(),
+        rows = MENU_TILE_ROWS,
+        spacing = TILE_GRID_SPACING,
+        contentPadding = MenuGridPadding,
+        style = TileGridGlassStyle,
+        key = key,
+        tile = tile,
     )
-    if (!response.ok) throw RequestError(response.msg)
-    return response.data.orEmpty()
 }
 
-private suspend fun loadMenuSkinHeads(
-    onHeadsChanged: (List<MarqueeIcon.SkinHead>) -> Unit
-) {
-    val response = server.makeRequest<List<String>>("player/unique-skin-list")
-    if (!response.ok) throw RequestError(response.msg)
+@Composable
+private fun MenuEmptyText(text: String) {
+    Text(
+        text = text,
+        color = Color.White,
+        style = MaterialTheme.typography.titleLarge,
+        textAlign = TextAlign.Center,
+    )
+}
 
-    val skinUrls = response.data.orEmpty()
-        .map(String::trim)
-        .filter(String::isNotBlank)
-        .distinct()
-    var heads = skinUrls.map {
-        MarqueeIcon.SkinHead(
-            image = null,
-            contentDescription = "玩家皮肤"
-        )
-    }
-    onHeadsChanged(heads)
-
-    coroutineScope {
-        skinUrls.forEachIndexed { index, skinUrl ->
-            launch {
-                val image = HttpImageState.fetch(skinUrl).bitmap
-                    ?.takeIf { it.width >= 64 && it.height >= 32 }
-                heads = heads.mapIndexed { currentIndex, head ->
-                    if (currentIndex == index) head.copy(image = image) else head
+/** 迁移mod文件期间盖住瓷砖网格，拦下所有点击。 */
+@Composable
+private fun MigrationBlocker(modifier: Modifier) {
+    Box(
+        modifier = modifier.pointerInput(Unit) {
+            awaitPointerEventScope {
+                while (true) {
+                    awaitPointerEvent(PointerEventPass.Initial).changes.forEach { it.consume() }
                 }
-                onHeadsChanged(heads)
             }
-        }
-    }
-}
-
-
-@Composable
-private fun MenuActionButtons(
-    modifier: Modifier = Modifier,
-    enabled: Boolean,
-    modpackBriefs: List<Modpack.ListSimpleVo>,
-    skinHeads: List<MarqueeIcon.SkinHead>,
-    onOpenModpacks: () -> Unit,
-    onOpenHostLobby: () -> Unit,
-    lastPlayHostBrief: Host.BriefVo?,
-    launchingHostId: String?,
-    onStartHost: (Host.BriefVo) -> Unit,
-) {
-    Column(
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-        modifier = modifier
+        },
+        contentAlignment = Alignment.Center,
     ) {
-        val marqueeIcons = remember(modpackBriefs) {
-            modpackBriefs.mapNotNull { brief ->
-                brief.iconUrl
-                    ?.trim()
-                    ?.takeIf(String::isNotBlank)
-                    ?.let { iconUrl ->
-                        MarqueeIcon.Url(
-                            url = iconUrl,
-                            contentDescription = brief.name
-                        )
-                    }
-            }
-        }
-        ModpackMenuActionCard(
-            enabled = enabled,
-            icons = marqueeIcons,
-            onClick = onOpenModpacks,
-        )
-        HostLobbyMenuActionCard(
-            enabled = enabled,
-            icons = skinHeads,
-            onClick = onOpenHostLobby,
-        )
-        lastPlayHostBrief?.let { host ->
-            RecentHostMenuActionCard(
-                enabled = enabled,
-                host = host,
-                launchingHostId = launchingHostId,
-                onStartHost = onStartHost,
-            )
-        }
-    }
-}
-
-@Composable
-private fun ModpackMenuActionCard(
-    enabled: Boolean,
-    icons: List<MarqueeIcon>,
-    onClick: () -> Unit,
-) {
-    MenuActionCardTooltip(enabled) {
-        IconMarqueeCard(
-            title = "整合包",
-            subtitle = "管理和安装你的整合包",
-            icons = icons,
-            Brush.linearGradient(
-                colors = listOf(
-                    MaterialTheme.colorScheme.surfaceVariant,
-                    MaterialTheme.colorScheme.surfaceVariant
-                )
-            ),
-            modifier = Modifier
-                .height(80.dp)
-                .width(320.dp)
-                .clip(baseRoundCornerShape)
-                .clickable(enabled = enabled, onClick = onClick)
-        )
-    }
-}
-
-@Composable
-private fun HostLobbyMenuActionCard(
-    enabled: Boolean,
-    icons: List<MarqueeIcon>,
-    onClick: () -> Unit,
-) {
-    MenuActionCardTooltip(enabled) {
-        IconMarqueeCard(
-            title = "多人房间",
-            subtitle = "选择创建房间跟大家一起玩",
-            icons = icons,
-            Brush.linearGradient(
-                colors = listOf(
-                    MaterialTheme.colorScheme.surfaceVariant,
-                    MaterialTheme.colorScheme.surfaceVariant
-                )
-            ),
-            modifier = Modifier
-                .height(80.dp)
-                .width(320.dp)
-                .clip(baseRoundCornerShape)
-                .clickable(enabled = enabled, onClick = onClick)
-        )
-    }
-}
-
-@Composable
-private fun RecentHostMenuActionCard(
-    enabled: Boolean,
-    host: Host.BriefVo,
-    launchingHostId: String?,
-    onStartHost: (Host.BriefVo) -> Unit,
-) {
-    MenuActionCardTooltip(enabled) {
-        UnifiedHostCard(
-            host = UnifiedHostBrief.fromLegacy(host).copy(name = "继续玩·${host.name}"),
-            modifier = Modifier.width(110.dp),
-            onPlay = { onStartHost(host) },
-            playEnabled = enabled && launchingHostId == null,
-            playLoading = launchingHostId == host._id.toHexString(),
-        )
-    }
-}
-
-@Composable
-private fun MenuActionCardTooltip(
-    enabled: Boolean,
-    content: @Composable () -> Unit,
-) {
-    if (enabled) {
-        content()
-    } else {
-        SimpleTooltip("正在迁移mod文件") {
-            content()
-        }
+        MenuEmptyText("正在迁移mod文件，请稍候")
     }
 }
 
