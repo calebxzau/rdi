@@ -124,7 +124,7 @@ object HostMemberService {
         return null
     }
 
-    private const val MAX_MEMBERS = 10
+    const val MAX_MEMBERS = 20
     private const val MAX_JOINED_HOSTS = 10
 
     suspend fun HostContext.addMember(qq: String) {
@@ -134,13 +134,7 @@ object HostMemberService {
             if (current.members.any { it.id == target._id }) {
                 throw RequestError("该用户已是成员")
             }
-            if (current.members.size >= 10) {
-                throw RequestError("该房间最多只能有10名成员")
-            }
-            val joinedCount = dbcl.countDocuments(eq("${Host::members.name}.${Host.Member::id.name}", target._id))
-            if (joinedCount >= 10) {
-                throw RequestError("该用户已加入9张房间，无法继续加入")
-            }
+            memberAddProblem(current, target._id, current.members.size)?.let { throw RequestError(it) }
             dbcl.updateOne(
                 eq("_id", current._id),
                 Updates.push(Host::members.name, Host.Member(target._id, Role.MEMBER))

@@ -155,10 +155,12 @@ class HostInstallServiceTest {
         val defaults = Properties().apply {
             setProperty("level-name", "myworld")
             setProperty("server-port", "9999")
+            setProperty("max-players", "8")
         }
         HostInstallService.applyDefaultServerProperties(server, defaults)
         assertTrue(server.getProperty("level-name") == "world")
         assertTrue(server.getProperty("server-port") == "25565")
+        assertTrue(server.getProperty("max-players") == HostMemberService.MAX_MEMBERS.toString())
     }
 
     @Test

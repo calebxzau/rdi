@@ -68,6 +68,7 @@ object HostInstallService {
                 .replace("#{difficulty}", getDifficultyText(difficulty))
 
                 .replace("#{gamemode}", getGameModeText(gameMode))
+                .replace("#{max-players}", HostMemberService.MAX_MEMBERS.toString())
             //水星迫降
             if (this@writeServerProperties.modpackId == ObjectId("6a211c654467027dd3ed3f1d")) {
                 txt = txt.replace(
@@ -109,6 +110,7 @@ object HostInstallService {
             }
         }
         serverProps.setProperty("level-name", "world")
+        serverProps.setProperty("max-players", HostMemberService.MAX_MEMBERS.toString())
     }
 
     fun Host.deleteTransientStartupDirs() {
