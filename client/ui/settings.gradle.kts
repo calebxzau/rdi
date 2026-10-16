@@ -17,6 +17,7 @@ include(
     ":code-editor",
     ":code-editor-ui",
     ":database",
+    ":sqlite-natives",
     ":client-store",
     ":misc",
     ":model",
@@ -48,6 +49,7 @@ project(":theme").projectDir = file("theme")
 project(":code-editor").projectDir = file("code-editor")
 project(":code-editor-ui").projectDir = file("code-editor-ui")
 project(":database").projectDir = file("database")
+project(":sqlite-natives").projectDir = file("sqlite-natives")
 project(":client-store").projectDir = file("client-store")
 project(":misc").projectDir = file("../../common/misc")
 project(":model").projectDir = file("../../common/model")

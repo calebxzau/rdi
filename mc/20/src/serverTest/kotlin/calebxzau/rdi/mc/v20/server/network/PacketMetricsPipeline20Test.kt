@@ -11,6 +11,7 @@ import calebxzau.rdi.mc.zstdcodec.PacketCaptureRecorder
 import com.github.luben.zstd.ZstdInputStream
 import java.io.DataInputStream
 import java.nio.file.Files
+import java.sql.DriverManager
 import java.util.UUID
 import io.netty.channel.ChannelInboundHandlerAdapter
 import io.netty.channel.ChannelOutboundHandlerAdapter
@@ -161,6 +162,34 @@ class PacketMetricsPipeline20Test {
             assertEquals(2048, harness.samples.last().bytes)
         } finally {
             harness.close()
+        }
+    }
+
+    @Test
+    fun `uncompressed batch metrics accept a void write promise`(): Unit {
+        // Krypton writes listener-less login packets with a void promise, before compression exists.
+        val database = Files.createTempDirectory("rdi-v4-void").resolve("packet-traffic_v4.db")
+        PacketMetrics20.startBatchMetrics(database)
+        val harness = Harness(threshold = -1)
+        try {
+            harness.channel.writeAndFlush(ServerboundKeepAlivePacket(7), harness.channel.voidPromise())
+            harness.channel.checkException()
+            assertTrue(harness.channel.isOpen)
+            val frame = harness.channel.readOutbound<ByteBuf>() ?: error("packet encoder produced no frame")
+            frame.release()
+        } finally {
+            harness.close()
+            PacketMetrics20.stop()
+        }
+
+        DriverManager.getConnection("jdbc:sqlite:${database.toAbsolutePath()}").use { connection ->
+            connection.createStatement().use { statement ->
+                statement.executeQuery("SELECT SUM(write_successes), SUM(successful_records) FROM packet_batch_windows").use { rows ->
+                    rows.next()
+                    assertEquals(1L, rows.getLong(1))
+                    assertEquals(1L, rows.getLong(2))
+                }
+            }
         }
     }
 

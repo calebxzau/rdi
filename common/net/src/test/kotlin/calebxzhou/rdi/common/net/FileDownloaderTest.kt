@@ -428,6 +428,39 @@ class FileDownloaderTest {
     }
 
     @Test
+    fun `unreachable host is skipped for other files after one failure`() = runBlocking {
+        val fixture = LocalDownloadServer()
+        // Drop the connection without a response, like a blocked or dead host.
+        fixture.add("/dead/one") { exchange -> exchange.close() }
+        fixture.add("/dead/two") { exchange -> exchange.close() }
+        fixture.add("/good/two", "two!")
+        try {
+            // "localhost" and 127.0.0.1 reach the same server but count as different hosts.
+            val first = fixture.tempDirectory.resolve("one.bin").downloadFileFrom(
+                urls = listOf(fixture.url("/dead/one", host = "localhost")),
+                knownSize = 4,
+                maxAttempts = 1,
+                onProgress = {},
+            )
+            assertTrue(first.isFailure)
+            assertEquals(1, fixture.requests("/dead/one"))
+
+            val secondTarget = fixture.tempDirectory.resolve("two.bin")
+            val second = secondTarget.downloadFileFrom(
+                urls = listOf(fixture.url("/dead/two", host = "localhost"), fixture.url("/good/two")),
+                knownSize = 4,
+                maxAttempts = 1,
+                onProgress = {},
+            )
+            assertTrue(second.isSuccess)
+            assertEquals("two!", secondTarget.readText())
+            assertEquals(0, fixture.requests("/dead/two"))
+        } finally {
+            fixture.close()
+        }
+    }
+
+    @Test
     fun `resume mismatch gets a bounded clean retry`() = runBlocking {
         val fixture = LocalDownloadServer()
         val body = "abcdef".toByteArray()
@@ -512,7 +545,7 @@ private class LocalDownloadServer : AutoCloseable {
         }
     }
 
-    fun url(path: String): String = "http://127.0.0.1:${server.address.port}$path"
+    fun url(path: String, host: String = "127.0.0.1"): String = "http://${host}:${server.address.port}$path"
 
     fun requests(path: String): Int = requestMethods[path]?.count { it == "GET" } ?: 0
 

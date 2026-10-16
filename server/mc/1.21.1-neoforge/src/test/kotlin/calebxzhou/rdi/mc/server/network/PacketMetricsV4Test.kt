@@ -14,6 +14,7 @@ import java.nio.file.Files
 import java.sql.DriverManager
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertTrue
 
 class PacketMetricsV4Test {
     @Test
@@ -63,6 +64,41 @@ class PacketMetricsV4Test {
                 assertEquals(2, frames["Legacy"]?.first)
                 // Every frame that left the encoder is counted exactly once.
                 assertEquals(written, frames.values.sumOf { it.second })
+            }
+        }
+    }
+
+    @Test
+    fun `uncompressed batch metrics accept a void write promise`() {
+        // Krypton writes listener-less login packets with a void promise, before compression exists.
+        val database = Files.createTempDirectory("rdi-v4-void").resolve("packet-traffic_v4.db")
+        PacketMetrics.startBatchMetrics(database)
+        val channel = EmbeddedChannel()
+        try {
+            channel.pipeline().addLast("splitter", ChannelInboundHandlerAdapter())
+            channel.pipeline().addLast("flow", FlowControlHandler())
+            channel.pipeline().addLast("decoder", ChannelInboundHandlerAdapter())
+            channel.pipeline().addLast("prepender", ChannelOutboundHandlerAdapter())
+            channel.pipeline().addLast("encoder", TaggingEncoder())
+            PacketRecordPipeline.install(channel.pipeline())
+            PacketMetricsPipeline.install(channel.pipeline())
+            channel.writeAndFlush(TestPacket21.other(0), channel.voidPromise())
+            channel.checkException()
+            assertTrue(channel.isOpen)
+            val frame = channel.readOutbound<ByteBuf>() ?: error("packet encoder produced no frame")
+            frame.release()
+        } finally {
+            channel.finishAndReleaseAll()
+            PacketMetrics.stop()
+        }
+
+        DriverManager.getConnection("jdbc:sqlite:${database.toAbsolutePath()}").use { connection ->
+            connection.createStatement().use { statement ->
+                statement.executeQuery("SELECT SUM(write_successes), SUM(successful_records) FROM packet_batch_windows").use { rows ->
+                    rows.next()
+                    assertEquals(1L, rows.getLong(1))
+                    assertEquals(1L, rows.getLong(2))
+                }
             }
         }
     }

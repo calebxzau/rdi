@@ -1282,7 +1282,7 @@ fn start_client(
     }
     command.arg(format!("-Drdi.updater.pid={}", win32::process_id()));
     command.arg(format!("-Drdi.updater.islogmode={}", options.app_logs));
-    command.arg(format!("-Drserverurl={r_server_url}"));
+    command.arg(format!("-Drdi.server.url={r_server_url}"));
     command.args([
         "-cp",
         "lib/*",

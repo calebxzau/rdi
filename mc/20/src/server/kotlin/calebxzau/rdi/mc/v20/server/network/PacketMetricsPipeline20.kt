@@ -243,10 +243,12 @@ object PacketMetricsPipeline20 {
                 if (ZstdCompressionPipeline.hasOutboundEncoder(ctx.channel())) {
                     ctx.write(ZstdSendingRecord(msg, policy, identity, PersistentPacketKinds20.kindOf(packet)), promise)
                 } else {
-                    if (PacketMetrics20.batchMetricsEnabled) {
+                    val writePromise = if (PacketMetrics20.batchMetricsEnabled) {
                         PacketMetrics20.recordUncompressed(identity, msg.readableBytes(), promise)
+                    } else {
+                        promise
                     }
-                    ctx.write(msg, promise)
+                    ctx.write(msg, writePromise)
                 }
             } finally {
                 state.outboundPacket = previous

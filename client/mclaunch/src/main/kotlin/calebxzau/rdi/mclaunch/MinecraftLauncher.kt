@@ -1,5 +1,6 @@
 package calebxzau.rdi.mclaunch
 
+import calebxzau.rdi.mediaproc.FfmpegNativePlatform
 import calebxzhou.rdi.common.util.humanFileSize
 import calebxzhou.rdi.common.util.sha1
 import calebxzhou.rdi.common.exception.RequestError
@@ -34,9 +35,13 @@ private val utf8LoggingJvmArgs = listOf(
     "-Dsun.stderr.encoding=UTF-8",
 )
 
-internal fun earlyDisplayJvmArgs(mcVersion: McVersion, nativeLibraryDir: File): List<String> =
+internal fun earlyDisplayJvmArgs(
+    mcVersion: McVersion,
+    nativeLibraryDir: File,
+    ffmpegPlatform: FfmpegNativePlatform = FfmpegNativePlatform.current,
+): List<String> =
     if (mcVersion == McVersion.V201 || mcVersion == McVersion.V211) {
-        listOf("-Drdi.earlyDisplay.ffmpeg=${nativeLibraryDir.resolve("ffmpeg.exe").absolutePath}")
+        listOf("-Drdi.earlyDisplay.ffmpeg=${nativeLibraryDir.resolve(ffmpegPlatform.ffmpegExecutable).absolutePath}")
     } else {
         emptyList()
     }
@@ -337,7 +342,9 @@ class MinecraftLauncher(
             )
         }
         processedJvmArgs += request.extraJvmArgs
-        if (environment.debug) processedJvmArgs += "-Djavax.net.ssl.trustStoreType=Windows-ROOT"
+        if (environment.debug && LibraryOsArch.detectHostOs().isWindows) {
+            processedJvmArgs += "-Djavax.net.ssl.trustStoreType=Windows-ROOT"
+        }
 
         val mainClass = loaderManifest.mainClass ?: error("缺少启动主类")
         val command = buildList {

@@ -26,11 +26,24 @@ import kotlinx.serialization.builtins.MapSerializer
 import kotlinx.serialization.builtins.serializer
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonPrimitive
+import java.net.URI
 import java.nio.file.Path
 import java.nio.file.Paths
 
 private const val DEFAULT_GAME_NODE_ADDR = "rdi.calebxzhou.cn:65230"
 private const val DEFAULT_PRIMARY_HOST = "rdi.calebxzhou.cn"
+
+/**
+ * Host of a debug master given by the launcher as -Drdi.server.url (rdi.sh passes RDI_DEBUG_URL);
+ * null when it is absent or unusable, so debug builds keep talking to this machine.
+ */
+internal fun parseDebugServerHost(serverUrl: String?): String? {
+    if (serverUrl.isNullOrBlank()) return null
+    return runCatching { URI(serverUrl.trim()).host }
+        .onFailure { lgr.warn(it) { "rdi.server.url无效，将使用本机调试服务器: $serverUrl" } }
+        .getOrNull()
+        ?.takeIf { it.isNotBlank() }
+}
 
 data class ServerRouteState(
     val useBackupNode: Boolean = false,
@@ -76,8 +89,10 @@ class RServer(
 
         val routeState = MutableStateFlow(ServerRouteState())
 
+        val DEBUG_HOST: String? = parseDebugServerHost(System.getProperty("rdi.server.url"))
+
         val DBG = RServer(
-            "127.0.0.1", 65231, 65331
+            DEBUG_HOST ?: "127.0.0.1", 65231, 65331
         )
         val OFFICIAL_NNG = RServer(
             DEFAULT_PRIMARY_HOST, 65231, 65331

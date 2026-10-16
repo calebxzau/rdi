@@ -11,8 +11,10 @@ import sun.jvmstat.monitor.MonitoredVmUtil.mainClass
 import java.io.File
 import java.io.InputStream
 import java.security.MessageDigest
+import java.util.zip.CRC32
 import java.util.zip.ZipEntry
 import java.util.zip.ZipFile
+import java.util.zip.ZipOutputStream
 import java.util.jar.JarFile
 
 val appVersion = libs.versions.app.get()
@@ -30,6 +32,11 @@ plugins {
     id("org.gradlex.extra-java-module-info") version "1.14.2"
     idea
 }
+
+apply(from = "../gradle/target-platform.gradle.kts")
+val rdiTargetPlatform: String by extra
+val lwjglNatives: String by extra
+val zstdClassifier: String by extra
 
 extraJavaModuleInfo {
     failOnMissingModuleInfo.set(false)
@@ -82,7 +89,7 @@ kotlin {
 }
 
 dependencies {
-    implementation(compose.desktop.currentOs)
+    implementation("org.jetbrains.compose.desktop:desktop-jvm-$rdiTargetPlatform:${libs.versions.compose.plugin.get()}")
     implementation(kotlin("reflect"))
     implementation(libs.compose.runtime)
     implementation(libs.compose.foundation)
@@ -159,7 +166,7 @@ dependencies {
     listOf("", "glfw").forEach { component ->
         val suffix = component.takeIf(String::isNotEmpty)?.let { "-$it" }.orEmpty()
         implementation("org.lwjgl:lwjgl${suffix}:$lwjglVersion")
-        implementation("org.lwjgl:lwjgl${suffix}:$lwjglVersion:natives-windows")
+        implementation("org.lwjgl:lwjgl${suffix}:$lwjglVersion:$lwjglNatives")
     }
 
     testImplementation(kotlin("test"))
@@ -177,11 +184,11 @@ allprojects {
     configurations.all {
         resolutionStrategy {
             force("org.slf4j:slf4j-api:${libs.versions.slf4j.api.get()}")
-            // The launcher only ships on Windows x64; the default zstd-jni jar bundles natives for every platform.
+            // The default zstd-jni jar bundles natives for every platform; ship only the target platform's.
             dependencySubstitution {
                 substitute(module("com.github.luben:zstd-jni"))
                     .using(module("com.github.luben:zstd-jni:${libs.versions.zstd.get()}"))
-                    .withClassifier("win_amd64")
+                    .withClassifier(zstdClassifier)
             }
         }
     }
@@ -356,6 +363,28 @@ tasks.register<Test>("modpackUploadTest") {
     useJUnitPlatform()
 }
 
+// One UI release carries a manifest per platform. This build resolves natives for rdiTargetPlatform;
+// the other platforms are staged by nested builds with -Prdi.targetPlatform.
+val uiReleasePlatforms = listOf("windows-x64", "linux-x64")
+
+// File name markers of each platform's native jars, checked independently of target-platform.gradle.kts.
+val uiPlatformNativeMarkers = mapOf(
+    "windows-x64" to listOf(
+        "skiko-awt-runtime-windows-x64-", "-natives-windows.jar", "-windows-x86_64-gpl.jar", "-win_amd64.jar",
+        "rdi-sqlite-natives-windows-x64.jar",
+    ),
+    "linux-x64" to listOf(
+        "skiko-awt-runtime-linux-x64-", "-natives-linux.jar", "-linux-x86_64-gpl.jar", "-linux_amd64.jar",
+        "rdi-sqlite-natives-linux-x64.jar",
+    ),
+    "macos-arm64" to listOf(
+        "skiko-awt-runtime-macos-arm64-", "-natives-macos-arm64.jar", "-macosx-arm64-gpl.jar", "-darwin_aarch64.jar",
+        "rdi-sqlite-natives-macos-arm64.jar",
+    ),
+)
+
+fun uiInstallLibDir(platform: String) = layout.buildDirectory.dir("install/ui/$platform/lib")
+
 tasks.register<Sync>("desktopInstallLibs") {
     duplicatesStrategy = DuplicatesStrategy.FAIL
     notCompatibleWithConfigurationCache("resolves runtime artifact metadata while staging libraries")
@@ -367,15 +396,32 @@ tasks.register<Sync>("desktopInstallLibs") {
     }
     from(tasks.named<Jar>("jar"))
     from(earlyDisplayJar)
-    into(layout.buildDirectory.dir("install/ui/lib"))
+    into(uiInstallLibDir(rdiTargetPlatform))
 }
+
+// Nested builds share build directories with this one, so they run one at a time after it has staged
+// its own platform; running in parallel races on compiled classes.
+val nestedDesktopInstallLibs = uiReleasePlatforms.filter { it != rdiTargetPlatform }
+    .fold(emptyList<TaskProvider<GradleBuild>>()) { registered, platform ->
+        registered + tasks.register<GradleBuild>("desktopInstallLibs-$platform") {
+            notCompatibleWithConfigurationCache("runs a nested build for another target platform")
+            group = "distribution"
+            description = "Stage the UI runtime libraries for $platform."
+            setTasks(listOf("desktopInstallLibs"))
+            startParameter.projectProperties = mapOf("rdi.targetPlatform" to platform)
+            mustRunAfter("desktopInstallLibs")
+            registered.lastOrNull()?.let { mustRunAfter(it) }
+        }
+    }
 
 tasks.named<Jar>("jar") {
     archiveFileName.set("rdi-ui.jar")
 }
 
 
-val uiInstallLibDir = layout.buildDirectory.dir("install/ui/lib")
+val uiReleasesRootDir = layout.buildDirectory.dir("ui-releases")
+// Fixed ZIP entry time keeps release.zip byte-identical across rebuilds of the same files.
+val UI_RELEASE_ENTRY_TIME = 315532800000L
 val uiReleaseOutputDir = layout.buildDirectory.dir("ui-releases/$appVersion")
 
 fun jsonQuote(value: String): String =
@@ -406,7 +452,7 @@ fun readUiManifest(file: File): Map<String, String> {
     }
 }
 
-fun validateUiReleaseArchive(archive: File, expectedHashes: Map<String, String>) {
+fun validateUiReleaseArchive(archive: File, manifests: Map<String, Map<String, String>>) {
     ZipFile(archive).use { zip ->
         val entries = mutableListOf<ZipEntry>()
         val enumeration = zip.entries()
@@ -422,83 +468,139 @@ fun validateUiReleaseArchive(archive: File, expectedHashes: Map<String, String>)
             throw GradleException("UI库ZIP包含非法entry: $archive")
         }
         val entryNames = entries.map { it.name }
-        if (entryNames.size != entryNames.toSet().size || entryNames.toSet() != expectedHashes.keys) {
-            throw GradleException("UI库ZIP和manifest文件列表不一致: $archive")
+        val expectedNames = manifests.values.flatMap { it.keys }.toSet()
+        if (entryNames.size != entryNames.toSet().size || entryNames.toSet() != expectedNames) {
+            throw GradleException("UI库ZIP和各平台manifest的文件并集不一致: $archive")
         }
-        entries.forEach { entry ->
-            val actualHash = zip.getInputStream(entry).use { sha1(it) }
-            if (!actualHash.equals(expectedHashes[entry.name], ignoreCase = true)) {
-                throw GradleException("UI库ZIP文件hash不匹配: ${entry.name}")
+        val actualHashes = entries.associate { entry -> entry.name to zip.getInputStream(entry).use { sha1(it) } }
+        manifests.forEach { (platform, manifest) ->
+            manifest.forEach { (name, hash) ->
+                if (!hash.equals(actualHashes[name], ignoreCase = true)) {
+                    throw GradleException("UI库ZIP文件hash与${platform}的manifest不匹配: $name")
+                }
             }
         }
     }
 }
 
+// Same name must mean same bytes on every platform, because all platforms share one release.zip.
+fun mergeUiReleaseFiles(platformFiles: Map<String, Map<String, File>>): Map<String, File> {
+    val merged = linkedMapOf<String, File>()
+    val mergedHashes = mutableMapOf<String, String>()
+    val conflicts = sortedSetOf<String>()
+    platformFiles.forEach { (_, files) ->
+        files.forEach { (name, file) ->
+            val hash = sha1(file)
+            val existing = mergedHashes.putIfAbsent(name, hash)
+            if (existing == null) {
+                merged[name] = file
+            } else if (existing != hash) {
+                conflicts += name
+            }
+        }
+    }
+    if (conflicts.isNotEmpty()) {
+        throw GradleException("以下文件在不同平台的内容不同，无法共用release.zip: ${conflicts.joinToString()}")
+    }
+    return merged.toSortedMap()
+}
+
+// STORED keeps jars uncompressed (already compressed), so the server can stream entries cheaply.
+fun writeStoredZip(archive: File, files: Map<String, File>) {
+    ZipOutputStream(archive.outputStream().buffered()).use { zip ->
+        zip.setMethod(ZipOutputStream.STORED)
+        files.forEach { (name, file) ->
+            val checksum = CRC32()
+            file.inputStream().buffered().use { input ->
+                val buffer = ByteArray(8192)
+                while (true) {
+                    val read = input.read(buffer)
+                    if (read < 0) break
+                    checksum.update(buffer, 0, read)
+                }
+            }
+            val entry = ZipEntry(name).apply {
+                method = ZipEntry.STORED
+                size = file.length()
+                compressedSize = file.length()
+                crc = checksum.value
+                time = UI_RELEASE_ENTRY_TIME
+            }
+            zip.putNextEntry(entry)
+            file.inputStream().buffered().use { it.copyTo(zip) }
+            zip.closeEntry()
+        }
+    }
+}
+
+// Each platform ships its own natives only: every marker of its platform, none of the others'.
+fun validateUiPlatformNatives(platform: String, fileNames: Set<String>) {
+    val ownMarkers = uiPlatformNativeMarkers[platform] ?: throw GradleException("未知平台: $platform")
+    val missing = ownMarkers.filter { marker -> fileNames.none { it.contains(marker) } }
+    if (missing.isNotEmpty()) throw GradleException("${platform}缺少原生库: ${missing.joinToString()}")
+    val foreign = uiPlatformNativeMarkers.filterKeys { it != platform }.values.flatten()
+        .flatMap { marker -> fileNames.filter { it.contains(marker) } }
+        .distinct()
+    if (foreign.isNotEmpty()) throw GradleException("${platform}混入了其他平台的原生库: ${foreign.joinToString()}")
+}
+
 val packageUiRelease = tasks.register("packageUiRelease") {
-    dependsOn("desktopInstallLibs")
-    notCompatibleWithConfigurationCache("invokes 7z and validates the generated ZIP")
+    dependsOn("desktopInstallLibs", nestedDesktopInstallLibs)
+    notCompatibleWithConfigurationCache("reads staged libraries and validates the generated ZIP")
     group = "distribution"
-    description = "Generate the versioned UI library ZIP, manifest and latest pointer."
+    description = "Generate the versioned UI library ZIP, per-platform manifests and latest pointer."
 
     doLast {
-        val sourceDir = uiInstallLibDir.get().asFile
-        if (!sourceDir.isDirectory) throw GradleException("未找到UI运行库目录: $sourceDir")
-        val files = sourceDir.listFiles()
-            ?.filter { it.isFile }
-            ?.sortedBy { it.name }
-            .orEmpty()
-        if (files.isEmpty() || files.none { it.name.endsWith(".jar", ignoreCase = true) }) {
-            throw GradleException("UI运行库目录缺少JAR: $sourceDir")
-        }
-        val uiJar = sourceDir.resolve("rdi-ui.jar")
-        if (!uiJar.isFile) throw GradleException("UI运行库目录缺少rdi-ui.jar: $sourceDir")
-        val implementationVersion = JarFile(uiJar).use {
-            it.manifest?.mainAttributes?.getValue("Implementation-Version")
-        }
-        if (implementationVersion != appVersion) {
-            throw GradleException(
-                "rdi-ui.jar的Implementation-Version不匹配，期望$appVersion，实际${implementationVersion ?: "未知"}"
-            )
-        }
-
-        val hashes = files.associate { it.name to sha1(it) }
-        val outputDir = uiReleaseOutputDir.get().asFile
-        outputDir.mkdirs()
-        val archive = outputDir.resolve("$appVersion.zip")
-        val manifest = outputDir.resolve("$appVersion.json")
-        val latest = outputDir.resolve("latest.txt")
-
-        manifest.writeText(
-            hashes.entries.joinToString(",\n", "{\n", "\n}\n") { (name, hash) ->
-                "    ${jsonQuote(name)}: ${jsonQuote(hash)}"
+        val platformFiles = uiReleasePlatforms.associateWith { platform ->
+            val sourceDir = uiInstallLibDir(platform).get().asFile
+            if (!sourceDir.isDirectory) throw GradleException("未找到${platform}的UI运行库目录: $sourceDir")
+            val files = sourceDir.listFiles()
+                ?.filter { it.isFile }
+                ?.sortedBy { it.name }
+                .orEmpty()
+            if (files.isEmpty() || files.none { it.name.endsWith(".jar", ignoreCase = true) }) {
+                throw GradleException("${platform}的UI运行库目录缺少JAR: $sourceDir")
             }
-        )
-        if (archive.exists() && !archive.delete()) {
-            throw GradleException("无法覆盖旧UI库ZIP: $archive")
+            val uiJar = sourceDir.resolve("rdi-ui.jar")
+            if (!uiJar.isFile) throw GradleException("${platform}的UI运行库目录缺少rdi-ui.jar: $sourceDir")
+            val implementationVersion = JarFile(uiJar).use {
+                it.manifest?.mainAttributes?.getValue("Implementation-Version")
+            }
+            if (implementationVersion != appVersion) {
+                throw GradleException(
+                    "${platform}的rdi-ui.jar的Implementation-Version不匹配，期望$appVersion，实际${implementationVersion ?: "未知"}"
+                )
+            }
+            files.associateBy { it.name }
+        }
+        platformFiles.forEach { (platform, files) -> validateUiPlatformNatives(platform, files.keys) }
+        val mergedFiles = mergeUiReleaseFiles(platformFiles)
+
+        val rootDir = uiReleasesRootDir.get().asFile
+        val outputDir = uiReleaseOutputDir.get().asFile
+        if (outputDir.exists() && !outputDir.deleteRecursively()) {
+            throw GradleException("无法清理旧的UI发布目录: $outputDir")
+        }
+        outputDir.mkdirs()
+
+        val manifests = platformFiles.mapValues { (platform, files) ->
+            val hashes = files.mapValues { (_, file) -> sha1(file) }.toSortedMap()
+            val manifest = outputDir.resolve("$platform.json")
+            manifest.writeText(
+                hashes.entries.joinToString(",\n", "{\n", "\n}\n") { (name, hash) ->
+                    "    ${jsonQuote(name)}: ${jsonQuote(hash)}"
+                }
+            )
+            val parsedHashes = readUiManifest(manifest)
+            if (parsedHashes != hashes) throw GradleException("UI库manifest内容校验失败: $manifest")
+            parsedHashes
         }
 
-        val sevenZipExecutable = sequenceOf(
-            File("C:/Program Files/7-Zip/7z.exe"),
-            File("C:/Program Files (x86)/7-Zip/7z.exe")
-        ).firstOrNull { it.isFile }?.absolutePath ?: "7z"
-        val process = ProcessBuilder(
-            sevenZipExecutable,
-            "a",
-            "-tzip",
-            "-mx=0",
-            archive.absolutePath,
-            *files.map { it.name }.toTypedArray()
-        ).directory(sourceDir)
-            .inheritIO()
-            .start()
-        val exitCode = process.waitFor()
-        if (exitCode != 0) throw GradleException("7z生成UI库ZIP失败，退出码:$exitCode")
-
-        val parsedHashes = readUiManifest(manifest)
-        if (parsedHashes != hashes) throw GradleException("UI库manifest内容校验失败: $manifest")
-        validateUiReleaseArchive(archive, parsedHashes)
-        latest.writeText("$appVersion\n")
-        logger.lifecycle("已生成UI库发布包: $outputDir")
+        val archive = outputDir.resolve("release.zip")
+        writeStoredZip(archive, mergedFiles)
+        validateUiReleaseArchive(archive, manifests)
+        rootDir.resolve("latest.txt").writeText("$appVersion\n")
+        logger.lifecycle("已生成UI库发布包: $outputDir（平台: ${uiReleasePlatforms.joinToString()}）")
     }
 }
 
@@ -510,27 +612,19 @@ fun registerCopyTask(name: String, extraDestinationRoots: List<String> = emptyLi
     )
     val destinationRoots = baseDestinationRoots + extraDestinationRoots.map { file(it) }
     val copyTaskNames = destinationRoots.flatMapIndexed { index, destinationRoot ->
-        //val targetDir = destinationRoot.resolve("lib")
-        val releaseDir = destinationRoot.resolve("releases")
-        val syncTaskName = "${name}Sync$index"
-        /*val libSync = tasks.register<Sync>(syncTaskName) {
-            dependsOn("desktopInstallLibs")
-            from(uiInstallLibDir)
-            into(targetDir)
-        }*/
-        val releaseFilesSync = tasks.register<Copy>("${name}Releases$index") {
+        val uiDir = destinationRoot.resolve("ui")
+        val releaseFilesSync = tasks.register<Sync>("${name}Releases$index") {
             dependsOn(packageUiRelease)
-            from(uiReleaseOutputDir) {
-                include("$appVersion.zip", "$appVersion.json")
-            }
-            into(releaseDir)
+            from(uiReleaseOutputDir)
+            into(uiDir.resolve(appVersion))
         }
+        // latest.txt goes last, so the server never points at a half-copied version.
         val latestSync = tasks.register<Copy>("${name}Latest$index") {
             dependsOn(releaseFilesSync)
-            from(uiReleaseOutputDir) {
+            from(uiReleasesRootDir) {
                 include("latest.txt")
             }
-            into(releaseDir)
+            into(uiDir)
         }
         listOf(releaseFilesSync, latestSync)
     }
@@ -543,6 +637,73 @@ fun registerCopyTask(name: String, extraDestinationRoots: List<String> = emptyLi
 
 registerCopyTask("出core2-local")
 registerCopyTask("出core2-release", listOf("\\\\rdi6\\rdi\\master\\client-libs"))
+
+val nixScriptDir = layout.projectDirectory.dir("nix")
+
+fun requireLfScript(script: File) {
+    if (!script.isFile) throw GradleException("未找到启动脚本: $script")
+    if (script.readBytes().contains('\r'.code.toByte())) throw GradleException("${script.name}必须使用LF换行")
+}
+
+// The master serves client-libs/scripts/rdi.sh to rdi.sh's self-update for every non-Windows platform.
+fun registerNixScriptCopyTask(name: String, destinationRoots: List<File>) {
+    tasks.register(name) {
+        notCompatibleWithConfigurationCache("copies the launcher script at execution time")
+        group = "distribution"
+        description = "Publish rdi.sh for the Linux/macOS self-update route."
+        doLast {
+            val script = nixScriptDir.file("rdi.sh").asFile
+            requireLfScript(script)
+            destinationRoots.forEach { root ->
+                val scriptsDir = root.resolve("scripts").also { it.mkdirs() }
+                script.copyTo(scriptsDir.resolve("rdi.sh"), overwrite = true)
+                logger.lifecycle("已发布rdi.sh到$scriptsDir")
+            }
+        }
+    }
+}
+
+registerNixScriptCopyTask("出rdi-sh-local", listOf(file("../../server/master/run/client-libs")))
+registerNixScriptCopyTask(
+    "出rdi-sh-release",
+    listOf(file("../../server/master/run/client-libs"), file("\\\\rdi6\\rdi\\master\\client-libs"))
+)
+
+// The pack ships the same lib/ the release manifests were made from, so the first run finds it up to date;
+// rdi.sh then only fetches files changed by later releases.
+val nixShipPlatforms = uiReleasePlatforms.filter { it != "windows-x64" }
+val nixShipPackTasks = nixShipPlatforms.map { platform ->
+    tasks.register<Tar>("makeNixShipPack-$platform") {
+        dependsOn(packageUiRelease)
+        group = "distribution"
+        description = "Create rdi-$platform.tar.gz with rdi.sh, the guide and the UI libraries."
+        notCompatibleWithConfigurationCache("checks the launcher script with a build script function")
+        doFirst { requireLfScript(nixScriptDir.file("rdi.sh").asFile) }
+        archiveFileName.set("rdi-$platform.tar.gz")
+        destinationDirectory.set(layout.buildDirectory.dir("nix-ship"))
+        compression = Compression.GZIP
+        into("rdi") {
+            from(nixScriptDir) {
+                include("rdi.sh")
+                filePermissions { unix("rwxr-xr-x") }
+            }
+            from(nixScriptDir) {
+                include("README.txt")
+                filePermissions { unix("rw-r--r--") }
+            }
+        }
+        into("rdi/lib") {
+            from(uiInstallLibDir(platform))
+            filePermissions { unix("rw-r--r--") }
+        }
+    }
+}
+
+tasks.register("makeNixShipPack") {
+    group = "distribution"
+    description = "Create the Linux/macOS shipping archives."
+    dependsOn(nixShipPackTasks)
+}
 val cargoReleaseCmd = listOf(
     "cargo",
     "build",

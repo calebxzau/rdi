@@ -75,6 +75,11 @@ private const val SOURCE_FAILURE_PENALTY = 2.0
 private const val SOURCE_FAILURE_COOLDOWN_MILLIS = 5_000L
 private const val SOURCE_SPEED_CACHE_TTL_MILLIS = 10 * 60_000L
 private const val SOURCE_URL_FAILURE_COOLDOWN_MILLIS = 30_000L
+private const val SOURCE_HOST_FAILURE_COOLDOWN_MILLIS = 30_000L
+private const val SOURCE_HOST_FAILURE_COOLDOWN_MAX_MILLIS = 5 * 60_000L
+// Small files mostly measure latency, not throughput; recording them would make
+// a healthy host look slower than an untested one.
+private const val SOURCE_SPEED_MIN_SAMPLE_BYTES = 512L * 1024
 private const val BMCL_HOST = "bmclapi2.bangbang93.com"
 private const val BMCL_MAX_CONCURRENT_REQUESTS = 8
 private const val DEFAULT_HOST_MAX_CONCURRENT_REQUESTS = 24
@@ -84,6 +89,7 @@ private val hostSemaphores = ConcurrentHashMap<String, Semaphore>()
 private val hostCooldowns = ConcurrentHashMap<String, HostCooldown>()
 private val sourceSpeedCache = ConcurrentHashMap<String, SourceSpeedCacheEntry>()
 private val sourceUrlCooldowns = ConcurrentHashMap<String, Long>()
+private val sourceHostFailures = ConcurrentHashMap<String, SourceHostFailure>()
 
 private class TargetDownloadLockEntry {
     val mutex = Mutex()
@@ -337,6 +343,8 @@ private data class ContentRangeInfo(
 )
 
 private class ResumeMismatchException(message: String) : IOException(message)
+/** The host answered, but this URL cannot provide the expected file. */
+private class SourceRejectedException(message: String) : IOException(message)
 private class TooManyRequestsException(
     val retryAfterMillis: Long?,
     message: String
@@ -349,6 +357,11 @@ private class DownloadValidationException(
 private data class HostCooldown(
     val untilMillis: Long,
     val reason: String,
+)
+
+private data class SourceHostFailure(
+    val consecutiveFailures: Int,
+    val untilMillis: Long,
 )
 
 private data class SourceSpeedCacheEntry(
@@ -387,7 +400,10 @@ private class DynamicRangeSourceScheduler(sources: List<DownloadSource>) {
             stat.ewmaBytesPerSecond = stat.ewmaBytesPerSecond * (1.0 - weight) + measuredSpeed * weight
             stat.completedChunks++
             stat.failures = (stat.failures - 1).coerceAtLeast(0)
-            rememberSourceSpeed(stat.source, stat.ewmaBytesPerSecond)
+            rememberSourceSuccess(stat.source)
+            if (bytesDownloaded >= SOURCE_SPEED_MIN_SAMPLE_BYTES) {
+                rememberSourceSpeed(stat.source, stat.ewmaBytesPerSecond)
+            }
         }
     }
 
@@ -410,7 +426,7 @@ private class DynamicRangeSourceScheduler(sources: List<DownloadSource>) {
     }
 
     private fun selectCandidates(now: Long, excludedUrls: Set<String>): List<SourceRuntimeStats> {
-        val available = stats.filter { it.cooldownUntilMillis <= now && !isSourceUrlCoolingDown(it.source, now) }
+        val available = stats.filter { it.cooldownUntilMillis <= now && !isSourceCoolingDown(it.source, now) }
         val notTried = available.filter { it.source.url !in excludedUrls }
         return when {
             notTried.isNotEmpty() -> notTried
@@ -781,7 +797,7 @@ private suspend fun downloadSingleStream(
                 }
                 rejectJsonDownloadResponse(url, response)
                 if (!shouldResume && !response.status.isSuccess()) {
-                    throw IOException("Download failed: ${response.status} for ${url}")
+                    throw httpStatusFailure("Download failed: ${response.status} for ${url}", response.status)
                 }
                 if (!shouldResume && response.status == HttpStatusCode.PartialContent) {
                     throw ResumeMismatchException("Unexpected partial response for fresh download: ${url}")
@@ -808,7 +824,7 @@ private suspend fun downloadSingleStream(
 
                 val expectedTotalBytes = knownSize.takeIf { it > 0L }
                 if (expectedTotalBytes != null && totalBytes > 0L && totalBytes != expectedTotalBytes) {
-                    throw IOException(
+                    throw SourceRejectedException(
                         "Unexpected total size for ${url}: expected $expectedTotalBytes, got $totalBytes"
                     )
                 }
@@ -946,7 +962,10 @@ private suspend fun downloadSingleStreamFromSources(
                 )
                 validateDownloadedFile(targetPath, validator)
                 resumeState.clear()
-                rememberSourceSpeed(source, measuredSpeedBytesPerSecond(bytesDownloaded, System.nanoTime() - startedAt))
+                rememberSourceSuccess(source)
+                if (bytesDownloaded >= SOURCE_SPEED_MIN_SAMPLE_BYTES) {
+                    rememberSourceSpeed(source, measuredSpeedBytesPerSecond(bytesDownloaded, System.nanoTime() - startedAt))
+                }
                 return bytesDownloaded
             } catch (cancel: CancellationException) {
                 throw cancel
@@ -1129,7 +1148,10 @@ private suspend fun downloadRangeChunk(
             }.execute { response ->
                 ensureNotRateLimited(source.url, response)
                 if (response.status != HttpStatusCode.PartialContent) {
-                    throw IOException("Range download failed: expected 206, got ${response.status} for ${source.url}")
+                    throw httpStatusFailure(
+                        "Range download failed: expected 206, got ${response.status} for ${source.url}",
+                        response.status
+                    )
                 }
 
                 val contentRange = parseContentRange(response.headers[HttpHeaders.ContentRange])
@@ -1141,7 +1163,7 @@ private suspend fun downloadRangeChunk(
                     )
                 }
                 if (contentRange.totalBytes != expectedTotalBytes) {
-                    throw IOException(
+                    throw SourceRejectedException(
                         "Unexpected total size for ${source.url}: expected $expectedTotalBytes, got ${contentRange.totalBytes}"
                     )
                 }
@@ -1206,7 +1228,7 @@ private fun normalizeDownloadUrls(urls: List<String>): List<String> = urls.asSeq
 
 private fun orderedSourcesForDownload(sources: List<DownloadSource>, resumeOwner: String? = null): List<DownloadSource> {
     val now = System.currentTimeMillis()
-    val hasAvailableSource = sources.any { !isSourceUrlCoolingDown(it, now) }
+    val hasAvailableSource = sources.any { !isSourceCoolingDown(it, now) }
     return sources.sortedWith(
         compareBy<DownloadSource> { if (it.url == resumeOwner) 0 else 1 }
             .thenByDescending { source ->
@@ -1222,7 +1244,7 @@ private fun sourceSelectionScore(
     now: Long,
     hasAvailableSource: Boolean,
 ): Double {
-    if (hasAvailableSource && isSourceUrlCoolingDown(source, now)) return 0.0
+    if (hasAvailableSource && isSourceCoolingDown(source, now)) return 0.0
     return cachedSourceSpeed(source) ?: SOURCE_INITIAL_SPEED_BYTES_PER_SECOND
 }
 
@@ -1251,13 +1273,47 @@ private fun rememberSourceSpeed(source: DownloadSource, measuredSpeedBytesPerSec
         }
         SourceSpeedCacheEntry(speed, now)
     }
+}
+
+private fun rememberSourceSuccess(source: DownloadSource) {
     sourceUrlCooldowns.remove(source.url)
+    sourceHostFailures.remove(extractHost(source.url))
 }
 
 private fun rememberSourceFailure(source: DownloadSource, error: Throwable) {
+    val now = System.currentTimeMillis()
     val cooldownMillis = (error as? TooManyRequestsException)?.retryAfterMillis
         ?: SOURCE_URL_FAILURE_COOLDOWN_MILLIS
-    sourceUrlCooldowns[source.url] = System.currentTimeMillis() + cooldownMillis
+    sourceUrlCooldowns[source.url] = now + cooldownMillis
+    if (!error.isHostLevelSourceFailure()) return
+    // Every asset/library has a distinct URL, so an unreachable host must be
+    // remembered by host or each new file would wait for it to time out again.
+    sourceHostFailures.compute(extractHost(source.url)) { _, old ->
+        val failures = (old?.consecutiveFailures ?: 0) + 1
+        val backoff = (SOURCE_HOST_FAILURE_COOLDOWN_MILLIS shl (failures - 1).coerceAtMost(4))
+            .coerceAtMost(SOURCE_HOST_FAILURE_COOLDOWN_MAX_MILLIS)
+        val hostCooldownMillis = (error as? TooManyRequestsException)?.retryAfterMillis ?: backoff
+        SourceHostFailure(failures, maxOf(now + hostCooldownMillis, old?.untilMillis ?: 0L))
+    }
+}
+
+private fun Throwable.isHostLevelSourceFailure(): Boolean = when (this) {
+    is DownloadValidationException,
+    is ResumeMismatchException,
+    is SourceRejectedException -> false
+    else -> true
+}
+
+private fun httpStatusFailure(message: String, status: HttpStatusCode): IOException =
+    if (status.value in 400..499) SourceRejectedException(message) else IOException(message)
+
+private fun isSourceCoolingDown(source: DownloadSource, now: Long): Boolean =
+    isSourceUrlCoolingDown(source, now) || isSourceHostCoolingDown(source, now)
+
+private fun isSourceHostCoolingDown(source: DownloadSource, now: Long): Boolean {
+    val failure = sourceHostFailures[extractHost(source.url)] ?: return false
+    // Keep the failure count after expiry so a host that keeps failing backs off longer.
+    return failure.untilMillis > now
 }
 
 private fun isSourceUrlCoolingDown(source: DownloadSource, now: Long): Boolean {
@@ -1393,7 +1449,7 @@ private suspend fun rejectJsonDownloadResponse(url: String, response: HttpRespon
     if (!contentType.match(ContentType.Application.Json)) return
     val responseText = response.bodyAsText()
     val apiMessage = responseText.apiResponseMessageOrNull()
-    throw IOException(apiMessage ?: "Download source returned JSON instead of file: ${response.status} for $url")
+    throw SourceRejectedException(apiMessage ?: "Download source returned JSON instead of file: ${response.status} for $url")
 }
 
 private fun String.apiResponseMessageOrNull(): String? =

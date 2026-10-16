@@ -1,10 +1,12 @@
 package calebxzhou.rdi.client.ui
 
+import calebxzhou.rdi.common.model.LibraryOsArch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import java.awt.EventQueue
 import java.awt.FileDialog
 import java.awt.Frame
 import java.io.File
+import javax.swing.JFileChooser
 
 private const val DIRECTORY_DIALOG_PROPERTY = "apple.awt.fileDialogForDirectories"
 private val directoryDialogLock = Any()
@@ -76,8 +78,22 @@ private fun FileDialog.selectedDirectoryOrNull(): File? {
     }.firstOrNull { it.exists() && it.isDirectory }
 }
 
-private fun isWindows(): Boolean =
-    System.getProperty("os.name").contains("windows", ignoreCase = true)
+// AWT FileDialog cannot pick directories under GTK, so Linux uses Swing's chooser instead.
+private fun pickSwingDirectory(title: String, defaultDirectory: File): File? {
+    fun showChooser(): File? {
+        val chooser = JFileChooser(defaultDirectory).apply {
+            dialogTitle = title
+            fileSelectionMode = JFileChooser.DIRECTORIES_ONLY
+            isAcceptAllFileFilterUsed = false
+        }
+        if (chooser.showOpenDialog(null) != JFileChooser.APPROVE_OPTION) return null
+        return chooser.selectedFile?.takeIf { it.isDirectory }
+    }
+    if (EventQueue.isDispatchThread()) return showChooser()
+    var selected: File? = null
+    EventQueue.invokeAndWait { selected = showChooser() }
+    return selected
+}
 
 internal fun pickAwtOpenFiles(
     title: String,
@@ -157,8 +173,12 @@ internal fun pickAwtDirectory(
     title: String,
     defaultDirectory: File = defaultDialogDirectory()
 ): File? {
-    if (isWindows()) {
+    val osArch = LibraryOsArch.detectHostOs()
+    if (osArch.isWindows) {
         return pickModernWindowsDirectory(title, defaultDirectory)
+    }
+    if (osArch.isLinux) {
+        return pickSwingDirectory(title, defaultDirectory)
     }
     return withDirectoryDialogEnabled {
         withFileDialog(

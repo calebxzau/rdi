@@ -151,10 +151,12 @@ object PacketRecordPipeline {
                 }
             }
             if (!ZstdCompressionPipeline.hasOutboundEncoder(ctx.channel())) {
-                if (PacketMetrics.batchMetricsEnabled) {
+                val writePromise = if (PacketMetrics.batchMetricsEnabled) {
                     PacketMetrics.recordUncompressed(packetIdentity(packet), msg.readableBytes(), promise)
+                } else {
+                    promise
                 }
-                ctx.write(msg, promise)
+                ctx.write(msg, writePromise)
                 return
             }
             // The identity also feeds v4 logical bytes, so every associated packet carries it.

@@ -7,6 +7,10 @@ plugins {
     alias(libs.plugins.compose)
 }
 
+apply(from = "../gradle/target-platform.gradle.kts")
+val rdiTargetPlatform: String by extra
+val lwjglNatives: String by extra
+
 //project.version = libs.versions.app.get()
 
 repositories {
@@ -24,7 +28,7 @@ dependencies {
     implementation(project(":player-model-core"))
     api(compose.ui)
     api(libs.kotlinx.coroutines.core)
-    implementation(compose.desktop.currentOs)
+    implementation("org.jetbrains.compose.desktop:desktop-jvm-$rdiTargetPlatform:${libs.versions.compose.plugin.get()}")
     implementation(libs.joml)
     implementation(libs.kotlin.logging.jvm)
 
@@ -32,7 +36,7 @@ dependencies {
     listOf("", "glfw", "opengl").forEach { component ->
         val suffix = component.takeIf(String::isNotEmpty)?.let { "-$it" }.orEmpty()
         implementation("org.lwjgl:lwjgl${suffix}:$lwjglVersion")
-        implementation("org.lwjgl:lwjgl${suffix}:$lwjglVersion:natives-windows")
+        implementation("org.lwjgl:lwjgl${suffix}:$lwjglVersion:$lwjglNatives")
     }
 
     testImplementation(kotlin("test"))

@@ -94,12 +94,18 @@ object PacketMetrics20 {
 
     internal fun recordEncodingFailure(records: Int) = PacketBatchMetrics.recordEncodingFailure(records)
 
-    internal fun recordUncompressed(identity: ZstdPacketIdentity?, bytes: Int, promise: ChannelPromise) {
+    /**
+     * Returns the promise to write with. Krypton writes listener-less packets with a void promise,
+     * which throws on addListener, so the outcome is tracked on its unvoided form.
+     */
+    internal fun recordUncompressed(identity: ZstdPacketIdentity?, bytes: Int, promise: ChannelPromise): ChannelPromise {
         recordLogical(identity, bytes)
         PacketBatchMetrics.recordFrame(
             PacketBatchFrameSample("Uncompressed", 1, bytes, bytes, varIntSize(bytes), "BARRIER", 0, 0, false),
         )
-        promise.addListener { future -> recordWriteOutcome(future.isSuccess, 1) }
+        val tracked = promise.unvoid()
+        tracked.addListener { future -> recordWriteOutcome(future.isSuccess, 1) }
+        return tracked
     }
 
     private fun varIntSize(value: Int): Int {

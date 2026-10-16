@@ -2,8 +2,8 @@ package calebxzhou.rdi.master.service
 
 import calebxzhou.rdi.common.util.sha1
 import calebxzhou.rdi.common.exception.RequestError
-import calebxzhou.rdi.common.serdesJson
 import calebxzhou.rdi.master.net.param
+import calebxzhou.rdi.master.net.paramNull
 import calebxzhou.rdi.master.net.response
 import calebxzhou.rdi.master.service.UpdateService.mcCoreModFile
 import io.ktor.http.*
@@ -16,61 +16,11 @@ private val CLIENT_LIBS_DIR = File("client-libs").also { it.mkdirs() }
 private val updatersDir get() = CLIENT_LIBS_DIR.resolve("updaters").also { it.mkdirs() }
 private val updaterWin get() = updatersDir.resolve("updater.exe.zst")
 private val updaterWinHash get() = updatersDir.resolve("updater.exe.sha1")
-private val uiReleasesDir get() = CLIENT_LIBS_DIR.resolve("releases")
-private val uiVersionPattern = Regex("^[A-Za-z0-9][A-Za-z0-9._-]*$")
-private val sha1Pattern = Regex("^[0-9a-fA-F]{40}$")
+// Legacy client-libs/releases/ is no longer read; keep it only as an archive.
+private val uiReleaseStore = UiReleaseStore(CLIENT_LIBS_DIR.resolve("ui"))
 
-private data class UiRelease(
-    val version: String,
-    val archive: File,
-    val manifest: Map<String, String>,
-)
-
-private fun validateUiVersion(rawVersion: String): String {
-    val version = rawVersion.trim()
-    if (!uiVersionPattern.matches(version)) throw RequestError("非法UI版本")
-    return version
-}
-
-private fun validateUiManifest(manifest: Map<String, String>): Map<String, String> {
-    if (manifest.isEmpty() || manifest.keys.none { it.endsWith(".jar", ignoreCase = true) }) {
-        throw RequestError("UI库manifest为空或缺少JAR")
-    }
-    if (manifest.any { (name, hash) ->
-            name.isBlank() || name == "." || name == ".." ||
-                name.contains('/') || name.contains('\\') || name.contains(':') ||
-                !sha1Pattern.matches(hash)
-        }) {
-        throw RequestError("UI库manifest包含非法文件")
-    }
-    return manifest
-}
-
-private fun loadUiRelease(rawVersion: String): UiRelease {
-    val version = validateUiVersion(rawVersion)
-    val archive = uiReleasesDir.resolve("$version.zip")
-    val manifestFile = uiReleasesDir.resolve("$version.json")
-    if (!archive.isFile) throw RequestError("找不到UI版本ZIP: $version")
-    if (!manifestFile.isFile) throw RequestError("找不到UI版本manifest: $version")
-    val manifest = runCatching {
-        serdesJson.decodeFromString<Map<String, String>>(manifestFile.readText())
-    }.getOrElse { throw RequestError("UI版本manifest格式错误: $version") }
-    return UiRelease(version, archive, validateUiManifest(manifest))
-}
-
-private fun loadLatestUiRelease(): UiRelease {
-    val latestFile = uiReleasesDir.resolve("latest.txt")
-    if (!latestFile.isFile) throw RequestError("找不到UI最新版本")
-    return loadUiRelease(latestFile.readText())
-}
-
-private suspend fun RoutingContext.respondUiLibrary(release: UiRelease, name: String) {
-    if (name.isBlank() || name == "." || name == ".." ||
-        name.contains('/') || name.contains('\\') || name.contains(':')
-    ) {
-        throw RequestError("非法文件名")
-    }
-    if (name !in release.manifest) throw RequestError("无此文件")
+private suspend fun RoutingContext.respondUiLibrary(release: UiReleaseStore.Release, name: String) {
+    uiReleaseStore.requireLibrary(release, name)
     val entrySize = ZipFile(release.archive).use { zip ->
         val entry = zip.getEntry(name)
         if (entry == null || entry.isDirectory) throw RequestError("无此文件")
@@ -87,23 +37,66 @@ private suspend fun RoutingContext.respondUiLibrary(release: UiRelease, name: St
     }
 }
 
+// rdi.sh for Linux/macOS; one script serves every platform for now.
+private val nixScript get() = CLIENT_LIBS_DIR.resolve("scripts").resolve("rdi.sh")
+
+private fun requireNixScript(): File {
+    val script = nixScript
+    if (!script.isFile) throw RequestError("找不到启动脚本")
+    return script
+}
+
+private suspend fun RoutingContext.scriptPlatform(): String = UiReleaseStore.requireScriptPlatform(param("platform"))
+
+// format=text answers in plain text so rdi.sh needs no JSON parser.
+private suspend fun RoutingContext.wantsText(): Boolean = paramNull("format") == "text"
+
 private val mcCoreFilePrefix = "rdi-5-mc-client"
 
 fun Route.updateRoutes() = route("/update") {
+    // Windows start.exe routes.
     get("/ui/libs") {
-        response(data = loadLatestUiRelease().manifest)
+        response(data = uiReleaseStore.loadLatest(UiReleaseStore.WINDOWS_X64).manifest)
     }
     get("/ui/libs/{version}") {
-        response(data = loadUiRelease(param("version")).manifest)
+        response(data = uiReleaseStore.load(param("version"), UiReleaseStore.WINDOWS_X64).manifest)
     }
     get("/ui/lib/{version}/{name}") {
-        respondUiLibrary(loadUiRelease(param("version")), param("name"))
+        respondUiLibrary(uiReleaseStore.load(param("version"), UiReleaseStore.WINDOWS_X64), param("name"))
     }
     get("/ui/lib/{name}") {
-        respondUiLibrary(loadLatestUiRelease(), param("name"))
+        respondUiLibrary(uiReleaseStore.loadLatest(UiReleaseStore.WINDOWS_X64), param("name"))
     }
     get("/ui/ver"){
-        response(data = loadLatestUiRelease().version)
+        response(data = uiReleaseStore.loadLatest(UiReleaseStore.WINDOWS_X64).version)
+    }
+    // Linux/macOS rdi.sh routes.
+    route("/ui/p/{platform}") {
+        get("/ver") {
+            val release = uiReleaseStore.loadLatest(scriptPlatform())
+            if (wantsText()) call.respondText("${release.version}\n") else response(data = release.version)
+        }
+        get("/libs/{version}") {
+            val release = uiReleaseStore.load(param("version"), scriptPlatform())
+            if (wantsText()) {
+                call.respondText(UiReleaseStore.manifestText(release.manifest))
+            } else {
+                response(data = release.manifest)
+            }
+        }
+        get("/lib/{version}/{name}") {
+            respondUiLibrary(uiReleaseStore.load(param("version"), scriptPlatform()), param("name"))
+        }
+    }
+    route("/script/{platform}") {
+        get {
+            scriptPlatform()
+            call.respondFile(requireNixScript())
+        }
+        get("/hash") {
+            scriptPlatform()
+            call.respondText("${requireNixScript().sha1}\n")
+        }
     }
     /*get("/ui/hash") {
         response(data = uiFile.sha1)

@@ -2,6 +2,7 @@ package calebxzau.rdi.client.ui
 
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.toComposeImageBitmap
+import calebxzhou.rdi.common.model.LibraryOsArch
 import calebxzhou.rdi.common.util.jarResource
 import calebxzau.rdi.mediaproc.FfmpegAvifDecoder
 import calebxzau.rdi.client.RDIClient
@@ -33,15 +34,33 @@ fun copyToClipboard(text: String) {
 }
 
 fun openUrl(url: String) {
-    if (Desktop.isDesktopSupported()) {
-        Desktop.getDesktop().browse(URI(url))
-    }
+    browse(URI(url))
 }
 
 fun openMsaVerificationUrl(url: String) {
-    if (Desktop.isDesktopSupported()) {
-        Desktop.getDesktop().browse(URI(url))
+    browse(URI(url))
+}
+
+private fun desktopSupports(action: Desktop.Action): Boolean =
+    Desktop.isDesktopSupported() && Desktop.getDesktop().isSupported(action)
+
+private fun browse(uri: URI) {
+    if (desktopSupports(Desktop.Action.BROWSE)) {
+        Desktop.getDesktop().browse(uri)
+    } else {
+        openWithSystemHandler(uri.toString())
     }
+}
+
+// Many Linux desktops lack the GNOME libraries AWT Desktop needs; hand the target to the desktop's opener.
+private fun openWithSystemHandler(target: String) {
+    val osArch = LibraryOsArch.detectHostOs()
+    val opener = when {
+        osArch.isWindows -> "explorer"
+        osArch.isMac -> "open"
+        else -> "xdg-open"
+    }
+    ProcessBuilder(opener, target).start()
 }
 
 suspend fun pickSaveFile(suggestedName: String, extension: String): File? =
@@ -135,10 +154,10 @@ fun loadImageBitmap(resourceName: String): Result<ImageBitmap> = runCatching {
 fun openFolder(path: String) {
     val dir = File(path)
     if (dir.exists()) {
-        if (Desktop.isDesktopSupported()) {
+        if (desktopSupports(Desktop.Action.OPEN)) {
             Desktop.getDesktop().open(dir)
         } else {
-            ProcessBuilder("explorer", dir.absolutePath).start()
+            openWithSystemHandler(dir.absolutePath)
         }
     }
 }
@@ -196,20 +215,22 @@ fun readTotalPhysicalMemoryMb(): Int {
     return (totalBytes / (1024L * 1024L)).toInt()
 }
 
-private fun resolveJavaExecutable(raw: String): File? {
+internal fun resolveJavaExecutable(raw: String, osArch: LibraryOsArch = LibraryOsArch.detectHostOs()): File? {
+    val javaName = if (osArch.isWindows) "java.exe" else "java"
     val input = File(raw.trim())
     if (input.isDirectory) {
-        val exe = input.resolve("bin").resolve("java.exe")
-        return exe.takeIf { it.exists() }
+        val exe = input.resolve("bin").resolve(javaName)
+        return exe.takeIf { it.isFile }
     }
     if (input.exists()) {
         val name = input.name.lowercase()
-        if (name == "java.exe") return input
-        if (name == "javaw.exe") {
+        if (name == javaName) return input
+        if (osArch.isWindows && name == "javaw.exe") {
             return input.parentFile?.resolve("java.exe")?.takeIf { it.exists() } ?: input
         }
         return null
     }
+    if (!osArch.isWindows) return null
     val exe = File(raw.trim() + ".exe")
     return exe.takeIf { it.exists() }
 }

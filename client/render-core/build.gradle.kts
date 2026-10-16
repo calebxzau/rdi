@@ -5,6 +5,9 @@ plugins {
     alias(libs.plugins.kotlin.jvm)
 }
 
+apply(from = "../gradle/target-platform.gradle.kts")
+val lwjglNatives: String by extra
+
 //project.version = libs.versions.app.get()
 
 repositories {
@@ -18,7 +21,7 @@ kotlin {
 
 dependencies {
     implementation("org.lwjgl:lwjgl-glfw:${libs.versions.lwjgl.get()}")
-    implementation("org.lwjgl:lwjgl-glfw:${libs.versions.lwjgl.get()}:natives-windows")
+    implementation("org.lwjgl:lwjgl-glfw:${libs.versions.lwjgl.get()}:$lwjglNatives")
     implementation(libs.kotlin.logging.jvm)
     testImplementation(kotlin("test"))
 }

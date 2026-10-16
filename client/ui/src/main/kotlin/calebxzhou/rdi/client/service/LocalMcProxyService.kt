@@ -12,7 +12,7 @@ object LocalMcProxyService {
 
     private val proxy = LocalMcProxy(
         endpointProvider = {
-            if (DEBUG) ProxyEndpoint("localhost", 65230)
+            if (DEBUG) ProxyEndpoint(RServer.DEBUG_HOST ?: "localhost", 65230)
             else ProxyEndpoint.parse(RServer.currentGameAddr).getOrThrow()
         },
         config = LocalMcProxyConfig(

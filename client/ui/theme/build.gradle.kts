@@ -7,6 +7,9 @@ plugins {
     alias(libs.plugins.compose)
 }
 
+apply(from = "../../gradle/target-platform.gradle.kts")
+val rdiTargetPlatform: String by extra
+
 //project.version = libs.versions.app.get()
 
 repositories {
@@ -24,7 +27,7 @@ dependencies {
     api(compose.ui)
     api(compose.foundation)
     api(libs.compose.material3)
-    implementation(compose.desktop.currentOs)
+    implementation("org.jetbrains.compose.desktop:desktop-jvm-$rdiTargetPlatform:${libs.versions.compose.plugin.get()}")
     runtimeOnly(project(":assets:fonts"))
 }
 

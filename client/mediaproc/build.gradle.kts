@@ -5,6 +5,9 @@ plugins {
     alias(libs.plugins.kotlin.jvm)
 }
 
+apply(from = "../gradle/target-platform.gradle.kts")
+val ffmpegClassifier: String by extra
+
 repositories {
     mavenCentral()
     mavenLocal()
@@ -32,7 +35,7 @@ dependencies {
     }
     implementation("org.bytedeco:javacpp:1.5.13")
     implementation("org.bytedeco:ffmpeg:8.0.1-1.5.13")
-    runtimeOnly("org.bytedeco:ffmpeg:8.0.1-1.5.13:windows-x86_64-gpl")
+    runtimeOnly("org.bytedeco:ffmpeg:8.0.1-1.5.13:$ffmpegClassifier")
     implementation(libs.kotlinx.coroutines.core)
 
     testImplementation(kotlin("test"))

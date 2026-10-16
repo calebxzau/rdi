@@ -22,10 +22,15 @@ import calebxzhou.rdi.common.service.runInline
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.serialization.Serializable
 import java.io.File
 import java.io.IOException
@@ -35,6 +40,8 @@ import java.nio.file.AtomicMoveNotSupportedException
 import java.nio.file.StandardCopyOption
 import java.util.*
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicReference
 import java.util.zip.ZipFile
 import kotlin.concurrent.thread
@@ -46,6 +53,8 @@ private const val FABRIC_INSTALLER_SHA1 = "74685b5a0178c4dabd4be741a276d35c59b5e
 private const val FABRIC_INSTALLER_TIMEOUT_SECONDS = 20L * 60L
 private const val FABRIC_INSTALLER_TERMINATE_TIMEOUT_SECONDS = 5L
 private const val FABRIC_RUNTIME_FILES_MANIFEST = ".rdi-runtime-files"
+private const val ASSET_REPAIR_PARALLELISM = 16
+private const val ASSET_REPAIR_REPORT_INTERVAL_MS = 500L
 
 class McInstall(
     internal val environment: McInstallEnvironment,
@@ -621,22 +630,76 @@ class McInstall(
             val assetIndexMeta = mcVer.metadata.assetIndex ?: return@withContext
             val plan = buildAssetRepairPlan(loadAssetIndex(assetIndexMeta))
             plan.toStub.forEach { (_, obj) -> writeEmptySoundStub(obj.hash) }
-            val broken = plan.compacted.filter { (_, obj) -> !assetObjectValid(obj) }
+            val semaphore = Semaphore(ASSET_REPAIR_PARALLELISM)
+            val broken = coroutineScope {
+                plan.compacted
+                    .distinctBy { (_, obj) -> obj.hash.lowercase(Locale.ROOT) }
+                    .map { entry ->
+                        async { semaphore.withPermit { entry.takeUnless { assetObjectValid(it.value) } } }
+                    }
+                    .awaitAll()
+                    .filterNotNull()
+            }
             val missingLinks = plan.linkPlans.filter { !assetObjectExists(it.fromHash) }
             if (broken.isEmpty() && missingLinks.isEmpty()) {
                 onProgress("资源完整")
                 return@withContext
             }
-            broken.forEach { (path, obj) ->
-                onProgress("修复资源 $path")
-                downloadAssetObject(path, obj) { progress ->
-                    val total = progress.totalBytes.takeIf { it > 0 }?.humanFileSize ?: "未知"
-                    onProgress("${path} ${progress.bytesDownloaded.humanFileSize}/$total")
-                }.getOrThrow()
-            }
+            val failed = if (broken.isNotEmpty()) repairAssetObjects(broken, semaphore, onProgress) else 0
             missingLinks.forEach { linkPlan -> createObjectLink(linkPlan.fromHash, linkPlan.toHash) }
-            onProgress("资源已就绪")
+            if (failed > 0) {
+                onProgress("有${failed}个资源下载失败，游戏中可能缺少部分声音或贴图，下次启动会自动重试")
+            } else {
+                onProgress("资源已就绪")
+            }
         }
+    }
+
+    private suspend fun repairAssetObjects(
+        broken: List<Map.Entry<String, MojangAssetObject>>,
+        semaphore: Semaphore,
+        onProgress: (String) -> Unit
+    ): Int {
+        val totalBytes = broken.sumOf { it.value.size }
+        val doneCount = AtomicInteger()
+        val failedCount = AtomicInteger()
+        val doneBytes = AtomicLong()
+        val lastReportAt = AtomicLong()
+        fun report(force: Boolean) {
+            val now = System.currentTimeMillis()
+            val last = lastReportAt.get()
+            // The final line is always printed by the forced report.
+            if (!force && doneCount.get() == broken.size) return
+            if (!force && now - last < ASSET_REPAIR_REPORT_INTERVAL_MS) return
+            if (!force && !lastReportAt.compareAndSet(last, now)) return
+            onProgress(
+                "修复资源 ${doneCount.get()}/${broken.size} " +
+                    "(${doneBytes.get().humanFileSize}/${totalBytes.humanFileSize})"
+            )
+        }
+        onProgress("修复资源 0/${broken.size} (共${totalBytes.humanFileSize})")
+        coroutineScope {
+            broken.map { (path, obj) ->
+                async {
+                    // A missing sound or texture must not block the game; the next launch retries it.
+                    try {
+                        semaphore.withPermit {
+                            downloadAssetObject(path, obj) {}.getOrThrow()
+                        }
+                        doneBytes.addAndGet(obj.size)
+                    } catch (cancel: CancellationException) {
+                        throw cancel
+                    } catch (error: Throwable) {
+                        lgr.warn(error) { "资源下载失败，跳过：$path" }
+                        failedCount.incrementAndGet()
+                    }
+                    doneCount.incrementAndGet()
+                    report(force = false)
+                }
+            }.awaitAll()
+        }
+        report(force = true)
+        return failedCount.get()
     }
 
     private fun loadAssetIndex(assetIndexMeta: MojangAssetIndex): MojangAssetIndexFile {

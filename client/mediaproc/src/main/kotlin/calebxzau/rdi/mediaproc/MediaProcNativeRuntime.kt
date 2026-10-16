@@ -9,12 +9,15 @@ import java.security.MessageDigest
 import java.util.jar.JarFile
 
 object MediaProcNativeRuntime {
-    private const val NATIVE_PREFIX = "org/bytedeco/ffmpeg/windows-x86_64-gpl/"
     private const val READY_MARKER = ".complete"
     // FileChannel locks coordinate processes, but overlapping locks in this JVM throw instead of waiting.
     private val extractionLock = Any()
 
-    fun prepare(nativeJar: File, rootDir: File): Result<File> = runCatching {
+    fun prepare(
+        nativeJar: File,
+        rootDir: File,
+        platform: FfmpegNativePlatform = FfmpegNativePlatform.current,
+    ): Result<File> = runCatching {
         require(nativeJar.isFile) { "FFmpeg native runtime does not exist: ${nativeJar.absolutePath}" }
         Files.createDirectories(rootDir.toPath())
         val bundleDir = rootDir.resolve(nativeJar.sha256())
@@ -25,29 +28,31 @@ object MediaProcNativeRuntime {
                 channel.lock().use {
                     val marker = bundleDir.resolve(READY_MARKER)
                     if (!marker.isFile) {
-                        extractNativeLibraries(nativeJar, bundleDir)
+                        extractNativeLibraries(nativeJar, bundleDir, platform)
                         marker.writeText(nativeJar.name)
                     }
                 }
             }
         }
-        check(bundleDir.resolve("jniavutil.dll").isFile) { "FFmpeg native runtime is incomplete" }
+        check(bundleDir.resolve(platform.avutilJniLibrary).isFile) { "FFmpeg native runtime is incomplete" }
         bundleDir
     }
 
-    private fun extractNativeLibraries(nativeJar: File, bundleDir: File) {
+    private fun extractNativeLibraries(nativeJar: File, bundleDir: File, platform: FfmpegNativePlatform) {
         val bundlePath = bundleDir.toPath()
         Files.createDirectories(bundlePath)
         JarFile(nativeJar).use { jar ->
             jar.entries().asSequence()
-                .filter { !it.isDirectory && it.name.startsWith(NATIVE_PREFIX) }
+                .filter { !it.isDirectory && it.name.startsWith(platform.jarPrefix) }
                 .forEach { entry ->
-                    val target = bundlePath.resolve(entry.name.removePrefix(NATIVE_PREFIX)).normalize()
+                    val target = bundlePath.resolve(entry.name.removePrefix(platform.jarPrefix)).normalize()
                     require(target.startsWith(bundlePath)) { "Invalid FFmpeg native entry: ${entry.name}" }
                     Files.createDirectories(target.parent)
                     jar.getInputStream(entry).use { input ->
                         Files.copy(input, target, StandardCopyOption.REPLACE_EXISTING)
                     }
+                    // Jar entries carry no permission bits; the ffmpeg/ffprobe executables need them off Windows.
+                    if (!platform.isWindows) target.toFile().setExecutable(true)
                 }
         }
     }

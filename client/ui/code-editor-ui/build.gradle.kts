@@ -7,6 +7,9 @@ plugins {
     alias(libs.plugins.compose)
 }
 
+apply(from = "../../gradle/target-platform.gradle.kts")
+val rdiTargetPlatform: String by extra
+
 //project.version = libs.versions.app.get()
 
 repositories {
@@ -23,7 +26,7 @@ dependencies {
     api(compose.runtime)
     api(compose.ui)
     api(project(":code-editor"))
-    implementation(compose.desktop.currentOs)
+    implementation("org.jetbrains.compose.desktop:desktop-jvm-$rdiTargetPlatform:${libs.versions.compose.plugin.get()}")
     implementation(compose.foundation)
     implementation(libs.compose.material3)
     implementation(libs.kotlinx.coroutines.core)

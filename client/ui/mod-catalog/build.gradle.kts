@@ -1,4 +1,3 @@
-import org.gradle.language.jvm.tasks.ProcessResources
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 plugins {
@@ -18,11 +17,6 @@ kotlin {
     compilerOptions.jvmTarget.set(JvmTarget.fromTarget(libs.versions.java.get()))
 }
 
-val sqliteWindowsX64 by configurations.creating {
-    isCanBeConsumed = false
-    isTransitive = false
-}
-
 dependencies {
     implementation(project(":misc"))
     api(project(":model"))
@@ -34,7 +28,7 @@ dependencies {
         exclude(group = "org.xerial", module = "sqlite-jdbc")
     }
     implementation("org.xerial:sqlite-jdbc:${libs.versions.sqlite.get()}:without-natives")
-    sqliteWindowsX64("org.xerial:sqlite-jdbc:${libs.versions.sqlite.get()}:natives-windows")
+    runtimeOnly(project(":sqlite-natives"))
 
     testImplementation(kotlin("test"))
     testImplementation(libs.ktor.client.mock)
@@ -46,12 +40,6 @@ sqldelight {
         register("ModCatalogDatabase") {
             packageName.set("calebxzhou.rdi.client.modcatalog.database")
         }
-    }
-}
-
-tasks.named<ProcessResources>("processResources") {
-    from({ sqliteWindowsX64.map(::zipTree) }) {
-        include("org/sqlite/native/Windows/x86_64/sqlitejdbc.dll")
     }
 }
 

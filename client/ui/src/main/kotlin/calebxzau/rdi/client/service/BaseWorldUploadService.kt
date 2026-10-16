@@ -1,5 +1,6 @@
 package calebxzau.rdi.client.service
 
+import calebxzhou.rdi.common.model.LibraryOsArch
 import calebxzhou.rdi.client.net.lgr
 import calebxzau.rdi.common.model.BaseWorld
 import calebxzau.rdi.common.model.BaseWorldUploadSessionCreateDto
@@ -378,7 +379,7 @@ private data class SourceEntry(
 
 fun baseWorldUploadTaskKey(ownerId: String, directory: File): String {
     val normalized = directory.absoluteFile.toPath().normalize().toString()
-    val path = if (System.getProperty("os.name").contains("win", ignoreCase = true)) {
+    val path = if (LibraryOsArch.detectHostOs().isWindows) {
         normalized.lowercase()
     } else {
         normalized

@@ -47,7 +47,7 @@ object FfmpegNativePreloader {
         val loaded = ArrayList<String>()
         for (type in FFMPEG_CLASSES) {
             val properties = Loader.loadProperties(type, platform, true)
-            // Optional, as in Loader.load: absent system libraries are resolved by Windows when FFmpeg loads.
+            // Optional, as in Loader.load: absent system libraries are resolved by the OS loader when FFmpeg loads.
             for (preload in properties.get("platform.preload") + properties.get("platform.link")) {
                 load(type, properties, preload.removeSuffix("!"), loaded, required = false)
             }

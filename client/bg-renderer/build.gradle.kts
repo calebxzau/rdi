@@ -7,6 +7,9 @@ plugins {
     alias(libs.plugins.compose)
 }
 
+apply(from = "../gradle/target-platform.gradle.kts")
+val lwjglNatives: String by extra
+
 //project.version = libs.versions.app.get()
 
 repositories {
@@ -31,7 +34,7 @@ dependencies {
     listOf("", "glfw", "opengl").forEach { component ->
         val suffix = component.takeIf(String::isNotEmpty)?.let { "-${it}" }.orEmpty()
         implementation("org.lwjgl:lwjgl${suffix}:${lwjglVersion}")
-        implementation("org.lwjgl:lwjgl${suffix}:${lwjglVersion}:natives-windows")
+        implementation("org.lwjgl:lwjgl${suffix}:${lwjglVersion}:$lwjglNatives")
     }
 
     testImplementation(kotlin("test"))

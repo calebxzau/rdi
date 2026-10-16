@@ -1,5 +1,7 @@
 package calebxzau.rdi.client
 
+import calebxzhou.rdi.client.useSystemWindowDecoration
+import calebxzhou.rdi.common.model.LibraryOsArch
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
@@ -88,7 +90,7 @@ import calebxzau.rdi.client.ui.showFatalStartupErrorAndExit
 lateinit var ScreenSize: Pair<Dp, Dp>
 
 fun main() {
-    if (DEBUG) {
+    if (DEBUG && LibraryOsArch.detectHostOs().isWindows) {
         System.setProperty("javax.net.ssl.trustStoreType", "Windows-ROOT")
     }
     val databasePath = RDIClient.DIR.toPath().resolve("data.db")
@@ -165,7 +167,8 @@ fun main() {
 
         LaunchedEffect(Unit) {
             submitClientContentMigrationOnStartup()
-            if (!Const.NO_UPDATE) {
+            // start.exe exists only on Windows; rdi.sh updates itself.
+            if (!Const.NO_UPDATE && LibraryOsArch.detectHostOs().isWindows) {
                 UpdateService.updateUpdater(
                     onStatus = { lgr.info { it } },
                     onDetail = { if (it.isNotBlank()) lgr.info { it } }
@@ -209,7 +212,11 @@ fun main() {
             icon = windowIcon,
             state = windowState,
             transparent = Const.WINDOW_TRANSPARENT,
-            decoration = if(Const.WINDOW_TRANSPARENT) WindowDecoration.Undecorated(resizerThickness = 0.dp) else WindowDecoration.SystemDefault,
+            decoration = if (useSystemWindowDecoration(Const.WINDOW_TRANSPARENT)) {
+                WindowDecoration.SystemDefault
+            } else {
+                WindowDecoration.Undecorated(resizerThickness = 0.dp)
+            },
             onPreviewKeyEvent = { event ->
                 event.type == KeyEventType.KeyDown && event.key == Key.Escape
             }

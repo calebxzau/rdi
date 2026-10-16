@@ -8,6 +8,7 @@ import calebxzhou.rdi.master.net.clientIp
 import calebxzhou.rdi.master.net.param
 import calebxzhou.rdi.master.net.paramNull
 import calebxzhou.rdi.master.net.response
+import io.ktor.server.response.*
 import io.ktor.server.routing.*
 import java.time.LocalTime
 import java.time.ZoneId
@@ -17,13 +18,17 @@ private val ipv4Regex =
 
 fun Route.gameNodeRoutes() {
     get("/server-entry") {
-        response(
-            data = GameNodeService.resolveServerEntry(
-                ipv4 = call.paramNull("myIp")?:call.clientIp,
-                gameBackup = call.paramNull("gameBackup") == "true",
-                call.paramNull("forceMain") == "true",
-            )
+        val entry = GameNodeService.resolveServerEntry(
+            ipv4 = call.paramNull("myIp")?:call.clientIp,
+            gameBackup = call.paramNull("gameBackup") == "true",
+            call.paramNull("forceMain") == "true",
         )
+        // rdi.sh only needs the backup API; an empty body means none.
+        if (call.paramNull("format") == "text") {
+            call.respondText(entry.api.orEmpty())
+        } else {
+            response(data = entry)
+        }
     }
 }
 
