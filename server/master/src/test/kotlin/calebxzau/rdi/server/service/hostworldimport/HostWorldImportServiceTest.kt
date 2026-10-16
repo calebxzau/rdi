@@ -174,6 +174,22 @@ class HostWorldImportServiceTest {
     }
 
     @Test
+    fun davImportsAsTheOwner() = runBlocking {
+        val host = access.addHost()
+        val dav = ObjectId()
+        val bytes = archive(level())
+        val dto = HostWorldImportCreateDto(bytes.size.toLong(), bytes.sha1, "1.20.1", ModLoader.forge)
+        service.precheck(host, dav, HostWorldImportPrecheckDto("1.20.1", ModLoader.forge, listOf(owner)), isDav = true)
+        val created = service.create(host, dav, dto, isDav = true)
+        assertEquals(host.ownerId, store.get(host._id, created.id).ownerId, "the session belongs to the host owner")
+        assertEquals(created.id, service.status(host._id, created.id, owner).id, "the owner can continue it")
+        assertEquals(created.id, service.status(host._id, created.id, dav, isDav = true).id)
+        assertFailsWith<RequestError> { service.status(host._id, created.id, dav) }
+        service.cancel(host._id, created.id, dav, isDav = true)
+        assertTrue(store.sessions(host._id).isEmpty())
+    }
+
+    @Test
     fun recoveryFinishesACommittedImport() = runBlocking {
         val host = access.addHost(gameRules = mutableMapOf("doDaylightCycle" to "false"))
         val session = upload(host, archive(level()), members = listOf(friend))

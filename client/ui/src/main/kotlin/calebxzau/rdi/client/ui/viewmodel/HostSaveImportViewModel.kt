@@ -32,6 +32,7 @@ import calebxzhou.rdi.common.exception.RequestError
 import calebxzhou.rdi.common.model.Host
 import calebxzhou.rdi.common.model.ModLoader
 import calebxzhou.rdi.common.model.Task2
+import calebxzhou.rdi.common.model.isDav
 import calebxzhou.rdi.common.util.toObjectId
 import calebxzhou.rdi.common.util.toUUID
 import kotlinx.coroutines.CancellationException
@@ -122,6 +123,8 @@ class HostSaveImportViewModel(
     private val picker: suspend (String) -> File? = { calebxzau.rdi.client.ui.pickLocalDirectory(it) },
     private val self: () -> Pair<ObjectId, String> = { AccountSessionStore.current.let { it._id to it.name } },
     private val ioDispatcher: kotlinx.coroutines.CoroutineDispatcher = Dispatchers.IO,
+    /** dav counts as the owner of every host. */
+    private val selfIsDav: () -> Boolean = { AccountSessionStore.current.isDav },
 ) : ViewModel() {
     private val _uiState = MutableStateFlow(HostSaveImportUiState())
     val uiState: StateFlow<HostSaveImportUiState> = _uiState.asStateFlow()
@@ -133,7 +136,7 @@ class HostSaveImportViewModel(
     init {
         work("正在加载房间") {
             val host = gateway.hostDetail(hostId)
-            if (host.ownerId != self().first) throw RequestError("只有房主可以导入存档")
+            if (host.ownerId != self().first && !selfIsDav()) throw RequestError("只有房主可以导入存档")
             if (host.version != 2) throw RequestError("仅2026.9.5以后创建的房间支持此功能")
             _uiState.update { it.copy(host = host) }
         }

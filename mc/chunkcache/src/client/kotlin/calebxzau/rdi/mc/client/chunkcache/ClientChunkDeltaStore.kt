@@ -669,8 +669,8 @@ class ClientChunkDeltaStore(root: Path) : AutoCloseable {
         private const val MAX_NAME_BYTES = 2048
         private const val MAX_BLOCK_CHANGES = 65_536
         private const val MAX_BE_EVENTS = 65_536
-        private const val MAX_GENERATIONS = 4096
-        private const val MAX_OVERLAYS = 128
+        private const val MAX_GENERATIONS = 8192
+        private const val MAX_OVERLAYS = 1024
         private const val MAX_RETAINED_BYTES = 64L * 1024 * 1024
         private const val MAX_OPEN_REGIONS = 32
         private const val BLOCK_ENTRY_BYTES = 48L

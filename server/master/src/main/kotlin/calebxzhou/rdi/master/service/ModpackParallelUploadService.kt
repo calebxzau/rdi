@@ -3,6 +3,7 @@ package calebxzhou.rdi.master.service
 import calebxzhou.rdi.common.util.sha1
 import calebxzhou.rdi.common.exception.ChunkedUploadErrorCodes
 import calebxzhou.rdi.common.exception.RequestError
+import calebxzhou.rdi.common.model.MODPACK_UPLOAD_MAX_MB
 import calebxzhou.rdi.common.model.ModpackUploadSessionCreateDto
 import calebxzhou.rdi.common.model.ModpackUploadSessionVo
 import calebxzhou.rdi.common.serdesJson
@@ -52,7 +53,7 @@ internal class ModpackParallelUploadService(
     ): Result<ModpackUploadSessionVo> = resultOf {
         val fileName = dto.fileName.trim().let { File(it).name }.takeIf(String::isNotBlank)
             ?: throw RequestError("上传文件名不能为空")
-        requestCheck(dto.size in 1..maxFileSize, "整合包文件过大，最大允许2GiB")
+        requestCheck(dto.size in 1..maxFileSize, "整合包文件过大，最大允许${MODPACK_UPLOAD_MAX_MB}MB")
         val sha1 = dto.sha1.normalizedSha1()
         sessionsMutex.withLock {
             cleanupExpiredSessions()

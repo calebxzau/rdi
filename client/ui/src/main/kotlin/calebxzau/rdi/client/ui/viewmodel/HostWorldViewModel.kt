@@ -16,6 +16,7 @@ import calebxzhou.rdi.common.model.Host
 import calebxzhou.rdi.common.model.McVersion
 import calebxzhou.rdi.common.model.ModLoader
 import calebxzhou.rdi.common.model.Task2Status
+import calebxzhou.rdi.common.model.isDav
 import calebxzhou.rdi.model.Role
 import io.ktor.http.HttpMethod
 import kotlinx.coroutines.CancellationException
@@ -46,7 +47,7 @@ data class HostWorldUiState(
     /** The `saves` folder the save is downloaded into. */
     val savesDir: Path? = null,
 ) {
-    /** Save import, rollback and reset are owner only on the server. */
+    /** Save import, rollback and reset are owner (or dav) only on the server. */
     val canImportSave: Boolean get() = isOwner
 
     /** 回档 is supported on 1.20.1 Forge hosts for now. */
@@ -122,6 +123,8 @@ class HostWorldViewModel(
     private val hostId: String,
     private val gateway: HostWorldGateway = RdiHostWorldGateway(),
     private val selfId: () -> ObjectId = { loggedAccount._id },
+    /** dav counts as the owner of every host. */
+    private val selfIsDav: () -> Boolean = { loggedAccount.isDav },
 ) : ViewModel() {
     private val _uiState = MutableStateFlow(HostWorldUiState())
     val uiState: StateFlow<HostWorldUiState> = _uiState.asStateFlow()
@@ -187,9 +190,10 @@ class HostWorldViewModel(
     private suspend fun load() {
         val host = gateway.hostDetail(hostId)
         val self = selfId()
-        val isMember = host.members.any { it.id == self && it.role != Role.GUEST }
+        val dav = selfIsDav()
+        val isMember = dav || host.members.any { it.id == self && it.role != Role.GUEST }
         val download = if (isMember && host.version == 2) gateway.downloadStatus(hostId) else null
-        _uiState.update { it.copy(host = host, isOwner = host.ownerId == self, isMember = isMember, download = download) }
+        _uiState.update { it.copy(host = host, isOwner = dav || host.ownerId == self, isMember = isMember, download = download) }
     }
 
     private fun work(message: String, block: suspend () -> Unit) {

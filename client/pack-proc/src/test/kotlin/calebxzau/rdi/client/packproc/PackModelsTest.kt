@@ -252,18 +252,22 @@ class PackModelsTest {
     }
 
     @Test
-    fun `mca files become empty placeholders except exact ftbteambases segments`() = runBlocking {
+    fun `only region files of embedded saves become empty placeholders`() = runBlocking {
         val root = Files.createTempDirectory("pack-proc-mca-upload").toFile()
         try {
-            root.resolve("region/r.0.0.mca").also { it.parentFile.mkdirs() }.writeBytes(byteArrayOf(1))
-            root.resolve("region/c.0.0.mcc").writeBytes(byteArrayOf(12))
-            root.resolve("myftbteambasescopy/r.0.0.mca").also { it.parentFile.mkdirs() }.writeBytes(byteArrayOf(2))
+            root.resolve("saves/World/level.dat").also { it.parentFile.mkdirs() }.writeBytes(byteArrayOf(20))
+            root.resolve("saves/World/region/r.0.0.mca").also { it.parentFile.mkdirs() }.writeBytes(byteArrayOf(1))
+            root.resolve("saves/World/region/c.0.0.mcc").writeBytes(byteArrayOf(12))
+            root.resolve("saves/World/DIM-1/region/r.0.0.MCA").also { it.parentFile.mkdirs() }.writeBytes(byteArrayOf(13))
+            root.resolve("myftbteambasescopy/level.dat").also { it.parentFile.mkdirs() }.writeBytes(byteArrayOf(21))
+            root.resolve("myftbteambasescopy/region/r.0.0.mca").also { it.parentFile.mkdirs() }.writeBytes(byteArrayOf(2))
+            root.resolve("FTBTeamBases/level.dat").also { it.parentFile.mkdirs() }.writeBytes(byteArrayOf(22))
             root.resolve("FTBTeamBases/region/r.0.0.MCA").also { it.parentFile.mkdirs() }.writeBytes(byteArrayOf(3))
+            root.resolve("config/dimtemplate/region/r.0.0.mca").also { it.parentFile.mkdirs() }.writeBytes(byteArrayOf(14))
             writeZip(
                 root.resolve("mods/example.jar"),
                 mapOf(
-                    "region/nested.mca" to byteArrayOf(4),
-                    "foo/ftbteambases/kept.mca" to byteArrayOf(5),
+                    "data/example/dimension/region/nested.mca" to byteArrayOf(4),
                     "assets/example.txt" to byteArrayOf(6),
                 )
             )
@@ -271,17 +275,16 @@ class PackModelsTest {
                 root.resolve("resourcepacks/example.zip"),
                 mapOf(
                     "region/resourcepack.mca" to byteArrayOf(7),
-                    "ftbteambases/resourcepack-kept.mca" to byteArrayOf(8),
                     "assets/texture.bin" to byteArrayOf(9),
                 )
             )
             writeZip(
-                root.resolve("data/eligible.zip"),
-                mapOf("region/eligible.mca" to byteArrayOf(10))
-            )
-            writeZip(
-                root.resolve("data/eligible.jar"),
-                mapOf("region/eligible-jar.mca" to byteArrayOf(11))
+                root.resolve("data/world.zip"),
+                mapOf(
+                    "world/level.dat" to byteArrayOf(23),
+                    "world/region/zipped.mca" to byteArrayOf(10),
+                    "template/region/kept.mca" to byteArrayOf(11),
+                )
             )
 
             val archive = ModpackProcessor(PackProcessingPaths(root.resolve("work")))
@@ -291,29 +294,26 @@ class PackModelsTest {
                 if (!entry.isDirectory) archiveFiles[entry.path] = entry.bytes!!
             }
 
-            assertContentEquals(byteArrayOf(), archiveFiles["region/r.0.0.mca"])
-            assertContentEquals(byteArrayOf(), archiveFiles["myftbteambasescopy/r.0.0.mca"])
-            assertContentEquals(byteArrayOf(12), archiveFiles["region/c.0.0.mcc"])
-            assertContentEquals(byteArrayOf(1), root.resolve("region/r.0.0.mca").readBytes())
+            assertContentEquals(byteArrayOf(), archiveFiles["saves/World/region/r.0.0.mca"])
+            assertContentEquals(byteArrayOf(), archiveFiles["saves/World/region/c.0.0.mcc"])
+            assertContentEquals(byteArrayOf(), archiveFiles["saves/World/DIM-1/region/r.0.0.MCA"])
+            assertContentEquals(byteArrayOf(20), archiveFiles["saves/World/level.dat"])
+            assertContentEquals(byteArrayOf(), archiveFiles["myftbteambasescopy/region/r.0.0.mca"])
+            assertContentEquals(byteArrayOf(1), root.resolve("saves/World/region/r.0.0.mca").readBytes())
             assertContentEquals(byteArrayOf(3), archiveFiles["FTBTeamBases/region/r.0.0.MCA"])
-            assertNestedZipEntryEquals(archiveFiles["mods/example.jar"]!!, "region/nested.mca", byteArrayOf())
-            assertNestedZipEntryEquals(archiveFiles["mods/example.jar"]!!, "foo/ftbteambases/kept.mca", byteArrayOf(5))
-            assertNestedZipEntryEquals(archiveFiles["resourcepacks/example.zip"]!!, "region/resourcepack.mca", byteArrayOf())
-            assertNestedZipEntryEquals(
-                archiveFiles["resourcepacks/example.zip"]!!,
-                "ftbteambases/resourcepack-kept.mca",
-                byteArrayOf(8)
-            )
+            assertContentEquals(byteArrayOf(14), archiveFiles["config/dimtemplate/region/r.0.0.mca"])
+            assertNestedZipEntryEquals(archiveFiles["mods/example.jar"]!!, "data/example/dimension/region/nested.mca", byteArrayOf(4))
+            assertNestedZipEntryEquals(archiveFiles["resourcepacks/example.zip"]!!, "region/resourcepack.mca", byteArrayOf(7))
             assertNestedZipEntryEquals(archiveFiles["resourcepacks/example.zip"]!!, "assets/texture.bin", byteArrayOf(9))
-            assertNestedZipEntryEquals(archiveFiles["data/eligible.zip"]!!, "region/eligible.mca", byteArrayOf())
-            assertNestedZipEntryEquals(archiveFiles["data/eligible.jar"]!!, "region/eligible-jar.mca", byteArrayOf())
+            assertNestedZipEntryEquals(archiveFiles["data/world.zip"]!!, "world/region/zipped.mca", byteArrayOf())
+            assertNestedZipEntryEquals(archiveFiles["data/world.zip"]!!, "template/region/kept.mca", byteArrayOf(11))
         } finally {
             root.deleteRecursively()
         }
     }
 
     @Test
-    fun `local preparation detects excluded mca files after extraction`() = runBlocking {
+    fun `local preparation detects embedded saves after extraction`() = runBlocking {
         val root = Files.createTempDirectory("pack-proc-mca-detection").toFile()
         try {
             val archive = root.resolve("mca-detection.zip")
@@ -321,12 +321,10 @@ class PackModelsTest {
                 archive,
                 mapOf(
                     "modrinth.index.json" to modrinthIndexBytes(),
+                    "overrides/FTBTeamBases/level.dat" to byteArrayOf(1),
                     "overrides/FTBTeamBases/region/kept.mca" to byteArrayOf(2),
-                    "overrides/data/eligible.zip" to zipBytes(
-                        mapOf("region/eligible.mca" to byteArrayOf(4))
-                    ),
-                    "overrides/data/eligible.jar" to zipBytes(
-                        mapOf("region/eligible-jar.mca" to byteArrayOf(5))
+                    "overrides/data/world.zip" to zipBytes(
+                        mapOf("level.dat" to byteArrayOf(3), "region/eligible.mca" to byteArrayOf(4))
                     ),
                 )
             )
@@ -343,7 +341,10 @@ class PackModelsTest {
                 onlyKeptArchive,
                 mapOf(
                     "modrinth.index.json" to modrinthIndexBytes(),
+                    "overrides/ftbteambases/level.dat" to byteArrayOf(5),
                     "overrides/ftbteambases/region/kept.mca" to byteArrayOf(3),
+                    "overrides/config/dimtemplate/region/r.0.0.mca" to byteArrayOf(6),
+                    "overrides/data/template.jar" to zipBytes(mapOf("region/template.mca" to byteArrayOf(7))),
                 )
             )
             val onlyKept = ModpackProcessor(PackProcessingPaths(root.resolve("work-kept")))
@@ -505,19 +506,25 @@ class PackModelsTest {
     }
 
     @Test
-    fun `server extra mca files and direct archive entries become empty placeholders`() = runBlocking {
+    fun `server extra save region files and direct archive entries become empty placeholders`() = runBlocking {
         val root = Files.createTempDirectory("pack-proc-server-mca").toFile()
         try {
             val extraRoot = root.resolve("server-files").also { it.mkdirs() }
+            val levelDat = extraRoot.resolve("world/level.dat").also { it.parentFile.mkdirs() }
+            levelDat.writeBytes(byteArrayOf(5))
             val excluded = extraRoot.resolve("world/region/r.0.0.mca").also { it.parentFile.mkdirs() }
             excluded.writeBytes(byteArrayOf(1))
+            val template = extraRoot.resolve("config/template/r.0.0.mca").also { it.parentFile.mkdirs() }
+            template.writeBytes(byteArrayOf(6))
             val kept = extraRoot.resolve("ftbteambases/region/r.0.0.mca").also { it.parentFile.mkdirs() }
             kept.writeBytes(byteArrayOf(2))
             val nested = extraRoot.resolve("data.zip")
             writeZip(
                 nested,
                 mapOf(
+                    "world/level.dat" to byteArrayOf(11),
                     "world/region/nested.mca" to byteArrayOf(3),
+                    "template/nested.mca" to byteArrayOf(12),
                     "ftbteambases/kept.mca" to byteArrayOf(4),
                     "sounds/server.mp3" to byteArrayOf(7, 8),
                     "cache/kept.dat" to byteArrayOf(9, 10),
@@ -528,7 +535,9 @@ class PackModelsTest {
                 rootDir = root.resolve("empty").also { it.mkdirs() },
                 baseName = "server-mca-upload",
                 serverExtraFiles = listOf(
+                    ServerExtraFile(levelDat, "world/level.dat"),
                     ServerExtraFile(excluded, "world/region/r.0.0.mca"),
+                    ServerExtraFile(template, "config/template/r.0.0.mca"),
                     ServerExtraFile(kept, "ftbteambases/region/r.0.0.mca"),
                     ServerExtraFile(nested, "data.zip"),
                 ),
@@ -539,7 +548,9 @@ class PackModelsTest {
             }
             assertContentEquals(byteArrayOf(), archiveFiles["server/world/region/r.0.0.mca"])
             assertContentEquals(byteArrayOf(2), archiveFiles["server/ftbteambases/region/r.0.0.mca"])
+            assertContentEquals(byteArrayOf(6), archiveFiles["server/config/template/r.0.0.mca"])
             assertNestedZipEntryEquals(archiveFiles["server/data.zip"]!!, "world/region/nested.mca", byteArrayOf())
+            assertNestedZipEntryEquals(archiveFiles["server/data.zip"]!!, "template/nested.mca", byteArrayOf(12))
             assertNestedZipEntryEquals(archiveFiles["server/data.zip"]!!, "ftbteambases/kept.mca", byteArrayOf(4))
             assertNestedZipEntryEquals(archiveFiles["server/data.zip"]!!, "sounds/server.mp3", byteArrayOf(7, 8))
             assertNestedZipEntryEquals(archiveFiles["server/data.zip"]!!, "cache/kept.dat", byteArrayOf(9, 10))
@@ -1120,6 +1131,7 @@ class PackModelsTest {
                 root.resolve("media/nested/file.$suffix").also { it.parentFile.mkdirs() }
                     .writeBytes(byteArrayOf(1, 2, 3))
             }
+            root.resolve("world/level.dat").also { it.parentFile.mkdirs() }.writeBytes(byteArrayOf(13))
             root.resolve("world/region/r.0.0.mca").also { it.parentFile.mkdirs() }.writeBytes(byteArrayOf(12))
             root.resolve("server.json").writeText("{}")
             root.resolve("server.toml").writeText("enabled = true")

@@ -12,6 +12,7 @@ import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertTrue
 
 class ChunkCachePayloadsTest {
     @Test
@@ -97,6 +98,61 @@ class ChunkCachePayloadsTest {
             assertEquals(0, oversizedMetadataBuffer.readableBytes(), "The rejected length must fail before allocating or reading metadata bytes")
         } finally {
             oversizedMetadataBuffer.release()
+        }
+    }
+
+    @Test
+    fun warmupPayloadsRoundTripAndEnforceLimits(): Unit {
+        val epoch = UUID(5, 6)
+        val dimension = ResourceLocation.fromNamespaceAndPath("minecraft", "the_nether")
+
+        val warmup = roundTrip(ChunkCacheWarmupPayload(epoch, 4096, 3000, 1), ChunkCacheWarmupPayload.STREAM_CODEC)
+        assertEquals(ChunkCacheWarmupPayload(epoch, 4096, 3000, 1), warmup)
+        assertFailsWith<IllegalArgumentException> { ChunkCacheWarmupPayload(epoch, ChunkCacheLimits.MAX_OFFERS + 1, 3000, 1) }
+        assertFailsWith<IllegalArgumentException> { ChunkCacheWarmupPayload(epoch, ChunkCacheLimits.LEGACY_MAX_OFFERS - 1, 3000, 1) }
+        assertFailsWith<IllegalArgumentException> {
+            ChunkCacheWarmupPayload(epoch, 4096, ChunkCacheWarmupPayload.MAX_DURATION_MILLIS + 1, 1)
+        }
+
+        val positions = listOf(0L, -1L, Long.MIN_VALUE, Long.MAX_VALUE)
+        val absent = roundTrip(ChunkCacheAbsentPayload(epoch, dimension, positions), ChunkCacheAbsentPayload.STREAM_CODEC)
+        assertEquals(epoch, absent.epoch)
+        assertEquals(dimension, absent.dimension)
+        assertEquals(positions, absent.positions)
+        assertFailsWith<IllegalArgumentException> {
+            ChunkCacheAbsentPayload(epoch, dimension, List(ChunkCacheLimits.MAX_ABSENT_BATCH + 1) { it.toLong() })
+        }
+
+        val oversized = buffer()
+        try {
+            oversized.writeLong(epoch.mostSignificantBits)
+            oversized.writeLong(epoch.leastSignificantBits)
+            oversized.writeUtf(dimension.toString(), 256)
+            oversized.writeVarInt(ChunkCacheLimits.MAX_ABSENT_BATCH + 1)
+            assertFailsWith<IllegalArgumentException> { ChunkCacheAbsentPayload(oversized) }
+        } finally {
+            oversized.release()
+        }
+    }
+
+    @Test
+    fun largestServerboundMessagesFitVanillaLimit(): Unit {
+        val epoch = UUID(7, 8)
+        val dimension = ResourceLocation.fromNamespaceAndPath("minecraft", "overworld")
+        val buffer = buffer()
+        try {
+            ChunkCacheOfferPayload(epoch, dimension, List(ChunkCacheLimits.MAX_OFFER_BATCH) { ChunkCacheOffer(it + 1L, it, -it, ByteArray(20)) })
+                .write(buffer)
+            // Serverbound custom payloads are limited to 32767 bytes.
+            assertTrue(buffer.readableBytes() < 32767)
+            buffer.clear()
+            ChunkCacheAbsentPayload(epoch, dimension, List(ChunkCacheLimits.MAX_ABSENT_BATCH) { it.toLong() }).write(buffer)
+            assertTrue(buffer.readableBytes() < 32767)
+            buffer.clear()
+            ChunkCacheCancelPayload(epoch, List(ChunkCacheLimits.MAX_IDS_PER_MESSAGE) { it + 1L }).write(buffer)
+            assertTrue(buffer.readableBytes() < 32767)
+        } finally {
+            buffer.release()
         }
     }
 

@@ -74,8 +74,8 @@ object ChunkTerrainCodec {
             if (palette is SingleValuePalette<*>) {
                 return TerrainHash.uniformSectionSha1(Block.getId(palette.valueFor(0) as BlockState), biomeIds)
             }
-            val ids = IntArray(TerrainHash.BLOCKS_PER_SECTION)
-            var index = 0
+            // IDs go straight into the hash buffer; a per-section array cost as much as reading the palette.
+            val hasher = TerrainHash.sectionHasher()
             if (palette is GlobalPalette<*>) {
                 var lastRaw = -1
                 var lastId = -1
@@ -84,13 +84,13 @@ object ChunkTerrainCodec {
                         lastRaw = raw
                         lastId = Block.getId(palette.valueFor(raw) as BlockState)
                     }
-                    ids[index++] = lastId
+                    hasher.add(lastId)
                 }
             } else {
                 val paletteIds = IntArray(palette.size) { Block.getId(palette.valueFor(it)) }
-                storage.getAll { raw -> ids[index++] = paletteIds[raw] }
+                storage.getAll { raw -> hasher.add(paletteIds[raw]) }
             }
-            return TerrainHash.sectionSha1(ids, biomeIds)
+            return hasher.finish(biomeIds)
         } catch (failure: RuntimeException) {
             throw IOException("Invalid terrain section data", failure)
         }

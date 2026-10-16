@@ -9,8 +9,8 @@ import java.util.zip.ZipOutputStream
 
 plugins {
     id 'net.neoforged.moddev.legacyforge' version '2.0.141'
-    id 'org.jetbrains.kotlin.jvm' version '2.4.10'
-    id 'org.jetbrains.kotlin.plugin.serialization' version '2.4.10'
+    id 'org.jetbrains.kotlin.jvm' version '2.4.21'
+    id 'org.jetbrains.kotlin.plugin.serialization' version '2.4.21'
     id 'idea'
 }
 
@@ -181,8 +181,8 @@ def sqliteLinuxRuntimeJar = tasks.register('sqliteLinuxRuntimeJar', Jar) {
 }
 
 dependencies {
-    implementation("org.jetbrains.kotlin:kotlin-stdlib:2.4.10")
-    additionalRuntimeClasspath("org.jetbrains.kotlin:kotlin-stdlib:2.4.10")
+    implementation("org.jetbrains.kotlin:kotlin-stdlib:2.4.21")
+    additionalRuntimeClasspath("org.jetbrains.kotlin:kotlin-stdlib:2.4.21")
     implementation("com.github.luben:zstd-jni:1.5.7-11:win_amd64")
     additionalRuntimeClasspath("com.github.luben:zstd-jni:1.5.7-11:win_amd64")
     jarJar("com.github.luben:zstd-jni:1.5.7-11:linux_amd64")
@@ -217,7 +217,7 @@ dependencies {
     ].each { dep ->
         modImplementation dep
     }
-    zstdTestImplementation 'org.jetbrains.kotlin:kotlin-test-junit5:2.4.10'
+    zstdTestImplementation 'org.jetbrains.kotlin:kotlin-test-junit5:2.4.21'
     zstdTestImplementation 'com.github.luben:zstd-jni:1.5.7-11:win_amd64'
     zstdTestImplementation 'io.netty:netty-buffer:4.1.97.Final'
     zstdTestImplementation 'io.netty:netty-codec:4.1.97.Final'
@@ -226,7 +226,7 @@ dependencies {
     zstdTestImplementation 'io.netty:netty-handler:4.1.97.Final'
     zstdTestRuntimeOnly 'org.junit.jupiter:junit-jupiter-engine:6.1.1'
 
-    testImplementation 'org.jetbrains.kotlin:kotlin-test-junit5:2.4.10'
+    testImplementation 'org.jetbrains.kotlin:kotlin-test-junit5:2.4.21'
     testRuntimeOnly 'org.junit.jupiter:junit-jupiter-engine:6.1.1'
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher:6.1.1'
     testImplementation 'io.github.llamalad7:mixinextras-common:0.5.3'

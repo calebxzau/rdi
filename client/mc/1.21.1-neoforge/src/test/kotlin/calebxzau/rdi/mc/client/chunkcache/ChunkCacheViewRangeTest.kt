@@ -11,7 +11,7 @@ import kotlin.test.assertTrue
 class ChunkCacheViewRangeTest {
     @Test
     fun `candidates cover the chunks a 1_21 server sends after one step`() {
-        for (viewDistance in 2..31) {
+        for (viewDistance in 2..32) {
             // The server sends what its tracking view contains, including the outer border chunks.
             for (dx in -40..40) for (dz in -40..40) {
                 if (ChunkTrackingView.isWithinDistance(1, 0, viewDistance, dx, dz, true)) {
@@ -23,7 +23,7 @@ class ChunkCacheViewRangeTest {
 
     @Test
     fun `scan square contains every admitted chunk`() {
-        for (viewDistance in 2..31) {
+        for (viewDistance in 2..32) {
             val radius = ChunkCacheViewRange.scanRadius(viewDistance)
             var edgeReached = false
             for (dx in -40..40) for (dz in -40..40) {
@@ -50,6 +50,14 @@ class ChunkCacheViewRangeTest {
         assertEquals(2, ChunkCacheViewRange.viewDistance(0))
         assertEquals(10, ChunkCacheViewRange.viewDistance(10))
         assertEquals(32, ChunkCacheViewRange.viewDistance(64))
-        assertEquals(34, ChunkCacheViewRange.scanRadius(32))
+        assertEquals(35, ChunkCacheViewRange.scanRadius(32))
+    }
+
+    @Test
+    fun `candidate scan accepts every scan radius up to view distance 32`() {
+        // Regression: the scan once capped the radius below what view distance 32 needs and crashed the client.
+        for (viewDistance in 2..32) {
+            ChunkCacheCandidateScan().update(0, 0, ChunkCacheViewRange.scanRadius(viewDistance))
+        }
     }
 }

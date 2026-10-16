@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.ImageComposeScene
 import androidx.compose.ui.Modifier
@@ -54,6 +55,34 @@ class IconTileCardTest {
     }
 
     @Test
+    fun selectionFrameShowsOnlyAroundHoveredTile() {
+        val render = sharedRender
+
+        val hovered = render.selectionPixel("hovered")
+        // 第二张瓷砖左外沿会落在悬停瓷砖的选中框上，用第三张
+        val idle = render.selectionPixel("dimmed")
+
+        assertTrue(hovered.isCyan(), "悬停瓷砖外沿应有青色选中框，实际=${hovered.hex()}")
+        assertTrue(!idle.isCyan(), "未悬停瓷砖外沿不应有选中框，实际=${idle.hex()}")
+    }
+
+    @Test
+    fun selectionFrameGlowsOutsideItsStroke() {
+        val render = sharedRender
+        val tile = render.bounds.getValue("hovered")
+        // 描边外缘在8dp处，再往外2dp只剩光晕
+        val x = tile.left - 10f * SCALE
+        val glow = render.pixel(x, tile.center.y)
+        // 背景是横向渐变，同一列顶部的像素就是原背景
+        val background = render.pixel(x, 2f)
+
+        assertTrue(
+            glow.blue() >= background.blue() + 30,
+            "选中框外侧应有青色光晕，光晕处=${glow.hex()}，背景=${background.hex()}",
+        )
+    }
+
+    @Test
     fun backdropRimFollowsWhatIsBehindIt() {
         val render = sharedRender
 
@@ -63,14 +92,14 @@ class IconTileCardTest {
     }
 }
 
-/** 红到蓝的背景上放三张单独折射背景的瓷砖，第一张处于悬停状态。结果另存为预览图。 */
+/** 红到蓝的背景上放三张单独折射背景的瓷砖（带版本角标），第一张处于悬停状态，提示框显示在它下方。结果另存为预览图。 */
 @OptIn(ExperimentalComposeUiApi::class)
 private fun renderTiles(): TileRender {
     val bounds = mutableMapOf<String, Rect>()
-    val scene = ImageComposeScene(width = 960, height = 400, density = Density(SCALE)) {
+    val scene = ImageComposeScene(width = 960, height = 560, density = Density(SCALE)) {
         RTheme {
             val hazeState = rememberHazeState()
-            Box(Modifier.fillMaxSize()) {
+            CardHintHost(Modifier.fillMaxSize()) {
                 Box(
                     Modifier
                         .fillMaxSize()
@@ -115,14 +144,22 @@ private fun TileRow(hazeState: HazeState, bounds: MutableMap<String, Rect>, modi
                     .onGloballyPositioned { bounds[key] = it.boundsInRoot() }
             ) {
                 IconTileCard(
-                    title = title,
-                    hint = CardHint(title = title),
+                    hint = CardHint(
+                        title = title,
+                        detail = "A-TM10",
+                        detailVersion = "6.6",
+                        actions = listOf(
+                            CardHintAction(HintMouseButton.Left, "开玩"),
+                            CardHintAction(HintMouseButton.Right, "详情 设置"),
+                        ),
+                    ),
                     statusDotColor = dot,
                     dimmed = key == "dimmed",
                     glass = TileGlass.Backdrop(hazeState),
                     onPrimaryClick = {},
                 ) {
                     NameInitialIcon(title, Modifier.fillMaxSize().clip(TileIconShape))
+                    TileVersionBadge("1.2.0-beta", Modifier.align(Alignment.BottomEnd))
                 }
             }
         }
@@ -131,6 +168,12 @@ private fun TileRow(hazeState: HazeState, bounds: MutableMap<String, Rect>, modi
 
 private class TileRender(val bitmap: Bitmap, val bounds: Map<String, Rect>) {
     fun pixel(x: Float, y: Float): Int = bitmap.getColor(x.toInt(), y.toInt())
+
+    /** 瓷砖左侧外沿中段，选中框描边的位置（外扩5dp，描边宽3dp）。 */
+    fun selectionPixel(key: String): Int {
+        val tile = bounds.getValue(key)
+        return pixel(tile.left - 6.5f * SCALE, tile.center.y)
+    }
 
     /** 左侧玻璃框中段：避开高光最强的上下沿。 */
     fun rimPixel(key: String): Int {
@@ -144,5 +187,9 @@ private fun Int.channels() = listOf((this shr 16) and 0xFF, (this shr 8) and 0xF
 private fun Int.luminance(): Int = channels().let { (r, g, b) -> (r * 299 + g * 587 + b * 114) / 1000 }
 
 private fun Int.distance(other: Int): Int = channels().zip(other.channels()).sumOf { (a, b) -> abs(a - b) }
+
+private fun Int.isCyan(): Boolean = channels().let { (r, g, b) -> g > 180 && b > 200 && r < 190 }
+
+private fun Int.blue(): Int = this and 0xFF
 
 private fun Int.hex(): String = "#%06X".format(this and 0xFFFFFF)

@@ -1,5 +1,6 @@
 package calebxzau.rdi.mc.client.chunkcache
 
+import calebxzau.rdi.mc.chunkcache.ChunkCacheLimits
 import net.minecraft.world.level.ChunkPos
 import java.util.Arrays
 
@@ -9,7 +10,7 @@ internal class ChunkCacheCandidateScan {
     private var cursor = 0
 
     fun update(centerX: Int, centerZ: Int, radius: Int) {
-        require(radius in 0..34)
+        require(radius in 0..ChunkCacheLimits.MAX_SCAN_RADIUS)
         val width = radius * 2 + 1
         // The low bits retain the original Z/X order for equal distances, without boxed sorting.
         positions = LongArray(width * width) { index ->

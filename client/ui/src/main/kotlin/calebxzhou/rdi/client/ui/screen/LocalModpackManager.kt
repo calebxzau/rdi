@@ -77,6 +77,7 @@ import calebxzhou.rdi.client.ui.comp.HttpImage
 import calebxzhou.rdi.client.ui.comp.IconTileCard
 import calebxzhou.rdi.client.ui.comp.TILE_ACTIVE_DOT_COLOR
 import calebxzhou.rdi.client.ui.comp.TileIconShape
+import calebxzhou.rdi.client.ui.comp.TileVersionBadge
 import calebxzau.rdi.client.ui.comp.NameInitialIcon
 import calebxzhou.rdi.client.ui.McPlayArgs
 import calebxzhou.rdi.common.isExcludedConfigPath
@@ -855,7 +856,6 @@ private fun InstalledCard(
         },
     ) {
         IconTileCard(
-            title = pack.name,
             glass = glass,
             hint = hint,
             statusDotColor = TILE_ACTIVE_DOT_COLOR.takeIf { isRunning },
@@ -876,6 +876,7 @@ private fun InstalledCard(
             } else {
                 NameInitialIcon(pack.name, iconModifier)
             }
+            TileVersionBadge(pack.verName, Modifier.align(Alignment.BottomEnd))
         }
     }
 }

@@ -250,7 +250,10 @@ internal class PacketCaptureRecorder @JvmOverloads constructor(
     private data object PacketCaptureFailed
 
     companion object {
-        const val MAX_FILE_BYTES: Long = 128_000_000L
+        const val MAX_FILE_BYTES: Long = 256_000_000L
+
+        /** Parts kept in the capture directory across all runs; the oldest go first, see [PacketCaptureRetention]. */
+        const val MAX_FILES: Int = 20
         const val MAX_PAYLOAD_BYTES: Int = 8 * 1024 * 1024
         const val MAX_STRING_BYTES: Int = 4096
         const val DEFAULT_MAX_PENDING_BYTES: Long = 16L * 1024 * 1024
@@ -312,6 +315,7 @@ private data class PacketCaptureRecord(
 /** Test-adjustable resource limits. Production defaults match docs/packbatch-format.md. */
 internal data class PacketCaptureLimits(
     val maxFileBytes: Long = PacketCaptureRecorder.MAX_FILE_BYTES,
+    val maxFiles: Int = PacketCaptureRecorder.MAX_FILES,
     val maxPendingBytes: Long = PacketCaptureRecorder.DEFAULT_MAX_PENDING_BYTES,
     val maxEvents: Int = PacketCaptureRecorder.DEFAULT_MAX_EVENTS,
     val targetFrameBytes: Int = PacketCaptureRecorder.TARGET_FRAME_BYTES,
@@ -322,6 +326,7 @@ internal data class PacketCaptureLimits(
 ) {
     init {
         require(maxFileBytes in MIN_TEST_FILE_BYTES..PacketCaptureRecorder.MAX_FILE_BYTES)
+        require(maxFiles in 1..PacketCaptureRecorder.MAX_FILES)
         require(maxPendingBytes in 1..PacketCaptureRecorder.DEFAULT_MAX_PENDING_BYTES)
         require(maxEvents in 1..PacketCaptureRecorder.DEFAULT_MAX_EVENTS)
         require(targetFrameBytes in 1..PacketCaptureRecorder.TARGET_FRAME_BYTES)
@@ -476,6 +481,8 @@ private class PacketCaptureFileWriter(
     private fun ensurePart() {
         if (output != null) return
         Files.createDirectories(directory)
+        // A failed deletion stops the capture rather than letting the directory outgrow its budget.
+        PacketCaptureRetention.makeRoomForPart(directory, limits.maxFiles, runId).getOrThrow()
         partNumber++
         val basename = "${runId}-${partNumber.toString().padStart(6, '0')}.rdibatch.zst"
         partialPath = directory.resolve("$basename.partial")

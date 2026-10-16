@@ -107,6 +107,7 @@ class RDIMain {
             calebxzhou.rdi.mc.server.network.RServerZstdStream.onPlayerJoined(player)
             calebxzhou.rdi.mc.server.network.RServerBatching.onPlayerJoined(player)
             calebxzhou.rdi.mc.server.network.RServerPacketRefs.onPlayerJoined(player)
+            calebxzhou.rdi.mc.server.network.RServerZlibTail.onPlayerJoined(player)
             PlayerChatRangeState.restore(player.uuid, PlayerNbtChatRangeStore(player))
             if (RDI.isAllOp()) {
                 player.server.playerList.op(player.gameProfile)

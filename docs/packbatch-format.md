@@ -19,7 +19,10 @@ new ID; reconfiguration keeps the connection ID and continuing sequence.
 These are packet-encoder bytes, not proof of delivery or measured wire bytes.
 
 Files live in `rdi/packbatch/<run-uuid>-<part:06>.rdibatch.zst`, with a hard
-128,000,000-byte limit including all frames. Each file is a concatenation of
+256,000,000-byte limit including all frames. The directory keeps at most 20 part
+files across all runs: before a new part opens, the writer deletes the oldest
+parts (by run UUIDv7, then part number, `.partial` leftovers included) and the
+`<run-uuid>.json` of any earlier run left without parts. Each file is a concatenation of
 complete, independent Zstd frames (level 3, checksum enabled). No packet crosses
 a frame or file boundary. The writer targets 1 MiB of uncompressed records per
 data frame; a larger packet occupies its own frame. Partial files end in

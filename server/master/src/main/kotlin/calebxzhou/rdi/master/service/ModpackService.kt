@@ -25,7 +25,7 @@ val Modpack.Version.clientZstdPack get() = storageDir.resolve("${name}-client.ta
 val Modpack.Version.clientPackFile get() = clientZstdPack.takeIf(File::exists) ?: clientZip
 
 const val CLIENT_ONLY_MARK_PREFIX = "C" + "$$" + "_"
-val MAX_PACK_SIZE = 2L * 1024 * 1024 * 1024
+val MAX_PACK_SIZE = MODPACK_UPLOAD_MAX_BYTES
 
 fun Route.modpackRoutes() = this.focusedModpackRoutes()
 

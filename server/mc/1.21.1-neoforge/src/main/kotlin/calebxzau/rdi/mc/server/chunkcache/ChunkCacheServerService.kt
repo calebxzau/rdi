@@ -2,19 +2,25 @@ package calebxzau.rdi.mc.server.chunkcache
 
 import calebxzau.rdi.mc.chunkcache.ChunkCacheLimits
 import calebxzau.rdi.mc.chunkcache.ChunkReuseCodec
-import calebxzau.rdi.mc.chunkcache.ChunkTerrainCodec
+import calebxzau.rdi.mc.chunkcache.network.ChunkCacheAbsentPayload
 import calebxzau.rdi.mc.chunkcache.network.ChunkCacheCancelPayload
 import calebxzau.rdi.mc.chunkcache.network.ChunkCacheContextPayload
 import calebxzau.rdi.mc.chunkcache.network.ChunkCacheOfferPayload
 import calebxzau.rdi.mc.chunkcache.network.ChunkCacheResultPayload
 import calebxzau.rdi.mc.chunkcache.network.ChunkCacheRetirePayload
 import calebxzau.rdi.mc.chunkcache.network.ChunkCacheReusePayload
-import net.minecraft.core.registries.Registries
+import calebxzau.rdi.mc.chunkcache.network.ChunkCacheWarmupPayload
+import calebxzau.rdi.mc.server.mixin.APlayerChunkSender
+import it.unimi.dsi.fastutil.longs.LongSet
 import net.minecraft.network.protocol.Packet
-import net.minecraft.network.protocol.game.ClientboundBundlePacket
-import net.minecraft.network.protocol.game.ClientboundLevelChunkWithLightPacket
 import net.minecraft.network.protocol.common.ClientboundCustomPayloadPacket
+import net.minecraft.network.protocol.game.ClientGamePacketListener
+import net.minecraft.network.protocol.game.ClientboundBundlePacket
+import net.minecraft.network.protocol.game.ClientboundForgetLevelChunkPacket
+import net.minecraft.network.protocol.game.ClientboundLevelChunkWithLightPacket
 import net.minecraft.resources.ResourceLocation
+import net.minecraft.server.level.ChunkMap
+import net.minecraft.server.level.ChunkTrackingView
 import net.minecraft.server.level.ServerPlayer
 import net.minecraft.server.network.ServerGamePacketListenerImpl
 import net.minecraft.world.level.ChunkPos
@@ -22,99 +28,102 @@ import net.minecraft.world.level.chunk.LevelChunk
 import net.neoforged.neoforge.network.PacketDistributor
 import net.neoforged.neoforge.network.registration.NetworkRegistry
 import org.slf4j.LoggerFactory
-import java.security.SecureRandom
 import java.util.UUID
 
-/** Main-thread-owned state and send hook for optional cached-terrain reuse. */
+/**
+ * Main-thread-owned state and send hook for optional cached-terrain reuse on NeoForge 1.21.1.
+ *
+ * Chunks leave through `PlayerChunkSender` batches; warm-up chooses from its pending set, and a failed reuse is
+ * repaired by queueing the chunk there again. The version-independent steps live in [ChunkCacheServerSession]
+ * and [ChunkCacheReuseSender].
+ */
 object ChunkCacheServerService {
     private val logger = LoggerFactory.getLogger("rdi")
-    private val random = SecureRandom()
     private val sessions = mutableMapOf<UUID, Session>()
     private val sentChunks = ChunkCacheSentChunks()
-    private var budgetTick = Long.MIN_VALUE
-    private var budgetUsedNanos = 0L
+    private val budget = ChunkCacheReuseBudget()
+    private val warmupMillis = ChunkCacheWarmup.configuredMillis(ChunkCacheWarmupPayload.MAX_DURATION_MILLIS.toLong())
 
-    private data class Session(
-        var epoch: UUID,
-        var dimension: ResourceLocation,
-        val ledger: ChunkCacheOfferLedger = ChunkCacheOfferLedger(),
-        val forceFull: ChunkCacheRepairs = ChunkCacheRepairs(),
-        val metrics: ChunkCacheServerMetrics = ChunkCacheServerMetrics(),
-        var offersThisTick: Int = 0,
-        var offerTick: Long = Long.MIN_VALUE,
-        var metricTick: Long = 0,
-    )
+    private class Session(
+        val playerName: String,
+        epoch: UUID,
+        dimension: ResourceLocation,
+        capacity: Int,
+        offersPerTick: Int,
+        warmup: ChunkCacheWarmup?,
+        metricTick: Long,
+    ) : ChunkCacheServerSession(epoch, dimension, capacity, offersPerTick, warmup, metricTick) {
+        /** Repairs waiting for their full chunk to leave through the chunk sender. */
+        val forceFull = ChunkCacheRepairs()
+    }
 
     @JvmStatic
     fun offer(player: ServerPlayer, payload: ChunkCacheOfferPayload) {
         val session = activeSession(player, payload.epoch, payload.dimension) ?: return
-        if (payload.entries.isEmpty()) return
-        val tick = player.server.tickCount.toLong()
-        if (session.offerTick != tick) {
-            session.offerTick = tick
-            session.offersThisTick = 0
-        }
-        if (session.offersThisTick + payload.entries.size > ChunkCacheLimits.MAX_OFFER_BATCH) {
-            session.ledger.rejectIds(payload.entries.map { it.id })
-            retireRejected(player, session, payload.entries.map { it.id })
-            return
-        }
-        session.offersThisTick += payload.entries.size
         val dimensionMatches = payload.dimension == player.level().dimension().location()
-        val admission = session.ledger.admit(
-            payload.entries,
-            System.currentTimeMillis() + ChunkCacheLimits.OFFER_TTL_MILLIS,
-        ) { x, z ->
-            dimensionMatches && session.forceFull.find(x, z) == null &&
-                withinPrefetchView(player.chunkTrackingView, x, z)
+        val retire = session.admitOffers(payload.entries, player.server.tickCount.toLong(), System.currentTimeMillis()) { x, z ->
+            dimensionMatches && session.forceFull.find(x, z) == null && withinPrefetchView(player.chunkTrackingView, x, z)
         }
-        if (!admission.accepted) retireRejected(player, session, admission.retireIds)
+        sendRetire(player, session, retire)
     }
 
-    private fun withinPrefetchView(view: net.minecraft.server.level.ChunkTrackingView, x: Int, z: Int): Boolean {
-        if (view !is net.minecraft.server.level.ChunkTrackingView.Positioned) return false
+    private fun withinPrefetchView(view: ChunkTrackingView, x: Int, z: Int): Boolean {
+        if (view !is ChunkTrackingView.Positioned) return false
         val center = view.center()
-        return net.minecraft.server.level.ChunkTrackingView.isWithinDistance(
-            center.x,
-            center.z,
-            view.viewDistance() + 2,
-            x,
-            z,
-            true,
-        )
+        return ChunkTrackingView.isWithinDistance(center.x, center.z, view.viewDistance() + 2, x, z, true)
     }
 
-    private fun retireRejected(player: ServerPlayer, session: Session, ids: List<Long>) {
-        if (ids.isNotEmpty()) PacketDistributor.sendToPlayer(player, ChunkCacheRetirePayload(session.epoch, ids.distinct()))
+    /** Split to the wire limit, which older clients still enforce. */
+    private fun sendRetire(player: ServerPlayer, session: Session, ids: List<Long>) {
+        ids.chunked(ChunkCacheLimits.MAX_IDS_PER_MESSAGE).forEach { PacketDistributor.sendToPlayer(player, ChunkCacheRetirePayload(session.epoch, it)) }
+    }
+
+    /** The client will not offer these chunks; while warming up they may now be sent in full. */
+    @JvmStatic
+    fun absent(player: ServerPlayer, payload: ChunkCacheAbsentPayload) {
+        val session = activeSession(player, payload.epoch, payload.dimension) ?: return
+        val warmup = session.warmup ?: return
+        val view = player.chunkTrackingView
+        warmup.markAbsent(payload.positions.filter { withinPrefetchView(view, ChunkPos.getX(it), ChunkPos.getZ(it)) })
+    }
+
+    /**
+     * Chooses this tick's chunks from [pending] while the session warms up; null means send them the vanilla way.
+     * Called by `PlayerChunkSender.collectChunksToSend` with the same quota and player position.
+     */
+    @JvmStatic
+    fun selectWarmup(player: ServerPlayer, pending: LongSet, quota: Int, center: ChunkPos, chunkMap: ChunkMap): List<LevelChunk>? {
+        val session = sessions[player.uuid] ?: return null
+        val warmup = session.warmup ?: return null
+        if (session.dimension != player.level().dimension().location()) return null
+        val now = System.currentTimeMillis()
+        if (!warmup.active(now)) {
+            session.finishWarmup(logger, player.scoreboardName, pending.size, now, budget.averageReuseNanos)
+            return null
+        }
+        val positions = warmup.select(
+            pending, quota, center.x, center.z,
+            budget.allowance(player.server.tickCount.toLong(), ChunkCacheLimits.WARMUP_MAX_SERVER_REUSE_NANOS_PER_TICK),
+            { session.ledger.hasOffer(ChunkPos.getX(it), ChunkPos.getZ(it)) },
+            { chunkMap.getChunkToSend(it) != null },
+        )
+        return positions.mapNotNull(chunkMap::getChunkToSend)
     }
 
     @JvmStatic
     fun cancel(player: ServerPlayer, payload: ChunkCacheCancelPayload) {
         val session = activeSession(player, payload.epoch, player.level().dimension().location()) ?: return
-        if (payload.ids.size > ChunkCacheLimits.MAX_OFFERS) return
-        session.ledger.cancelOfferIds(payload.ids)
-        // Retire is an explicit fence: clients keep each pinned snapshot until this acknowledgement.
-        val awaitingOutcome = payload.ids.filter { session.forceFull.contains(it) || session.ledger.inFlightToken(it) != null }
-        retireRejected(player, session, payload.ids - awaitingOutcome.toSet())
+        sendRetire(player, session, session.cancelOffers(payload.ids) { session.forceFull.contains(it) })
     }
 
     @JvmStatic
     fun result(player: ServerPlayer, payload: ChunkCacheResultPayload) {
         val session = activeSession(player, payload.epoch, player.level().dimension().location()) ?: return
-        val issued = session.ledger.resolve(payload.id, payload.x, payload.z, payload.hash, payload.success) ?: return
-        if (issued.token.expiresAt <= System.currentTimeMillis()) {
-            session.metrics.recordReuseTimeout()
-            if (!payload.success) session.metrics.recordClientFailure()
-            repair(player, session, issued.token)
-            return
+        when (val outcome = session.resolveResult(payload.id, payload.x, payload.z, payload.hash, payload.success, System.currentTimeMillis())) {
+            is ChunkCacheServerSession.ResultOutcome.Confirmed -> sendRetire(player, session, listOf(outcome.id))
+            is ChunkCacheServerSession.ResultOutcome.Repair -> repair(player, session, outcome.token)
+            ChunkCacheServerSession.ResultOutcome.Ignored -> Unit
         }
-        if (payload.success) {
-            session.metrics.recordReuseConfirmed()
-            retireRejected(player, session, listOf(payload.id))
-            return
-        }
-        session.metrics.recordClientFailure()
-        repair(player, session, issued.token)
     }
 
     private fun repair(player: ServerPlayer, session: Session, candidate: ChunkCacheOfferLedger.Token) {
@@ -130,22 +139,20 @@ object ChunkCacheServerService {
             return
         }
         session.forceFull.add(candidate)
+        // A repair is a full send the client waits for; warm-up must not hold it back.
+        session.warmup?.markAbsent(listOf(position.toLong()))
         player.connection.chunkSender.markChunkPendingToSend(chunk)
         session.metrics.recordRepairQueued()
         logger.warn("Chunk cache repair queued for player={} chunk=({}, {})", player.scoreboardName, position.x, position.z)
     }
 
-    private fun abandonRepair(
-        player: ServerPlayer,
-        session: Session,
-        token: ChunkCacheOfferLedger.Token,
-    ) {
+    private fun abandonRepair(player: ServerPlayer, session: Session, token: ChunkCacheOfferLedger.Token) {
         session.metrics.recordRepairAbandoned()
         session.forceFull.remove(token.id)
         if (session.dimension == player.level().dimension().location()) {
-            player.connection.send(net.minecraft.network.protocol.game.ClientboundForgetLevelChunkPacket(ChunkPos(token.x, token.z)))
+            player.connection.send(ClientboundForgetLevelChunkPacket(ChunkPos(token.x, token.z)))
         }
-        PacketDistributor.sendToPlayer(player, ChunkCacheRetirePayload(session.epoch, listOf(token.id)))
+        sendRetire(player, session, listOf(token.id))
     }
 
     /** [chunk] is the live chunk the packet was just built from on this thread, when the caller has it. */
@@ -160,13 +167,13 @@ object ChunkCacheServerService {
             when (packet) {
                 is ClientboundLevelChunkWithLightPacket -> replaceChunk(player, session, packet, chunk)
                 is ClientboundBundlePacket -> {
-                    val packets = mutableListOf<Packet<in net.minecraft.network.protocol.game.ClientGamePacketListener>>()
+                    val packets = mutableListOf<Packet<in ClientGamePacketListener>>()
                     for (nested in packet.subPackets()) {
                         @Suppress("UNCHECKED_CAST")
-                        val replacement: Packet<in net.minecraft.network.protocol.game.ClientGamePacketListener> = if (nested is ClientboundLevelChunkWithLightPacket) {
-                            replaceChunk(player, session, nested, chunk) as Packet<in net.minecraft.network.protocol.game.ClientGamePacketListener>
+                        val replacement: Packet<in ClientGamePacketListener> = if (nested is ClientboundLevelChunkWithLightPacket) {
+                            replaceChunk(player, session, nested, chunk) as Packet<in ClientGamePacketListener>
                         } else {
-                            nested as Packet<in net.minecraft.network.protocol.game.ClientGamePacketListener>
+                            nested as Packet<in ClientGamePacketListener>
                         }
                         packets.add(replacement)
                     }
@@ -189,125 +196,26 @@ object ChunkCacheServerService {
         chunk: LevelChunk?,
     ): Packet<*> {
         val pos = ChunkPos(packet.x, packet.z)
-        val repairToken = session.forceFull.find(pos.x, pos.z)
-        if (repairToken != null) {
+        if (session.forceFull.find(pos.x, pos.z) != null) {
             session.metrics.recordForcedRepairFullSend()
             logger.info("Chunk cache full repair sent for player={} chunk=({}, {})", player.scoreboardName, pos.x, pos.z)
             return packet
         }
-        session.metrics.recordNormalChunkAttempt()
-        val revisit = sentChunks.markSent(player.uuid, session.dimension, pos.toLong())
-        val candidate = session.ledger.consume(pos.x, pos.z)
-            ?: run {
-                session.metrics.recordNoOfferFullSend()
-                if (revisit) session.metrics.recordNoOfferRevisitFullSend()
-                return packet
-            }
-        val retire = ChunkCacheRetirePayload(session.epoch, listOf(candidate.id))
+        val candidate = session.consumeCandidate(sentChunks, player.uuid, pos.x, pos.z) ?: return packet
         if (!player.chunkTrackingView.contains(pos)) {
             session.metrics.recordCandidateFallbackFullSend()
-            PacketDistributor.sendToPlayer(player, retire)
+            sendRetire(player, session, listOf(candidate.id))
             return packet
         }
-        if (!reuseBudgetAvailable(player.server.tickCount.toLong())) {
-            session.metrics.recordBudgetFallbackFullSend()
-            PacketDistributor.sendToPlayer(player, retire)
+        val level = player.serverLevel()
+        val reuse = ChunkCacheReuseSender.attempt(
+            session, budget, level, packet, chunk, candidate, player.server.tickCount.toLong(), player.scoreboardName,
+        ) { ChunkReuseCodec.metadata(it, level.registryAccess()) }
+        if (reuse == null) {
+            sendRetire(player, session, listOf(candidate.id))
             return packet
         }
-        val budgetStart = System.nanoTime()
-        try {
-            val level = player.serverLevel()
-            val biomeRegistry = level.registryAccess().registryOrThrow(Registries.BIOME)
-            val sectionBuffer = packet.chunkData.readBuffer
-            val sectionPayloadBytes = try {
-                sectionBuffer.readableBytes()
-            } finally {
-                sectionBuffer.release()
-            }
-            if (sectionPayloadBytes > ChunkCacheLimits.MAX_SECTION_BYTES) {
-                session.metrics.recordCandidateFallbackFullSend()
-                PacketDistributor.sendToPlayer(player, retire)
-                return packet
-            }
-            session.metrics.recordRawSectionPayloadBytes(sectionPayloadBytes)
-            val semanticHashStart = System.nanoTime()
-            val hash = try {
-                if (chunk != null && chunk.pos == pos && chunk.level === level && chunk.sections.size == level.sectionsCount) {
-                    // The packet was serialized from this chunk earlier in the same server-thread call.
-                    ServerTerrainHashes.chunkHash(chunk, level.minSection, biomeRegistry, session.metrics)
-                } else {
-                    decodedPacketHash(session, packet, level.sectionsCount, level.minSection, biomeRegistry)
-                }
-            } finally {
-                session.metrics.recordSemanticHash(System.nanoTime() - semanticHashStart)
-            }
-            if (!hash.contentEquals(candidate.hash)) {
-                session.metrics.recordMismatch()
-                PacketDistributor.sendToPlayer(player, retire)
-                return packet
-            }
-            val metadataStart = System.nanoTime()
-            val metadata = try {
-                ChunkReuseCodec.metadata(packet, level.registryAccess())
-            } finally {
-                session.metrics.recordMetadataEncode(System.nanoTime() - metadataStart)
-            }
-            val reuse = ChunkCacheReusePayload(
-                session.epoch,
-                candidate.id,
-                session.dimension,
-                pos.x,
-                pos.z,
-                candidate.hash.copyOf(),
-                metadata,
-            )
-            if (!session.ledger.trackReuse(candidate, System.currentTimeMillis() + ChunkCacheLimits.OFFER_TTL_MILLIS)) {
-                session.metrics.recordCandidateFallbackFullSend()
-                PacketDistributor.sendToPlayer(player, retire)
-                return packet
-            }
-            session.metrics.recordReuseSent()
-            session.metrics.recordReuseMetadataBytes(metadata.size)
-            return ClientboundCustomPayloadPacket(reuse)
-        } catch (failure: Exception) {
-            session.metrics.recordCandidateFallbackFullSend()
-            logger.debug("Chunk cache candidate failed player={} chunk=({}, {}); sending full chunk", player.scoreboardName, pos.x, pos.z, failure)
-            PacketDistributor.sendToPlayer(player, retire)
-            return packet
-        } finally {
-            budgetUsedNanos += System.nanoTime() - budgetStart
-        }
-    }
-
-    /** Fallback when no live chunk is available, such as a chunk packet nested in a foreign bundle. */
-    private fun decodedPacketHash(
-        session: Session,
-        packet: ClientboundLevelChunkWithLightPacket,
-        sectionCount: Int,
-        minSection: Int,
-        biomeRegistry: net.minecraft.core.Registry<net.minecraft.world.level.biome.Biome>,
-    ): ByteArray {
-        val sectionCopyDecodeStart = System.nanoTime()
-        val sections = try {
-            val sectionBuffer = packet.chunkData.readBuffer
-            val sectionBytes = try {
-                ByteArray(sectionBuffer.readableBytes()).also { sectionBuffer.readBytes(it) }
-            } finally {
-                sectionBuffer.release()
-            }
-            ChunkTerrainCodec.decode(sectionBytes, sectionCount, biomeRegistry)
-        } finally {
-            session.metrics.recordSectionCopyDecode(System.nanoTime() - sectionCopyDecodeStart)
-        }
-        return ChunkTerrainCodec.hash(minSection, sections, biomeRegistry)
-    }
-
-    private fun reuseBudgetAvailable(tick: Long): Boolean {
-        if (budgetTick != tick) {
-            budgetTick = tick
-            budgetUsedNanos = 0
-        }
-        return budgetUsedNanos < ChunkCacheLimits.MAX_SERVER_REUSE_NANOS_PER_TICK
+        return ClientboundCustomPayloadPacket(reuse)
     }
 
     /** Called only after the ordinary packet has been accepted by the connection. */
@@ -326,75 +234,42 @@ object ChunkCacheServerService {
             session.metrics.recordRepairCompleted()
             retired += token.id
         }
-        if (retired.isNotEmpty()) PacketDistributor.sendToPlayer(player, ChunkCacheRetirePayload(session.epoch, retired))
+        sendRetire(player, session, retired)
     }
 
     @JvmStatic
     fun tick(player: ServerPlayer) {
         val session = ensureContext(player) ?: return
-        session.metrics.advanceReplacementTick(player.server.tickCount.toLong())
+        val tick = player.server.tickCount.toLong()
+        session.metrics.advanceReplacementTick(tick)
         val now = System.currentTimeMillis()
-        val expired = session.ledger.expire(now)
-        val expiredOffers = expired.offers.map { it.id }
-        if (expiredOffers.isNotEmpty()) PacketDistributor.sendToPlayer(player, ChunkCacheRetirePayload(session.epoch, expiredOffers))
+        if (session.warmup?.active(now) == false) {
+            val pending = (player.connection.chunkSender as APlayerChunkSender).`rdi$pendingChunks`().size
+            session.finishWarmup(logger, player.scoreboardName, pending, now, budget.averageReuseNanos)
+        }
         val view = player.chunkTrackingView
-        val expiredFlights = expired.inFlight
-        for (candidate in expiredFlights) {
-            if (candidate.expiresAt <= now) {
-                session.metrics.recordReuseTimeout()
-                repair(player, session, candidate)
-            }
-        }
-        val droppedFlights = session.ledger.retireInFlightOutside { x, z -> view.contains(x, z) }
-        droppedFlights.forEach { abandonRepair(player, session, it) }
-        val dropped = session.ledger.retireOffersOutside { x, z -> withinPrefetchView(view, x, z) }
-        if (dropped.isNotEmpty()) PacketDistributor.sendToPlayer(player, ChunkCacheRetirePayload(session.epoch, dropped))
+        val expiry = session.expire(
+            now,
+            inView = { x, z -> view.contains(x, z) },
+            inPrefetch = { x, z -> withinPrefetchView(view, x, z) },
+        )
+        sendRetire(player, session, expiry.retire)
+        expiry.repair.forEach { repair(player, session, it) }
+        expiry.abandon.forEach { abandonRepair(player, session, it) }
         session.forceFull.outside { x, z -> view.contains(x, z) }.forEach { abandonRepair(player, session, it) }
-        if (player.server.tickCount.toLong() - session.metricTick >= 1_200L) {
-            val metrics = session.metrics
-            if (metrics.hasWindowActivity()) {
-                logger.info(
-                    "Chunk cache minute player={} normalAttempts={} noOfferFullSends={} noOfferRevisitFullSends={} candidateFallbackFullSends={} forcedRepairFullSends={} mismatches={} reuseSent={} reuseConfirmed={} clientFailure={} reuseTimeout={} repairQueued={} repairCompleted={} repairAbandonedEvents={} budgetFallbackFullSends={} sectionHashHits={} sectionHashMisses={} sectionHashStale={} rawSectionPayloadBytes={} reuseMetadataBytes={} sectionCopyDecodeNanosTotal={} sectionCopyDecodeNanosMax={} semanticHashNanosTotal={} semanticHashNanosMax={} metadataEncodeNanosTotal={} metadataEncodeNanosMax={} replacementNanosTotal={} replacementNanosMax={} replacementNanosCurrentTick={} replacementNanosMaxTick={} replacementTickBoundary=perPlayerSessionServerTick",
-                    player.scoreboardName,
-                    metrics.normalChunkAttempts,
-                    metrics.noOfferFullSends,
-                    metrics.noOfferRevisitFullSends,
-                    metrics.candidateFallbackFullSends,
-                    metrics.forcedRepairFullSends,
-                    metrics.mismatches,
-                    metrics.reuseSent,
-                    metrics.reuseConfirmed,
-                    metrics.clientFailure,
-                    metrics.reuseTimeout,
-                    metrics.repairQueued,
-                    metrics.repairCompleted,
-                    metrics.repairAbandoned,
-                    metrics.budgetFallbackFullSends,
-                    metrics.sectionHashHits,
-                    metrics.sectionHashMisses,
-                    metrics.sectionHashStale,
-                    metrics.rawSectionPayloadBytes,
-                    metrics.reuseMetadataBytes,
-                    metrics.sectionCopyDecodeNanos,
-                    metrics.sectionCopyDecodeMaxNanos,
-                    metrics.semanticHashNanos,
-                    metrics.semanticHashMaxNanos,
-                    metrics.metadataEncodeNanos,
-                    metrics.metadataEncodeMaxNanos,
-                    metrics.replacementNanos,
-                    metrics.replacementMaxNanos,
-                    metrics.replacementNanosCurrentTick,
-                    metrics.replacementNanosMaxTick,
-                )
-            }
-            session.metricTick = player.server.tickCount.toLong()
-            metrics.resetWindow()
-        }
+        session.logMinuteIfDue(logger, player.scoreboardName, tick)
     }
 
     @JvmStatic
     fun reset(player: ServerPlayer) {
-        sessions.remove(player.uuid)
+        sessions.remove(player.uuid)?.logMetricsWindow(logger, "logout", player.scoreboardName)
+    }
+
+    /** Respawn and dimension changes start a new session; the old one's partial window is kept in the log. */
+    @JvmStatic
+    fun restart(player: ServerPlayer) {
+        sessions.remove(player.uuid)?.logMetricsWindow(logger, "session-replaced", player.scoreboardName)
+        ensureContext(player)
     }
 
     @JvmStatic
@@ -404,10 +279,10 @@ object ChunkCacheServerService {
 
     @JvmStatic
     fun clear() {
+        sessions.values.forEach { it.logMetricsWindow(logger, "server-stop", it.playerName) }
         sessions.clear()
         sentChunks.clear()
-        budgetTick = Long.MIN_VALUE
-        budgetUsedNanos = 0
+        budget.clear()
     }
 
     private fun activeSession(player: ServerPlayer, epoch: UUID, dimension: ResourceLocation): Session? {
@@ -422,10 +297,27 @@ object ChunkCacheServerService {
         val dimension = player.level().dimension().location()
         val existing = sessions[player.uuid]
         if (existing != null && existing.dimension == dimension) return existing
+        existing?.logMetricsWindow(logger, "session-replaced", player.scoreboardName)
+        val warm = supportsWarmup(listener)
+        val now = System.currentTimeMillis()
         // Start the window now; with 0 a new session would close its first "minute" on its first tick.
-        val session = Session(newUuidV7(), dimension, metricTick = player.server.tickCount.toLong())
+        val session = Session(
+            player.scoreboardName,
+            ChunkCacheEpochs.newUuidV7(),
+            dimension,
+            capacity = if (warm) ChunkCacheLimits.MAX_OFFERS else ChunkCacheLimits.LEGACY_MAX_OFFERS,
+            offersPerTick = if (warm) ChunkCacheLimits.MAX_OFFERS_PER_TICK else ChunkCacheLimits.LEGACY_MAX_OFFERS_PER_TICK,
+            warmup = if (warm && warmupMillis > 0) ChunkCacheWarmup(now, warmupMillis) else null,
+            metricTick = player.server.tickCount.toLong(),
+        )
         sessions[player.uuid] = session
         PacketDistributor.sendToPlayer(player, ChunkCacheContextPayload(session.epoch, dimension))
+        if (warm) {
+            PacketDistributor.sendToPlayer(
+                player,
+                ChunkCacheWarmupPayload(session.epoch, session.capacity, warmupMillis.toInt(), ChunkCacheLimits.WARMUP_IMMEDIATE_RADIUS),
+            )
+        }
         return session
     }
 
@@ -437,16 +329,8 @@ object ChunkCacheServerService {
             NetworkRegistry.hasChannel(listener, ChunkCacheResultPayload.TYPE.id()) &&
             NetworkRegistry.hasChannel(listener, ChunkCacheReusePayload.TYPE.id())
 
-    private fun newUuidV7(): UUID {
-        val bytes = ByteArray(16).also(random::nextBytes)
-        val millis = System.currentTimeMillis()
-        for (index in 0..5) bytes[index] = (millis ushr (40 - index * 8)).toByte()
-        bytes[6] = ((bytes[6].toInt() and 0x0f) or 0x70).toByte()
-        bytes[8] = ((bytes[8].toInt() and 0x3f) or 0x80).toByte()
-        var most = 0L
-        var least = 0L
-        for (index in 0..7) most = (most shl 8) or (bytes[index].toLong() and 0xff)
-        for (index in 8..15) least = (least shl 8) or (bytes[index].toLong() and 0xff)
-        return UUID(most, least)
-    }
+    /** Warm-up and the larger capacity need both payloads; older clients keep the original protocol. */
+    private fun supportsWarmup(listener: ServerGamePacketListenerImpl): Boolean =
+        NetworkRegistry.hasChannel(listener, ChunkCacheWarmupPayload.TYPE.id()) &&
+            NetworkRegistry.hasChannel(listener, ChunkCacheAbsentPayload.TYPE.id())
 }

@@ -91,6 +91,70 @@ class PacketCaptureRecorderTest {
     }
 
     @Test
+    fun `keeps only the newest parts across runs in the directory`(): Unit {
+        val directory = Files.createTempDirectory("rdi-packbatch-retention")
+        val olderRun = "00000000-0000-7000-8000-000000000001"
+        val crashedRun = "00000000-0001-7000-8000-000000000002"
+        (1..3).forEach { Files.write(directory.resolve("${olderRun}-${it.toString().padStart(6, '0')}.rdibatch.zst"), byteArrayOf(1)) }
+        Files.writeString(directory.resolve("${olderRun}.json"), "{}")
+        Files.write(directory.resolve("${crashedRun}-000001.rdibatch.zst.partial"), byteArrayOf(1))
+        Files.writeString(directory.resolve("${crashedRun}.json"), "{}")
+        Files.writeString(directory.resolve("notes.txt"), "kept")
+        val recorder = PacketCaptureRecorder(
+            directory,
+            PacketCaptureLimits(maxFileBytes = 1800, maxFiles = 3, maxPendingBytes = 1_000_000, targetFrameBytes = 256),
+        )
+        // The server adapter writes the run metadata next to the parts right after the recorder starts.
+        Files.writeString(directory.resolve("${recorder.runId}.json"), "{}")
+        val connection = recorder.connection(UUID.fromString("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"))
+        val source = Unpooled.wrappedBuffer(ByteArray(240).also(Random(4471)::nextBytes))
+        try {
+            repeat(24) { connection.record(source, ZstdPacketIdentity("test:noise")) }
+            recorder.close().getOrThrow()
+
+            val names = Files.list(directory).use { paths -> paths.map { it.fileName.toString() }.sorted().toList() }
+            val parts = listParts(directory).map(::readPart)
+            assertEquals(3, parts.size, "files=${names}")
+            assertTrue(parts.all { it.runId == recorder.runId })
+            assertTrue(parts.last().final)
+            assertEquals(parts.first().partNumber + 2, parts.last().partNumber)
+            assertTrue(parts.first().partNumber > 1, "older parts of the active run are pruned too")
+            assertFalse(names.any { it.startsWith(olderRun) || it.startsWith(crashedRun) }, "files=${names}")
+            assertTrue("${recorder.runId}.json" in names)
+            assertTrue("notes.txt" in names)
+        } finally {
+            source.release()
+            deleteTree(directory)
+        }
+    }
+
+    @Test
+    fun `retention orders parts by run then part number and spares the active run metadata`(): Unit {
+        val directory = Files.createTempDirectory("rdi-packbatch-retention-order")
+        val first = "00000000-0000-7000-8000-000000000001"
+        val active = UUID.fromString("00000000-0002-7000-8000-000000000003")
+        try {
+            listOf("${first}-000010", "${first}-000002", "${active}-000001", "${active}-1000000").forEach {
+                Files.write(directory.resolve("${it}.rdibatch.zst"), byteArrayOf(1))
+            }
+            Files.writeString(directory.resolve("${first}.json"), "{}")
+            Files.writeString(directory.resolve("${active}.json"), "{}")
+
+            assertEquals(0, PacketCaptureRetention.makeRoomForPart(directory, 5, active).getOrThrow())
+            assertEquals(1, PacketCaptureRetention.makeRoomForPart(directory, 4, active).getOrThrow())
+            assertFalse(Files.exists(directory.resolve("${first}-000002.rdibatch.zst")))
+            assertTrue(Files.exists(directory.resolve("${first}.json")), "the run still has a part")
+
+            assertEquals(3, PacketCaptureRetention.makeRoomForPart(directory, 1, active).getOrThrow())
+            val names = Files.list(directory).use { paths -> paths.map { it.fileName.toString() }.sorted().toList() }
+            assertEquals(listOf("${active}.json"), names)
+            assertTrue(PacketCaptureRetention.makeRoomForPart(directory, 0, active).isFailure)
+        } finally {
+            deleteTree(directory)
+        }
+    }
+
+    @Test
     fun `queue budget drops attempts and resumes after pending frame is written`(): Unit {
         val directory = Files.createTempDirectory("rdi-packbatch-budget")
         val reserved = CountDownLatch(1)

@@ -31,6 +31,17 @@ internal class ChunkCacheServerMetrics {
         private set
     var budgetFallbackFullSends = 0L
         private set
+    /** Offers refused by reason; see [ChunkCacheOfferLedger.RejectReason]. */
+    var offerRejectedRange = 0L
+        private set
+    var offerRejectedCapacity = 0L
+        private set
+    var offerRejectedDuplicate = 0L
+        private set
+    var offerRejectedInvalid = 0L
+        private set
+    var offerRejectedRate = 0L
+        private set
     var sectionHashHits = 0L
         private set
     var sectionHashMisses = 0L
@@ -81,6 +92,15 @@ internal class ChunkCacheServerMetrics {
     fun recordRepairCompleted() { repairCompleted++ }
     fun recordRepairAbandoned() { repairAbandoned++ }
     fun recordBudgetFallbackFullSend() { budgetFallbackFullSends++ }
+    fun recordOfferRejected(reason: ChunkCacheOfferLedger.RejectReason, count: Int = 1) {
+        when (reason) {
+            ChunkCacheOfferLedger.RejectReason.Range -> offerRejectedRange += count
+            ChunkCacheOfferLedger.RejectReason.Capacity -> offerRejectedCapacity += count
+            ChunkCacheOfferLedger.RejectReason.Duplicate -> offerRejectedDuplicate += count
+            ChunkCacheOfferLedger.RejectReason.Invalid -> offerRejectedInvalid += count
+            ChunkCacheOfferLedger.RejectReason.Rate -> offerRejectedRate += count
+        }
+    }
     fun recordSectionHashHit() { sectionHashHits++ }
     fun recordSectionHashMiss() { sectionHashMisses++ }
     fun recordSectionHashStale() { sectionHashStale++ }
@@ -121,7 +141,8 @@ internal class ChunkCacheServerMetrics {
     fun hasWindowActivity(): Boolean =
         normalChunkAttempts + noOfferFullSends + candidateFallbackFullSends + forcedRepairFullSends + mismatches + reuseSent +
             reuseConfirmed + clientFailure + reuseTimeout + repairQueued + repairCompleted + repairAbandoned +
-            budgetFallbackFullSends + sectionHashStale > 0L
+            budgetFallbackFullSends + sectionHashStale + offerRejectedRange + offerRejectedCapacity + offerRejectedDuplicate +
+            offerRejectedInvalid + offerRejectedRate > 0L
 
     fun resetWindow() {
         normalChunkAttempts = 0
@@ -138,6 +159,11 @@ internal class ChunkCacheServerMetrics {
         repairCompleted = 0
         repairAbandoned = 0
         budgetFallbackFullSends = 0
+        offerRejectedRange = 0
+        offerRejectedCapacity = 0
+        offerRejectedDuplicate = 0
+        offerRejectedInvalid = 0
+        offerRejectedRate = 0
         sectionHashHits = 0
         sectionHashMisses = 0
         sectionHashStale = 0

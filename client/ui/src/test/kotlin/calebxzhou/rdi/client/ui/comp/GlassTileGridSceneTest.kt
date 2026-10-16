@@ -67,7 +67,8 @@ class GlassTileGridSceneTest {
     @Test
     fun sharedGlassCastsShadowIntoGaps() {
         val render = gridRender
-        val tile = render.bounds.getValue(0)
+        // 第2列第1行：它下面的瓷砖没有悬停，缝隙里不会有选中框和光晕
+        val tile = render.bounds.getValue(3)
         val belowTile = render.pixel(tile.center.x, tile.bottom + 4f * GRID_SCALE)
         val background = render.pixel(tile.center.x, 2f)
 
@@ -105,7 +106,6 @@ private fun renderGrid(): GridRender {
                 ) { index, title ->
                     Box(Modifier.onGloballyPositioned { bounds[index] = it.boundsInRoot() }) {
                         IconTileCard(
-                            title = title,
                             hint = CardHint(title = title),
                             glass = TileGlass.Shared(grid, index),
                             dimmed = index >= GRID_TILES - 2,

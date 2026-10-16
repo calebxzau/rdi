@@ -3,8 +3,8 @@ plugins {
     id 'maven-publish'
     id 'idea'
     id 'net.neoforged.moddev' version '2.0.141'
-    id 'org.jetbrains.kotlin.jvm' version '2.4.10'
-    id 'org.jetbrains.kotlin.plugin.serialization' version '2.4.10'
+    id 'org.jetbrains.kotlin.jvm' version '2.4.21'
+    id 'org.jetbrains.kotlin.plugin.serialization' version '2.4.21'
 
 }
 
@@ -175,8 +175,8 @@ dependencies {
     additionalRuntimeClasspath project(':rmcp-common')
     shaded 'com.neovisionaries:nv-websocket-client:2.14'
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.11.0")
-    implementation("org.jetbrains.kotlin:kotlin-stdlib:2.4.10")
-    additionalRuntimeClasspath("org.jetbrains.kotlin:kotlin-stdlib:2.4.10")
+    implementation("org.jetbrains.kotlin:kotlin-stdlib:2.4.21")
+    additionalRuntimeClasspath("org.jetbrains.kotlin:kotlin-stdlib:2.4.21")
 
     implementation("com.github.luben:zstd-jni:1.5.7-11:win_amd64")
     additionalRuntimeClasspath("com.github.luben:zstd-jni:1.5.7-11:win_amd64")

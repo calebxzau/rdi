@@ -11,7 +11,8 @@ object ZstdInboundPreparation {
     const val STREAM = 1
     const val BATCH = 2
     const val REFERENCES = 4
-    const val ALL = STREAM or BATCH or REFERENCES
+    const val ZLIB_TAIL = 8
+    const val ALL = STREAM or BATCH or REFERENCES or ZLIB_TAIL
 
     @JvmStatic
     fun armInbound(channel: Channel, extensions: Int): CompletableFuture<Boolean> {
@@ -43,6 +44,7 @@ object ZstdInboundPreparation {
                 if (extensions and STREAM != 0) handler.requestStreamReady(true)
                 if (extensions and BATCH != 0) handler.requestBatching(true)
                 if (extensions and REFERENCES != 0) handler.requestPacketRefsReady(true)
+                if (extensions and ZLIB_TAIL != 0) handler.requestZlibTailReady(true)
                 check(pipeline.context("decompress") === context) { "Decoder replaced during preparation" }
                 guard.checkHealthy()
                 if (!result.complete(true)) guard.fail(CancellationException("RDI preparation completed too late"))

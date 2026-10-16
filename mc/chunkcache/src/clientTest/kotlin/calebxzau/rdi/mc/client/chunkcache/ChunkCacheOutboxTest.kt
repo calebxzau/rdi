@@ -47,4 +47,15 @@ class ChunkCacheOutboxTest {
         assertEquals((65L..70L).toList(), offers.single())
         assertTrue(outbox.pendingOffers == 0 && outbox.pendingCancels == 0)
     }
+
+    @Test
+    fun `a tick's offers are split into packets`() {
+        val outbox = ChunkCacheOutbox<Long> { it }
+        (1L..300L).forEach(outbox::offer)
+        val offers = ArrayList<List<Long>>()
+        outbox.drain(128, 256, { error("no cancels") }, { offers += it }, maxOffersPerPacket = 64)
+        assertEquals(listOf(64, 64, 64, 64), offers.map { it.size })
+        assertEquals((1L..256L).toList(), offers.flatten())
+        assertEquals(44, outbox.pendingOffers)
+    }
 }

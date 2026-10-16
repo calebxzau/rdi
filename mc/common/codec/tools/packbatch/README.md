@@ -6,7 +6,7 @@ read the older RDST capture format. Install its only dependency with
 
 The reader streams concatenated independent Zstandard frames and bounds each
 compressed frame to 10 MiB and each decompressed frame to 9 MiB. Capture files
-must be at most 128,000,000 bytes. Complete frames before a truncated or corrupt
+must be at most 256,000,000 bytes. Complete frames before a truncated or corrupt
 tail are still analyzed, with an incomplete-file diagnostic. `.partial` files
 are accepted.
 

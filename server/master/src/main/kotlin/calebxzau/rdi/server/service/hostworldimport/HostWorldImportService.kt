@@ -92,20 +92,22 @@ class HostWorldImportService(
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var recoveryJob: Job? = null
 
-    suspend fun precheck(host: Host, requester: ObjectId, dto: HostWorldImportPrecheckDto): HostWorldImportPrecheckVo =
+    /** [isDav] counts as the owner here and in the calls below. */
+    suspend fun precheck(host: Host, requester: ObjectId, dto: HostWorldImportPrecheckDto, isDav: Boolean = false): HostWorldImportPrecheckVo =
         withContext(Dispatchers.IO) {
-            val warnings = checkImportable(host, requester, dto.mcVersionName, dto.loader, dto.memberPlayerIds)
+            val warnings = checkImportable(host, requester, isDav, dto.mcVersionName, dto.loader, dto.memberPlayerIds)
             HostWorldImportPrecheckVo(warnings, host.gameRules.size)
         }
 
-    suspend fun create(host: Host, requester: ObjectId, dto: HostWorldImportCreateDto): HostWorldImportSessionVo =
+    suspend fun create(host: Host, requester: ObjectId, dto: HostWorldImportCreateDto, isDav: Boolean = false): HostWorldImportSessionVo =
         withImportLock(host._id) {
-            val warnings = checkImportable(host, requester, dto.mcVersionName, dto.loader, dto.memberPlayerIds)
-            store.create(host._id, requester, dto.size, dto.sha1, dto.memberPlayerIds.distinct(), warnings).toVo()
+            val warnings = checkImportable(host, requester, isDav, dto.mcVersionName, dto.loader, dto.memberPlayerIds)
+            // The session belongs to the host owner even when dav starts it, so both can continue it.
+            store.create(host._id, host.ownerId, dto.size, dto.sha1, dto.memberPlayerIds.distinct(), warnings).toVo()
         }
 
-    suspend fun status(hostId: ObjectId, importId: UUID, requester: ObjectId): HostWorldImportSessionVo =
-        withContext(Dispatchers.IO) { ownedSession(hostId, importId, requester).toVo() }
+    suspend fun status(hostId: ObjectId, importId: UUID, requester: ObjectId, isDav: Boolean = false): HostWorldImportSessionVo =
+        withContext(Dispatchers.IO) { ownedSession(hostId, importId, requester, isDav).toVo() }
 
     suspend fun uploadPart(
         hostId: ObjectId,
@@ -115,16 +117,17 @@ class HostWorldImportService(
         declaredLength: Long?,
         sha1: String,
         source: ByteReadChannel,
+        isDav: Boolean = false,
     ) {
         val ticket = withImportLock(hostId) {
-            store.preparePart(ownedSession(hostId, importId, requester), index, declaredLength, sha1)
+            store.preparePart(ownedSession(hostId, importId, requester, isDav), index, declaredLength, sha1)
         } ?: return
         withContext(Dispatchers.IO) {
             val temporary = store.createPartTemporary()
             try {
                 chunkedUploadService.receive(source, temporary, ticket.expectedLength.toLong(), ticket.sha1)
                 withImportLock(hostId) {
-                    ownedSession(hostId, importId, requester)
+                    ownedSession(hostId, importId, requester, isDav)
                     store.commitPart(hostId, ticket, temporary)
                 }
             } finally {
@@ -134,9 +137,9 @@ class HostWorldImportService(
     }
 
     /** Queues processing once every part is uploaded. Repeated calls return the current state. */
-    suspend fun complete(hostId: ObjectId, importId: UUID, requester: ObjectId): HostWorldImportSessionVo =
+    suspend fun complete(hostId: ObjectId, importId: UUID, requester: ObjectId, isDav: Boolean = false): HostWorldImportSessionVo =
         withImportLock(hostId) {
-            val session = ownedSession(hostId, importId, requester)
+            val session = ownedSession(hostId, importId, requester, isDav)
             if (session.journal.status != ImportJournalStatus.Uploading) return@withImportLock session.toVo()
             val claim = registry.tryClaim(importId) ?: throw RequestError("该存档正在处理")
             val queued = try {
@@ -155,8 +158,8 @@ class HostWorldImportService(
             queued.toVo()
         }
 
-    suspend fun cancel(hostId: ObjectId, importId: UUID, requester: ObjectId) = withImportLock(hostId) {
-        store.cancel(ownedSession(hostId, importId, requester))
+    suspend fun cancel(hostId: ObjectId, importId: UUID, requester: ObjectId, isDav: Boolean = false) = withImportLock(hostId) {
+        store.cancel(ownedSession(hostId, importId, requester, isDav))
     }
 
     /** Closes an import that needs manual recovery, after an administrator fixed the files (§10.5). */
@@ -431,11 +434,12 @@ class HostWorldImportService(
     private suspend fun checkImportable(
         host: Host,
         requester: ObjectId,
+        isDav: Boolean,
         mcVersionName: String,
         loader: ModLoader,
         memberPlayerIds: List<ObjectId>,
     ): List<HostWorldImportMemberWarning> {
-        requestCheck(host.ownerId == requester, "只有房主可以导入存档")
+        requestCheck(isDav || host.ownerId == requester, "只有房主可以导入存档")
         requestCheck(host.realVersion == 2, "仅v2房间支持导入存档")
         requestCheck(hosts.isStopped(host), "请先停止房间")
         store.blockingSession(host._id)?.let { store.checkNotBlocked(it) }
@@ -476,8 +480,8 @@ class HostWorldImportService(
         requestCheck(modpack.modloader == ModLoader.forge, "目前仅支持mc20forge导入存档")
     }
 
-    private fun ownedSession(hostId: ObjectId, importId: UUID, requester: ObjectId): ImportSession =
-        store.get(hostId, importId).also { requestCheck(it.ownerId == requester, "无权操作该存档导入任务") }
+    private fun ownedSession(hostId: ObjectId, importId: UUID, requester: ObjectId, isDav: Boolean): ImportSession =
+        store.get(hostId, importId).also { requestCheck(isDav || it.ownerId == requester, "无权操作该存档导入任务") }
 
     private suspend fun <T> withImportLock(hostId: ObjectId, block: suspend () -> T): T =
         withContext(Dispatchers.IO) { importLocks.computeIfAbsent(hostId) { Mutex() }.withLock { block() } }

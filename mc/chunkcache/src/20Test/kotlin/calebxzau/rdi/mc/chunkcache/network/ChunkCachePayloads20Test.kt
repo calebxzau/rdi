@@ -64,6 +64,36 @@ class ChunkCachePayloads20Test {
     }
 
     @Test
+    fun warmupPayloadsRoundTripAndEnforceLimits() {
+        val warmup = roundTrip(ChunkCacheWarmupPayload(epoch, 4096, 3000, 1)) { ChunkCacheWarmupPayload(it) }
+        assertEquals(ChunkCacheWarmupPayload(epoch, 4096, 3000, 1), warmup)
+        assertFailsWith<IllegalArgumentException> { ChunkCacheWarmupPayload(epoch, ChunkCacheLimits.MAX_OFFERS + 1, 3000, 1) }
+        assertFailsWith<IllegalArgumentException> { ChunkCacheWarmupPayload(epoch, ChunkCacheLimits.LEGACY_MAX_OFFERS - 1, 3000, 1) }
+        assertFailsWith<IllegalArgumentException> {
+            ChunkCacheWarmupPayload(epoch, 4096, ChunkCacheWarmupPayload.MAX_DURATION_MILLIS + 1, 1)
+        }
+
+        val positions = listOf(0L, -1L, Long.MIN_VALUE, Long.MAX_VALUE)
+        val absent = roundTrip(ChunkCacheAbsentPayload(epoch, dimension, positions)) { ChunkCacheAbsentPayload(it) }
+        assertEquals(epoch, absent.epoch)
+        assertEquals(dimension, absent.dimension)
+        assertEquals(positions, absent.positions)
+        assertFailsWith<IllegalArgumentException> {
+            ChunkCacheAbsentPayload(epoch, dimension, List(ChunkCacheLimits.MAX_ABSENT_BATCH + 1) { it.toLong() })
+        }
+
+        val oversized = FriendlyByteBuf(Unpooled.buffer())
+        try {
+            ChunkCachePayloads.writeEpoch(oversized, epoch)
+            ChunkCachePayloads.writeDimension(oversized, dimension)
+            oversized.writeVarInt(ChunkCacheLimits.MAX_ABSENT_BATCH + 1)
+            assertFailsWith<IllegalArgumentException> { ChunkCacheAbsentPayload(oversized) }
+        } finally {
+            oversized.release()
+        }
+    }
+
+    @Test
     fun oversizedListsAreRejectedOnRead() {
         val buffer = FriendlyByteBuf(Unpooled.buffer())
         try {
@@ -80,7 +110,7 @@ class ChunkCachePayloads20Test {
     fun invalidIdsAndHashesAreRejected() {
         assertFailsWith<IllegalArgumentException> { ChunkCacheOffer(0, 0, 0, hash) }
         assertFailsWith<IllegalArgumentException> { ChunkCacheOffer(1, 0, 0, ByteArray(19)) }
-        assertFailsWith<IllegalArgumentException> { ChunkCacheRetirePayload(epoch, List(ChunkCacheLimits.MAX_OFFERS + 1) { it + 1L }) }
+        assertFailsWith<IllegalArgumentException> { ChunkCacheRetirePayload(epoch, List(ChunkCacheLimits.MAX_IDS_PER_MESSAGE + 1) { it + 1L }) }
         assertFailsWith<IllegalArgumentException> {
             ChunkCacheReusePayload(epoch, 1, dimension, 0, 0, hash, ByteArray(ChunkCacheLimits.MAX_METADATA_BYTES + 1))
         }
@@ -94,7 +124,10 @@ class ChunkCachePayloads20Test {
             // Serverbound custom payloads are limited to 32767 bytes in 1.20.1.
             assertTrue(buffer.readableBytes() < 32767)
             buffer.clear()
-            ChunkCacheCancelPayload(epoch, List(ChunkCacheLimits.MAX_OFFERS) { it + 1L }).write(buffer)
+            ChunkCacheAbsentPayload(epoch, dimension, List(ChunkCacheLimits.MAX_ABSENT_BATCH) { it.toLong() }).write(buffer)
+            assertTrue(buffer.readableBytes() < 32767)
+            buffer.clear()
+            ChunkCacheCancelPayload(epoch, List(ChunkCacheLimits.MAX_IDS_PER_MESSAGE) { it + 1L }).write(buffer)
             assertTrue(buffer.readableBytes() < 32767)
         } finally {
             buffer.release()

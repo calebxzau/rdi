@@ -46,6 +46,9 @@ internal enum class ZstdBatchFrameKind {
 
     /** A FULL, HIT or DELTA frame of the persistent packet extension; see [PersistentPacketFormat]. */
     Persistent,
+
+    /** A packet whose mod-deflated field leaves inflated; see [ZlibTailFormat]. */
+    ZlibTail,
 }
 
 /** One encoded frame handed to the downstream pipeline. Byte counts exclude the outer prefix except where named. */

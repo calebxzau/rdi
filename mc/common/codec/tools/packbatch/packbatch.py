@@ -20,7 +20,7 @@ except ImportError as exc:  # pragma: no cover - exercised by command-line users
 
 
 VERSION = 2
-MAX_FILE_SIZE = 128_000_000
+MAX_FILE_SIZE = 256_000_000
 MAX_COMPRESSED_FRAME = 10 * 1024 * 1024
 MAX_DECOMPRESSED_FRAME = 9 * 1024 * 1024
 MAX_STRING_BYTES = 4096

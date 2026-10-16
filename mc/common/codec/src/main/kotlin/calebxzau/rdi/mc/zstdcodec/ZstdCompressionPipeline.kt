@@ -157,6 +157,28 @@ object ZstdCompressionPipeline {
     }
 
     /**
+     * Sends custom payloads of [namespaces] with their zlib field inflated, see [ZlibTailFormat]. Call it
+     * only after the client's decoder accepts zlib tail frames; "*" names every namespace.
+     */
+    @JvmStatic
+    fun setOutboundZlibTail(channel: Channel, namespaces: Set<String>) {
+        (channel.pipeline().get(COMPRESS_HANDLER_NAME) as? ZstdCompressionEncoder)
+            ?.requestZlibTail(namespaces)
+    }
+
+    @JvmStatic
+    fun isOutboundZlibTailEnabled(channel: Channel): Boolean =
+        (channel.pipeline().get(COMPRESS_HANDLER_NAME) as? ZstdCompressionEncoder)?.isZlibTailEnabled() ?: false
+
+    /** Lets the RDI decoder accept zlib tail frames; returns false when that decoder is absent. */
+    @JvmStatic
+    fun setInboundZlibTailIfAvailable(channel: Channel, ready: Boolean): Boolean {
+        val decoder = channel.pipeline().get(DECOMPRESS_HANDLER_NAME) as? ZstdCompressionDecoder ?: return false
+        decoder.requestZlibTailReady(ready)
+        return true
+    }
+
+    /**
      * Starts the connection's Zstd stream, see [ZstdStreamFormat].
      *
      * Only call this after the peer announced the extension and prepared its decoder; the window is

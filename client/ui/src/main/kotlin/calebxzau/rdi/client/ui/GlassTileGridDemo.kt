@@ -137,7 +137,6 @@ private fun PerTileGlassGrid(
 @Composable
 private fun DemoTile(title: String, glass: TileGlass) {
     IconTileCard(
-        title = title,
         hint = CardHint(title = title),
         glass = glass,
         onPrimaryClick = {},

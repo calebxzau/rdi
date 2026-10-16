@@ -190,8 +190,67 @@ data class ChunkCacheReusePayload(
     }
 }
 
+/**
+ * Server to client, right after the context: the server holds chunks back for [durationMillis] until the client
+ * offers or declines them, and accepts up to [capacity] candidates. Sent on [ChunkCacheChannel]'s v2 channel, which
+ * only peers with both warm-up messages have.
+ */
+data class ChunkCacheWarmupPayload(
+    val epoch: UUID,
+    val capacity: Int,
+    val durationMillis: Int,
+    val immediateRadius: Int,
+) : ChunkCachePayload {
+    init {
+        require(capacity in ChunkCacheLimits.LEGACY_MAX_OFFERS..ChunkCacheLimits.MAX_OFFERS) { "Warm-up capacity out of range" }
+        require(durationMillis in 0..MAX_DURATION_MILLIS) { "Warm-up duration out of range" }
+        require(immediateRadius in 0..MAX_IMMEDIATE_RADIUS) { "Warm-up radius out of range" }
+    }
+
+    constructor(buffer: FriendlyByteBuf) : this(
+        ChunkCachePayloads.readEpoch(buffer), buffer.readVarInt(), buffer.readVarInt(), buffer.readVarInt(),
+    )
+
+    override fun write(buffer: FriendlyByteBuf) {
+        ChunkCachePayloads.writeEpoch(buffer, epoch)
+        buffer.writeVarInt(capacity)
+        buffer.writeVarInt(durationMillis)
+        buffer.writeVarInt(immediateRadius)
+    }
+
+    companion object {
+        const val MAX_DURATION_MILLIS = 30_000
+        const val MAX_IMMEDIATE_RADIUS = 4
+    }
+}
+
+/** Client to server during warm-up: chunks the client will not offer, so the server sends them in full now. */
+data class ChunkCacheAbsentPayload(
+    val epoch: UUID,
+    val dimension: ResourceLocation,
+    /** Packed chunk positions ([net.minecraft.world.level.ChunkPos.toLong]). */
+    val positions: List<Long>,
+) : ChunkCachePayload {
+    init {
+        require(positions.size <= ChunkCacheLimits.MAX_ABSENT_BATCH) { "Absent list exceeds limit" }
+    }
+
+    constructor(buffer: FriendlyByteBuf) : this(
+        ChunkCachePayloads.readEpoch(buffer),
+        ChunkCachePayloads.readDimension(buffer),
+        List(ChunkCachePayloads.readCount(buffer, ChunkCacheLimits.MAX_ABSENT_BATCH)) { buffer.readLong() },
+    )
+
+    override fun write(buffer: FriendlyByteBuf) {
+        ChunkCachePayloads.writeEpoch(buffer, epoch)
+        ChunkCachePayloads.writeDimension(buffer, dimension)
+        buffer.writeVarInt(positions.size)
+        positions.forEach(buffer::writeLong)
+    }
+}
+
 private fun readIds(buffer: FriendlyByteBuf): List<Long> =
-    List(ChunkCachePayloads.readCount(buffer, ChunkCacheLimits.MAX_OFFERS)) {
+    List(ChunkCachePayloads.readCount(buffer, ChunkCacheLimits.MAX_IDS_PER_MESSAGE)) {
         buffer.readLong().also(ChunkCachePayloads::validateId)
     }
 
@@ -203,6 +262,6 @@ private fun writeIds(buffer: FriendlyByteBuf, epoch: UUID, ids: List<Long>) {
 }
 
 private fun validateIds(ids: List<Long>) {
-    require(ids.size <= ChunkCacheLimits.MAX_OFFERS) { "Candidate ID list exceeds limit" }
+    require(ids.size <= ChunkCacheLimits.MAX_IDS_PER_MESSAGE) { "Candidate ID list exceeds limit" }
     ids.forEach(ChunkCachePayloads::validateId)
 }

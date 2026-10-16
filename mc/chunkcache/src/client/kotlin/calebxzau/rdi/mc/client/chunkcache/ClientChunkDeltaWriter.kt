@@ -6,7 +6,13 @@ import java.util.concurrent.CompletableFuture
 import java.util.concurrent.TimeUnit
 import java.util.function.Consumer
 
-/** Ordered, bounded, nonblocking producer queue. Only its worker owns persistent delta state. */
+/**
+ * Ordered, bounded, nonblocking producer queue. Only its worker owns persistent delta state.
+ *
+ * Writes run in submission order. A read waits only for earlier writes of the same chunk, so cache reads for
+ * candidate preparation are not stuck behind unrelated base writes; writes still get a turn after a few reads,
+ * and go first once their queue is half full, so reads cannot starve them into rejection.
+ */
 class ClientChunkDeltaWriter private constructor(
     private val sinkFactory: () -> Sink,
     private val onFailure: Consumer<Throwable>,
@@ -60,15 +66,18 @@ class ClientChunkDeltaWriter private constructor(
 
     private val lock = Object()
     private sealed interface Command {
-        data class Write(val value: ClientChunkCacheWrite) : Command
+        val sequence: Long
+        data class Write(val value: ClientChunkCacheWrite, override val sequence: Long) : Command
         interface Read : Command {
+            val key: ClientChunkRegionSink.Key
             val enqueuedNanos: Long
             fun execute(sink: Sink)
             fun fail(error: Throwable)
         }
     }
     private inner class TypedRead<T>(
-        private val key: ClientChunkRegionSink.Key,
+        override val key: ClientChunkRegionSink.Key,
+        override val sequence: Long,
         val result: CompletableFuture<T?>,
         override val enqueuedNanos: Long,
         private val action: (Sink, ClientChunkRegionSink.Key) -> T?,
@@ -89,7 +98,12 @@ class ClientChunkDeltaWriter private constructor(
 
         override fun fail(error: Throwable) { result.completeExceptionally(error) }
     }
-    private val pending = ArrayDeque<Command>()
+    private val writes = ArrayDeque<Command.Write>()
+    private val readQueue = ArrayDeque<Command.Read>()
+    /** Sequences of queued writes per chunk, oldest first; a read waits for those older than itself. */
+    private val writeSequences = HashMap<ClientChunkRegionSink.Key, ArrayDeque<Long>>()
+    private var nextSequence = 0L
+    private var consecutiveReads = 0
     private var pendingWrites = 0
     private var outstandingReads = 0
     private var pendingBytes = 0L
@@ -133,7 +147,9 @@ class ClientChunkDeltaWriter private constructor(
             rejected++
             return@synchronized false
         }
-        pending.addLast(Command.Write(write))
+        val command = Command.Write(write, nextSequence++)
+        writes.addLast(command)
+        writeSequences.getOrPut(write.key()) { ArrayDeque() }.addLast(command.sequence)
         pendingWrites++
         pendingBytes += bytes
         accepted++
@@ -143,7 +159,7 @@ class ClientChunkDeltaWriter private constructor(
         true
     }
 
-    /** Enqueues a bounded read behind all earlier writes without blocking the caller. */
+    /** Enqueues a bounded read behind earlier writes of the same chunk without blocking the caller. */
     fun read(key: ClientChunkRegionSink.Key): CompletableFuture<ClientChunkDeltaStore.Combined?> = enqueueRead(key) { sink, readKey ->
         sink.read(readKey)
     }
@@ -160,7 +176,7 @@ class ClientChunkDeltaWriter private constructor(
             return@synchronized failedFuture<T?>(IllegalStateException("Chunk cache read queue is unavailable or full"))
         }
         val result = CompletableFuture<T?>()
-        pending.addLast(TypedRead(key, result, System.nanoTime(), action))
+        readQueue.addLast(TypedRead(key, nextSequence++, result, System.nanoTime(), action))
         outstandingReads++
         lock.notifyAll()
         result
@@ -214,7 +230,7 @@ class ClientChunkDeltaWriter private constructor(
             while (true) {
                 var stop = false
                 val command = synchronized(lock) {
-                    while (pending.isEmpty() && accepting) {
+                    while (writes.isEmpty() && readQueue.isEmpty() && accepting) {
                         if (!dirty) lock.wait()
                         else {
                             val remaining = deadline - System.nanoTime()
@@ -222,10 +238,10 @@ class ClientChunkDeltaWriter private constructor(
                             TimeUnit.NANOSECONDS.timedWait(lock, remaining)
                         }
                     }
-                    if (pending.isEmpty()) {
+                    if (writes.isEmpty() && readQueue.isEmpty()) {
                         stop = !accepting
                         null
-                    } else pending.removeFirst().also { next ->
+                    } else nextCommandLocked().also { next ->
                         when (next) {
                             is Command.Write -> {
                                 pendingWrites--
@@ -295,15 +311,50 @@ class ClientChunkDeltaWriter private constructor(
         }
     }
 
-    /** Caller holds [lock]. Returned futures are completed after releasing it. */
-    private fun discardQueuedLocked(): List<Command.Read> {
-        val reads = mutableListOf<Command.Read>()
-        while (pending.isNotEmpty()) {
-            when (val command = pending.removeFirst()) {
-                is Command.Write -> discarded++
-                is Command.Read -> { outstandingReads--; reads += command }
+    /** Caller holds [lock] and at least one command is queued. */
+    private fun nextCommandLocked(): Command {
+        val writeFirst = writes.isNotEmpty() && (consecutiveReads >= MAX_CONSECUTIVE_READS || pendingWrites * 2 >= capacity)
+        if (!writeFirst) {
+            val iterator = readQueue.iterator()
+            while (iterator.hasNext()) {
+                val read = iterator.next()
+                val oldestWrite = writeSequences[read.key]?.peekFirst()
+                if (oldestWrite == null || oldestWrite > read.sequence) {
+                    iterator.remove()
+                    consecutiveReads++
+                    return read
+                }
             }
         }
+        // Every queued read waits for an earlier write, or writes are due: the oldest write unblocks the queue.
+        val next = writes.peekFirst() ?: return readQueue.removeFirst().also { consecutiveReads++ }
+        // A read never observes a write submitted after it; such reads of the same chunk go first.
+        val iterator = readQueue.iterator()
+        while (iterator.hasNext()) {
+            val read = iterator.next()
+            if (read.sequence < next.sequence && read.key == next.value.key()) {
+                iterator.remove()
+                return read
+            }
+        }
+        val write = writes.removeFirst()
+        consecutiveReads = 0
+        val key = write.value.key()
+        writeSequences[key]?.let { sequences ->
+            sequences.pollFirst()
+            if (sequences.isEmpty()) writeSequences.remove(key)
+        }
+        return write
+    }
+
+    /** Caller holds [lock]. Returned futures are completed after releasing it. */
+    private fun discardQueuedLocked(): List<Command.Read> {
+        discarded += writes.size
+        writes.clear()
+        writeSequences.clear()
+        val reads = ArrayList<Command.Read>(readQueue)
+        outstandingReads -= readQueue.size
+        readQueue.clear()
         pendingWrites = 0
         return reads
     }
@@ -324,7 +375,9 @@ class ClientChunkDeltaWriter private constructor(
         it.completeExceptionally(error)
     }
 
-    private companion object {
-        const val MAX_PENDING_READS = 32
+    internal companion object {
+        const val MAX_PENDING_READS = 64
+        /** Reads served before a waiting write gets its turn. */
+        const val MAX_CONSECUTIVE_READS = 8
     }
 }

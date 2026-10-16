@@ -5,6 +5,7 @@ import com.github.luben.zstd.Zstd
 import com.github.luben.zstd.ZstdCompressCtx
 import io.netty.buffer.ByteBuf
 import io.netty.buffer.ByteBufUtil
+import io.netty.buffer.Unpooled
 import io.netty.channel.ChannelHandlerContext
 import io.netty.channel.ChannelDuplexHandler
 import io.netty.channel.ChannelPromise
@@ -55,6 +56,10 @@ internal class ZstdCompressionEncoder(
     private var streamContext: ZstdCompressCtx? = null
     @Volatile
     private var streamEnabled = false
+
+    /** Custom payload namespaces whose zlib fields leave inflated, see [ZlibTailFormat]; null while off. */
+    @Volatile
+    private var zlibTailNamespaces: Set<String>? = null
 
     private data class BufferedRecord(
         val sending: ZstdSendingRecord,
@@ -115,6 +120,19 @@ internal class ZstdCompressionEncoder(
         }
         val encodedBytes = sending.content.readableBytes()
         observe { it.recordEncoded(sending.identity, encodedBytes, sending.policy) }
+
+        val zlibTail = zlibTailOf(sending)
+        if (zlibTail != null) {
+            // Leaves alone, like a legacy envelope, so buffered records keep their place before it.
+            if (batchingEnabled) flushBuffered(context, ZstdBatchFlushReason.BARRIER)
+            if (failed != null) {
+                sending.release()
+                promise.tryFailure(failed!!)
+                return
+            }
+            writeZlibTail(context, sending, zlibTail, promise)
+            return
+        }
 
         if (!batchingEnabled || sending.policy == ZstdBatchPolicy.Immediate ||
             encodedBytes == 0 || encodedBytes > MAXIMUM_BATCHED_RECORD_BYTES ||
@@ -180,6 +198,7 @@ internal class ZstdCompressionEncoder(
         closeStream()
         packetRefs = null
         packetRefsEnabled = false
+        zlibTailNamespaces = null
         handlerContext = null
         super.handlerRemoved(context)
     }
@@ -215,6 +234,16 @@ internal class ZstdCompressionEncoder(
      */
     fun requestStream(windowLog: Int) = onEventLoop { context ->
         startStream(context, windowLog)
+    }
+
+    fun isZlibTailEnabled(): Boolean = zlibTailNamespaces != null
+
+    /**
+     * Sends custom payloads of [namespaces] with their zlib field inflated, see [ZlibTailFormat]; "*"
+     * names every namespace and an empty set turns the extension off. Call it only once the peer is ready.
+     */
+    fun requestZlibTail(namespaces: Set<String>) = onEventLoop {
+        zlibTailNamespaces = namespaces.takeIf { it.isNotEmpty() }?.toSet()
     }
 
     fun isBatchingEnabled(): Boolean = batchingEnabled
@@ -650,7 +679,7 @@ internal class ZstdCompressionEncoder(
                     ZstdBatchFormat.varIntSize(payloadBytes) + ZstdBatchFormat.varIntSize(recordCount)
                 headerBytes + payloadBytes
             }
-            ZstdBatchFrameKind.Ref, ZstdBatchFrameKind.Control, ZstdBatchFrameKind.Persistent ->
+            ZstdBatchFrameKind.Ref, ZstdBatchFrameKind.Control, ZstdBatchFrameKind.Persistent, ZstdBatchFrameKind.ZlibTail ->
                 throw IllegalStateException("${frame.frameKind} frames build their own sample")
         }
         val uncompressedBytes = uncompressedInnerBytes + outerPrefix
@@ -826,6 +855,11 @@ internal class ZstdCompressionEncoder(
             outerPrefixBytes = ZstdBatchFormat.varIntSize(frameBytes),
             compressedBytes = frameBytes + ZstdBatchFormat.varIntSize(frameBytes),
         )
+        writeObservedFrame(context, frame, sample, promise)
+    }
+
+    /** Writes one frame that carries exactly one record and reports it once the write completes. */
+    private fun writeObservedFrame(context: ChannelHandlerContext, frame: ByteBuf, sample: ZstdBatchSample, promise: ChannelPromise) {
         val downstream = context.newPromise()
         downstream.addListener { future ->
             if (future.isSuccess) promise.trySuccess() else promise.tryFailure(future.cause() ?: ClosedChannelException())
@@ -835,6 +869,78 @@ internal class ZstdCompressionEncoder(
         observe { it.batchFlushed(sample) }
         writeFrame(context, frame, downstream)
         if (batchingEnabled) context.flush()
+    }
+
+    /** The unwrapped form of a custom payload from a configured namespace, or null when it stays as it is. */
+    private fun zlibTailOf(sending: ZstdSendingRecord): ZlibTailPacket? {
+        val namespaces = zlibTailNamespaces ?: return null
+        val identity = sending.identity ?: return null
+        if (identity.packetType != CUSTOM_PAYLOAD_TYPE) return null
+        if (WILDCARD_NAMESPACE !in namespaces && identity.namespace !in namespaces) return null
+        val size = sending.content.readableBytes()
+        if (size < ZlibTailFormat.MINIMUM_PACKET_BYTES || size > ZstdCompressionPipeline.MAXIMUM_UNCOMPRESSED_LENGTH) return null
+        val unwrapped = ZlibTail.unwrap(ByteBufUtil.getBytes(sending.content)) ?: return null
+        return unwrapped.takeIf { it.unwrapped.size <= ZstdCompressionPipeline.MAXIMUM_UNCOMPRESSED_LENGTH }
+    }
+
+    /** Never touches the packet reference table: the client restores different zlib bytes than these. */
+    private fun writeZlibTail(
+        context: ChannelHandlerContext,
+        sending: ZstdSendingRecord,
+        tail: ZlibTailPacket,
+        promise: ChannelPromise,
+    ) {
+        val recordBytes = sending.content.readableBytes()
+        val started = nanoTime()
+        val frame: ByteBuf
+        try {
+            frame = encodeZlibTailFrame(context, tail)
+        } catch (error: Throwable) {
+            failDirect(context, sending, promise, error)
+            return
+        }
+        sending.release()
+        val frameBytes = frame.readableBytes()
+        val sample = ZstdBatchSample(
+            recordCount = 1,
+            payloadBytes = recordBytes,
+            blockBytes = frameBytes,
+            raw = false,
+            flushReason = ZstdBatchFlushReason.BARRIER,
+            waitNanos = 0,
+            compressionNanos = (nanoTime() - started).coerceAtLeast(0L),
+            frameKind = ZstdBatchFrameKind.ZlibTail,
+            outerPrefixBytes = ZstdBatchFormat.varIntSize(frameBytes),
+            compressedBytes = frameBytes + ZstdBatchFormat.varIntSize(frameBytes),
+        )
+        writeObservedFrame(context, frame, sample, promise)
+    }
+
+    private fun encodeZlibTailFrame(context: ChannelHandlerContext, tail: ZlibTailPacket): ByteBuf {
+        val content = Unpooled.wrappedBuffer(tail.unwrapped)
+        val envelope = try {
+            encodeLegacyFrame(context, content).buffer
+        } finally {
+            content.release()
+        }
+        try {
+            val frameBytes = ZstdBatchFormat.varIntSize(ZlibTailFormat.MARKER) + 1 +
+                ZstdBatchFormat.varIntSize(tail.tailOffset) + envelope.readableBytes()
+            val frame = context.alloc().directBuffer(frameBytes, frameBytes)
+            var written = false
+            try {
+                varIntCodec.write(frame, ZlibTailFormat.MARKER)
+                frame.writeByte(ZlibTailFormat.VERSION)
+                varIntCodec.write(frame, tail.tailOffset)
+                frame.writeBytes(envelope, envelope.readerIndex(), envelope.readableBytes())
+                written = true
+                return frame
+            } finally {
+                if (!written) frame.release()
+            }
+        } finally {
+            envelope.release()
+        }
     }
 
     private fun encodePersistentHit(context: ChannelHandlerContext, kind: Int, hash: PersistentPacketHash): ByteBuf {
@@ -1132,6 +1238,10 @@ internal class ZstdCompressionEncoder(
         private val LOGGER: System.Logger = System.getLogger(ZstdCompressionEncoder::class.java.name)
         private const val COMPRESSION_LEVEL = 3
         private const val MAXIMUM_BATCHED_RECORD_BYTES = ZstdCompressionPipeline.MAXIMUM_UNCOMPRESSED_LENGTH - 5
+
+        /** The packet type [ZstdPacketIdentity] names for every custom payload. */
+        private const val CUSTOM_PAYLOAD_TYPE = "minecraft:custom_payload"
+        private const val WILDCARD_NAMESPACE = "*"
 
         /** Room beyond compressBound for the stream's frame header and block headers at buffer wraps. */
         private const val STREAM_SEGMENT_SLACK_BYTES = 64

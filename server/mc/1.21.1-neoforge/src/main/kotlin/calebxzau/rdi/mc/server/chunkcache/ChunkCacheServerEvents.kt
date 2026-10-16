@@ -32,19 +32,13 @@ object ChunkCacheServerEvents {
     @JvmStatic
     @SubscribeEvent
     fun onPlayerRespawn(event: PlayerRespawnEvent) {
-        (event.entity as? net.minecraft.server.level.ServerPlayer)?.let {
-            ChunkCacheServerService.reset(it)
-            ChunkCacheServerService.initialize(it)
-        }
+        (event.entity as? net.minecraft.server.level.ServerPlayer)?.let(ChunkCacheServerService::restart)
     }
 
     @JvmStatic
     @SubscribeEvent
     fun onPlayerChangedDimension(event: PlayerChangedDimensionEvent) {
-        (event.entity as? net.minecraft.server.level.ServerPlayer)?.let {
-            ChunkCacheServerService.reset(it)
-            ChunkCacheServerService.initialize(it)
-        }
+        (event.entity as? net.minecraft.server.level.ServerPlayer)?.let(ChunkCacheServerService::restart)
     }
 
     @JvmStatic

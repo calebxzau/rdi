@@ -17,6 +17,7 @@ object RdiExtensionChannels21 {
     val STREAM: ResourceLocation = ResourceLocation.fromNamespaceAndPath("rdi", "zstream")
     val BATCH: ResourceLocation = ResourceLocation.fromNamespaceAndPath("rdi", "batch")
     val REFERENCES: ResourceLocation = ResourceLocation.fromNamespaceAndPath("rdi", "pktref")
+    val ZLIB_TAIL: ResourceLocation = ResourceLocation.fromNamespaceAndPath("rdi", "zlibtail")
     private val logger = LogManager.getLogger("rdi.network-extensions")
 
     private class Presence(val payloadType: CustomPacketPayload.Type<Presence>) : CustomPacketPayload {
@@ -24,7 +25,7 @@ object RdiExtensionChannels21 {
     }
 
     fun register(event: RegisterPayloadHandlersEvent, client: Boolean) {
-        // Both sides support all three capabilities; activation still requires negotiated PLAY channels.
+        // Both sides support every capability; activation still requires negotiated PLAY channels.
         val ids = supportedChannels(client)
         for (id in ids) {
             val type = CustomPacketPayload.Type<Presence>(id)
@@ -37,7 +38,7 @@ object RdiExtensionChannels21 {
     }
 
     internal fun supportedChannels(@Suppress("UNUSED_PARAMETER") client: Boolean): List<ResourceLocation> =
-        listOf(STREAM, BATCH, REFERENCES)
+        listOf(STREAM, BATCH, REFERENCES, ZLIB_TAIL)
 
     // Deliberately no hasChannel() fallback to unversioned c:register / ad-hoc declarations.
     fun isNegotiated(connection: Connection, id: ResourceLocation): Boolean =
@@ -46,5 +47,6 @@ object RdiExtensionChannels21 {
     fun inboundExtensions(connection: Connection): Int =
         (if (isNegotiated(connection, STREAM)) ZstdInboundPreparation.STREAM else 0) or
             (if (isNegotiated(connection, BATCH)) ZstdInboundPreparation.BATCH else 0) or
-            (if (isNegotiated(connection, REFERENCES)) ZstdInboundPreparation.REFERENCES else 0)
+            (if (isNegotiated(connection, REFERENCES)) ZstdInboundPreparation.REFERENCES else 0) or
+            (if (isNegotiated(connection, ZLIB_TAIL)) ZstdInboundPreparation.ZLIB_TAIL else 0)
 }

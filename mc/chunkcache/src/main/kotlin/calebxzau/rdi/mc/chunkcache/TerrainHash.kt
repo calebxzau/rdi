@@ -23,7 +23,9 @@ object TerrainHash {
     private const val SECTION_COUNT_LIMIT = 256
     private const val UNIFORM_BLOCKS: Byte = 0
     private const val FULL_BLOCKS: Byte = 1
-    private const val SECTION_BUFFER_BYTES = 4 + 4 + 1 + BLOCKS_PER_SECTION * 4 + BIOMES_PER_SECTION * 4
+    /** Block IDs start after the section magic, version and form byte. */
+    private const val BLOCKS_OFFSET = 4 + 4 + 1
+    private const val SECTION_BUFFER_BYTES = BLOCKS_OFFSET + BLOCKS_PER_SECTION * 4 + BIOMES_PER_SECTION * 4
 
     private val sectionBuffers = ThreadLocal.withInitial {
         ByteBuffer.allocate(SECTION_BUFFER_BYTES).order(ByteOrder.BIG_ENDIAN)
@@ -40,6 +42,33 @@ object TerrainHash {
             if (id != first) uniform = false
         }
         return if (uniform) uniformSectionSha1(first, biomeIds) else encodeSection(blockIds, -1, biomeIds)
+    }
+
+    /**
+     * Hashes one section from block IDs written in container index order, straight into this thread's hash buffer
+     * instead of an intermediate array; [SectionHasher.finish] equals [sectionSha1] of the same IDs. Finish it before
+     * hashing anything else on this thread.
+     */
+    @JvmStatic
+    fun sectionHasher(): SectionHasher = SectionHasher(sectionBuffers.get())
+
+    class SectionHasher internal constructor(private val buffer: ByteBuffer) {
+        private var count = 0
+        private var first = 0
+        private var uniform = true
+
+        fun add(blockId: Int) {
+            require(blockId >= 0) { "Invalid block state ID" }
+            require(count < BLOCKS_PER_SECTION) { "Invalid block ID count" }
+            if (count == 0) first = blockId else if (blockId != first) uniform = false
+            buffer.putInt(BLOCKS_OFFSET + count * 4, blockId)
+            count++
+        }
+
+        fun finish(biomeIds: IntArray): ByteArray {
+            require(count == BLOCKS_PER_SECTION) { "Invalid block ID count" }
+            return if (uniform) uniformSectionSha1(first, biomeIds) else digestSection(buffer, FULL_BLOCKS, biomeIds)
+        }
     }
 
     /** Equal to [sectionSha1] for a block array whose 4,096 entries are all [blockId]. */
@@ -88,22 +117,34 @@ object TerrainHash {
     }
 
     private fun encodeSection(blockIds: IntArray?, uniformId: Int, biomeIds: IntArray): ByteArray {
+        val buffer = sectionBuffers.get()
+        if (blockIds == null) {
+            buffer.clear()
+            buffer.position(BLOCKS_OFFSET)
+            buffer.putInt(uniformId)
+            return digestSection(buffer, UNIFORM_BLOCKS, biomeIds)
+        }
+        buffer.clear()
+        buffer.position(BLOCKS_OFFSET)
+        buffer.asIntBuffer().put(blockIds)
+        buffer.position(BLOCKS_OFFSET + BLOCKS_PER_SECTION * 4)
+        return digestSection(buffer, FULL_BLOCKS, biomeIds)
+    }
+
+    /**
+     * Completes a section whose block part is already in [buffer] after [BLOCKS_OFFSET]: one uniform ID, or all
+     * [BLOCKS_PER_SECTION] IDs. Writes the header and biomes around it and hashes the whole section.
+     */
+    private fun digestSection(buffer: ByteBuffer, form: Byte, biomeIds: IntArray): ByteArray {
         require(biomeIds.size == BIOMES_PER_SECTION) { "Invalid biome ID count" }
         for (id in biomeIds) require(id >= 0) { "Invalid biome ID" }
-        val buffer = sectionBuffers.get()
-        buffer.clear()
-        buffer.putInt(SECTION_MAGIC).putInt(VERSION)
-        if (blockIds == null) {
-            buffer.put(UNIFORM_BLOCKS).putInt(uniformId)
-        } else {
-            buffer.put(FULL_BLOCKS)
-            buffer.asIntBuffer().put(blockIds)
-            buffer.position(buffer.position() + BLOCKS_PER_SECTION * 4)
-        }
+        buffer.putInt(0, SECTION_MAGIC).putInt(4, VERSION).put(8, form)
+        val biomesOffset = BLOCKS_OFFSET + if (form == UNIFORM_BLOCKS) 4 else BLOCKS_PER_SECTION * 4
+        buffer.position(biomesOffset)
         buffer.asIntBuffer().put(biomeIds)
-        buffer.position(buffer.position() + BIOMES_PER_SECTION * 4)
+        val length = biomesOffset + BIOMES_PER_SECTION * 4
         val digest = MessageDigest.getInstance("SHA-1")
-        digest.update(buffer.array(), 0, buffer.position())
+        digest.update(buffer.array(), 0, length)
         return digest.digest()
     }
 }

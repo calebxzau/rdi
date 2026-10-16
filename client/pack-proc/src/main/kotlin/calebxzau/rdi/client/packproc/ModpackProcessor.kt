@@ -1221,7 +1221,6 @@ class ModpackProcessor(
         matchedModFiles: Set<File>
     ): ServerExtraFileSelection {
         val canonicalMatchedFiles = matchedModFiles.mapTo(mutableSetOf()) { it.canonicalFile }
-        var containsExcludedMcaFiles = false
         val files = rootDir.walkTopDown()
             .onEnter { dir ->
                 if (shouldSkipServerExtraDir(rootDir, dir)) {
@@ -1246,15 +1245,16 @@ class ModpackProcessor(
                     )
                     return@mapNotNull null
                 }
-                if (shouldExcludeMca(relativePath, isDirectory = false) || containsExcludedMcaArchiveEntry(file)) {
-                    containsExcludedMcaFiles = true
-                }
                 ServerExtraFile(
                     sourceFile = file,
                     relativePath = relativePath
                 )
             }
             .toList()
+        val saveRegions = SaveRegionPaths.of(files.map { it.relativePath })
+        val containsExcludedMcaFiles = files.any {
+            saveRegions.isSaveRegion(it.relativePath, isDirectory = false) || containsExcludedMcaArchiveEntry(it.sourceFile)
+        }
         return ServerExtraFileSelection(files, containsExcludedMcaFiles)
     }
 
@@ -1297,11 +1297,12 @@ class ModpackProcessor(
     }
 
     private fun containsExcludedMcaFiles(rootDir: File): Boolean {
-        return rootDir.walkTopDown()
-            .filter { it.isFile }
+        val files = rootDir.walkTopDown().filter { it.isFile }.toList()
+        val saveRegions = SaveRegionPaths.of(files.map { it.relativeTo(rootDir).invariantSeparatorsPath })
+        return files
             .any { file ->
                 val relativePath = file.relativeTo(rootDir).invariantSeparatorsPath
-                if (shouldExcludeMca(relativePath, isDirectory = false)) return@any true
+                if (saveRegions.isSaveRegion(relativePath, isDirectory = false)) return@any true
                 val relativeLower = relativePath.lowercase()
                 if (shouldSkipEntry(relativeLower, isDirectory = false)) return@any false
                 containsExcludedMcaArchiveEntry(file)
@@ -1313,9 +1314,9 @@ class ModpackProcessor(
             !file.extension.equals("jar", ignoreCase = true)
         ) return false
         return file.openChineseZip().use { zip ->
-            zip.entries().asSequence().any { entry ->
-                shouldExcludeMca(entry.name, entry.isDirectory)
-            }
+            val entries = zip.entries().asSequence().toList()
+            val saveRegions = SaveRegionPaths.of(entries.filterNot { it.isDirectory }.map { it.name })
+            entries.any { entry -> saveRegions.isSaveRegion(entry.name, entry.isDirectory) }
         }
     }
 
@@ -1446,6 +1447,10 @@ class ModpackProcessor(
                 }
                 .toList()
             val fileEntries = walkEntries.filter { it != rootDir }
+            val saveRegions = SaveRegionPaths.of(
+                fileEntries.filter(File::isFile).map { it.relativeTo(rootDir).invariantSeparatorsPath }
+            )
+            val serverSaveRegions = SaveRegionPaths.of(serverExtraFiles.map { it.relativePath })
             val oversizedUnpackedResourcepacks = findOversizedUnpackedResourcepacks(rootDir)
             val effectiveLocalExtras = collectEffectiveLocalExtraCandidates(rootDir)
             val effectiveSources = effectiveLocalExtras.mapTo(mutableSetOf()) { it.sourceRelativePath }
@@ -1559,6 +1564,7 @@ class ModpackProcessor(
                         } else null,
                         preprocessedBytes = processedAssets[relative],
                         retainedShaderConfigPaths = retainedShaderConfigPaths,
+                        saveRegions = saveRegions,
                     )
                     writtenEntries++
                     val fraction = writtenEntries.toFloat() / totalWriteEntries.toFloat()
@@ -1585,7 +1591,7 @@ class ModpackProcessor(
                         logSkippedUploadEntry(relative, isDirectory = false, reason = "所在目录名包含cache")
                         continue
                     }
-                    if (shouldExcludeMca(relative, isDirectory = false)) {
+                    if (serverSaveRegions.isSaveRegion(extraFile.relativePath, isDirectory = false)) {
                         ensureArchiveParents(relative, out, addedDirs)
                         out.addFile(relative, byteArrayOf(), sourceFile.lastModified())
                         continue
@@ -1611,6 +1617,12 @@ class ModpackProcessor(
                 }
             }
             verifyMatchedExtraSources(rootDir, excludedClientExtras, "打包完成前")
+            val packedBytes = target.length()
+            if (packedBytes > MODPACK_UPLOAD_MAX_BYTES) {
+                throw ModpackError(
+                    "整合包打包后为${packedBytes.humanFileSize}，超过${MODPACK_UPLOAD_MAX_MB}MB上限，请删除不需要的大文件后重试"
+                )
+            }
             onProgress(LoadProgress.Percent("整合包打包完成", 1f))
         } catch (error: Throwable) {
             runCatching { Files.deleteIfExists(target.toPath()) }
@@ -1700,6 +1712,7 @@ class ModpackProcessor(
                     val oggWorkDir = Files.createTempDirectory(paths.workDir.toPath(), "ogg-nested-").toFile()
                     try {
                         val entries = zip.entries().asSequence().toList()
+                        val saveRegions = SaveRegionPaths.of(entries.filterNot { it.isDirectory }.map { it.name })
                         val isNestedJarEntry = zipFile.extension.equals("jar", ignoreCase = true)
                         val processedAssets = if (preserveResourcepackEntries || mcaOnly) {
                             emptyMap()
@@ -1753,7 +1766,8 @@ class ModpackProcessor(
                                 skipCacheDirectory = !isNestedJarEntry,
                                 preprocessedBytes = processedAssets[relative],
                                 preserveResourcepackEntries = preserveResourcepackEntries,
-                                mcaOnly = mcaOnly
+                                mcaOnly = mcaOnly,
+                                saveRegions = saveRegions,
                             )
                         }
                     } finally {
@@ -1813,15 +1827,6 @@ class ModpackProcessor(
         }.toSet()
     }
 
-    private fun shouldExcludeMca(path: String, isDirectory: Boolean): Boolean {
-        if (isDirectory) return false
-        val normalized = path.replace('\\', '/').trim('/')
-        if (normalized.isBlank() ||
-            !normalized.substringAfterLast('/').endsWith(".mca", ignoreCase = true)
-        ) return false
-        return normalized.split('/').none { it.equals("ftbteambases", ignoreCase = true) }
-    }
-
     private fun containsCacheDirectory(path: String, isDirectory: Boolean): Boolean {
         val normalized = path.replace('\\', '/').trim('/')
         if (normalized.isEmpty()) return false
@@ -1849,6 +1854,7 @@ class ModpackProcessor(
         skipCacheDirectory: Boolean = true,
         preprocessedBytes: ByteArray? = null,
         retainedShaderConfigPaths: Set<String> = emptySet(),
+        saveRegions: SaveRegionPaths = SaveRegionPaths.NONE,
     ) {
         if (isDisabledFile(relative, isDirectory)) {
             logSkippedUploadEntry(relative, isDirectory, "文件已禁用（.disabled）")
@@ -1869,7 +1875,7 @@ class ModpackProcessor(
             return
         }
 
-        if (shouldExcludeMca(relative, isDirectory)) {
+        if (saveRegions.isSaveRegion(relative, isDirectory)) {
             ensureArchiveParents(relative, out, addedDirs)
             out.addFile(relative, byteArrayOf(), lastModified)
             return
@@ -1916,9 +1922,10 @@ class ModpackProcessor(
         skipCacheDirectory: Boolean = true,
         preprocessedBytes: ByteArray? = null,
         preserveResourcepackEntries: Boolean = false,
-        mcaOnly: Boolean = false
+        mcaOnly: Boolean = false,
+        saveRegions: SaveRegionPaths = SaveRegionPaths.NONE,
     ) {
-        if (shouldExcludeMca(relative, isDirectory)) {
+        if (saveRegions.isSaveRegion(relative, isDirectory)) {
             ensureZipParents(relative, out, addedDirs)
             out.putNextEntry(ZipEntry(relative).apply { time = lastModified })
             out.closeEntry()

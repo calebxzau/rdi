@@ -1,6 +1,7 @@
 package calebxzau.rdi.server.service.hostrollback
 
 import calebxzau.rdi.common.model.HostRollbackCreateDto
+import calebxzhou.rdi.common.model.isDav
 import calebxzhou.rdi.master.net.ok
 import calebxzhou.rdi.master.net.response
 import calebxzhou.rdi.master.service.host.HostControlService.graceStop
@@ -24,7 +25,7 @@ fun Route.hostRollbackRoutes() = route("/rollback") {
     post {
         val ctx = call.hostContext().needOwner
         val dto = call.receive<HostRollbackCreateDto>()
-        response(data = rollbackService.request(ctx.host, ctx.player._id, dto) { ctx.graceStop() })
+        response(data = rollbackService.request(ctx.host, ctx.player._id, dto, stopHost = { ctx.graceStop() }, isDav = ctx.player.isDav))
     }
     delete {
         val ctx = call.hostContext().needOwner

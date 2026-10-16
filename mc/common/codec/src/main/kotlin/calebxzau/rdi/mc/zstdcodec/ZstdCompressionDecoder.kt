@@ -24,6 +24,8 @@ import java.nio.ByteBuffer
  *
  * With the persistent packet extension it restores packets the client kept from earlier joins, once a
  * [PersistentPacketClientSession] is attached to the channel.
+ *
+ * With the zlib tail extension it deflates the inflated field of a packet again, see [ZlibTailFormat].
  */
 internal class ZstdCompressionDecoder(
     private var threshold: Int,
@@ -43,6 +45,9 @@ internal class ZstdCompressionDecoder(
 
     /** The connection's Zstd stream; non-null exactly in [ExtensionState.Active], see [ZstdStreamFormat]. */
     private var streamContext: ZstdDecompressCtx? = null
+
+    @Volatile
+    private var zlibTailReady = false
 
     private enum class ExtensionState { Idle, Ready, Active }
 
@@ -74,6 +79,10 @@ internal class ZstdCompressionDecoder(
         }
         if (declaredSize == PersistentPacketFormat.MARKER) {
             consumeOnFailure(input) { decodePersistent(context, input, output) }
+            return
+        }
+        if (declaredSize == ZlibTailFormat.MARKER) {
+            consumeOnFailure(input) { decodeZlibTail(context, input, output) }
             return
         }
 
@@ -114,10 +123,13 @@ internal class ZstdCompressionDecoder(
         emit(decompressFrame(context, input, compressedSize, declaredSize), output)
     }
 
-    /** Records one plain packet in the client table, then passes it on; a failed record is released. */
-    private fun emit(record: ByteBuf, output: MutableList<Any>) {
+    /**
+     * Records one plain packet in the client table, then passes it on; a failed record is released.
+     * A packet the server kept out of its own table, such as a restored zlib tail, skips the record.
+     */
+    private fun emit(record: ByteBuf, output: MutableList<Any>, recordReference: Boolean = true) {
         try {
-            packetRefs?.record(record)
+            if (recordReference) packetRefs?.record(record)
         } catch (error: Throwable) {
             record.release()
             throw error
@@ -199,6 +211,16 @@ internal class ZstdCompressionDecoder(
         if (context.executor().inEventLoop()) task.run() else context.executor().execute(task)
     }
 
+    /** Accepts zlib tail frames from now on, or rejects them again when [ready] is false. */
+    fun requestZlibTailReady(ready: Boolean) {
+        val context = handlerContext ?: return
+        val task = Runnable {
+            if (ready) ZstdTransportGuard.get(context.channel()).armInbound(context)
+            zlibTailReady = ready
+        }
+        if (context.executor().inEventLoop()) task.run() else context.executor().execute(task)
+    }
+
     /** Test view: whether compressed payloads decode as stream segments; call it on the event loop. */
     internal fun isStreamActive(): Boolean = streamState == ExtensionState.Active
 
@@ -260,7 +282,7 @@ internal class ZstdCompressionDecoder(
                 emit(record, output)
             }
             PersistentPacketFormat.OP_FULL -> {
-                val record = decodePersistentEnvelope(context, input)
+                val record = decodeInnerEnvelope(context, input, "Persistent packet FULL", PERSISTENT_EXTENSION)
                 val content = try {
                     ByteBufUtil.getBytes(record).also { verifyPersistent(it, named, kind) }
                 } catch (error: Throwable) {
@@ -299,24 +321,44 @@ internal class ZstdCompressionDecoder(
         }
     }
 
-    /** The legacy envelope inside a FULL frame, decoded like a top-level one, the Zstd stream included. */
-    private fun decodePersistentEnvelope(context: ChannelHandlerContext, input: ByteBuf): ByteBuf {
-        val declaredSize = readRefVarInt(input, "envelope size", PERSISTENT_EXTENSION)
+    /** The legacy envelope inside an extension frame, decoded like a top-level one, the Zstd stream included. */
+    private fun decodeInnerEnvelope(context: ChannelHandlerContext, input: ByteBuf, frame: String, extension: String): ByteBuf {
+        val declaredSize = readRefVarInt(input, "envelope size", extension)
         if (declaredSize == 0) {
             val rawSize = input.readableBytes()
             if (rawSize == 0 || rawSize > ZstdCompressionPipeline.MAXIMUM_UNCOMPRESSED_LENGTH) {
-                throw DecoderException("Persistent packet FULL carries ${rawSize} raw bytes")
+                throw DecoderException("${frame} carries ${rawSize} raw bytes")
             }
             return input.readRetainedSlice(rawSize)
         }
         if (declaredSize < 0 || declaredSize > ZstdCompressionPipeline.MAXIMUM_UNCOMPRESSED_LENGTH) {
-            throw DecoderException("Persistent packet FULL declares ${declaredSize} bytes")
+            throw DecoderException("${frame} declares ${declaredSize} bytes")
         }
         val compressedSize = input.readableBytes()
         if (compressedSize == 0 || compressedSize > ZstdCompressionPipeline.MAXIMUM_COMPRESSED_LENGTH) {
-            throw DecoderException("Persistent packet FULL carries ${compressedSize} compressed bytes")
+            throw DecoderException("${frame} carries ${compressedSize} compressed bytes")
         }
         return decompressFrame(context, input, compressedSize, declaredSize)
+    }
+
+    private fun decodeZlibTail(context: ChannelHandlerContext, input: ByteBuf, output: MutableList<Any>) {
+        if (!zlibTailReady) throw DecoderException("Received a zlib tail frame on a connection that did not negotiate zlib tails")
+        if (!input.isReadable) throw DecoderException("Zlib tail frame ended before its version")
+        val version = input.readUnsignedByte().toInt()
+        if (version != ZlibTailFormat.VERSION) throw DecoderException("Unsupported zlib tail version: ${version}")
+        val tailOffset = readRefVarInt(input, "tail offset", ZLIB_TAIL_EXTENSION)
+        val envelope = decodeInnerEnvelope(context, input, "Zlib tail frame", ZLIB_TAIL_EXTENSION)
+        val unwrapped = try {
+            ByteBufUtil.getBytes(envelope)
+        } finally {
+            envelope.release()
+        }
+        val packet = ZlibTail.rewrap(unwrapped, tailOffset).getOrElse { error ->
+            throw DecoderException("Failed to restore the zlib field of a ${unwrapped.size} byte packet", error)
+        }
+        val record = context.alloc().buffer(packet.size, packet.size)
+        record.writeBytes(packet)
+        emit(record, output, recordReference = false)
     }
 
     private fun verifyPersistent(content: ByteArray, hash: PersistentPacketHash, kind: Int) {
@@ -588,6 +630,7 @@ internal class ZstdCompressionDecoder(
         streamState = ExtensionState.Idle
         packetRefs = null
         packetRefState = ExtensionState.Idle
+        zlibTailReady = false
         handlerContext = null
         super.handlerRemoved0(context)
     }
@@ -596,5 +639,6 @@ internal class ZstdCompressionDecoder(
         const val REF_EXTENSION = "packet reference"
         const val STREAM_EXTENSION = "Zstd stream"
         const val PERSISTENT_EXTENSION = "persistent packet"
+        const val ZLIB_TAIL_EXTENSION = "zlib tail"
     }
 }

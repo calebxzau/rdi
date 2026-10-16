@@ -105,7 +105,7 @@ class ClientChunkReadCommandTest {
             assertTrue(writer.submit(write(1)))
             val terrain = writer.readTerrain(key)
             assertTrue(entered.await(5, TimeUnit.SECONDS))
-            val fullReads = List(31) { writer.read(key) }
+            val fullReads = List(ClientChunkDeltaWriter.MAX_PENDING_READS - 1) { writer.read(key) }
             assertFailsWith<ExecutionException> { writer.readTerrain(key).get(5, TimeUnit.SECONDS) }
             assertTrue(writer.submit(write(2)))
             release.countDown()
@@ -122,10 +122,10 @@ class ClientChunkReadCommandTest {
             writer.closeAsync()
             assertTrue(writer.awaitClosed(5_000))
         }
-        assertEquals(listOf("write1", "terrain") + List(31) { "full" } + listOf("write2", "write3", "terrain"), events)
+        assertEquals(listOf("write1", "terrain") + List(ClientChunkDeltaWriter.MAX_PENDING_READS - 1) { "full" } + listOf("write2", "write3", "terrain"), events)
         val stats = writer.stats()
-        assertEquals(33L, stats.reads)
-        assertEquals(31L, stats.missingReads)
+        assertEquals(ClientChunkDeltaWriter.MAX_PENDING_READS + 1L, stats.reads)
+        assertEquals(ClientChunkDeltaWriter.MAX_PENDING_READS - 1L, stats.missingReads)
         assertEquals(1L, stats.failedReads)
         assertTrue(stats.readQueueNanos >= 0)
         assertTrue(stats.maxReadQueueNanos >= 0)
@@ -157,8 +157,8 @@ class ClientChunkReadCommandTest {
         try {
             reads += writer.readTerrain(key)
             assertTrue(entered.await(5, TimeUnit.SECONDS))
-            repeat(31) { index -> reads += if (index % 2 == 0) writer.read(key) else writer.readTerrain(key) }
-            assertEquals(32, reads.size)
+            repeat(ClientChunkDeltaWriter.MAX_PENDING_READS - 1) { index -> reads += if (index % 2 == 0) writer.read(key) else writer.readTerrain(key) }
+            assertEquals(ClientChunkDeltaWriter.MAX_PENDING_READS, reads.size)
             assertFailsWith<ExecutionException> { writer.read(key).get(5, TimeUnit.SECONDS) }
             writer.discardPending()
             reads.drop(1).forEach { future ->

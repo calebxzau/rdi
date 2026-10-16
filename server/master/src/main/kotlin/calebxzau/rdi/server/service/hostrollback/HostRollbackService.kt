@@ -104,12 +104,18 @@ class HostRollbackService(
 
     /**
      * Leaves a request for [HostRollbackCreateDto.pointId] and, when the host runs, stops it through
-     * [stopHost] after releasing the lifecycle lock (stopping takes the lock itself).
+     * [stopHost] after releasing the lifecycle lock (stopping takes the lock itself). [isDav] counts as the owner.
      */
-    suspend fun request(host: Host, requester: ObjectId, dto: HostRollbackCreateDto, stopHost: suspend () -> Unit): HostRollbackCreateVo {
+    suspend fun request(
+        host: Host,
+        requester: ObjectId,
+        dto: HostRollbackCreateDto,
+        stopHost: suspend () -> Unit,
+        isDav: Boolean = false,
+    ): HostRollbackCreateVo {
         val running = hosts.withLifecycleLock(host._id) {
             val fresh = hosts.host(host._id) ?: throw RequestError("无此房间")
-            if (fresh.ownerId != requester) throw RequestError("仅房主可以回档")
+            if (!isDav && fresh.ownerId != requester) throw RequestError("仅房主可以回档")
             hosts.checkNotImporting(fresh._id)
             val root = SyncChunkBackupStore.rootOf(hosts.hostDir(fresh))
             val index = readIndex(root) ?: throw RequestError("此房间还没有回档点")

@@ -24,24 +24,24 @@ import org.bson.types.ObjectId
 import org.koin.ktor.ext.getKoin
 import java.util.UUID
 
-/** `/host/{hostId}/world-import`, owner only. Mounted inside the host routes. */
+/** `/host/{hostId}/world-import`, owner (or dav) only. Mounted inside the host routes. */
 fun Route.hostWorldImportRoutes() = route("/world-import") {
     post("/precheck") {
         val ctx = call.hostContext().needOwner
-        response(data = call.importService().precheck(ctx.host, ctx.player._id, call.receive<HostWorldImportPrecheckDto>()))
+        response(data = call.importService().precheck(ctx.host, ctx.player._id, call.receive<HostWorldImportPrecheckDto>(), ctx.player.isDav))
     }
     post {
         val ctx = call.hostContext().needOwner
-        response(data = call.importService().create(ctx.host, ctx.player._id, call.receive<HostWorldImportCreateDto>()))
+        response(data = call.importService().create(ctx.host, ctx.player._id, call.receive<HostWorldImportCreateDto>(), ctx.player.isDav))
     }
     route("/{importId}") {
         get {
             val ctx = call.hostContext().needOwner
-            response(data = call.importService().status(ctx.host._id, call.importId(), ctx.player._id))
+            response(data = call.importService().status(ctx.host._id, call.importId(), ctx.player._id, ctx.player.isDav))
         }
         delete {
             val ctx = call.hostContext().needOwner
-            call.importService().cancel(ctx.host._id, call.importId(), ctx.player._id)
+            call.importService().cancel(ctx.host._id, call.importId(), ctx.player._id, ctx.player.isDav)
             ok()
         }
         put("/parts/{index}") {
@@ -50,12 +50,12 @@ fun Route.hostWorldImportRoutes() = route("/world-import") {
             val lengthHeader = call.request.headers[HttpHeaders.ContentLength]
             val length = lengthHeader?.toLongOrNull() ?: if (lengthHeader == null) null else throw ParamError("分片长度不正确")
             val index = call.parameters["index"]?.toIntOrNull() ?: throw ParamError("分片序号不正确")
-            call.importService().uploadPart(ctx.host._id, call.importId(), ctx.player._id, index, length, sha1, call.receiveChannel())
+            call.importService().uploadPart(ctx.host._id, call.importId(), ctx.player._id, index, length, sha1, call.receiveChannel(), ctx.player.isDav)
             ok()
         }
         post("/complete") {
             val ctx = call.hostContext().needOwner
-            response(data = call.importService().complete(ctx.host._id, call.importId(), ctx.player._id))
+            response(data = call.importService().complete(ctx.host._id, call.importId(), ctx.player._id, ctx.player.isDav))
         }
     }
 }

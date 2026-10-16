@@ -4,7 +4,7 @@ import it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap
 import it.unimi.dsi.fastutil.longs.Long2ObjectLinkedOpenHashMap
 
 /** Game-thread-owned offers. Cancellation keeps the exact snapshot pinned until the server's fence. */
-class ChunkCacheOfferPins<T>(private val maxEntries: Int, private val maxBytes: Long) {
+class ChunkCacheOfferPins<T>(private val maxEntries: Int, val maxBytes: Long) {
     data class Pin<T>(
         val id: Long,
         val position: Long,

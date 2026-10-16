@@ -149,15 +149,22 @@ class HostSaveImportViewModelTest {
 
     @Test
     fun onlyTheOwnerOfAV2HostCanImport() {
-        val vm = HostSaveImportViewModel("host", FakeGateway(players = emptyList(), hostOwner = friend), picker = { save.toFile() }, self = { me to "我" }, ioDispatcher = Dispatchers.Unconfined)
+        val vm = HostSaveImportViewModel("host", FakeGateway(players = emptyList(), hostOwner = friend), picker = { save.toFile() }, self = { me to "我" }, ioDispatcher = Dispatchers.Unconfined, selfIsDav = { false })
         assertEquals("只有房主可以导入存档", vm.uiState.value.error)
         assertNull(vm.uiState.value.host)
     }
 
     @Test
+    fun davCanImportIntoAnotherPlayersHost() {
+        val vm = HostSaveImportViewModel("host", FakeGateway(players = emptyList(), hostOwner = friend), picker = { save.toFile() }, self = { me to "我" }, ioDispatcher = Dispatchers.Unconfined, selfIsDav = { true })
+        assertNull(vm.uiState.value.error)
+        assertEquals(friend, vm.uiState.value.host?.ownerId)
+    }
+
+    @Test
     fun selectedRoleIsSuggestedAsSelfInsteadOfOriginalOwner() {
         val gateway = FakeGateway(players = listOf(player(owner, host = true), player(online)))
-        val vm = HostSaveImportViewModel("host", gateway, picker = { save.toFile() }, self = { me to "我" }, ioDispatcher = Dispatchers.Unconfined)
+        val vm = HostSaveImportViewModel("host", gateway, picker = { save.toFile() }, self = { me to "我" }, ioDispatcher = Dispatchers.Unconfined, selfIsDav = { false })
         vm.pickSave()
         assertEquals(SaveImportStep.SelectPlayer, vm.uiState.value.step)
         assertEquals(owner, vm.uiState.value.selectedPlayer)
@@ -198,7 +205,7 @@ class HostSaveImportViewModelTest {
     @Test
     fun failedLaunchPreparationLeavesSelectionAvailable() {
         val gateway = FakeGateway(players = listOf(player(owner, host = true)), failLaunch = true)
-        val vm = HostSaveImportViewModel("host", gateway, picker = { save.toFile() }, self = { me to "我" }, ioDispatcher = Dispatchers.Unconfined)
+        val vm = HostSaveImportViewModel("host", gateway, picker = { save.toFile() }, self = { me to "我" }, ioDispatcher = Dispatchers.Unconfined, selfIsDav = { false })
         vm.pickSave()
         vm.startMarking(reuse = false)
         assertEquals(SaveImportStep.SelectPlayer, vm.uiState.value.step)
@@ -210,7 +217,7 @@ class HostSaveImportViewModelTest {
     // ---- helpers ----
 
     private fun marked(gateway: FakeGateway): HostSaveImportViewModel {
-        val vm = HostSaveImportViewModel("host", gateway, picker = { save.toFile() }, self = { me to "我" }, ioDispatcher = Dispatchers.Unconfined)
+        val vm = HostSaveImportViewModel("host", gateway, picker = { save.toFile() }, self = { me to "我" }, ioDispatcher = Dispatchers.Unconfined, selfIsDav = { false })
         vm.pickSave()
         vm.startMarking(reuse = false)
         assertNotNull(vm.launch.value, "the game is launched in marking mode")

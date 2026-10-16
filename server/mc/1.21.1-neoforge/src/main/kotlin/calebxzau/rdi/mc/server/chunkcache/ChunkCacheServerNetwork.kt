@@ -1,11 +1,13 @@
 package calebxzau.rdi.mc.server.chunkcache
 
+import calebxzau.rdi.mc.chunkcache.network.ChunkCacheAbsentPayload
 import calebxzau.rdi.mc.chunkcache.network.ChunkCacheCancelPayload
 import calebxzau.rdi.mc.chunkcache.network.ChunkCacheContextPayload
 import calebxzau.rdi.mc.chunkcache.network.ChunkCacheOfferPayload
 import calebxzau.rdi.mc.chunkcache.network.ChunkCacheResultPayload
 import calebxzau.rdi.mc.chunkcache.network.ChunkCacheRetirePayload
 import calebxzau.rdi.mc.chunkcache.network.ChunkCacheReusePayload
+import calebxzau.rdi.mc.chunkcache.network.ChunkCacheWarmupPayload
 import net.minecraft.server.level.ServerPlayer
 import net.minecraft.network.protocol.common.custom.CustomPacketPayload
 import net.neoforged.bus.api.SubscribeEvent
@@ -24,6 +26,10 @@ object ChunkCacheServerNetwork {
             .playToClient(ChunkCacheContextPayload.TYPE, ChunkCacheContextPayload.STREAM_CODEC, noop())
             .playToClient(ChunkCacheRetirePayload.TYPE, ChunkCacheRetirePayload.STREAM_CODEC, noop())
             .playToClient(ChunkCacheReusePayload.TYPE, ChunkCacheReusePayload.STREAM_CODEC, noop())
+            .playToClient(ChunkCacheWarmupPayload.TYPE, ChunkCacheWarmupPayload.STREAM_CODEC, noop())
+            .playToServer(ChunkCacheAbsentPayload.TYPE, ChunkCacheAbsentPayload.STREAM_CODEC, IPayloadHandler { payload, context ->
+                onMain(context) { player -> ChunkCacheServerService.absent(player, payload) }
+            })
             .playToServer(ChunkCacheOfferPayload.TYPE, ChunkCacheOfferPayload.STREAM_CODEC, IPayloadHandler { payload, context ->
                 onMain(context) { player -> ChunkCacheServerService.offer(player, payload) }
             })

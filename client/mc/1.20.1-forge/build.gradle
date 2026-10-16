@@ -12,8 +12,8 @@ plugins {
     id 'net.neoforged.moddev.legacyforge' version '2.0.141'
     id 'org.gradlex.extra-java-module-info' version '1.14.2'
     id 'idea'
-    id "org.jetbrains.kotlin.jvm" version "2.4.10"
-    id 'org.jetbrains.kotlin.plugin.serialization' version '2.4.10'
+    id "org.jetbrains.kotlin.jvm" version "2.4.21"
+    id 'org.jetbrains.kotlin.plugin.serialization' version '2.4.21'
 }
 
 // Ensure the common project is configured before we read its outputs
@@ -340,7 +340,7 @@ dependencies {
     compileOnly(annotationProcessor("io.github.llamalad7:mixinextras-common:0.5.3"))
     implementation(jarJar("io.github.llamalad7:mixinextras-forge:0.5.3"))
     // https://mvnrepository.com/artifact/org.jetbrains.kotlin/kotlin-stdlib
-    additionalRuntimeClasspath("org.jetbrains.kotlin:kotlin-stdlib:2.4.10")
+    additionalRuntimeClasspath("org.jetbrains.kotlin:kotlin-stdlib:2.4.21")
     implementation(project(":c-mc-common"))
     additionalRuntimeClasspath(project(":c-mc-common"))
     implementation(project(":rmcp-common"))
@@ -423,13 +423,13 @@ dependencies {
         modImplementation dep
     }
     compileOnly "dev.ftb.mods:ftb-chunks-forge:2001.3.8"
-    testImplementation 'org.jetbrains.kotlin:kotlin-test-junit5:2.4.10'
+    testImplementation 'org.jetbrains.kotlin:kotlin-test-junit5:2.4.21'
     testRuntimeOnly 'org.bytedeco:ffmpeg:8.0.1-1.5.13:windows-x86_64-gpl'
     testRuntimeOnly 'org.junit.jupiter:junit-jupiter-engine:6.1.1'
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher:6.1.1'
     // Match Minecraft's logging API instead of the older shared-library test dependency.
     testRuntimeOnly 'org.slf4j:slf4j-api:2.0.0'
-    zstdTestImplementation 'org.jetbrains.kotlin:kotlin-test-junit5:2.4.10'
+    zstdTestImplementation 'org.jetbrains.kotlin:kotlin-test-junit5:2.4.21'
     zstdTestImplementation 'com.github.luben:zstd-jni:1.5.7-11:win_amd64'
     zstdTestImplementation 'io.netty:netty-buffer:4.1.97.Final'
     zstdTestImplementation 'io.netty:netty-codec:4.1.97.Final'

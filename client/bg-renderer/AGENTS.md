@@ -116,7 +116,7 @@ One `2048x2048` static depth map is baked in `initialize()` from `terrainShadowB
 ## Activation and Fallback
 
 - `client/ui/src/main/kotlin/calebxzau/rdi/client/ui/AppBackground.kt` opens one renderer session for the application window and shows `bg.avif` before the first frame, after a renderer failure, or after low-performance fallback. A paused renderer keeps its last frame.
-- `client/ui/src/main/kotlin/calebxzau/rdi/client/Main.kt` activates rendering only when the window is not minimized and the route is `MenuRoute` or `LoginRoute`.
+- `client/ui/src/main/kotlin/calebxzau/rdi/client/Main.kt` activates rendering only when the window is focused (`LocalWindowInfo.isWindowFocused`) and not minimized, and the route is `MenuRoute` or `LoginRoute`.
 - The static fallback `bg.avif` still shows the old scene; replacing it with a capture of the new scene is a UI-side decision.
 
 Do not move route, window, Compose theme, or fallback-resource policy into `:bg-renderer`.

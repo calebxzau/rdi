@@ -17,9 +17,16 @@ class RdiExtensionChannels21Test {
     }
 
     @Test
+    fun `both sides announce zlib tails`() {
+        assertTrue(RdiExtensionChannels21.ZLIB_TAIL in RdiExtensionChannels21.supportedChannels(client = false))
+        assertTrue(RdiExtensionChannels21.ZLIB_TAIL in RdiExtensionChannels21.supportedChannels(client = true))
+    }
+
+    @Test
     fun `only negotiated PLAY channels arm extensions`() {
         assertNegotiation(RdiExtensionChannels21.STREAM, 1)
         assertNegotiation(RdiExtensionChannels21.REFERENCES, 4)
+        assertNegotiation(RdiExtensionChannels21.ZLIB_TAIL, 8)
     }
 
     private fun assertNegotiation(id: net.minecraft.resources.ResourceLocation, expectedMask: Int) {

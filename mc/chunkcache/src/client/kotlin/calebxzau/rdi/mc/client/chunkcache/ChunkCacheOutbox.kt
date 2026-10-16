@@ -28,23 +28,25 @@ class ChunkCacheOutbox<O>(private val idOf: (O) -> Long) {
     }
 
     /**
-     * Sends cancels first, so the server frees ledger room before new offers, then at most [maxOffers] offers.
-     * The server rejects more than one batch of offers per tick; the rest wait for the next client tick.
+     * Sends cancels first, so the server frees ledger room before new offers, then at most [maxOffers] offers in
+     * packets of [maxOffersPerPacket]. The server rejects more offers per tick than it agreed to; the rest wait for
+     * the next client tick.
      */
     fun drain(
         maxCancelsPerPacket: Int,
         maxOffers: Int,
         sendCancels: (List<Long>) -> Unit,
         sendOffers: (List<O>) -> Unit,
+        maxOffersPerPacket: Int = maxOffers,
     ) {
-        require(maxCancelsPerPacket > 0 && maxOffers > 0)
+        require(maxCancelsPerPacket > 0 && maxOffers > 0 && maxOffersPerPacket > 0)
         if (cancels.isNotEmpty()) {
             cancels.chunked(maxCancelsPerPacket).forEach(sendCancels)
             cancels.clear()
         }
         if (offers.isNotEmpty()) {
             val batch = offers.subList(0, minOf(maxOffers, offers.size))
-            sendOffers(ArrayList(batch))
+            batch.chunked(maxOffersPerPacket).forEach { sendOffers(ArrayList(it)) }
             batch.clear()
         }
     }

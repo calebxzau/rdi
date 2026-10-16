@@ -75,7 +75,7 @@ private val MenuNavItems = listOf(
 )
 
 private const val MENU_TILE_ROWS = 3
-private val MenuTileSize = iconTileSize(110.dp)
+private val MenuTileSize = iconTileSize(126.dp)
 private val MenuGridPadding = PaddingValues(horizontal = 16.dp, vertical = 16.dp)
 
 /** 与[GlassTileGrid]自身高度一致，加载中、空列表时占位不跳动。 */
@@ -294,11 +294,11 @@ fun MenuScreen(
         ) {
             if (gridHovered) {
                 sponsorBitmap?.let { bitmap ->
-                    Text(
+                    /*Text(
                         "支持rdi继续走下去",
                         color = Color.White,
                         style = MaterialTheme.typography.bodyMedium
-                    )
+                    )*/
                     Image(
                         bitmap = bitmap,
                         contentDescription = null,

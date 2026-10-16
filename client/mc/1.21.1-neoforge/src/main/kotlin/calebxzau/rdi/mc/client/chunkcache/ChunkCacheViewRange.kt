@@ -1,5 +1,6 @@
 package calebxzau.rdi.mc.client.chunkcache
 
+import calebxzau.rdi.mc.chunkcache.ChunkCacheLimits
 import net.minecraft.server.level.ChunkTrackingView
 
 /**
@@ -12,7 +13,6 @@ import net.minecraft.server.level.ChunkTrackingView
 internal object ChunkCacheViewRange {
     /** Matches the server's prefetch margin. */
     const val PREFETCH_MARGIN = 2
-    private const val MAX_SCAN_RADIUS = 34
 
     fun viewDistance(effectiveRenderDistance: Int): Int = effectiveRenderDistance.coerceIn(2, 32)
 
@@ -21,7 +21,7 @@ internal object ChunkCacheViewRange {
 
     /**
      * Square half-width containing every admitted chunk: the predicate reaches one chunk past its distance on the
-     * axes. At view distance 32 the cap drops only the outermost axis tips of the prefetch ring.
+     * axes. The cap covers the whole prefetch ring up to view distance 32.
      */
-    fun scanRadius(viewDistance: Int): Int = (viewDistance + PREFETCH_MARGIN + 1).coerceAtMost(MAX_SCAN_RADIUS)
+    fun scanRadius(viewDistance: Int): Int = (viewDistance + PREFETCH_MARGIN + 1).coerceAtMost(ChunkCacheLimits.MAX_SCAN_RADIUS)
 }

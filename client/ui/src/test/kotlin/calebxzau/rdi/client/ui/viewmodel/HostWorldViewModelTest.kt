@@ -57,6 +57,16 @@ class HostWorldViewModelTest {
     }
 
     @Test
+    fun davWhoIsNotInTheHostGetsEverySaveActionLikeTheOwner() {
+        val state = viewModel(FakeGateway(host()), self = ObjectId(), dav = true).uiState.value
+        assertTrue(state.isOwner)
+        assertTrue(state.canImportSave)
+        assertTrue(state.canRollback)
+        assertTrue(state.canResetWorld)
+        assertTrue(state.canDownload)
+    }
+
+    @Test
     fun membersOnlyDownloadTheSaveAndGuestsGetNothing() {
         val memberState = viewModel(FakeGateway(host()), self = member).uiState.value
         assertFalse(memberState.canImportSave)
@@ -168,7 +178,8 @@ class HostWorldViewModelTest {
         assertEquals("run-7", vm.uiState.value.downloadRunId)
     }
 
-    private fun viewModel(gateway: FakeGateway, self: ObjectId = owner) = HostWorldViewModel("host", gateway) { self }
+    private fun viewModel(gateway: FakeGateway, self: ObjectId = owner, dav: Boolean = false) =
+        HostWorldViewModel("host", gateway, selfId = { self }, selfIsDav = { dav })
 
     private fun host(mcVer: McVersion = McVersion.V201, loader: ModLoader = ModLoader.forge, version: Int = 2) = Host.DetailVo(
         _id = ObjectId(),

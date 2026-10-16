@@ -124,4 +124,27 @@ class TerrainHashTest {
         blocks: TerrainIdReader,
         biomes: TerrainIdReader,
     ): ByteArray = TerrainHash.sha1(0, 2, blocks, biomes)
+
+    @Test
+    fun sectionHasherMatchesSectionSha1() {
+        val biomes = IntArray(TerrainHash.BIOMES_PER_SECTION) { 3 + it % 5 }
+        val mixed = IntArray(TerrainHash.BLOCKS_PER_SECTION) { (it * 31) % 97 }
+        // A uniform section first leaves stale bytes in the thread's buffer; the next digest must not see them.
+        val uniform = IntArray(TerrainHash.BLOCKS_PER_SECTION) { 42 }
+        for (ids in listOf(uniform, mixed, uniform, IntArray(TerrainHash.BLOCKS_PER_SECTION) { if (it == 4095) 1 else 0 })) {
+            val hasher = TerrainHash.sectionHasher()
+            ids.forEach(hasher::add)
+            assertContentEquals(TerrainHash.sectionSha1(ids, biomes), hasher.finish(biomes))
+        }
+    }
+
+    @Test
+    fun sectionHasherRejectsInvalidInput() {
+        val biomes = IntArray(TerrainHash.BIOMES_PER_SECTION)
+        assertFailsWith<IllegalArgumentException> { TerrainHash.sectionHasher().add(-1) }
+        assertFailsWith<IllegalArgumentException> { TerrainHash.sectionHasher().apply { add(1) }.finish(biomes) }
+        val full = TerrainHash.sectionHasher()
+        repeat(TerrainHash.BLOCKS_PER_SECTION) { full.add(it) }
+        assertFailsWith<IllegalArgumentException> { full.add(0) }
+    }
 }

@@ -11,6 +11,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import calebxzau.rdi.client.ui.SimpleTooltip
 import calebxzau.rdi.client.ui.comp.NameInitialIcon
@@ -22,7 +23,7 @@ import calebxzhou.rdi.common.model.HostStatus
 import org.bson.types.ObjectId
 
 /**
- * Shared room tile (icon on top, name below): left click plays, right click opens details; a cursor-following hint (drawn by [CardHintHost]) explains both.
+ * Shared room tile (icon with online heads at the top-left and the owner's head at the bottom-right): left click plays, right click opens details; a cursor-following hint (drawn by [CardHintHost]) explains both.
  * [glass] is passed through to [IconTileCard]; see [TileGlass].
  */
 @Composable
@@ -42,14 +43,12 @@ fun UnifiedHostCard(
         title = hostName,
         detail = host.modpackName,
         detailVersion = host.packVersion,
-        ownerId = host.ownerId,
         actions = listOfNotNull(
             CardHintAction(HintMouseButton.Left, if (playLoading) "启动中..." else "开玩", active = canPlay),
             onOpenDetail?.let { CardHintAction(HintMouseButton.Right, "详情 设置") },
         ),
     )
     IconTileCard(
-        title = hostName,
         hint = hint,
         modifier = modifier,
         statusDotColor = host.status.statusDotColor(),
@@ -63,11 +62,16 @@ fun UnifiedHostCard(
             iconUrl = host.iconUrl,
             fallbackName = host.modpackName.ifBlank { hostName },
             onlinePlayerIds = host.onlinePlayerIds,
+            ownerId = host.ownerId,
             playLoading = playLoading,
             modifier = Modifier.fillMaxSize(),
         )
     }
 }
+
+/** 在线玩家头像边长；房主头像是它的1.5倍。 */
+private val ONLINE_HEAD_SIZE = 18.dp
+private val OWNER_HEAD_SIZE = ONLINE_HEAD_SIZE * 1.5f
 
 private val HOST_STARTING_COLOR = Color(0xFFFFC107)
 
@@ -83,6 +87,7 @@ private fun UnifiedHostIcon(
     iconUrl: String?,
     fallbackName: String,
     onlinePlayerIds: List<ObjectId>,
+    ownerId: ObjectId?,
     playLoading: Boolean,
     modifier: Modifier = Modifier,
 ) {
@@ -120,30 +125,40 @@ private fun UnifiedHostIcon(
                 verticalArrangement = Arrangement.spacedBy(2.dp),
             ) {
                 onlinePlayerIds.forEach { uid ->
-                    HeadBadge(uid)
+                    HeadBadge(uid, ONLINE_HEAD_SIZE)
                 }
             }
+        }
+        if (ownerId != null) {
+            HeadBadge(
+                uid = ownerId,
+                size = OWNER_HEAD_SIZE,
+                modifier = Modifier.align(Alignment.BottomEnd).offset(x = 3.dp, y = 3.dp),
+                tooltipPrefix = "房主 ",
+            )
         }
     }
 }
 
-/** Player head pinned onto the icon; the surface-colored ring keeps it readable on any icon. */
+/** Player head pinned onto the icon, [size] wide; the surface-colored ring keeps it readable on any icon. */
 @Composable
-private fun HeadBadge(uid: ObjectId, modifier: Modifier = Modifier) {
+private fun HeadBadge(uid: ObjectId, size: Dp, modifier: Modifier = Modifier, tooltipPrefix: String = "") {
     val state = rememberPlayerHeadState(uid)
-    val badgeShape = RoundedCornerShape(4.dp)
+    // 圆角与描边随头像尺寸等比缩放
+    val scale = size / ONLINE_HEAD_SIZE
+    val badgeShape = RoundedCornerShape(4.dp * scale)
     Box(modifier) {
-        SimpleTooltip(state.name) {
+        SimpleTooltip("${tooltipPrefix}${state.name}") {
             Box(
                 modifier = Modifier
-                    .size(18.dp)
+                    .size(size)
                     .clip(badgeShape)
                     .background(MaterialTheme.colorScheme.surface, badgeShape)
-                    .padding(1.5.dp),
+                    .padding(1.5.dp * scale),
             ) {
                 PlayerHead(
                     skinImage = state.skinImage,
-                    modifier = Modifier.fillMaxSize().clip(RoundedCornerShape(2.dp)),
+                    modifier = Modifier.fillMaxSize().clip(RoundedCornerShape(2.dp * scale)),
                 )
             }
         }

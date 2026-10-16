@@ -23,6 +23,7 @@ import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.WindowDecoration
@@ -256,7 +257,8 @@ fun main() {
                         },
                         onOpenWardrobe = { navController.navigate(WardrobeRoute) }
                     ) { onOpenTask ->
-                        val dynamicBackgroundActive = !windowState.isMinimized &&
+                        val dynamicBackgroundActive = LocalWindowInfo.current.isWindowFocused &&
+                            !windowState.isMinimized &&
                             (currentBackStackEntry?.destination?.hasRoute<MenuRoute>() == true ||
                                 currentBackStackEntry?.destination?.hasRoute<LoginRoute>() == true)
                         Box(modifier = Modifier.fillMaxSize()) {

@@ -23,7 +23,7 @@ import static calebxzhou.rdi.mc.common.RDI.HOST_ID;
 /** Captures detached server packet data in network order and binds cache metadata on the game thread. */
 public final class RdiChunkCache {
     private static final Logger LOGGER = LogUtils.getLogger();
-    private static final int MAX_BASE_HANDOFF_ENTRIES = 4096;
+    private static final int MAX_BASE_HANDOFF_ENTRIES = 8192;
     /** Updates are small; the byte bound limits memory while the client thread is busy, e.g. loading recipe viewers. */
     private static final int MAX_DELTA_HANDOFF_ENTRIES = 65_536;
     private static final long MAX_PACKET_HANDOFF_BYTES = 256L * 1024 * 1024;
@@ -211,7 +211,11 @@ public final class RdiChunkCache {
         }
     }
 
-    /** Called from packet-handler tails after vanilla has applied each update on the game thread. */
+    /**
+     * Called from packet-handler tails after vanilla has applied each update on the game thread. An update for a chunk
+     * the client has not loaded changed nothing, so its cached terrain is left alone; 1.20.1 servers send such updates
+     * for chunks held back during warm-up, which must stay offerable. The chunk's next packet saves it again.
+     */
     public static void receivedDelta(ClientLevel level, Packet<?> packet, PacketCaptureContext context) {
         if (context == null) return;
         Session session = context.owner;
@@ -221,6 +225,7 @@ public final class RdiChunkCache {
             for (long chunk : ClientChunkDeltaPacketHandoff.affectedChunks(packet)) {
                 int x = ChunkPos.getX(chunk);
                 int z = ChunkPos.getZ(chunk);
+                if (!level.getChunkSource().hasChunk(x, z)) continue;
                 if (!ChunkCacheClient.waitingForRepair(level, x, z)) invalidate(session, level, x, z);
             }
             return;
@@ -232,7 +237,7 @@ public final class RdiChunkCache {
             for (var update : detached.updates()) {
                 int x = update.x();
                 int z = update.z();
-                if (ChunkCacheClient.waitingForRepair(level, x, z)) continue;
+                if (!level.getChunkSource().hasChunk(x, z) || ChunkCacheClient.waitingForRepair(level, x, z)) continue;
                 long estimatedBytes = 128 + update.estimatedBytes();
                 if (estimatedBytes > ClientChunkSnapshot.MAX_SNAPSHOT_BYTES) {
                     invalidate(session, level, x, z);

@@ -1,9 +1,10 @@
 package calebxzhou.rdi.client.ui.comp
 
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -12,9 +13,12 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
-import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.draw.drawWithCache
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.layout.LayoutCoordinates
@@ -25,15 +29,15 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntRect
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.round
+import androidx.compose.ui.unit.toIntSize
 import androidx.compose.ui.unit.sp
 import calebxzau.rdi.client.lgr
 import calebxzau.rdi.client.ui.loadIconBitmap
-import calebxzhou.rdi.client.service.rememberPlayerHeadState
-import org.bson.types.ObjectId
 
 /** Mouse buttons a hint can explain, each drawn with its own glyph. */
 internal enum class HintMouseButton(iconName: String) {
@@ -56,20 +60,18 @@ internal data class CardHintAction(
 )
 
 /**
- * What a hovered card wants shown next to the cursor: a full-length [title] (the card itself cuts it
- * to one line), an optional one-line [detail], an optional owner row and the mouse [actions].
- * A version string follows its line in a muted color.
+ * What a hovered card wants shown below itself: a full-length [title], an optional one-line [detail]
+ * and the mouse [actions]. A version string follows its line in a muted color.
  */
 internal data class CardHint(
     val title: String,
     val titleVersion: String = "",
     val detail: String = "",
     val detailVersion: String = "",
-    val ownerId: ObjectId? = null,
     val actions: List<CardHintAction> = emptyList(),
 )
 
-private data class ShownCardHint(val owner: Any, val cursorInWindow: Offset, val hint: CardHint)
+private data class ShownCardHint(val owner: Any, val anchorInWindow: Rect, val hint: CardHint)
 
 /**
  * Shared hint slot for every card under one [CardHintHost].
@@ -83,8 +85,9 @@ internal class CardHintState {
     /** Plain field: only read while laying out the overlay, never needs to trigger recomposition. */
     var containerCoordinates: LayoutCoordinates? = null
 
-    fun show(owner: Any, cursorInWindow: Offset, hint: CardHint) {
-        val shown = ShownCardHint(owner, cursorInWindow, hint)
+    /** Shows [hint] for [owner], pointing at [anchorInWindow]; call again whenever the card moves. */
+    fun show(owner: Any, anchorInWindow: Rect, hint: CardHint) {
+        val shown = ShownCardHint(owner, anchorInWindow, hint)
         if (current != shown) current = shown
     }
 
@@ -94,13 +97,16 @@ internal class CardHintState {
 
     @Composable
     fun Overlay(modifier: Modifier) {
-        current?.let { CardHintOverlay(it, this, modifier) }
+        current?.let { shown ->
+            // 每换一张卡片重新淡入
+            key(shown.owner) { CardHintOverlay(shown, this, modifier) }
+        }
     }
 }
 
 internal val LocalCardHintState = staticCompositionLocalOf<CardHintState?> { null }
 
-/** Wrap a screen with this so the cards inside it can show their cursor-following hint. */
+/** Wrap a screen with this so the cards inside it can show their hint below themselves. */
 @Composable
 fun CardHintHost(
     modifier: Modifier = Modifier,
@@ -115,49 +121,110 @@ fun CardHintHost(
     }
 }
 
-/** Places the hint below-right of the cursor (clearing the pointer glyph), flipping sides when it would leave the container. */
-internal fun cardMouseHintPosition(
-    cursor: IntOffset,
+/** 提示框与卡片之间的距离：避开选中框（卡片外8dp）。 */
+private val HINT_ANCHOR_GAP = 10.dp
+private val HINT_ARROW_WIDTH = 14.dp
+private val HINT_ARROW_HEIGHT = 7.dp
+/** 小三角离提示框左右边缘的最小距离，免得戳到圆角上。 */
+private val HINT_ARROW_EDGE_INSET = 16.dp
+private const val HINT_FADE_IN_MILLIS = 120
+
+/** Where the hint box goes ([offset]), whether it sits [below] the card, and the arrow tip's x inside the box ([arrowX]). */
+internal data class CardHintPlacement(val offset: IntOffset, val below: Boolean, val arrowX: Int)
+
+/**
+ * Centers the hint under [anchor] with an arrow of [arrowHeight] pointing up at it; flips above when it does not fit below
+ * but fits above. The box stays inside the container and the arrow keeps [arrowInset] from the box edges.
+ */
+internal fun cardAnchoredHintPlacement(
+    anchor: IntRect,
     hintSize: IntSize,
     containerSize: IntSize,
     gap: Int,
-    belowGap: Int,
-): IntOffset {
-    val rightX = cursor.x + gap
-    val x = if (rightX + hintSize.width <= containerSize.width) rightX else cursor.x - gap - hintSize.width
-    val belowY = cursor.y + belowGap
-    val y = if (belowY + hintSize.height <= containerSize.height) belowY else cursor.y - gap - hintSize.height
-    return IntOffset(
-        x.coerceIn(0, (containerSize.width - hintSize.width).coerceAtLeast(0)),
-        y.coerceIn(0, (containerSize.height - hintSize.height).coerceAtLeast(0)),
+    arrowHeight: Int,
+    arrowInset: Int,
+): CardHintPlacement {
+    val belowY = anchor.bottom + gap + arrowHeight
+    val aboveY = anchor.top - gap - arrowHeight - hintSize.height
+    val below = belowY + hintSize.height <= containerSize.height || aboveY < 0
+    val y = if (below) belowY else aboveY
+    val centerX = anchor.center.x
+    val x = (centerX - hintSize.width / 2).coerceIn(0, (containerSize.width - hintSize.width).coerceAtLeast(0))
+    val arrowX = (centerX - x).coerceIn(arrowInset, (hintSize.width - arrowInset).coerceAtLeast(arrowInset))
+    return CardHintPlacement(
+        offset = IntOffset(x, y.coerceIn(0, (containerSize.height - hintSize.height).coerceAtLeast(0))),
+        below = below,
+        arrowX = arrowX,
     )
 }
 
 @Composable
 private fun CardHintOverlay(shown: ShownCardHint, state: CardHintState, modifier: Modifier) {
+    val alpha = remember { Animatable(0f) }
+    LaunchedEffect(Unit) { alpha.animateTo(1f, tween(HINT_FADE_IN_MILLIS)) }
+    val color = MaterialTheme.colorScheme.surfaceContainerHighest
     Layout(
-        modifier = modifier,
-        content = { CardHintContent(shown.hint) },
+        modifier = modifier.graphicsLayer { this.alpha = alpha.value },
+        content = {
+            CardHintContent(shown.hint)
+            HintArrow(color, pointsUp = true)
+            HintArrow(color, pointsUp = false)
+        },
     ) { measurables, constraints ->
-        val placeable = measurables.single().measure(constraints.copy(minWidth = 0, minHeight = 0))
-        val cursor = state.containerCoordinates
+        val looseConstraints = constraints.copy(minWidth = 0, minHeight = 0)
+        val (content, arrowUp, arrowDown) = measurables.map { it.measure(looseConstraints) }
+        val anchor = state.containerCoordinates
             ?.takeIf { it.isAttached }
-            ?.windowToLocal(shown.cursorInWindow)
-            ?.round()
+            ?.let { container ->
+                val topLeft = container.windowToLocal(shown.anchorInWindow.topLeft)
+                IntRect(topLeft.round(), shown.anchorInWindow.size.toIntSize())
+            }
         layout(constraints.maxWidth, constraints.maxHeight) {
-            if (cursor != null) {
-                placeable.place(
-                    cardMouseHintPosition(
-                        cursor = cursor,
-                        hintSize = IntSize(placeable.width, placeable.height),
-                        containerSize = IntSize(constraints.maxWidth, constraints.maxHeight),
-                        gap = 12.dp.roundToPx(),
-                        belowGap = 20.dp.roundToPx(),
-                    ),
+            if (anchor != null) {
+                val placement = cardAnchoredHintPlacement(
+                    anchor = anchor,
+                    hintSize = IntSize(content.width, content.height),
+                    containerSize = IntSize(constraints.maxWidth, constraints.maxHeight),
+                    gap = HINT_ANCHOR_GAP.roundToPx(),
+                    arrowHeight = arrowUp.height,
+                    arrowInset = HINT_ARROW_EDGE_INSET.roundToPx(),
                 )
+                val box = placement.offset
+                val arrowLeft = box.x + placement.arrowX - arrowUp.width / 2
+                // 只放置朝向卡片的那个小三角，另一个不放置就不会绘制
+                if (placement.below) {
+                    arrowUp.place(arrowLeft, box.y - arrowUp.height)
+                } else {
+                    arrowDown.place(arrowLeft, box.y + content.height)
+                }
+                content.place(box)
             }
         }
     }
+}
+
+/** 提示框指向卡片的小三角，颜色与提示框一致。 */
+@Composable
+private fun HintArrow(color: Color, pointsUp: Boolean) {
+    Spacer(
+        Modifier
+            .size(HINT_ARROW_WIDTH, HINT_ARROW_HEIGHT)
+            .drawWithCache {
+                val path = Path().apply {
+                    if (pointsUp) {
+                        moveTo(0f, size.height)
+                        lineTo(size.width / 2f, 0f)
+                        lineTo(size.width, size.height)
+                    } else {
+                        moveTo(0f, 0f)
+                        lineTo(size.width / 2f, size.height)
+                        lineTo(size.width, 0f)
+                    }
+                    close()
+                }
+                onDrawBehind { drawPath(path, color) }
+            },
+    )
 }
 
 /** Plain Box rather than Surface: a non-clickable M3 Surface blocks pointer input, which would steal hover from the card. */
@@ -189,7 +256,6 @@ private fun CardHintContent(hint: CardHint) {
                         singleLine = true,
                     )
                 }
-                hint.ownerId?.let { OwnerHintItem(it) }
                 if (hint.actions.isNotEmpty()) {
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
@@ -233,28 +299,6 @@ private fun VersionedHintText(
         maxLines = if (singleLine) 1 else Int.MAX_VALUE,
         overflow = if (singleLine) TextOverflow.Ellipsis else TextOverflow.Clip,
     )
-}
-
-@Composable
-private fun OwnerHintItem(ownerId: ObjectId) {
-    val state = rememberPlayerHeadState(ownerId)
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(4.dp),
-    ) {
-        Text(text = "房主", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        PlayerHead(
-            skinImage = state.skinImage,
-            modifier = Modifier.size(14.dp).clip(RoundedCornerShape(2.dp)),
-        )
-        Text(
-            text = state.name,
-            modifier = Modifier.widthIn(max = 240.dp),
-            fontSize = 12.sp,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
-    }
 }
 
 @Composable

@@ -88,6 +88,17 @@ class HostRollbackServiceTest {
     }
 
     @Test
+    fun davCanRollBackAnotherPlayersHost() = runTest {
+        val host = access.addHost()
+        val (older, _) = takePoints(host)
+        val dav = ObjectId()
+        service.request(host, dav, HostRollbackCreateDto(older), ::stop, isDav = true)
+        val request = assertNotNull(SyncChunkRollbackFiles.readRequest(root(host)).getOrThrow())
+        assertEquals(older, request.pointId)
+        assertEquals(dav.toHexString(), request.requestedBy)
+    }
+
+    @Test
     fun invalidRequestsAreRejected() = runTest {
         val host = access.addHost()
         val (older, _) = takePoints(host)
