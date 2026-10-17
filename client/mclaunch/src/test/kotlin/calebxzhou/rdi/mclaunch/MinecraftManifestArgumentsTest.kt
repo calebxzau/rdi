@@ -1,15 +1,45 @@
 package calebxzau.rdi.mclaunch
 
 import calebxzau.rdi.mclaunch.model.MojangArguments
+import calebxzhou.rdi.common.model.LibraryOsArch
+import calebxzhou.rdi.common.serdesJson
 import calebxzau.rdi.mclaunch.model.MojangVersionManifest
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.jsonArray
 import java.io.File
 import java.nio.file.Files
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class MinecraftManifestArgumentsTest {
+    // The head of the vanilla 1.21.1 (and 1.20.1) client manifest's jvm arguments.
+    private val vanillaJvmArguments = serdesJson.parseToJsonElement(
+        """
+        [
+          {"rules": [{"action": "allow", "os": {"name": "osx"}}], "value": ["-XstartOnFirstThread"]},
+          {"rules": [{"action": "allow", "os": {"name": "windows"}}],
+           "value": "-XX:HeapDumpPath=MojangTricksIntelDriversForPerformance_javaw.exe_minecraft.exe.heapdump"},
+          "-Djava.library.path=${'$'}{natives_directory}"
+        ]
+        """.trimIndent()
+    ).jsonArray
+
+    @Test
+    fun macGameProcessStartsOnFirstThread() {
+        val args = resolveArgumentList(vanillaJvmArguments, LibraryOsArch.MAC_ARM64)
+        assertTrue("-XstartOnFirstThread" in args)
+        assertFalse(args.any { it.startsWith("-XX:HeapDumpPath=") })
+    }
+
+    @Test
+    fun windowsAndLinuxGameProcessesDoNotStartOnFirstThread() {
+        listOf(LibraryOsArch.WIN_X64, LibraryOsArch.LINUX_X64).forEach { osArch ->
+            assertFalse("-XstartOnFirstThread" in resolveArgumentList(vanillaJvmArguments, osArch), osArch.name)
+        }
+        assertTrue(resolveArgumentList(vanillaJvmArguments, LibraryOsArch.WIN_X64).any { it.startsWith("-XX:HeapDumpPath=") })
+    }
     @Test
     fun resolvesLegacyArgumentsAndLaunchTokens() {
         val manifest = MojangVersionManifest(

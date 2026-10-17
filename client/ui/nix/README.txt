@@ -17,8 +17,12 @@ gui要有桌面合成器(k11 xde gnome wayland...)
 或从https://adoptium.net 下载arm64版的.pkg
 
 【启动】
- 
+
  sh rdi.sh
+
+macOS也可以双击RDI.command启动。第一次双击如果提示"无法验证开发者"，
+先在"终端"里执行一次 sh rdi.sh（之后双击就不再提示），
+或者到"系统设置 → 隐私与安全性"里点"仍要打开"。
 
  
 

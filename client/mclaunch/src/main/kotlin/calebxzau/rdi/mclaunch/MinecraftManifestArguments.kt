@@ -18,7 +18,7 @@ private val hostOsArchRaw = System.getProperty("os.arch")?.lowercase(Locale.ROOT
 private val hostOsVersionRaw = System.getProperty("os.version").orEmpty()
 private val launcherFeatures: Map<String, Boolean> = emptyMap()
 
-fun resolveArgumentList(source: List<JsonElement>): List<String> {
+fun resolveArgumentList(source: List<JsonElement>, osArch: LibraryOsArch = hostOs): List<String> {
     val args = mutableListOf<String>()
     val ruleListSerializer = ListSerializer(MojangRule.serializer())
     source.forEach { element ->
@@ -26,7 +26,7 @@ fun resolveArgumentList(source: List<JsonElement>): List<String> {
             is JsonPrimitive -> if (element.isString) args += element.content
             is JsonObject -> {
                 val rules = element["rules"]?.let { serdesJson.decodeFromJsonElement(ruleListSerializer, it) }
-                if (!rulesAllow(rules)) return@forEach
+                if (!rulesAllow(rules, osArch)) return@forEach
                 when (val value = element["value"]) {
                     is JsonPrimitive -> if (value.isString) args += value.content
                     is JsonArray -> value.forEach { item ->
@@ -53,23 +53,24 @@ fun MojangVersionManifest.resolveGameArgumentList(): List<String> {
         .orEmpty()
 }
 
-fun MojangVersionManifest.resolveJvmArgumentList(): List<String> = resolveArgumentList(arguments.jvm)
+fun MojangVersionManifest.resolveJvmArgumentList(osArch: LibraryOsArch = hostOs): List<String> =
+    resolveArgumentList(arguments.jvm, osArch)
 
-fun rulesAllow(rules: List<MojangRule>?): Boolean {
+fun rulesAllow(rules: List<MojangRule>?, osArch: LibraryOsArch = hostOs): Boolean {
     if (rules.isNullOrEmpty()) return true
     var allowed = false
     rules.forEach { rule ->
-        if (rule.matchesHost()) {
+        if (rule.matchesHost(osArch)) {
             allowed = rule.action == MojangRuleAction.allow
         }
     }
     return allowed
 }
 
-private fun MojangRule.matchesHost(): Boolean {
+private fun MojangRule.matchesHost(osArch: LibraryOsArch): Boolean {
     os?.let { spec ->
         val osName = spec.name
-        if (osName != null && !hostOs.ruleOsName.equals(osName, true)) return false
+        if (osName != null && !osArch.ruleOsName.equals(osName, true)) return false
         val archSpec = spec.arch?.lowercase(Locale.ROOT)
         if (archSpec != null && !hostOsArchRaw.contains(archSpec)) return false
         spec.version?.let { versionSpec ->

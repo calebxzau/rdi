@@ -84,7 +84,9 @@ import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.launch
 import org.koin.core.context.startKoin
 import java.awt.Dimension
+import java.awt.Taskbar
 import java.awt.Toolkit
+import javax.imageio.ImageIO
 import calebxzau.rdi.client.ui.showFatalStartupErrorAndExit
 
 lateinit var ScreenSize: Pair<Dp, Dp>
@@ -141,6 +143,7 @@ fun main() {
     val displayDiagonalInches = readSingleDisplayDiagonalInches()
         .onFailure { cause -> lgr.warn(cause) { "读取显示器EDID失败，仅按屏幕分辨率决定窗口大小" } }
         .getOrElse { null }
+    if (LibraryOsArch.detectHostOs().isMac) setMacDockIcon()
     try {
         application {
         val windowIcon = remember {
@@ -355,5 +358,17 @@ private fun clearPackProcDirOnStartup() {
             .onFailure { cause ->
                 lgr.warn(cause) { "清理pack-proc目录失败" }
             }
+    }
+}
+
+// The Dock shows the generic Java icon unless the app sets one; the Dock name comes from rdi.sh's -Xdock:name.
+private fun setMacDockIcon() {
+    runCatching {
+        if (!Taskbar.isTaskbarSupported()) return
+        val taskbar = Taskbar.getTaskbar()
+        if (!taskbar.isSupported(Taskbar.Feature.ICON_IMAGE)) return
+        taskbar.iconImage = RDIClient.jarResource("icon.png").use { ImageIO.read(it) }
+    }.onFailure {
+        lgr.warn(it) { "设置Dock图标失败" }
     }
 }

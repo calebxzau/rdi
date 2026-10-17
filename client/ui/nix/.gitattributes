@@ -1,2 +1,3 @@
 # Linux/macOS run these with sh; CRLF breaks them.
 *.sh text eol=lf
+*.command text eol=lf

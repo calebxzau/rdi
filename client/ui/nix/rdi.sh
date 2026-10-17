@@ -129,8 +129,11 @@ detect_platform() {
 detect_platform
 
 if [ "$PLATFORM" = macos-arm64 ]; then
-    # Browsers mark downloaded files as quarantined; the script itself must not stay blocked.
-    xattr -d com.apple.quarantine "$SCRIPT" 2>/dev/null || true
+    # Browsers mark downloaded files as quarantined; the scripts themselves must not stay blocked.
+    # After one run from Terminal, RDI.command opens with a double-click without a Gatekeeper prompt.
+    for file in "$SCRIPT" "${ROOT}/RDI.command"; do
+        xattr -d com.apple.quarantine "$file" 2>/dev/null || true
+    done
 fi
 
 # ---------- HTTP ----------
@@ -409,11 +412,16 @@ jdk_candidates() {
     fi
     if command -v java >/dev/null 2>&1; then
         java_path=$(readlink -f "$(command -v java)" 2>/dev/null || command -v java)
-        dirname -- "$(dirname -- "$java_path")"
+        path_home=$(dirname -- "$(dirname -- "$java_path")")
+        # macOS's /usr/bin/java is a stub that may pop up an "install Java" dialog; java_home covers real JDKs.
+        if [ "$PLATFORM" != macos-arm64 ] || [ "$path_home" != /usr ]; then
+            printf '%s\n' "$path_home"
+        fi
     fi
     if [ "$PLATFORM" = macos-arm64 ]; then
         for home in /Library/Java/JavaVirtualMachines/*/Contents/Home \
             "$HOME"/Library/Java/JavaVirtualMachines/*/Contents/Home \
+            /opt/homebrew/opt/openjdk*/libexec/openjdk.jdk/Contents/Home \
             "$HOME"/.sdkman/candidates/java/*; do
             if [ -d "$home" ]; then printf '%s\n' "$home"; fi
         done
@@ -474,6 +482,8 @@ set -- -Dfile.encoding=UTF-8 "$@" -Drdi.debug="$DEBUG"
 if [ "$NO_UPDATE" = true ]; then set -- "$@" -Drdi.noUpdate=true; fi
 if [ "$SOLID_WINDOW" = true ]; then set -- "$@" -Drdi.window.transparent=false; fi
 if [ "$USE_HTTP" = true ]; then set -- "$@" -Drdi.noHttps=true; fi
+# The Dock and menu bar would otherwise show "java"; Main.kt sets the Dock icon.
+if [ "$PLATFORM" = macos-arm64 ]; then set -- "$@" -Xdock:name=RDI; fi
 set -- "$@" -Drdi.updater.islogmode="$APP_LOGS" -Drdi.server.url="$SERVER_URL" \
     -cp "lib/*" --enable-native-access=ALL-UNNAMED "$MAIN_CLASS"
 

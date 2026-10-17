@@ -10,7 +10,7 @@ import org.bytedeco.javacv.FFmpegFrameGrabber
 
 internal object FfmpegAvifNative {
     private const val ERROR_BUFFER_SIZE = 256L
-    private const val EAGAIN = -11
+    private val EAGAIN = FfmpegNativePlatform.current.averrorEagain
 
     private val decodeReadiness: Result<Unit> by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
         runCatching {

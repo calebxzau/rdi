@@ -18,6 +18,7 @@ import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import calebxzau.rdi.client.lgr
 import calebxzau.rdi.client.ui.CircleIconButton
+import calebxzau.rdi.client.ui.RenderFeatures
 import calebxzau.rdi.client.ui.decodeImageBitmap
 import calebxzau.rdi.playermodel.PlayerModelRenderer
 import calebxzau.rdi.playermodel.PlayerModelTexture
@@ -47,6 +48,12 @@ fun PlayerModel(
     maxRenderSide: Int = 480,
     noControl: Boolean = false
 ) {
+    if (!RenderFeatures.available) {
+        Box(modifier = modifier.background(backgroundColor), contentAlignment = Alignment.Center) {
+            PlayerHead(skinImage = skin, modifier = Modifier.fillMaxSize(0.5f).aspectRatio(1f))
+        }
+        return
+    }
     var viewport by remember { mutableStateOf(IntSize.Zero) }
     var autoRotateEnabled by remember(skin, cape, autoRotate) { mutableStateOf(autoRotate) }
     var walkEnabled by remember(skin, cape, animateWalk) { mutableStateOf(animateWalk) }

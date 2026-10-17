@@ -26,6 +26,9 @@ data class FfmpegNativePlatform(val classifier: String) {
 
     val ffmpegExecutable: String get() = if (isWindows) "ffmpeg.exe" else "ffmpeg"
 
+    /** AVERROR(EAGAIN): errno EAGAIN is 35 on macOS but 11 on Linux and Windows. */
+    val averrorEagain: Int get() = if (isMac) -35 else -11
+
     companion object {
         /** The platform of this JVM, named the way JavaCPP names its classifiers. */
         val current: FfmpegNativePlatform by lazy { FfmpegNativePlatform("${Loader.getPlatform()}-gpl") }

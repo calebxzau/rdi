@@ -28,6 +28,13 @@ class FfmpegNativePlatformTest {
     }
 
     @Test
+    fun eagainFollowsThePlatformErrno() {
+        assertEquals(-11, windows.averrorEagain)
+        assertEquals(-11, linux.averrorEagain)
+        assertEquals(-35, mac.averrorEagain)
+    }
+
+    @Test
     fun nativeJarNamesMatchOnlyTheirOwnPlatform() {
         assertTrue(linux.isNativeJarName("ffmpeg-8.0.1-1.5.13-linux-x86_64-gpl.jar"))
         assertFalse(linux.isNativeJarName("ffmpeg-8.0.1-1.5.13-windows-x86_64-gpl.jar"))

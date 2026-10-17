@@ -103,7 +103,7 @@
 
 ### 3.2发布物
 
-- 每个平台发一个完整包`rdi-<平台ID>.tar.gz`（2026-10-16改为完整包）：`rdi/rdi.sh`、`rdi/使用说明.txt`和`rdi/lib/`。Linux约130MB，mac约150MB。
+- 每个平台发一个完整包`rdi-<平台ID>.tar.gz`（2026-10-16改为完整包）：`rdi/rdi.sh`、`rdi/README.txt`和`rdi/lib/`；mac包另带可双击的`rdi/RDI.command`（2026-10-17）。`RDI.command`解压后带隔离标记，`rdi.sh`在mac上每次运行都会清掉它和自身的隔离标记，所以在终端里跑过一次`sh rdi.sh`之后，双击就不会再弹提示。Linux约130MB，mac约150MB。
 - `lib/`取自生成发布manifest的同一份`build/install/ui/<平台ID>/lib`，所以首次运行直接提示"UI库已是最新"；之后的版本只下载有变化的文件。完整包可以放群文件或网盘，不占服务器带宽，和Windows的`makeShipPackZst`思路一致。
 - 脚本仍然保留下载完整`lib/`的能力（`lib/`缺失或被删时自动补齐）。不需要`installer`。
 - 用`tar.gz`而不是zip，是为了保留`rdi.sh`的可执行位；说明里仍然写`sh rdi.sh`，可执行位丢了也能跑。
@@ -262,6 +262,7 @@ client-libs/ui/
    - `AppBackground.kt`：`available == false`时不调用`BackgroundRenderer.openSession()`，`AppBackgroundImage`直接用已有的`LocalAppBackgroundPainter`静态图。由于`LocalBackgroundRenderer`当前是必填的，要改成可空，或者提供一个空实现的`BackgroundRenderSession`。实施时看哪种对调用方改动更小。
    - Linux不用改：`BackgroundRenderSession`和`PlayerModelRenderSession`本来就在渲染线程里初始化，失败时通过`failure`状态降级（背景换静态图，玩家模型显示失败提示），不会崩溃（M1确认）。
    - `comp/PlayerModel.kt`（M2）：`available == false`时显示头像，共4个调用点：`MenuScreen`、`PlayerInfoScreen`、`SkinPreviewScreen`、`PlayerModel`自身。只改组件内部，调用方签名不变。
+   - M2已实现：`LocalBackgroundRenderer`改为可空，mac上不创建`BackgroundRenderSession`和`PlayerModelRenderSession`（GLFW在mac上只能在主线程用，渲染线程里初始化可能直接让JVM崩溃，而不只是走`failure`降级）。
    - `LibraryOsArch`补一个`isMac`属性。
 3. **`WindowsUtils.kt`的JDK校验**：
    - `resolveJavaExecutable`：目录模式按平台找`bin/java`或`bin/java.exe`；在mac上还要接受`.../Contents/Home`，以及用户选中`.jdk`包根目录时自动补上`Contents/Home`。
@@ -384,8 +385,11 @@ Arch: sudo pacman -S jdk25-openjdk
 
 ### 8.5macOS特殊处理
 
-- 首次运行时执行`xattr -dr com.apple.quarantine "$ROOT" 2>/dev/null || true`，避免浏览器下载的文件带隔离标记。JVM运行时自己解压的dylib不会被打标记。
+- 只对`rdi.sh`自身执行`xattr -d com.apple.quarantine`（M1实现）。`lib/`里的jar只被JVM当文件读，JVM解压出的dylib不带隔离标记，所以不需要`-dr`整个目录。
 - 启动器的JVM**不加**`-XstartOnFirstThread`（会和AWT冲突）。
+- Dock和菜单栏名称：`rdi.sh`在mac上加`-Xdock:name=RDI`；Dock图标由`Main.kt`用`java.awt.Taskbar`设置为`icon.png`（M2）。
+- JDK查找：mac上跳过`/usr`（`/usr/bin/java`是系统空壳，没装JDK时可能弹"安装Java"对话框），并补上Homebrew formula的`/opt/homebrew/opt/openjdk*/libexec/openjdk.jdk/Contents/Home`（M2）。
+- 设置页手动选JDK：mac上接受`.jdk`包、`Contents`和`Contents/Home`三种目录；用`-XshowSettings:properties`检查`os.arch`，Apple Silicon上选了x64版JDK时提示选arm64版（M2）。
 
 ### 8.6脚本自更新
 
@@ -451,13 +455,16 @@ Windows列用于回归：确认`DisplayModes`、sqlite原生库拆分、可复�
 **测试环境**：
 
 - linux-x64：可以先在WSL2+WSLg里做冒烟测试（需要在WSL里装Linux版JDK25，运行打好的`lib/`，不在WSL里跑Gradle），再找一台真Linux桌面（建议Ubuntu 24.04 GNOME Wayland，加一个X11桌面）复测。
-- macos-arm64：必须有一台Apple Silicon真机。
+- macos-arm64：用NoMac云Mac（macOS 26.6虚拟机，M5 Pro，8GB，有Rosetta，**没有GPU**）。注意事项（2026-10-17实测）：
+  - VM只有`Apple Software Renderer`（OpenGL 4.1）。GLFW的`nsgl_context.m`写死了`NSOpenGLPFAAccelerated`，MC会报`NSGL: Failed to find a suitable pixel format`。测试时用JVM agent `swgl`（替换`-[NSOpenGLPixelFormat initWithAttributes:]`去掉该属性，源码不进仓库），通过`JDK_JAVA_OPTIONS="-agentpath:.../libswgl.dylib"`注入启动器和它启动的MC进程（`JAVA_TOOL_OPTIONS`会让`javac -version`多输出一行，`rdi.sh`就认不出JDK）。已用LWJGL最小程序验证窗口能正常显示。
+  - 通过SSH启动的JVM不在图形会话里，AWT会进入headless模式；要用`open xxx.command`经Terminal.app启动。
+  - 性能、Retina缩放、真GPU驱动以后有真机时补测。
 
 ## 11.风险与后续项
 
 | 风险 | 影响 | 缓解 |
 |---|---|---|
-| MC进程在mac上需要`-XstartOnFirstThread`，早期加载窗口（GLFW）在mac上能否正常工作未验证 | mac上可能进不了游戏 | 阶段G优先测；必要时mac上关闭RDI早期画面，走Forge/NeoForge自带的流程 |
+| MC进程在mac上需要`-XstartOnFirstThread`，早期加载窗口（GLFW）在mac上能否正常工作未验证 | mac上可能进不了游戏 | 原版manifest的`osx`规则会给MC进程加`-XstartOnFirstThread`（已有单元测试）；`RdiDisplayWindow`的GLFW调用位置与NeoForge原版`DisplayWindow`一致，原版没有mac特殊处理。阶段G仍需实测；必要时mac上关闭RDI早期画面 |
 | 某个RDI jar不可复现（例如构建时写入时间或路径） | 合并出包时同名sha1冲突，发布失败 | Gradle 9默认可复现；冲突时错误信息列出文件名，逐个修 |
 | 玩家在Apple Silicon上装了x64版JDK | 加载x64原生库失败 | 8.4检查`os.arch`并提示 |
 | Linux最小化安装缺少`libpulse`、`libasound`、`libxcb`；`FfmpegNativePreloader`把`avdevice`当成必须加载的库 | 加载FFmpeg失败，整合包音频转码和游戏声音都受影响 | 阶段G在干净的Ubuntu桌面上验证；如果确实缺库，在说明文件里列出要装的包，或者评估能否把`avdevice`改成可选 |
@@ -489,8 +496,8 @@ A common平台模型
 
 0. **M0 Windows发布格式迁移**（2026-10-16完成，旧版`start.exe`端到端验证通过）：C里的sqlite拆分、可复现jar、合并出包（先只出`windows-x64`一份manifest），加上服务端改读`client-libs/ui/`。上线顺序：先把新格式版本复制到`client-libs/ui/`，再部署新服务端，然后用旧版`start.exe`验证能正常更新。这一步对玩家无感，可以先单独上线。
 1. **M1 Linux可玩**：A+B+C+D（去掉mac专项）+E，在WSLg和真Linux上跑通。（2026-10-16代码完成：单元测试通过；WSL里用假服务端验证了`rdi.sh`的首次安装、增量更新、下载失败保留旧库、中断恢复、更新锁、脚本自更新，并在WSLg里启动了客户端。WSLg没有可用的GL上下文，背景渲染按设计降级为静态图。待真Linux桌面手动测试。）
-2. **M2 macOS可玩**：D里的mac专项（渲染开关、JDK路径和架构检查、quarantine），在Apple Silicon真机上跑通。
-3. **M3 发布**：`makeNixShipPack`、说明文件、服务端上线`{version}.*.json`和`scripts/`。
+2. **M2 macOS可玩**：D里的mac专项（渲染开关、JDK路径和架构检查、quarantine），在Apple Silicon上跑通。（2026-10-17代码完成：渲染开关、JDK路径和架构检查、`rdi.sh`的JDK查找、Dock名称和图标；修了mac上AVIF解码失败的问题——`AVERROR(EAGAIN)`在mac上是-35，原来写死-11。单元测试通过；NoMac上`rdi.sh`找不到JDK的提示、启动器启动、背景图、Dock都正常；登录、下载整合包、启动1.21.1 NeoForge（Sodium）进房间都正常，`-XstartOnFirstThread`、RDI早期画面、OpenAL、FFmpeg解码（Opus）在mac上都能用。待测1.20.1 Forge。）
+3. **M3 发布**：`makeNixShipPack`、说明文件、服务端上线`{version}.*.json`和`scripts/`。（2026-10-17：`uiReleasePlatforms`加入`macos-arm64`；嵌套构建按平台设置`buildName`，否则第二个嵌套构建会以`:ui`的名字和第一个冲突；本地出6.6.4三平台包和两个tar.gz通过。服务端6.6.3已支持mac路由，不用改。发布由开发者手动执行。）
 
 ## 13.实施前待确认
 

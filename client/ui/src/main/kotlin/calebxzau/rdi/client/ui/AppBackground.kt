@@ -36,7 +36,8 @@ val LocalAppBackgroundPainter = staticCompositionLocalOf<Painter> {
     error("LocalAppBackgroundPainter is not provided")
 }
 
-val LocalBackgroundRenderer = staticCompositionLocalOf<BackgroundRenderSession> {
+/** null when [RenderFeatures.available] is false; the static background is shown instead. */
+val LocalBackgroundRenderer = staticCompositionLocalOf<BackgroundRenderSession?> {
     error("LocalBackgroundRenderer is not provided")
 }
 
@@ -57,8 +58,25 @@ fun AppBackgroundProvider(content: @Composable () -> Unit) {
         )
     }
 
-    val renderer = remember { BackgroundRenderer.openSession() }
+    val renderer = remember { if (RenderFeatures.available) BackgroundRenderer.openSession() else null }
     val hazeState = rememberHazeState()
+    if (renderer != null) {
+        BackgroundPlayerAppearanceEffect(renderer)
+        DisposableEffect(renderer) {
+            onDispose { renderer.close() }
+        }
+    }
+    CompositionLocalProvider(
+        LocalAppBackgroundPainter provides background,
+        LocalBackgroundRenderer provides renderer,
+        LocalAppBackgroundHazeState provides hazeState,
+        content = content
+    )
+}
+
+/** Keeps the background player's skin and cape in sync with the logged-in account. */
+@Composable
+private fun BackgroundPlayerAppearanceEffect(renderer: BackgroundRenderSession) {
     val account by AccountSessionStore.account.collectAsState()
     val fallbackSkin = remember {
         loadImageBitmap("assets/skins/steve.png").onFailure { error ->
@@ -89,15 +107,6 @@ fun AppBackgroundProvider(content: @Composable () -> Unit) {
     LaunchedEffect(renderer, coreSkin, coreCape) {
         renderer.setPlayerAppearance(coreSkin?.let { BackgroundPlayerAppearance(it, coreCape) })
     }
-    DisposableEffect(renderer) {
-        onDispose { renderer.close() }
-    }
-    CompositionLocalProvider(
-        LocalAppBackgroundPainter provides background,
-        LocalBackgroundRenderer provides renderer,
-        LocalAppBackgroundHazeState provides hazeState,
-        content = content
-    )
 }
 
 private fun ImageBitmap.toCoreSkin(slim: Boolean? = null): PlayerSkinTexture {
@@ -119,14 +128,19 @@ fun AppBackgroundImage(active: Boolean, modifier: androidx.compose.ui.Modifier =
     val fallback = LocalAppBackgroundPainter.current
     val renderer = LocalBackgroundRenderer.current
     val hazeState = LocalAppBackgroundHazeState.current
-    val frame by renderer.frame.collectAsState()
-    val failure by renderer.failure.collectAsState()
-    val lowPerformance by renderer.lowPerformance.collectAsState()
-    LaunchedEffect(active) {
-        renderer.setActive(active)
+    val painter = if (renderer == null) {
+        fallback
+    } else {
+        val frame by renderer.frame.collectAsState()
+        val failure by renderer.failure.collectAsState()
+        val lowPerformance by renderer.lowPerformance.collectAsState()
+        LaunchedEffect(renderer, active) {
+            renderer.setActive(active)
+        }
+        if (failure == null && !lowPerformance) frame ?: fallback else fallback
     }
     Image(
-        painter = if (failure == null && !lowPerformance) frame ?: fallback else fallback,
+        painter = painter,
         contentDescription = "rdi5 background",
         modifier = modifier.hazeSource(hazeState),
         contentScale = ContentScale.Crop

@@ -365,7 +365,7 @@ tasks.register<Test>("modpackUploadTest") {
 
 // One UI release carries a manifest per platform. This build resolves natives for rdiTargetPlatform;
 // the other platforms are staged by nested builds with -Prdi.targetPlatform.
-val uiReleasePlatforms = listOf("windows-x64", "linux-x64")
+val uiReleasePlatforms = listOf("windows-x64", "linux-x64", "macos-arm64")
 
 // File name markers of each platform's native jars, checked independently of target-platform.gradle.kts.
 val uiPlatformNativeMarkers = mapOf(
@@ -408,6 +408,8 @@ val nestedDesktopInstallLibs = uiReleasePlatforms.filter { it != rdiTargetPlatfo
             group = "distribution"
             description = "Stage the UI runtime libraries for $platform."
             setTasks(listOf("desktopInstallLibs"))
+            // Each nested build needs its own build path, or the second one clashes with the first as `:ui`.
+            buildName = "ui-$platform"
             startParameter.projectProperties = mapOf("rdi.targetPlatform" to platform)
             mustRunAfter("desktopInstallLibs")
             registered.lastOrNull()?.let { mustRunAfter(it) }
@@ -678,13 +680,15 @@ val nixShipPackTasks = nixShipPlatforms.map { platform ->
         group = "distribution"
         description = "Create rdi-$platform.tar.gz with rdi.sh, the guide and the UI libraries."
         notCompatibleWithConfigurationCache("checks the launcher script with a build script function")
-        doFirst { requireLfScript(nixScriptDir.file("rdi.sh").asFile) }
+        // macOS players can double-click RDI.command instead of typing sh rdi.sh in Terminal.
+        val scripts = if (platform == "macos-arm64") listOf("rdi.sh", "RDI.command") else listOf("rdi.sh")
+        doFirst { scripts.forEach { requireLfScript(nixScriptDir.file(it).asFile) } }
         archiveFileName.set("rdi-$platform.tar.gz")
         destinationDirectory.set(layout.buildDirectory.dir("nix-ship"))
         compression = Compression.GZIP
         into("rdi") {
             from(nixScriptDir) {
-                include("rdi.sh")
+                include(scripts)
                 filePermissions { unix("rwxr-xr-x") }
             }
             from(nixScriptDir) {
