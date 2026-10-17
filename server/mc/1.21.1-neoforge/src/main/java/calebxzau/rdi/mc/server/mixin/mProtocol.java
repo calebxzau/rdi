@@ -41,4 +41,10 @@ class mServerLoginPacketListener {
     private void injectUUID(ServerboundHelloPacket pPacket, CallbackInfo ci) {
         authenticatedProfile = new GameProfile(pPacket.profileId(), pPacket.name());
     }
+
+    // 120 seconds instead of 30, so a slow link can finish logging in.
+    @ModifyConstant(method = "tick", constant = @Constant(intValue = 600))
+    private int RDI$LoginTimeoutTicks(int ticks) {
+        return 2400;
+    }
 }

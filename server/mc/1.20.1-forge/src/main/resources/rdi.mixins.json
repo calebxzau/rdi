@@ -23,6 +23,7 @@
     "mPackListener",
     "mPersistentPacketQuery",
     "mPlusTimeout",
+    "mReadTimeout",
     "mRedundantTeamJoin",
     "mSaveBandwidth",
     "mServerLoginPacketListener"
