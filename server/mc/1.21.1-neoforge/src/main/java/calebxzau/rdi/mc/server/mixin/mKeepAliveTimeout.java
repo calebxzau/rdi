@@ -11,7 +11,8 @@ import org.spongepowered.asm.mixin.injection.ModifyConstant;
 /**
  * Keep-alive challenges still go out every 15 seconds, but the client has 120 seconds to answer one.
  * On a slow link the join burst queues ahead of the challenge, so vanilla's 15 second answer window
- * times players out while they are still loading in.
+ * times players out while they are still loading in. Network mods such as Connectivity may already
+ * own this constant; their timeout then applies instead, so the injection is optional.
  */
 @Mixin(ServerCommonPacketListenerImpl.class)
 public abstract class mKeepAliveTimeout {
@@ -21,7 +22,7 @@ public abstract class mKeepAliveTimeout {
     @Shadow
     private boolean keepAlivePending;
 
-    @ModifyConstant(method = "keepConnectionAlive", constant = @Constant(longValue = 15000L))
+    @ModifyConstant(method = "keepConnectionAlive", constant = @Constant(longValue = 15000L), require = 0)
     private long RDI$keepAliveTimeout(long interval) {
         return keepAlivePending ? RDI$KEEP_ALIVE_TIMEOUT_MILLIS : interval;
     }

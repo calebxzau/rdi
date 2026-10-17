@@ -925,6 +925,8 @@ private suspend fun downloadSingleStreamFromSources(
     }
 
     var lastError: Throwable? = null
+    // Each abandoned source's failure, attached to the final error so callers can report every source.
+    val sourceFailures = mutableListOf<Pair<String, Throwable>>()
 
     val hasMultipleSources = sources.size > 1
     val initialBytes = fileSizeOrZero(targetPath)
@@ -977,6 +979,7 @@ private suspend fun downloadSingleStreamFromSources(
                 if (t is DownloadValidationException) {
                     deleteQuietly(targetPath)
                     resumeState.clear()
+                    sourceFailures += source.url to t
                     break
                 }
                 if (shouldResume && t is ResumeMismatchException && !attemptedCleanAfterMismatch) {
@@ -995,12 +998,19 @@ private suspend fun downloadSingleStreamFromSources(
                     deleteQuietly(targetPath)
                     resumeState.clear()
                 }
+                sourceFailures += source.url to t
                 break
             }
         }
     }
 
-    throw (lastError ?: IOException("Single-stream download failed for all sources"))
+    val finalError = lastError ?: IOException("Single-stream download failed for all sources")
+    if (hasMultipleSources) {
+        sourceFailures.filter { (_, error) -> error !== finalError }.forEach { (url, error) ->
+            finalError.addSuppressed(IOException("${url}: ${error.message}", error))
+        }
+    }
+    throw finalError
 }
 
 private suspend fun downloadByRanges(
@@ -1574,6 +1584,10 @@ private suspend fun deleteQuietly(path: Path) {
             }
     }
 }
+
+/** Earlier sources' failures (suppressed) followed by the final one, so no source's reason is hidden. */
+fun Throwable.downloadFailureSummary(): String =
+    (suppressed.map { it.message } + message).filterNotNull().joinToString("；")
 
 private fun Throwable?.isRetryableDownloadFailure(): Boolean {
     val error = this ?: return false

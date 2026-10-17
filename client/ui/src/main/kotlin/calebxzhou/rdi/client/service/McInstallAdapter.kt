@@ -1,5 +1,7 @@
 package calebxzhou.rdi.client.service
 
+import calebxzhou.rdi.client.net.RServer
+import calebxzhou.rdi.client.net.server
 import calebxzhou.rdi.common.util.javaExePath
 import calebxzau.rdi.client.CONF
 import calebxzau.rdi.client.RDIClient
@@ -20,6 +22,8 @@ val mcInstall: McInstall by lazy {
                 assetObjectsDir = ClientDirs.assetObjectsDir,
             ),
             preferMirror = { CONF.preferMcMirror },
+            rdiServerUrl = { server.hqUrl },
+            rdiRequestHeaders = RServer::authHeadersFor,
             javaPath = { javaExePath },
             resourceLoader = { name -> runCatching { RDIClient.jarResource(name) } },
             launchPreparer = McLaunchPreparer { mcVersion, loader, versionId, versionDir, onProgress ->

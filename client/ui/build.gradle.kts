@@ -10,6 +10,8 @@ import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 import sun.jvmstat.monitor.MonitoredVmUtil.mainClass
 import java.io.File
 import java.io.InputStream
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
 import java.security.MessageDigest
 import java.util.zip.CRC32
 import java.util.zip.ZipEntry
@@ -607,33 +609,49 @@ val packageUiRelease = tasks.register("packageUiRelease") {
 }
 
 
+// Files.copy uses the OS copy (CopyFileExW on Windows). Gradle's Copy/Sync and Kotlin's File.copyTo
+// write 8KB at a time, which crawls at ~20Mbps over the \\rdi6 SMB share.
+fun publishFile(source: File, target: File) {
+    if (!source.isFile) throw GradleException("未找到发布文件: $source")
+    target.parentFile.mkdirs()
+    Files.copy(source.toPath(), target.toPath(), StandardCopyOption.REPLACE_EXISTING)
+}
+
+val repoRootDir = file("../..")
+
 fun registerCopyTask(name: String, extraDestinationRoots: List<String> = emptyList()) {
     val baseDestinationRoots = listOf(
         file("../../server/master/run/client-libs"),
         //     File(System.getProperty("user.home"), "Documents/rdi5ship/lib")
     )
     val destinationRoots = baseDestinationRoots + extraDestinationRoots.map { file(it) }
-    val copyTaskNames = destinationRoots.flatMapIndexed { index, destinationRoot ->
-        val uiDir = destinationRoot.resolve("ui")
-        val releaseFilesSync = tasks.register<Sync>("${name}Releases$index") {
-            dependsOn(packageUiRelease)
-            from(uiReleaseOutputDir)
-            into(uiDir.resolve(appVersion))
-        }
-        // latest.txt goes last, so the server never points at a half-copied version.
-        val latestSync = tasks.register<Copy>("${name}Latest$index") {
-            dependsOn(releaseFilesSync)
-            from(uiReleasesRootDir) {
-                include("latest.txt")
-            }
-            into(uiDir)
-        }
-        listOf(releaseFilesSync, latestSync)
-    }
 
     tasks.register(name) {
         group = "distribution"
-        dependsOn(copyTaskNames)
+        dependsOn(packageUiRelease)
+        notCompatibleWithConfigurationCache("copies the UI release at execution time")
+        doLast {
+            val releaseFiles = uiReleaseOutputDir.get().asFile.listFiles()?.filter { it.isFile }.orEmpty()
+            if (releaseFiles.isEmpty()) throw GradleException("UI发布包为空: ${uiReleaseOutputDir.get().asFile}")
+            val latestFile = uiReleasesRootDir.get().asFile.resolve("latest.txt")
+            val archiveId = "ui-release-${System.currentTimeMillis()}"
+            destinationRoots.forEachIndexed { index, destinationRoot ->
+                val uiDir = destinationRoot.resolve("ui")
+                val versionDir = uiDir.resolve(appVersion)
+                // Like the old Sync: files no longer in this version leave the version dir, archived under DEL/.
+                val releaseNames = releaseFiles.map { it.name }.toSet()
+                versionDir.listFiles()?.filter { it.name !in releaseNames }?.forEach { stale ->
+                    val archived = repoRootDir.resolve("DEL/$archiveId/client-libs-$index/ui/$appVersion/${stale.name}")
+                    archived.parentFile.mkdirs()
+                    Files.move(stale.toPath(), archived.toPath())
+                    logger.lifecycle("已归档旧文件$stale 到$archived")
+                }
+                releaseFiles.forEach { publishFile(it, versionDir.resolve(it.name)) }
+                // latest.txt goes last, so the server never points at a half-copied version.
+                publishFile(latestFile, uiDir.resolve(latestFile.name))
+                logger.lifecycle("已发布UI库${appVersion}到$uiDir")
+            }
+        }
     }
 }
 
@@ -658,7 +676,7 @@ fun registerNixScriptCopyTask(name: String, destinationRoots: List<File>) {
             requireLfScript(script)
             destinationRoots.forEach { root ->
                 val scriptsDir = root.resolve("scripts").also { it.mkdirs() }
-                script.copyTo(scriptsDir.resolve("rdi.sh"), overwrite = true)
+                publishFile(script, scriptsDir.resolve("rdi.sh"))
                 logger.lifecycle("已发布rdi.sh到$scriptsDir")
             }
         }
@@ -781,8 +799,8 @@ fun registerUpdaterTask(name: String, destinationDirs: List<File>) {
 
             destinationDirs.forEach { destinationDir ->
                 destinationDir.mkdirs()
-                compressedUpdater.copyTo(destinationDir.resolve(compressedUpdater.name), overwrite = true)
-                updaterSha1File.copyTo(destinationDir.resolve(updaterSha1File.name), overwrite = true)
+                publishFile(compressedUpdater, destinationDir.resolve(compressedUpdater.name))
+                publishFile(updaterSha1File, destinationDir.resolve(updaterSha1File.name))
                 logger.lifecycle("已发布updater到$destinationDir")
             }
         }

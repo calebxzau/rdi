@@ -75,15 +75,18 @@ class RServer(
             ModService.rdiModDownloadUrlProvider = { mod ->
                 "${server.hqUrl.trimEnd('/')}/mod/download/${mod.fileName.encodeURLPathPart()}"
             }
-            ModService.rdiModDownloadHeadersProvider = { url ->
-                val baseUrl = server.hqUrl.trimEnd('/')
-                if (!url.startsWith("$baseUrl/")) {
-                    emptyMap()
-                } else {
-                    loggedAccount.jwt?.takeIf(String::isNotBlank)
-                        ?.let { mapOf(HttpHeaders.Authorization to "Bearer $it") }
-                        ?: emptyMap()
-                }
+            ModService.rdiModDownloadHeadersProvider = ::authHeadersFor
+        }
+
+        /** Login token for downloads from the current RDI server; other hosts get none. */
+        fun authHeadersFor(url: String): Map<String, String> {
+            val baseUrl = server.hqUrl.trimEnd('/')
+            return if (!url.startsWith("$baseUrl/")) {
+                emptyMap()
+            } else {
+                loggedAccount.jwt?.takeIf(String::isNotBlank)
+                    ?.let { mapOf(HttpHeaders.Authorization to "Bearer $it") }
+                    ?: emptyMap()
             }
         }
 

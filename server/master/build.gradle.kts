@@ -202,6 +202,16 @@ tasks.register<Test>("uiReleaseTest") {
     useJUnitPlatform()
 }
 
+tasks.register<Test>("gameLibSourceTest") {
+    group = "verification"
+    description = "Runs focused game library source (RDI download source) tests."
+    dependsOn(tasks.named("testClasses"))
+    testClassesDirs = sourceSets["test"].output.classesDirs
+    classpath = sourceSets["test"].runtimeClasspath
+    include("**/calebxzau/rdi/server/service/gamelib/*Test.class")
+    useJUnitPlatform()
+}
+
 tasks.register<Test>("mongoConfigTest") {
     group = "verification"
     description = "Runs focused MongoDB client configuration tests."

@@ -27,6 +27,26 @@ import kotlin.test.assertTrue
 
 class FileDownloaderTest {
     @Test
+    fun `failure summary names every source`() = runBlocking {
+        val fixture = LocalDownloadServer()
+        fixture.add("/first") { exchange -> fixture.respond(exchange, 404, ByteArray(0)) }
+        fixture.add("/second") { exchange -> fixture.respond(exchange, 404, ByteArray(0)) }
+        try {
+            val result = fixture.tempDirectory.resolve("file.bin").downloadFileFrom(
+                urls = listOf(fixture.url("/first"), fixture.url("/second")),
+                knownSize = 4,
+                maxAttempts = 1,
+            ) {}
+
+            val summary = result.exceptionOrNull()?.downloadFailureSummary().orEmpty()
+            assertTrue(fixture.url("/first") in summary, summary)
+            assertTrue(fixture.url("/second") in summary, summary)
+        } finally {
+            fixture.close()
+        }
+    }
+
+    @Test
     fun `validation failure falls back to the next source`() = runBlocking {
         val fixture = LocalDownloadServer()
         fixture.add("/bad", "bad")

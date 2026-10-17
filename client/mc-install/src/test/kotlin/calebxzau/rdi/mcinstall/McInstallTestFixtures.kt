@@ -11,6 +11,8 @@ internal fun createTestMcInstall(
     },
     fabricArtifactDownloader: MinecraftArtifactDownloader? = null,
     launchPreparer: McLaunchPreparer = McLaunchPreparer { _, _, _, _, _ -> Result.success(Unit) },
+    preferMirror: Boolean = false,
+    rdiServerUrl: String? = null,
 ): McInstall {
     val mcDir = root.resolve("mc").toFile().apply { mkdirs() }
     val assetsDir = mcDir.resolve("assets").apply { mkdirs() }
@@ -24,7 +26,7 @@ internal fun createTestMcInstall(
                 assetIndexesDir = assetsDir.resolve("indexes").apply { mkdirs() },
                 assetObjectsDir = assetsDir.resolve("objects").apply { mkdirs() },
             ),
-            preferMirror = { false },
+            preferMirror = { preferMirror },
             javaPath = { "java" },
             resourceLoader = { name ->
                 runCatching {
@@ -36,6 +38,7 @@ internal fun createTestMcInstall(
             launchPreparer = launchPreparer,
             fabricMetadataFetcher = fabricMetadataFetcher,
             fabricArtifactDownloader = fabricArtifactDownloader,
+            rdiServerUrl = { rdiServerUrl },
         )
     )
 }

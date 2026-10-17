@@ -26,6 +26,10 @@ class McInstallEnvironment(
     val launchPreparer: McLaunchPreparer,
     val fabricMetadataFetcher: suspend (String) -> Result<String> = ::fetchFabricMetadata,
     val fabricArtifactDownloader: MinecraftArtifactDownloader? = null,
+    /** RDI server base URL, used as the last-resort source for Maven libraries; null disables it. */
+    val rdiServerUrl: () -> String? = { null },
+    /** Extra headers per download URL, e.g. the login token for the RDI server. */
+    val rdiRequestHeaders: (String) -> Map<String, String> = { emptyMap() },
 )
 
 private suspend fun fetchFabricMetadata(url: String): Result<String> = try {

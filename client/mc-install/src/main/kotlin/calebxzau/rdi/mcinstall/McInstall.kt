@@ -13,6 +13,8 @@ import calebxzhou.rdi.common.json
 import calebxzhou.rdi.common.model.*
 import calebxzhou.rdi.common.model.LibraryOsArch.Companion.detectHostOs
 import calebxzhou.rdi.common.net.DownloadProgress
+import calebxzhou.rdi.common.net.GameLibMaven
+import calebxzhou.rdi.common.net.downloadFailureSummary
 import calebxzhou.rdi.common.net.LocalArtifactHashAlgorithm
 import calebxzhou.rdi.common.net.LocalArtifactRequest
 import calebxzhou.rdi.common.net.LocalArtifactReuse
@@ -111,10 +113,14 @@ class McInstall(
     private val bracketedLibraryRegex = Regex("^\\[(.+)]$")
     private val numberedAssetRegex = Regex("^(.+?)(\\d+)(\\.[^./]+)$")
     private val VERIFIED_DOWNLOAD_MAX_ATTEMPTS = 6
-    private data class DownloadSourcePlan(
+    internal data class DownloadSourcePlan(
         val primaryUrls: List<String>,
-        val fallbackUrls: List<String> = emptyList()
-    )
+        val fallbackUrls: List<String> = emptyList(),
+        // The RDI server: tried only after every public source failed, whatever the order above.
+        val lastResortUrls: List<String> = emptyList(),
+    ) {
+        val urls get() = primaryUrls + fallbackUrls + lastResortUrls
+    }
 
     private val String.mirrorCandidateUrl: String
         get() {
@@ -134,10 +140,14 @@ class McInstall(
             return original
         }
 
-    private fun buildDownloadSourcePlan(
+    internal fun buildDownloadSourcePlan(
         officialUrl: String,
-        mirrorUrl: String = officialUrl.mirrorCandidateUrl
+        mirrorUrl: String = officialUrl.mirrorCandidateUrl,
+        sha1: String = "",
     ): DownloadSourcePlan {
+        val rdiUrls = listOfNotNull(
+            environment.rdiServerUrl()?.let { serverUrl -> GameLibMaven.rdiSourceUrl(serverUrl, officialUrl.trim(), sha1) }
+        )
         val officialUrls = listOf(officialUrl.trim())
             .filter { it.isNotBlank() }
             .distinct()
@@ -148,12 +158,14 @@ class McInstall(
         return if (environment.preferMirror()) {
             DownloadSourcePlan(
                 primaryUrls = mirrorUrls.ifEmpty { officialUrls },
-                fallbackUrls = if (mirrorUrls.isNotEmpty()) officialUrls else emptyList()
+                fallbackUrls = if (mirrorUrls.isNotEmpty()) officialUrls else emptyList(),
+                lastResortUrls = rdiUrls,
             )
         } else {
             DownloadSourcePlan(
                 primaryUrls = officialUrls,
-                fallbackUrls = mirrorUrls
+                fallbackUrls = mirrorUrls,
+                lastResortUrls = rdiUrls,
             )
         }
     }
@@ -422,7 +434,7 @@ class McInstall(
         if (resolvedUrl.isBlank()) {
             throw IllegalStateException("${target.name} 下载链接为空")
         }
-        val sourcePlan = buildDownloadSourcePlan(resolvedUrl)
+        val sourcePlan = buildDownloadSourcePlan(resolvedUrl, sha1 = artifact.sha1)
         return downloadVerifiedArtifact(
             label = "${target.name}库文件",
             artifact = artifact,
@@ -472,7 +484,7 @@ class McInstall(
 
     private fun DownloadSourcePlan.preferFallback(): DownloadSourcePlan {
         if (fallbackUrls.isEmpty()) return this
-        return DownloadSourcePlan(
+        return copy(
             primaryUrls = fallbackUrls,
             fallbackUrls = primaryUrls
         )
@@ -489,15 +501,16 @@ class McInstall(
             onProgress(DownloadProgress(target.length(), target.length(), 0.0))
             return Result.success(target)
         }
-        if (sourcePlan.primaryUrls.isEmpty() && sourcePlan.fallbackUrls.isEmpty()) {
+        if (sourcePlan.urls.isEmpty()) {
             throw IllegalStateException("$label 下载链接为空")
         }
         var attempt = 1
         var currentSourcePlan = sourcePlan
         while (true) {
             val result = target.toPath().downloadFileFrom(
-                urls = currentSourcePlan.primaryUrls + currentSourcePlan.fallbackUrls,
-                knownSize = artifact.size
+                urls = currentSourcePlan.urls,
+                knownSize = artifact.size,
+                urlHeadersProvider = environment.rdiRequestHeaders,
             ) { progress ->
                 onProgress(progress)
             }
@@ -505,7 +518,8 @@ class McInstall(
             if (error != null) {
                 target.delete()
                 if (attempt >= VERIFIED_DOWNLOAD_MAX_ATTEMPTS || !isRetryableArtifactDownloadFailure(error)) {
-                    throw error
+                    // Name every source's reason, not only the last source tried.
+                    throw if (error.suppressed.isEmpty()) error else IOException(error.downloadFailureSummary(), error)
                 }
                 scheduleArtifactRetry(label, attempt, error)
                 attempt++
@@ -813,7 +827,7 @@ class McInstall(
         var attempt = 0
         while (true) {
             val result = targetFile.toPath().downloadFileFrom(
-                urls = sourcePlan.primaryUrls + sourcePlan.fallbackUrls,
+                urls = sourcePlan.urls,
                 knownSize = asset.size,
                 validator = { downloadedPath ->
                     if (
@@ -1709,9 +1723,10 @@ class McInstall(
         }
         installer.parentFile?.mkdirs()
         ctx.emit(Task2Progress("开始下载Fabric安装器", 0f))
-        val sourcePlan = buildDownloadSourcePlan(FABRIC_INSTALLER_URL)
+        val sourcePlan = buildDownloadSourcePlan(FABRIC_INSTALLER_URL, sha1 = expectedSha1)
         installer.toPath().downloadFileFrom(
-            urls = sourcePlan.primaryUrls + sourcePlan.fallbackUrls,
+            urls = sourcePlan.urls,
+            urlHeadersProvider = environment.rdiRequestHeaders,
             validator = { path ->
                 if (path.sha1.equals(expectedSha1, true)) Result.success(Unit)
                 else Result.failure(IllegalStateException("Fabric安装器SHA1校验失败"))
@@ -1873,9 +1888,10 @@ class McInstall(
         }
 
         ctx.emit(Task2Progress("开始下载...", 0f))
-        val sourcePlan = buildDownloadSourcePlan(loaderMeta.installerUrl)
+        val sourcePlan = buildDownloadSourcePlan(loaderMeta.installerUrl, sha1 = loaderMeta.installerSha1)
         installer.toPath().downloadFileFrom(
-            urls = sourcePlan.primaryUrls + sourcePlan.fallbackUrls,
+            urls = sourcePlan.urls,
+            urlHeadersProvider = environment.rdiRequestHeaders,
             validator = { path ->
                 val actualSha1 = path.sha1
                 if (actualSha1 == loaderMeta.installerSha1) {
@@ -2118,7 +2134,7 @@ class McInstall(
         label = label,
         artifact = artifact,
         target = target,
-        sourcePlan = buildDownloadSourcePlan(resolveArtifactUrl(artifact)),
+        sourcePlan = buildDownloadSourcePlan(resolveArtifactUrl(artifact), sha1 = artifact.sha1),
         onProgress = onProgress
     )
 
