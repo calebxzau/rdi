@@ -29,6 +29,7 @@ import java.nio.file.LinkOption
 
 object HostContainerService {
     internal const val FORGEGUARD_CONTAINER_PATH = "/opt/forgeguard.jar"
+    private const val PACKSYNC_MOD_PREFIX = "packsync-"
     private const val MC_LOG4J2_FILE_NAME = "mc-log4j2.xml"
     internal const val MC_LOG4J2_CONTAINER_PATH = "/opt/rdi/mc-log4j2.xml"
     private const val MC_LOG4J2_CONFIGURATION_ARG = "-Dlog4j.configurationFile=$MC_LOG4J2_CONTAINER_PATH"
@@ -266,7 +267,12 @@ object HostContainerService {
     internal fun isServerInstalledMod(mod: Mod): Boolean =
         mod.side != Mod.Side.CLIENT &&
                 mod.side != Mod.Side.UNKNOWN &&
-                !mod.fileName.startsWith(CLIENT_ONLY_MARK_PREFIX)
+            !mod.fileName.startsWith(CLIENT_ONLY_MARK_PREFIX) &&
+            !isPackSyncModFileName(mod.fileName)
+
+    private fun isPackSyncModFileName(fileName: String): Boolean =
+        fileName.startsWith(PACKSYNC_MOD_PREFIX, ignoreCase = true) &&
+            fileName.endsWith(".jar", ignoreCase = true)
 
     internal fun Host.isDisabledMod(mod: Mod): Boolean =
         disabledMods.any { sameMod(it, mod) }
@@ -279,6 +285,14 @@ object HostContainerService {
             throw RequestError("房间Mod目录不能是软链接: ${modsDir.absolutePath}")
         }
         if (!modsDir.exists() || !modsDir.isDirectory) return
+        modsDir.listFiles()
+            ?.filter { file ->
+                isPackSyncModFileName(file.name) &&
+                    (Files.isRegularFile(file.toPath(), LinkOption.NOFOLLOW_LINKS) ||
+                        Files.isSymbolicLink(file.toPath()))
+            }
+            ?.forEach(::deleteHostModFile)
+
         val disabledServerMods = version.mods
             .filter(::isServerInstalledMod)
             .filter { isDisabledMod(it) }

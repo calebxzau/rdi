@@ -470,7 +470,7 @@ object ModpackVersionService {
         HostQueryService.findByModpackVersion(modpackId, name).filter { it.status != HostStatus.STOPPED }
 
     internal suspend fun Modpack.hostsUsing(): List<Host> =
-        HostQueryService.findByModpack(_id).filter { it.status != HostStatus.STOPPED }
+        HostQueryService.findByModpack(_id)
 
     suspend fun ModpackContext.deleteVersion() {
         val requestedName = versionNull?.name ?: throw RequestError("无此版本")
@@ -523,7 +523,9 @@ object ModpackVersionService {
 
     suspend fun ModpackContext.deleteModpack() {
         val hostsUsing = modpack.hostsUsing()
-        if (hostsUsing.isNotEmpty()) throw RequestError("以下主机用了此整合包，且正在运行，无法删除：${hostsUsing.map { it.name }}")
+        if (hostsUsing.isNotEmpty()) {
+            throw RequestError("以下房间正在使用此整合包，无法删除：${hostsUsing.joinToString("、") { it.name }}")
+        }
         modpack.dir.deleteRecursivelyNoSymlink()
         dbcl.deleteOne(eq("_id", modpack._id))
     }

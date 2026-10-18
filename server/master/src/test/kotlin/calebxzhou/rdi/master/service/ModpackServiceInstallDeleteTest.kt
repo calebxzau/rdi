@@ -53,7 +53,7 @@ class ModpackServiceInstallDeleteTest {
     }
 
     @Test
-    fun `delete modpack removes files and mongo document when no host is running`() = runTest {
+    fun `delete modpack removes files and mongo document when no host uses it`() = runTest {
         val owner = ModpackServiceTestFixtures.account()
         val pack = ModpackServiceTestFixtures.modpack(owner._id)
         pack.dir.mkdirs()
@@ -68,30 +68,30 @@ class ModpackServiceInstallDeleteTest {
     }
 
     @Test
-    fun `delete modpack rejects any non-stopped host`() = runTest {
+    fun `delete modpack rejects any host and includes its name`() = runTest {
         val owner = ModpackServiceTestFixtures.account()
         val pack = ModpackServiceTestFixtures.modpack(owner._id)
         val host = mockk<Host>()
         coEvery { HostQueryService.findByModpack(pack._id) } returns listOf(host)
-        io.mockk.every { host.status } returns HostStatus.STARTED
+        io.mockk.every { host.name } returns "正在运行的房间"
 
-        assertFailsWith<Exception> { ModpackContext(owner, pack, null).deleteModpack() }
+        val error = assertFailsWith<Exception> { ModpackContext(owner, pack, null).deleteModpack() }
+        assertTrue(error.message.orEmpty().contains("正在运行的房间"))
         coVerify(exactly = 0) { collection.deleteOne(any<Bson>(), any<DeleteOptions>()) }
     }
 
     @Test
-    fun `stopped hosts do not block modpack deletion`() = runTest {
+    fun `stopped hosts also block modpack deletion`() = runTest {
         val owner = ModpackServiceTestFixtures.account()
         val pack = ModpackServiceTestFixtures.modpack(owner._id)
-        coEvery { HostQueryService.findByModpack(pack._id) } returns listOf(mockk<Host> {
-            io.mockk.every { status } returns HostStatus.STOPPED
-        })
-        coEvery { collection.deleteOne(any<Bson>(), any<DeleteOptions>()) } returns mockk(relaxed = true)
+        val host = mockk<Host>()
+        io.mockk.every { host.name } returns "已停止的房间"
+        coEvery { HostQueryService.findByModpack(pack._id) } returns listOf(host)
 
-        ModpackContext(owner, pack, null).deleteModpack()
+        val error = assertFailsWith<Exception> { ModpackContext(owner, pack, null).deleteModpack() }
 
-        assertTrue(!pack.dir.exists())
-        coVerify(exactly = 1) { collection.deleteOne(any<Bson>(), any<DeleteOptions>()) }
+        assertTrue(error.message.orEmpty().contains("已停止的房间"))
+        coVerify(exactly = 0) { collection.deleteOne(any<Bson>(), any<DeleteOptions>()) }
     }
 
     @Test

@@ -43,6 +43,24 @@ class HostContainerServiceTest {
     }
 
     @Test
+    fun `cleanup removes all packsync jars including non-empty files and symlinks`() = withModsDir { modsDir ->
+        val blocked = modsDir.resolve("packsync-1.0.0.jar").apply { writeBytes(byteArrayOf(1)) }
+        val blockedUppercase = modsDir.resolve("PackSync-custom.JAR").apply { writeBytes(byteArrayOf(1)) }
+        val target = modsDir.resolve("target.jar").apply { writeBytes(byteArrayOf(1)) }
+        val blockedLink = modsDir.resolve("packsync-link.jar")
+        val linkCreated = runCatching {
+            Files.createSymbolicLink(blockedLink.toPath(), target.toPath())
+        }.isSuccess
+
+        cleanup(host(), version(), modsDir)
+
+        assertFalse(blocked.exists())
+        assertFalse(blockedUppercase.exists())
+        if (linkCreated) assertFalse(blockedLink.exists())
+        assertTrue(target.exists())
+    }
+
+    @Test
     fun `cleanup removes disabled aliases but preserves allowed names containing disabled slug`() = withModsDir { modsDir ->
         val disabledMod = mod("disabled-mod")
         val enabledMod = mod("disabled-mod-addon")
