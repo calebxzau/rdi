@@ -26,6 +26,34 @@ pub struct WorldSnapshotLimits {
     pub max_path_depth: usize,
 }
 
+#[derive(Debug, Clone, Copy, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorldCheckpointLimits {
+    pub max_upload_bytes: u64,
+    pub max_world_bytes: u64,
+    pub max_journal_bytes: u64,
+    pub max_file_bytes: u64,
+    pub max_metadata_bytes: u64,
+    pub max_world_entries: usize,
+    pub max_path_bytes: usize,
+    pub max_path_depth: usize,
+}
+
+impl Default for WorldCheckpointLimits {
+    fn default() -> Self {
+        Self {
+            max_upload_bytes: 256 * 1024 * 1024,
+            max_world_bytes: 8192 * 1024 * 1024,
+            max_journal_bytes: 1024 * 1024 * 1024,
+            max_file_bytes: 256 * 1024 * 1024,
+            max_metadata_bytes: 32 * 1024 * 1024,
+            max_world_entries: 100_000,
+            max_path_bytes: 1024,
+            max_path_depth: 64,
+        }
+    }
+}
+
 impl Default for WorldSnapshotLimits {
     fn default() -> Self {
         Self {
@@ -48,6 +76,7 @@ pub struct Config {
     pub max_upload_bytes: u64,
     pub sync_chunk_max_total: usize,
     pub world_snapshot: WorldSnapshotLimits,
+    pub world_checkpoint: WorldCheckpointLimits,
     pub public_host: Option<String>,
     pub tunnel_port: u16,
 }
@@ -60,6 +89,7 @@ impl Default for Config {
             max_upload_bytes: 256 * 1024 * 1024,
             sync_chunk_max_total: 256,
             world_snapshot: WorldSnapshotLimits::default(),
+            world_checkpoint: WorldCheckpointLimits::default(),
             public_host: None,
             tunnel_port: 25566,
         }
@@ -93,6 +123,7 @@ impl Config {
                     config.max_upload_bytes = mib
                         .checked_mul(1024 * 1024)
                         .context("upload limit overflow")?;
+                    config.world_checkpoint.max_upload_bytes = config.max_upload_bytes;
                 }
                 "--sync-chunk-max-total" => {
                     config.sync_chunk_max_total = args
@@ -104,33 +135,25 @@ impl Config {
                         bail!("SyncChunk total limit must be greater than zero");
                     }
                 }
-                "--world-snapshot-upload-mib" => {
+                "--max-world-mib" => {
                     let mib: u64 = args
                         .next()
-                        .context("--world-snapshot-upload-mib requires a number")?
+                        .context("--max-world-mib requires a number")?
                         .parse()
-                        .context("invalid world snapshot upload limit")?;
-                    let bytes = mib
+                        .context("invalid world limit")?;
+                    config.world_checkpoint.max_world_bytes = mib
                         .checked_mul(1024 * 1024)
-                        .context("world snapshot upload limit overflow")?;
-                    if bytes == 0 {
-                        bail!("world snapshot upload limit must be greater than zero");
-                    }
-                    config.world_snapshot.max_upload_bytes = bytes;
+                        .context("world limit overflow")?;
                 }
-                "--world-snapshot-expanded-mib" => {
+                "--max-journal-mib" => {
                     let mib: u64 = args
                         .next()
-                        .context("--world-snapshot-expanded-mib requires a number")?
+                        .context("--max-journal-mib requires a number")?
                         .parse()
-                        .context("invalid world snapshot expansion limit")?;
-                    let bytes = mib
+                        .context("invalid journal limit")?;
+                    config.world_checkpoint.max_journal_bytes = mib
                         .checked_mul(1024 * 1024)
-                        .context("world snapshot expansion limit overflow")?;
-                    if bytes == 0 {
-                        bail!("world snapshot expansion limit must be greater than zero");
-                    }
-                    config.world_snapshot.max_expanded_bytes = bytes;
+                        .context("journal limit overflow")?;
                 }
                 "--public-host" => {
                     config.public_host = Some(args.next().context("--public-host requires a host")?)
@@ -149,7 +172,7 @@ impl Config {
     }
     pub fn usage() {
         println!(
-            "dm-master\n\nOptions:\n  --http-listen ADDR                HTTP listen address (default 0.0.0.0:15566)\n  --data-dir PATH                   persistent data directory (default ./data)\n  --max-upload-mib N                max world-init upload (default 256)\n  --sync-chunk-max-total N          max SyncChunk entries per host (default 256)\n  --world-snapshot-upload-mib N     max world snapshot upload (default 256)\n  --world-snapshot-expanded-mib N   max expanded world snapshot bytes (default 1024)\n  --public-host HOST                public gateway host returned by /info\n  --tunnel-port PORT                gateway tunnel port (default 25566)"
+            "dm-master\n\nOptions:\n  --http-listen ADDR                HTTP listen address (default 0.0.0.0:15566)\n  --data-dir PATH                   persistent data directory (default ./data)\n  --max-upload-mib N                max world-init/checkpoint upload (default 256)\n  --sync-chunk-max-total N          max SyncChunk entries per host (default 256)\n  --max-world-mib N                 max playable checkpoint world (default 8192)\n  --max-journal-mib N               max unapplied checkpoint journal (default 1024)\n  --public-host HOST                public gateway host returned by /info\n  --tunnel-port PORT                gateway tunnel port (default 25566)"
         );
     }
 }

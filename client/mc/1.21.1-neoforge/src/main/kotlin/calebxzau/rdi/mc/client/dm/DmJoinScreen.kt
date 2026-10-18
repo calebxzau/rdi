@@ -110,7 +110,12 @@ class DmJoinScreen(private val parent: Screen) : Screen(Component.literal("加�
         val staging = Files.createTempDirectory(parentDirectory, "world-staging-")
         var published = false
         try {
-            client.downloadWorldInit(id, zip).getOrThrow()
+            val checkpoint = client.downloadWorldCheckpoint(id, zip)
+            if (checkpoint.isSuccess) {
+                checkpoint.getOrThrow()
+            } else {
+                client.downloadWorldInit(id, zip).getOrThrow()
+            }
             DmWorldInitArchive.extract(zip, staging).getOrThrow()
             if (generation.get() != token) throw java.util.concurrent.CancellationException("加入操作已取消")
             if (Files.exists(world)) moveToArchive(world, id)

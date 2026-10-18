@@ -1,7 +1,7 @@
 # dm-master
 
 `dm-master` stores distributed multiplayer hosts and serves the authoritative
-Sync Chunks（同步区块）roster and World Snapshot API. The gateway remains the
+Sync Chunks（同步区块）roster and World Checkpoint API. The gateway remains the
 game reverse proxy.
 
 ## Run
@@ -51,88 +51,50 @@ successful at capacity. The persisted chunk schema uses `ownerId`.
 Only the active routes above are accepted. Section-shaped requests, `ownerUuid`,
 and the former section-based routes are invalid.
 
-## World Snapshots (v5)
+## World Checkpoints (v6)
 
-The production synchronization route is
-`PUT /hosts/{hostId}/world-snapshot`. It accepts an `application/zip` body
-with `X-DM-Session`, positive `X-DM-Snapshot-Sequence`, nonnegative
-`X-DM-Sync-Revision`, UUIDv7 `X-DM-Sync-Cycle`, and lowercase SHA-1 of the
-entire upload in `X-DM-SHA1`. The status route is
-`GET /hosts/{hostId}/world-snapshot/status`.
+The production synchronization route is `PUT /hosts/{hostId}/world-checkpoint`. It
+uses `X-DM-Session`, positive `X-DM-Checkpoint-Sequence` (the old snapshot header
+is accepted during rollout), UUIDv7 `X-DM-Sync-Cycle`, and lowercase SHA-1 in
+`X-DM-SHA1`. `/info` advertises `worldCheckpointApiVersion: 3`.
 
-Metadata is `formatVersion: 5`, `kind: "world-snapshot"`, and
-`captureMode: "memory-and-files"`; `restoreSafe` is always `false`. It records
-the host/session, cycle, sequence, roster revision, capture time, all included
-WorldData files and directories, and observed chunk summaries. The root
-`world/level.dat` file is required. A cycle may contain zero chunks and may
-inherit unchanged file/column payloads from its declared base. Master stamps
-authoritative membership revisions and publishes one complete immutable directory.
-Uploads remain incremental ZIPs; no cumulative ZIP is built during synchronization.
+Each checkpoint is created after vanilla `saveEverything` and contains changed
+non-region files under `world/` plus opaque vanilla Anvil entries under
+`regions/<regionPath>/<index>`. Region members are stored without recompression.
+`metadata.json` is format6 `world-checkpoint` data and includes file hashes,
+removed files, region timestamps, sector counts, and a `baselineComplete` flag.
+The master applies the upload through a journal and keeps a directly playable
+world under `world-checkpoint/world/`. A download is available at
+`GET /hosts/{hostId}/world-checkpoint/download` once the baseline is complete.
 
-Fixed snapshots can be inspected with
-`GET /hosts/{hostId}/world-snapshot/{snapshotId}/manifest`. Snapshot downloads are
-not implemented for directory storage: the authenticated
-`GET /hosts/{hostId}/world-snapshot/{snapshotId}` route returns HTTP 501 with
-`DownloadUnavailable`. World-init downloads are unchanged. Only latest and previous
-snapshots are addressable; an in-flight operation can pin an older directory until it
-finishes. Unchanged files are hard-linked into a new snapshot, or copied if the
-filesystem cannot create a hard link. Changed files always receive new inodes.
+Session-authenticated inspection routes are:
 
-Snapshot status, manifest responses, and upload receipts declare `apiVersion: 2`;
-`/info` advertises `worldSnapshotApiVersion: 2`. Upload ZIP metadata remains v5.
-`manifestSha1` hashes the internal storage manifest and is not a ZIP hash.
-`expandedBytes` counts all payload files including `metadata.json`, excluding the
-internal `manifest.json`. `uploadSha1` and `uploadZipBytes` still describe the exact
-uploaded ZIP. The removed `archiveSha1`, `archiveZipBytes`, and `maxArchiveBytes`
-fields must not be synthesized by clients. The old `--world-snapshot-archive-mib`
-option is no longer accepted; upload, expanded-content, and per-member limits remain.
+- `GET /hosts/{hostId}/world-checkpoint/status`
+- `GET /hosts/{hostId}/world-checkpoint/files`
+- `GET /hosts/{hostId}/world-checkpoint/regions`
+- `GET /hosts/{hostId}/world-checkpoint/regions/{regionPath}`
 
-The archive derives native paths as
-`dimensions/<namespace>/<path>/<terrain|entities|poi>/<x>.<z>.nbt`. Dimension
-IDs are resource locations with one colon, safe lowercase namespace/path
-characters, and no empty, `.` or `..` components. Expanded, metadata, NBT,
-file-count, compressed-upload, SHA-1, CRC, and path checks are enforced.
+The limits are published in status and can be changed with `--max-upload-mib`,
+`--max-world-mib` (default8192), and `--max-journal-mib` (default1024). Region
+compression bytes are opaque to the master; the client only taps vanilla
+`RegionFile` writes. If the host exits abnormally, the playable world can lag by
+about one minute, with small item duplication or loss windows. A second copy of
+the same world must not host concurrently; takeover and lineage fencing remain
+out of scope.
 
-Membership revisions are created when a chunk is added and removed when it is
-deleted. Deleting and re-adding a coordinate therefore invalidates retained
-content from the earlier incarnation. Publication uses an atomic state pointer
-and preserves the latest and previous directories. Preparation writes and syncs files
-before the short publication gate; pointer durability failures are reconciled against
-persisted state before any candidate is retired. Recursive cleanup runs outside the
-publication/retention locks. Startup recovery validates retained snapshots and removes
-only recognized orphan directories owned by the new layout. Missing/corrupt retained
-data is a storage failure, never silently treated as an empty snapshot.
-
-Full content validation is retained: this reduces content writes, but not all content
-reads. Server logs distinguish `snapshotExpandedBytes`, `linkedBytes`, `copiedBytes`,
-`writtenBytes`, and stage durations. Linked bytes are logical reused bytes, not disk
-writes. Hard-link fallback is logged.
-
-Persistent data is kept under:
+Persistent checkpoint data is kept under:
 
 ```text
-data/
-  hosts/<hostId>/host.json
-  hosts/<hostId>/world-init.zip
-  hosts/<hostId>/sync-chunks.json
-  hosts/<hostId>/world-snapshots/directories-v1/state.json
-  hosts/<hostId>/world-snapshots/directories-v1/snapshots/<snapshotId>/metadata.json
-  hosts/<hostId>/world-snapshots/directories-v1/snapshots/<snapshotId>/manifest.json
-  hosts/<hostId>/world-snapshots/directories-v1/snapshots/<snapshotId>/world/...
-  hosts/<hostId>/world-snapshots/directories-v1/snapshots/<snapshotId>/chunks/...
-  hosts/<hostId>/world-snapshots/directories-v1/staging/<operationId>/
-  hosts/<hostId>/world-snapshots/directories-v1/garbage/<operationId>/
+data/hosts/<hostId>/world-checkpoint/
+  state.json
+  world/
+  journal/<sequence>.zip
   staging/
 ```
 
-The previous ZIP-based `world-snapshots/state.json` and `<snapshotId>.zip` files
-are left untouched and are not migration inputs. The new store starts with no base;
-clients upload full WorldData and currently captured columns on their first new cycle.
-This never modifies or deletes the local Minecraft save. The directory still contains
-v5 snapshot payloads (individual chunk NBT), not a directly playable `.mca` world.
-
-The retired v4 `sync-chunks/snapshot` routes and
-`sync-chunk-snapshots/` storage are not read, migrated, or deleted.
+The former `world-snapshot` routes are retired and return the application
+unknown-route response. Existing v5 data is left untouched; the first checkpoint
+for an existing room performs a full baseline reconciliation.
 
 Gateway routes are `POST /gateway/heartbeat`, `PUT` and `DELETE
 /gateway/hosts/{hostId}`, and `PUT /gateway/sessions`. Presence is in memory;

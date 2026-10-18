@@ -27,25 +27,7 @@ class DmClientEvents {
                 logger.error("Invalid rdi.dm.server; DM commands disabled", error)
                 null
             }
-            val snapshotCommand = Commands.literal("snapshot-test").executes { context ->
-                    val result = DmSnapshotTestService.start(DmSnapshotMode.Disk)
-                    result.onFailure { context.source.sendFailure(Component.literal(it.message ?: "无法开始同步区块快照测试")) }
-                    result.onSuccess { context.source.sendSuccess({ Component.literal("同步区块快照测试（disk）已开始，结果将保存在本地") }, false) }
-                    if (result.isSuccess) 1 else 0
-                }
-                .then(Commands.literal("disk").executes { context ->
-                        val result = DmSnapshotTestService.start(DmSnapshotMode.Disk)
-                        result.onFailure { context.source.sendFailure(Component.literal(it.message ?: "无法开始同步区块快照测试")) }
-                        result.onSuccess { context.source.sendSuccess({ Component.literal("同步区块快照测试（disk）已开始，结果将保存在本地") }, false) }
-                        if (result.isSuccess) 1 else 0
-                    })
-                    .then(Commands.literal("memory").executes { context ->
-                        val result = DmSnapshotTestService.start(DmSnapshotMode.Memory)
-                        result.onFailure { context.source.sendFailure(Component.literal(it.message ?: "无法开始同步区块快照测试")) }
-                        result.onSuccess { context.source.sendSuccess({ Component.literal("同步区块快照测试（memory）已开始，结果将保存在本地") }, false) }
-                        if (result.isSuccess) 1 else 0
-                    })
-            val command = Commands.literal("dm").then(snapshotCommand)
+            val command = Commands.literal("dm")
             if (config != null) {
                 command
                     .then(
@@ -87,8 +69,7 @@ class DmClientEvents {
         @JvmStatic
         fun onLoggingOut(@Suppress("UNUSED_PARAMETER") event: ClientPlayerNetworkEvent.LoggingOut) {
             onClientThread {
-                DmSnapshotTestService.cancel()
-                DmWorldSyncService.stop()
+                DmWorldCheckpointService.stop()
                 DmHostCreationService.cancel()
                 DmHostService.stop()
             }
@@ -98,8 +79,7 @@ class DmClientEvents {
         @JvmStatic
         fun onGameShuttingDown(@Suppress("UNUSED_PARAMETER") event: GameShuttingDownEvent) {
             onClientThread {
-                DmSnapshotTestService.cancel()
-                DmWorldSyncService.stop()
+                DmWorldCheckpointService.stop()
                 DmHostCreationService.cancel()
                 DmHostService.stop()
             }
@@ -116,15 +96,8 @@ class DmClientEvents {
 
         @SubscribeEvent
         @JvmStatic
-        fun onServerTick(event: ServerTickEvent.Pre) {
-            DmSnapshotTestService.onServerTick(event)
-        }
-
-        @SubscribeEvent
-        @JvmStatic
         fun onServerTickPost(event: ServerTickEvent.Post) {
-            DmSnapshotTestService.onServerTickPost(event)
-            DmWorldSyncService.onServerTickPost(event)
+            DmWorldCheckpointService.onServerTickPost(event)
         }
 
         private fun onClientThread(action: () -> Unit) {

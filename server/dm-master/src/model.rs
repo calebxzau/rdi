@@ -49,16 +49,14 @@ pub struct HostRecord {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct InfoData {
-    #[serde(rename = "worldSnapshotApiVersion")]
-    pub world_snapshot_api_version: u32,
     #[serde(rename = "publicHost", skip_serializing_if = "Option::is_none")]
     pub public_host: Option<String>,
     #[serde(rename = "tunnelPort")]
     pub tunnel_port: u16,
-    /// Published so a client can reject an oversized cycle before building the ZIP.
-    /// Master still enforces every limit independently.
-    #[serde(rename = "worldSnapshotLimits")]
-    pub world_snapshot_limits: crate::config::WorldSnapshotLimits,
+    #[serde(rename = "worldCheckpointApiVersion")]
+    pub world_checkpoint_api_version: u32,
+    #[serde(rename = "worldCheckpointLimits")]
+    pub world_checkpoint_limits: crate::config::WorldCheckpointLimits,
 }
 
 #[derive(Debug, Clone, Serialize)]

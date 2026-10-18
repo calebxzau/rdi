@@ -24,7 +24,29 @@ import calebxzau.rdi.mc.syncchunk.SyncChunkKey
 import calebxzau.rdi.mc.client.syncchunk.SyncChunkRequestError
 
 data class DmHostInfo(val id: UUID, val name: String, val state: String? = null, val gamePort: Int? = null)
-data class DmGatewayInfo(val publicHost: String?, val tunnelPort: Int)
+data class DmGatewayInfo(val publicHost: String?, val tunnelPort: Int, val worldCheckpointApiVersion: Int? = null)
+data class DmWorldCheckpointLimits(
+    val maxUploadBytes: Long,
+    val maxWorldBytes: Long,
+    val maxJournalBytes: Long,
+    val maxFileBytes: Long,
+    val maxMetadataBytes: Long,
+    val maxWorldEntries: Int,
+    val maxPathBytes: Int,
+    val maxPathDepth: Int,
+)
+data class DmWorldCheckpointStatus(
+    val lastUploadSessionId: UUID?,
+    val lastUploadSequence: Long?,
+    val lastUploadCycleId: UUID?,
+    val appliedSequence: Long,
+    val baselineComplete: Boolean,
+    val limits: DmWorldCheckpointLimits,
+)
+data class DmWorldCheckpointFile(val path: String, val bytes: Long, val sha1: String)
+data class DmWorldCheckpointFiles(val files: List<DmWorldCheckpointFile>, val directories: Set<String>)
+data class DmWorldCheckpointRegion(val path: String, val digest: String)
+data class DmWorldCheckpointReceipt(val sessionId: UUID, val sequence: Long, val cycleId: UUID, val uploadSha1: String, val uploadZipBytes: Long, val baselineComplete: Boolean, val appliedSequence: Long)
 /** Limits Master publishes so a client can fail fast before building an oversized cycle. */
 data class DmWorldSnapshotLimits(
     val maxUploadBytes: Long,
@@ -145,7 +167,7 @@ class DmHttpClient(private val config: DmConfig) {
     private val client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10)).build()
 
     fun info(): Result<DmGatewayInfo> = getJson("info").mapCatching { json ->
-        DmGatewayInfo(json.stringOrNull("publicHost"), json.get("tunnelPort").asInt)
+        DmGatewayInfo(json.stringOrNull("publicHost"), json.get("tunnelPort").asInt, json.get("worldCheckpointApiVersion")?.takeUnless { it.isJsonNull }?.asInt)
     }
 
     fun getHost(id: UUID): Result<DmHostInfo> = getJson("hosts/$id").mapCatching(::hostInfo)
@@ -201,6 +223,73 @@ class DmHttpClient(private val config: DmConfig) {
             }
         }
     }
+
+    fun getWorldCheckpointStatus(hostId: UUID, sessionId: UUID): Result<DmWorldCheckpointStatus> = runCatching {
+        val data = checkpointJson("hosts/$hostId/world-checkpoint/status", sessionId)
+        val upload = data.get("lastUpload")?.takeUnless { it.isJsonNull }?.asJsonObject
+        val limits = parseCheckpointLimits(data.getAsJsonObject("limits") ?: error("世界checkpoint响应缺少limits"))
+        DmWorldCheckpointStatus(
+            upload?.get("sessionId")?.asString?.let(UUID::fromString),
+            upload?.get("sequence")?.asLong,
+            upload?.get("cycleId")?.asString?.let(UUID::fromString),
+            data.get("appliedSequence").asLong,
+            data.get("baselineComplete").asBoolean,
+            limits,
+        )
+    }
+
+    fun getWorldCheckpointFiles(hostId: UUID, sessionId: UUID): Result<DmWorldCheckpointFiles> = runCatching {
+        val data = checkpointJson("hosts/$hostId/world-checkpoint/files", sessionId)
+        val files = data.getAsJsonArray("files").map { value ->
+            val item = value.asJsonObject
+            DmWorldCheckpointFile(item.get("path").asString, item.get("bytes").asLong, item.get("sha1").asString)
+        }
+        val directories = data.getAsJsonArray("directories")?.map { it.asString }?.toSet() ?: emptySet()
+        DmWorldCheckpointFiles(files, directories)
+    }
+
+    fun getWorldCheckpointRegions(hostId: UUID, sessionId: UUID): Result<List<DmWorldCheckpointRegion>> = runCatching {
+        val data = checkpointJson("hosts/$hostId/world-checkpoint/regions", sessionId)
+        data.getAsJsonArray("regions").map { value ->
+            val item = value.asJsonObject
+            DmWorldCheckpointRegion(item.get("path").asString, item.get("digest").asString)
+        }
+    }
+
+    fun getWorldCheckpointRegion(hostId: UUID, sessionId: UUID, path: String): Result<List<DmRegionSlot>> = runCatching {
+        val response = client.send(
+            request("hosts/$hostId/world-checkpoint/regions/${path.trimStart('/')}")
+                .header("X-DM-Session", sessionId.toString()).timeout(Duration.ofSeconds(30)).GET().build(),
+            HttpResponse.BodyHandlers.ofString(Charsets.UTF_8),
+        )
+        val envelope = JsonParser.parseString(response.body()).asJsonObject
+        if (response.statusCode() != 200 || envelope.get("code")?.asInt != 0) {
+            throw SyncChunkRequestError("Http${response.statusCode()}", envelope.stringOrNull("msg") ?: "DM服务器请求失败")
+        }
+        envelope.get("data").asJsonArray.map { value -> DmRegionSlot(value.asJsonObject.get("timestamp").asInt, value.asJsonObject.get("sectorCount").asInt) }
+    }
+
+    fun uploadWorldCheckpoint(hostId: UUID, archive: Path, sessionId: UUID, sequence: Long, cycleId: UUID, sha1: String): Result<DmWorldCheckpointReceipt> = runCatching {
+        require(Files.isRegularFile(archive)) { "世界checkpointZIP不存在" }
+        val request = request("hosts/$hostId/world-checkpoint")
+            .header("Content-Type", "application/zip")
+            .header("X-DM-Session", sessionId.toString())
+            .header("X-DM-Checkpoint-Sequence", sequence.toString())
+            .header("X-DM-Sync-Cycle", cycleId.toString())
+            .header("X-DM-SHA1", sha1)
+            .timeout(Duration.ofSeconds(DmWorldSyncTiming.UPLOAD_TIMEOUT_SECONDS))
+            .PUT(HttpRequest.BodyPublishers.ofFile(archive)).build()
+        val response = client.send(request, HttpResponse.BodyHandlers.ofString(Charsets.UTF_8))
+        val data = parseCheckpointResponse(response.body(), response.statusCode())
+        DmWorldCheckpointReceipt(
+            UUID.fromString(data.get("sessionId").asString), data.get("sequence").asLong,
+            UUID.fromString(data.get("cycleId").asString), data.get("uploadSha1").asString,
+            data.get("uploadZipBytes").asLong, data.get("baselineComplete").asBoolean,
+            data.get("appliedSequence").asLong,
+        )
+    }
+
+    fun downloadWorldCheckpoint(id: UUID, destination: Path): Result<Unit> = downloadZip("hosts/$id/world-checkpoint/download", destination)
 
     fun getSyncChunks(hostId: UUID, sessionId: UUID): Result<DmSyncChunkSnapshot> =
         syncChunksRequest("hosts/$hostId/sync-chunks", sessionId, "GET", null) { json ->
@@ -508,6 +597,46 @@ class DmHttpClient(private val config: DmConfig) {
     private fun request(path: String): HttpRequest.Builder = HttpRequest.newBuilder(
         config.baseUri.resolve(path.trimStart('/')),
     ).timeout(Duration.ofMinutes(10))
+
+    private fun checkpointJson(path: String, sessionId: UUID): JsonObject {
+        val response = client.send(
+            request(path).header("X-DM-Session", sessionId.toString()).timeout(Duration.ofSeconds(30)).GET().build(),
+            HttpResponse.BodyHandlers.ofString(Charsets.UTF_8),
+        )
+        return parseCheckpointResponse(response.body(), response.statusCode())
+    }
+
+    private fun parseCheckpointResponse(body: String, status: Int): JsonObject {
+        val json = JsonParser.parseString(body).asJsonObject
+        if (status != 200 || json.get("code")?.asInt != 0) {
+            val data = json.get("data")?.takeIf { it.isJsonObject }?.asJsonObject
+            throw SyncChunkRequestError(data?.stringOrNull("reason") ?: "Http$status", json.stringOrNull("msg") ?: "DM服务器请求失败")
+        }
+        return json.getAsJsonObject("data") ?: JsonObject()
+    }
+
+    private fun parseCheckpointLimits(json: JsonObject) = DmWorldCheckpointLimits(
+        json.get("maxUploadBytes").asLong,
+        json.get("maxWorldBytes").asLong,
+        json.get("maxJournalBytes").asLong,
+        json.get("maxFileBytes").asLong,
+        json.get("maxMetadataBytes").asLong,
+        json.get("maxWorldEntries").asInt,
+        json.get("maxPathBytes").asInt,
+        json.get("maxPathDepth").asInt,
+    )
+
+    private fun downloadZip(path: String, destination: Path): Result<Unit> = runCatching {
+        val response = client.send(request(path).GET().build(), HttpResponse.BodyHandlers.ofInputStream())
+        val contentType = response.headers().firstValue("Content-Type").orElse("")
+        if (!contentType.lowercase().startsWith("application/zip")) {
+            val body = response.body().use { it.readBytes().toString(Charsets.UTF_8) }
+            parseCheckpointResponse(body, response.statusCode())
+            error("DM服务器没有返回checkpointZIP")
+        }
+        destination.parent?.let(Files::createDirectories)
+        response.body().use { input -> Files.newOutputStream(destination).use { output -> input.copyTo(output) } }
+    }
 
     private fun parseResponse(body: String, status: Int): JsonObject {
         require(status == 200) { "DM服务器返回HTTP$status" }

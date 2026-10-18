@@ -8,7 +8,8 @@
     "mChunkCacheMinecraft",
     "mChunkCachePackets",
     "mChunkCacheLevel",
-    "mChunkCacheRegionFile"
+    "mChunkCacheRegionFile",
+    "mDmRegionFile"
   ],
   "mixins": [
     "AccessorSectionStorage",
@@ -16,7 +17,8 @@
     "AccessorPersistentEntitySectionManager",
     "AccessorEntityStorage",
     "AccessorChunkMap",
-    "AccessorIOUtilities"
+    "AccessorIOUtilities",
+    "AccessorRegionFile"
   ],
   "injectors": {
     "defaultRequire": 1

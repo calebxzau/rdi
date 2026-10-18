@@ -107,7 +107,7 @@ object DmHostService {
                     hosting.state = State.Connected
                     hosting.gamePort = gamePort
                     SyncChunkService.begin(hosting.hostId, session, hosting.owner)
-                    DmWorldSyncService.begin(hosting.hostId, session, hosting.owner, hosting.config)
+                    DmWorldCheckpointService.begin(hosting.hostId, session, hosting.owner, hosting.config)
                     sendMessage(minecraft, clickableAddress(endpoint.gameAddress(gamePort)))
                 }
             }
@@ -118,7 +118,7 @@ object DmHostService {
                     if (hosting.state != State.Retrying) sendMessage(minecraft, "DM网关连接中断，正在重试")
                     hosting.state = State.Retrying
                     hosting.gamePort = null
-                    DmWorldSyncService.pause(hosting.owner, "DM网关连接中断，世界同步暂时不可用")
+                    DmWorldCheckpointService.pause(hosting.owner, "DM网关连接中断，世界同步暂时不可用")
                     SyncChunkService.pause(hosting.owner, "DM网关连接中断，世界同步暂时不可用")
                 }
             }
@@ -128,7 +128,7 @@ object DmHostService {
                     if (!isCurrent(hosting)) return@execute
                     active = null
                     hosting.tunnel = null
-                    DmWorldSyncService.stop(hosting.owner)
+                    DmWorldCheckpointService.stop(hosting.owner)
                     SyncChunkService.stop(hosting.owner)
                     sendMessage(minecraft, failure.message)
                 }
@@ -140,7 +140,7 @@ object DmHostService {
         } catch (error: Throwable) {
             active = null
             tunnel.close()
-            DmWorldSyncService.stop(hosting.owner)
+            DmWorldCheckpointService.stop(hosting.owner)
             SyncChunkService.stop(hosting.owner)
             logger.error("Failed to start DM tunnel for host {}", hosting.hostId, error)
             sendMessage(minecraft, "无法启动DM网关连接：${error.message ?: "未知错误"}")
@@ -151,7 +151,7 @@ object DmHostService {
         val current = active ?: return false
         active = null
         current.tunnel?.close()
-        DmWorldSyncService.stop(current.owner)
+        DmWorldCheckpointService.stop(current.owner)
         SyncChunkService.stop(current.owner)
         return true
     }
@@ -170,7 +170,7 @@ object DmHostService {
             State.Connected -> "已连接"
         }
         val join = current.endpoint?.let { endpoint -> current.gamePort?.let(endpoint::gameAddress) }?.let { "，加入地址：$it" } ?: ""
-        return "DM房主：${state}，房间：${current.hostId}${join}；${DmWorldSyncService.status()}"
+        return "DM房主：${state}，房间：${current.hostId}${join}；${DmWorldCheckpointService.status()}"
     }
 
     private fun isCurrent(hosting: Hosting): Boolean = active === hosting &&

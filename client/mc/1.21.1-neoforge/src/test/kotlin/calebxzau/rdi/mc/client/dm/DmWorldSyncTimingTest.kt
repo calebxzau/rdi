@@ -20,4 +20,12 @@ class DmWorldSyncTimingTest {
             DmWorldSyncTiming.nextDue(readyAt + interval, 500L, interval),
         )
     }
+
+    @Test
+    fun adaptiveIntervalRespectsPauseBudgetAndBounds() {
+        val base = DmWorldSyncTiming.intervalNanos(60)
+        assertEquals(DmWorldSyncTiming.intervalNanos(120), DmWorldSyncTiming.adaptInterval(base, 51, 0))
+        assertEquals(DmWorldSyncTiming.intervalNanos(60), DmWorldSyncTiming.adaptInterval(base, 10, 2))
+        assertEquals(DmWorldSyncTiming.intervalNanos(300), DmWorldSyncTiming.adaptInterval(DmWorldSyncTiming.intervalNanos(200), 51, 0))
+    }
 }

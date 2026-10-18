@@ -10,6 +10,7 @@ use crate::{
     presence::Presence,
     store::HostStore,
     sync_chunks::{MutationError, MutationOutcome, SyncChunkStore},
+    world_checkpoints::{self, WorldCheckpointStore},
     world_snapshots::{
         CommitError, CommitOutcome, ErrorReason as WorldSnapshotErrorReason, Metadata, Prepared,
         SnapshotRecord, UploadReceipt, WorldSnapshotStore,
@@ -52,6 +53,7 @@ pub struct AppState {
     host_upload_slots: Arc<StdMutex<HashMap<Uuid, Arc<Semaphore>>>>,
     pub sync_chunks: SyncChunkStore,
     pub world_snapshots: WorldSnapshotStore,
+    pub world_checkpoints: WorldCheckpointStore,
     pub commit_gate: Arc<Mutex<()>>,
 }
 
@@ -60,6 +62,8 @@ impl AppState {
         let store = HostStore::open(&config.data_dir)?;
         let world_snapshots = WorldSnapshotStore::new(store.clone(), config.world_snapshot);
         world_snapshots.recover()?;
+        let world_checkpoints = WorldCheckpointStore::new(store.clone(), config.world_checkpoint);
+        world_checkpoints.recover()?;
         Ok(Self {
             store: store.clone(),
             config,
@@ -68,6 +72,7 @@ impl AppState {
             host_upload_slots: Arc::new(StdMutex::new(HashMap::new())),
             sync_chunks: SyncChunkStore::new(store),
             world_snapshots,
+            world_checkpoints,
             commit_gate: Arc::new(Mutex::new(())),
         })
     }
@@ -89,26 +94,34 @@ pub fn router(state: AppState) -> Router {
         .route("/hosts/{host_id}", get(get_host))
         .route("/hosts/{host_id}/world-init", get(download_world_init))
         .route(
+            "/hosts/{host_id}/world-checkpoint/status",
+            get(world_checkpoint_status),
+        )
+        .route(
+            "/hosts/{host_id}/world-checkpoint/files",
+            get(world_checkpoint_files),
+        )
+        .route(
+            "/hosts/{host_id}/world-checkpoint/regions",
+            get(world_checkpoint_regions),
+        )
+        .route(
+            "/hosts/{host_id}/world-checkpoint/regions/{*path}",
+            get(world_checkpoint_region),
+        )
+        .route(
+            "/hosts/{host_id}/world-checkpoint",
+            put(upload_world_checkpoint),
+        )
+        .route(
+            "/hosts/{host_id}/world-checkpoint/download",
+            get(download_world_checkpoint),
+        )
+        .route(
             "/hosts/{host_id}/sync-chunks",
             get(get_sync_chunks)
                 .put(add_sync_chunk)
                 .delete(remove_sync_chunk),
-        )
-        .route(
-            "/hosts/{host_id}/world-snapshot",
-            put(upload_world_snapshot),
-        )
-        .route(
-            "/hosts/{host_id}/world-snapshot/status",
-            get(world_snapshot_status),
-        )
-        .route(
-            "/hosts/{host_id}/world-snapshot/{snapshot_id}",
-            get(download_world_snapshot),
-        )
-        .route(
-            "/hosts/{host_id}/world-snapshot/{snapshot_id}/manifest",
-            get(world_snapshot_manifest),
         )
         .route("/gateway/heartbeat", post(gateway_heartbeat))
         .route(
@@ -142,8 +155,8 @@ async fn info(State(state): State<AppState>) -> HttpResponse {
     json(Response::ok(InfoData {
         public_host: state.config.public_host.clone(),
         tunnel_port: state.config.tunnel_port,
-        world_snapshot_api_version: crate::world_snapshots::API_VERSION,
-        world_snapshot_limits: state.config.world_snapshot,
+        world_checkpoint_api_version: world_checkpoints::API_VERSION,
+        world_checkpoint_limits: state.config.world_checkpoint,
     }))
 }
 
@@ -524,6 +537,464 @@ async fn remove_sync_chunk(
     SyncChunkJson(request): SyncChunkJson<SyncChunkMutationRequest>,
 ) -> HttpResponse {
     mutate_sync_chunk(state, host_id, request, true).await
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WorldCheckpointStatusData {
+    api_version: u32,
+    last_upload: Option<world_checkpoints::UploadReceipt>,
+    applied_sequence: i64,
+    baseline_complete: bool,
+    limits: crate::config::WorldCheckpointLimits,
+}
+
+#[derive(serde::Serialize)]
+struct WorldCheckpointFilesData {
+    files: Vec<world_checkpoints::WorldFile>,
+    directories: Vec<String>,
+}
+
+#[derive(serde::Serialize)]
+struct WorldCheckpointRegionsData {
+    regions: Vec<RegionDigestData>,
+}
+
+#[derive(serde::Serialize)]
+struct RegionDigestData {
+    path: String,
+    digest: String,
+}
+
+#[derive(serde::Serialize)]
+struct RegionSlotData {
+    timestamp: i32,
+    #[serde(rename = "sectorCount")]
+    sector_count: u8,
+}
+
+async fn checkpoint_session(
+    state: &AppState,
+    host_id: Uuid,
+    headers: &HeaderMap,
+) -> Result<Uuid, HttpResponse> {
+    let session = header_session(headers)?;
+    if !state.presence.has_active_session(host_id, session).await {
+        return Err(world_checkpoint_error(
+            world_checkpoints::ErrorReason::SessionUnavailable,
+            "host session is unavailable",
+        ));
+    }
+    Ok(session)
+}
+
+fn world_checkpoint_error(
+    reason: world_checkpoints::ErrorReason,
+    message: impl Into<String>,
+) -> HttpResponse {
+    json(Response::<()>::error_data(
+        message,
+        serde_json::json!({"reason": reason}),
+    ))
+}
+
+async fn world_checkpoint_status(
+    State(state): State<AppState>,
+    Path(host_id): Path<String>,
+    headers: HeaderMap,
+) -> HttpResponse {
+    let host_id = match Uuid::parse_str(&host_id) {
+        Ok(value) => value,
+        Err(_) => {
+            return world_checkpoint_error(
+                world_checkpoints::ErrorReason::InvalidRequest,
+                "invalid host id",
+            );
+        }
+    };
+    if let Err(response) = checkpoint_session(&state, host_id, &headers).await {
+        return response;
+    }
+    let store = state.world_checkpoints.clone();
+    match tokio::task::spawn_blocking(move || store.status(host_id)).await {
+        Ok(Ok(status)) => json(Response::ok(WorldCheckpointStatusData {
+            api_version: world_checkpoints::API_VERSION,
+            last_upload: status.last_upload,
+            applied_sequence: status.applied_sequence,
+            baseline_complete: status.baseline_complete,
+            limits: status.limits,
+        })),
+        Ok(Err(error)) => world_checkpoint_error(
+            world_checkpoints::ErrorReason::StorageError,
+            error.to_string(),
+        ),
+        Err(error) => world_checkpoint_error(
+            world_checkpoints::ErrorReason::StorageError,
+            error.to_string(),
+        ),
+    }
+}
+
+async fn world_checkpoint_files(
+    State(state): State<AppState>,
+    Path(host_id): Path<String>,
+    headers: HeaderMap,
+) -> HttpResponse {
+    let host_id = match Uuid::parse_str(&host_id) {
+        Ok(value) => value,
+        Err(_) => {
+            return world_checkpoint_error(
+                world_checkpoints::ErrorReason::InvalidRequest,
+                "invalid host id",
+            );
+        }
+    };
+    if let Err(response) = checkpoint_session(&state, host_id, &headers).await {
+        return response;
+    }
+    let store = state.world_checkpoints.clone();
+    match tokio::task::spawn_blocking(move || store.files(host_id)).await {
+        Ok(Ok((files, directories))) => json(Response::ok(WorldCheckpointFilesData {
+            files,
+            directories,
+        })),
+        Ok(Err(error)) => world_checkpoint_error(
+            world_checkpoints::ErrorReason::StorageError,
+            error.to_string(),
+        ),
+        Err(error) => world_checkpoint_error(
+            world_checkpoints::ErrorReason::StorageError,
+            error.to_string(),
+        ),
+    }
+}
+
+async fn world_checkpoint_regions(
+    State(state): State<AppState>,
+    Path(host_id): Path<String>,
+    headers: HeaderMap,
+) -> HttpResponse {
+    let host_id = match Uuid::parse_str(&host_id) {
+        Ok(value) => value,
+        Err(_) => {
+            return world_checkpoint_error(
+                world_checkpoints::ErrorReason::InvalidRequest,
+                "invalid host id",
+            );
+        }
+    };
+    if let Err(response) = checkpoint_session(&state, host_id, &headers).await {
+        return response;
+    }
+    let store = state.world_checkpoints.clone();
+    match tokio::task::spawn_blocking(move || store.regions(host_id)).await {
+        Ok(Ok(regions)) => json(Response::ok(WorldCheckpointRegionsData {
+            regions: regions
+                .into_iter()
+                .map(|(path, digest)| RegionDigestData { path, digest })
+                .collect(),
+        })),
+        Ok(Err(error)) => world_checkpoint_error(
+            world_checkpoints::ErrorReason::StorageError,
+            error.to_string(),
+        ),
+        Err(error) => world_checkpoint_error(
+            world_checkpoints::ErrorReason::StorageError,
+            error.to_string(),
+        ),
+    }
+}
+
+async fn world_checkpoint_region(
+    State(state): State<AppState>,
+    Path((host_id, path)): Path<(String, String)>,
+    headers: HeaderMap,
+) -> HttpResponse {
+    let host_id = match Uuid::parse_str(&host_id) {
+        Ok(value) => value,
+        Err(_) => {
+            return world_checkpoint_error(
+                world_checkpoints::ErrorReason::InvalidRequest,
+                "invalid host id",
+            );
+        }
+    };
+    if let Err(response) = checkpoint_session(&state, host_id, &headers).await {
+        return response;
+    }
+    let store = state.world_checkpoints.clone();
+    match tokio::task::spawn_blocking(move || store.region_table(host_id, &path)).await {
+        Ok(Ok(table)) => json(Response::ok(
+            table
+                .slots
+                .into_iter()
+                .map(|slot| RegionSlotData {
+                    timestamp: slot.timestamp,
+                    sector_count: slot.sector_count,
+                })
+                .collect::<Vec<_>>(),
+        )),
+        Ok(Err(error)) => world_checkpoint_error(
+            world_checkpoints::ErrorReason::InvalidRequest,
+            error.to_string(),
+        ),
+        Err(error) => world_checkpoint_error(
+            world_checkpoints::ErrorReason::StorageError,
+            error.to_string(),
+        ),
+    }
+}
+
+async fn upload_world_checkpoint(
+    State(state): State<AppState>,
+    Path(host_id): Path<String>,
+    request: Request,
+) -> HttpResponse {
+    let host_id = match Uuid::parse_str(&host_id) {
+        Ok(value) => value,
+        Err(_) => {
+            return world_checkpoint_error(
+                world_checkpoints::ErrorReason::InvalidRequest,
+                "invalid host id",
+            );
+        }
+    };
+    if !request
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|value| {
+            value
+                .split(';')
+                .next()
+                .is_some_and(|value| value.trim().eq_ignore_ascii_case("application/zip"))
+        })
+    {
+        return world_checkpoint_error(
+            world_checkpoints::ErrorReason::InvalidRequest,
+            "Content-Type must be application/zip",
+        );
+    }
+    let session = match header_session(request.headers()) {
+        Ok(value) => value,
+        Err(response) => return response,
+    };
+    if !state.presence.has_active_session(host_id, session).await {
+        return world_checkpoint_error(
+            world_checkpoints::ErrorReason::SessionUnavailable,
+            "host session is unavailable",
+        );
+    }
+    let _host_permit = match state.host_upload_slot(host_id).try_acquire_owned() {
+        Ok(permit) => permit,
+        Err(_) => {
+            return world_checkpoint_error(
+                world_checkpoints::ErrorReason::Busy,
+                "checkpoint upload for this host is busy",
+            );
+        }
+    };
+    let _permit = match state.upload_slots.clone().try_acquire_owned() {
+        Ok(permit) => permit,
+        Err(_) => {
+            return world_checkpoint_error(
+                world_checkpoints::ErrorReason::Busy,
+                "checkpoint upload is busy",
+            );
+        }
+    };
+    let sequence = request
+        .headers()
+        .get("x-dm-checkpoint-sequence")
+        .or_else(|| request.headers().get("x-dm-snapshot-sequence"))
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.parse::<i64>().ok())
+        .filter(|v| *v > 0);
+    let sequence = match sequence {
+        Some(value) => value,
+        None => {
+            return world_checkpoint_error(
+                world_checkpoints::ErrorReason::InvalidRequest,
+                "invalid checkpoint sequence",
+            );
+        }
+    };
+    let cycle = match request
+        .headers()
+        .get("x-dm-sync-cycle")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| Uuid::parse_str(v).ok())
+    {
+        Some(value) if value.get_version_num() == 7 => value,
+        Some(_) | None => {
+            return world_checkpoint_error(
+                world_checkpoints::ErrorReason::InvalidRequest,
+                "invalid cycle id",
+            );
+        }
+    };
+    let declared_sha1 = match request
+        .headers()
+        .get("x-dm-sha1")
+        .and_then(|v| v.to_str().ok())
+        .filter(|v| {
+            v.len() == 40
+                && v.bytes()
+                    .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
+        }) {
+        Some(value) => value.to_owned(),
+        None => {
+            return world_checkpoint_error(
+                world_checkpoints::ErrorReason::InvalidRequest,
+                "invalid X-DM-SHA1",
+            );
+        }
+    };
+    let staging = state.store.staging_path().join(format!(
+        "world-checkpoint-{}-{}",
+        std::process::id(),
+        Uuid::now_v7()
+    ));
+    let mut file = match tokio::fs::File::create(&staging).await {
+        Ok(value) => value,
+        Err(error) => {
+            return world_checkpoint_error(
+                world_checkpoints::ErrorReason::StorageError,
+                error.to_string(),
+            );
+        }
+    };
+    let mut body = request.into_body();
+    let mut hasher = Sha1::new();
+    let mut total = 0u64;
+    while let Some(frame) = body.frame().await {
+        let data = match frame {
+            Ok(frame) => match frame.into_data() {
+                Ok(data) => data,
+                Err(_) => {
+                    let _ = tokio::fs::remove_file(&staging).await;
+                    return world_checkpoint_error(
+                        world_checkpoints::ErrorReason::InvalidRequest,
+                        "invalid request body",
+                    );
+                }
+            },
+            Err(error) => {
+                let _ = tokio::fs::remove_file(&staging).await;
+                return world_checkpoint_error(
+                    world_checkpoints::ErrorReason::InvalidRequest,
+                    error.to_string(),
+                );
+            }
+        };
+        total = total.saturating_add(data.len() as u64);
+        if total > state.config.world_checkpoint.max_upload_bytes {
+            let _ = tokio::fs::remove_file(&staging).await;
+            return world_checkpoint_error(
+                world_checkpoints::ErrorReason::TooLarge,
+                "checkpoint upload is too large",
+            );
+        }
+        hasher.update(&data);
+        if let Err(error) = file.write_all(&data).await {
+            let _ = tokio::fs::remove_file(&staging).await;
+            return world_checkpoint_error(
+                world_checkpoints::ErrorReason::StorageError,
+                error.to_string(),
+            );
+        }
+    }
+    if let Err(error) = file.sync_all().await {
+        let _ = tokio::fs::remove_file(&staging).await;
+        return world_checkpoint_error(
+            world_checkpoints::ErrorReason::StorageError,
+            error.to_string(),
+        );
+    }
+    drop(file);
+    if hex::encode(hasher.finalize()) != declared_sha1 {
+        let _ = tokio::fs::remove_file(&staging).await;
+        return world_checkpoint_error(
+            world_checkpoints::ErrorReason::InvalidRequest,
+            "checkpoint SHA-1 does not match header",
+        );
+    }
+    let store = state.world_checkpoints.clone();
+    let sha = declared_sha1.clone();
+    let staged_for_commit = staging.clone();
+    let result = tokio::task::spawn_blocking(move || {
+        store.commit(
+            host_id,
+            &staged_for_commit,
+            session,
+            sequence,
+            cycle,
+            &sha,
+            total,
+        )
+    })
+    .await;
+    let _ = tokio::fs::remove_file(&staging).await;
+    match result {
+        Ok(Ok(receipt)) => json(Response::ok(receipt)),
+        Ok(Err(error)) => {
+            let message = error.to_string();
+            let reason = if message.contains("journal is busy") {
+                world_checkpoints::ErrorReason::Busy
+            } else if message.contains("sequence must") {
+                world_checkpoints::ErrorReason::SequenceConflict
+            } else if message.contains("host not found") {
+                world_checkpoints::ErrorReason::StorageError
+            } else {
+                world_checkpoints::ErrorReason::InvalidRequest
+            };
+            world_checkpoint_error(reason, message)
+        }
+        Err(error) => world_checkpoint_error(
+            world_checkpoints::ErrorReason::StorageError,
+            error.to_string(),
+        ),
+    }
+}
+
+async fn download_world_checkpoint(
+    State(state): State<AppState>,
+    Path(host_id): Path<String>,
+) -> HttpResponse {
+    let host_id = match Uuid::parse_str(&host_id) {
+        Ok(value) => value,
+        Err(_) => {
+            return world_checkpoint_error(
+                world_checkpoints::ErrorReason::InvalidRequest,
+                "invalid host id",
+            );
+        }
+    };
+    let store = state.world_checkpoints.clone();
+    match tokio::task::spawn_blocking(move || store.download(host_id)).await {
+        Ok(Ok(Some(bytes))) => (
+            StatusCode::OK,
+            [(header::CONTENT_TYPE, "application/zip")],
+            Body::from(bytes),
+        )
+            .into_response(),
+        Ok(Ok(None)) => {
+            let mut response = world_checkpoint_error(
+                world_checkpoints::ErrorReason::NoCheckpoint,
+                "world checkpoint is not ready",
+            );
+            *response.status_mut() = StatusCode::NOT_FOUND;
+            response
+        }
+        Ok(Err(error)) => world_checkpoint_error(
+            world_checkpoints::ErrorReason::StorageError,
+            error.to_string(),
+        ),
+        Err(error) => world_checkpoint_error(
+            world_checkpoints::ErrorReason::StorageError,
+            error.to_string(),
+        ),
+    }
 }
 
 #[derive(serde::Serialize)]
@@ -1414,6 +1885,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "v5 world-snapshot route retired in favor of world-checkpoint"]
     async fn world_snapshot_v5_zero_chunk_router_happy_path_is_idempotent() {
         let dir = tempdir().unwrap();
         let config = Config {

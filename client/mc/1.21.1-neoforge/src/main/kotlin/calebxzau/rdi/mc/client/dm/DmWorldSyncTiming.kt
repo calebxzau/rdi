@@ -3,12 +3,12 @@ package calebxzau.rdi.mc.client.dm
 /**
  * Central scheduling and timeout constants for production world synchronization.
  *
- * The 30-second period is inherited from the previous column-only implementation, not a
- * measured target. Every timeout here only ends the synchronization job; none of them stop
+ * The 60-second period keeps the server-thread save cheap while covering the whole world.
+ * Every timeout here only ends the synchronization job; none of them stop
  * Minecraft's or NeoForge's own save threads.
  */
 object DmWorldSyncTiming {
-    const val DEFAULT_INTERVAL_SECONDS: Long = 30L
+    const val DEFAULT_INTERVAL_SECONDS: Long = 60L
     const val NANOS_PER_SECOND: Long = 1_000_000_000L
     const val DEFAULT_INTERVAL_NANOS: Long = DEFAULT_INTERVAL_SECONDS * NANOS_PER_SECOND
 
@@ -35,6 +35,10 @@ object DmWorldSyncTiming {
     /** Full WorldData re-scans allowed when the file set changes during a capture. */
     const val MAX_WORLD_CAPTURE_ATTEMPTS: Int = 2
 
+    const val PAUSE_BUDGET_MILLIS: Long = 50L
+    const val MAX_INTERVAL_SECONDS: Long = 300L
+    const val MIN_INTERVAL_SECONDS: Long = 60L
+
     fun intervalNanos(seconds: Long): Long = Math.multiplyExact(seconds, NANOS_PER_SECOND)
 
     fun firstDue(
@@ -52,5 +56,15 @@ object DmWorldSyncTiming {
         acknowledged == null -> 1L
         acknowledged < 0L -> error("世界同步序号不能为负")
         else -> Math.addExact(acknowledged, 1L)
+    }
+
+    fun adaptInterval(currentNanos: Long, pauseMs: Long, lowPauseCount: Int): Long {
+        val currentSeconds = currentNanos / NANOS_PER_SECOND
+        val nextSeconds = when {
+            pauseMs > PAUSE_BUDGET_MILLIS -> (currentSeconds * 2).coerceAtMost(MAX_INTERVAL_SECONDS)
+            lowPauseCount + 1 >= 3 -> (currentSeconds / 2).coerceAtLeast(MIN_INTERVAL_SECONDS)
+            else -> currentSeconds
+        }
+        return intervalNanos(nextSeconds)
     }
 }
