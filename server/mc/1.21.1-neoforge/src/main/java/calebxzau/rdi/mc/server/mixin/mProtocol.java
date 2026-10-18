@@ -1,5 +1,6 @@
 package calebxzau.rdi.mc.server.mixin;
 
+import com.llamalad7.mixinextras.injector.ModifyExpressionValue;
 import com.mojang.authlib.GameProfile;
 import net.minecraft.network.protocol.login.ServerboundHelloPacket;
 import net.minecraft.server.network.ServerLoginPacketListenerImpl;
@@ -42,8 +43,9 @@ class mServerLoginPacketListener {
         authenticatedProfile = new GameProfile(pPacket.profileId(), pPacket.name());
     }
 
-    // 120 seconds instead of 30, so a slow link can finish logging in.
-    @ModifyConstant(method = "tick", constant = @Constant(intValue = 600))
+    // 120 seconds instead of 30, so a slow link can finish logging in. Optional and chainable, since
+    // network mods such as Connectivity modify the same constant; failing it must not drop injectUUID.
+    @ModifyExpressionValue(method = "tick", at = @At(value = "CONSTANT", args = "intValue=600"), require = 0)
     private int RDI$LoginTimeoutTicks(int ticks) {
         return 2400;
     }

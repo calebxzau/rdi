@@ -1,10 +1,10 @@
 package calebxzau.rdi.mc.server.mixin;
 
+import com.llamalad7.mixinextras.injector.ModifyExpressionValue;
 import org.objectweb.asm.Opcodes;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.injection.At;
-import org.spongepowered.asm.mixin.injection.Redirect;
 
 /**
  * A client frozen while loading in sends nothing but keep-alive answers, so the 30 second read
@@ -16,7 +16,7 @@ public abstract class mReadTimeout {
     @Unique
     private static final int RDI$READ_TIMEOUT_SECONDS = 120;
 
-    @Redirect(
+    @ModifyExpressionValue(
             method = "initChannel",
             at = @At(
                     value = "FIELD",
@@ -25,7 +25,7 @@ public abstract class mReadTimeout {
             ),
             require = 0
     )
-    private int RDI$readTimeout() {
+    private int RDI$readTimeout(int seconds) {
         return RDI$READ_TIMEOUT_SECONDS;
     }
 }
