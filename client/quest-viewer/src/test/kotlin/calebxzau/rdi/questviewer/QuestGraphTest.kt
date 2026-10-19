@@ -11,6 +11,49 @@ class QuestGraphTest {
     private fun node(id: String, center: Offset, shape: String = "circle") = QuestGraphNode(id, id, center, 22f, shape, id, null)
 
     @Test
+    fun labelWidthsKeepDenseGridLabelsApartWithoutNarrowingIsolatedRows() {
+        val grid = (0..2).flatMap { row ->
+            (0..4).map { column -> node("${row}:${column}", Offset(column * 72f, row * 72f)) }
+        }
+        val isolated = node("isolated", Offset(0f, 720f))
+        val widths = questLabelWidths(grid + isolated, 16f)
+        grid.forEach { assertEquals(64f, widths.getValue(it.id)) }
+        assertEquals(150f, widths.getValue(isolated.id))
+        assertTrue(questLabelWidths(emptyList(), 16f).isEmpty())
+    }
+
+    @Test
+    fun labelWidthsHandleBandBoundariesNegativeCoordinatesAndDifferentNodeSizes() {
+        for (top in listOf(-33f, -17f, -1f, 15f, 31f)) {
+            val left = node("left", Offset(-72f, top - 22f))
+            val right = node("right", Offset(0f, top + 2f - 44f)).copy(radius = 44f)
+            val widths = questLabelWidths(listOf(left, right), 16f)
+            assertEquals(64f, widths.getValue("left"))
+            assertEquals(64f, widths.getValue("right"))
+        }
+    }
+
+    @Test
+    fun labelWidthsDoNotOverlapInStaggeredRowsOrFailOnCoincidentNodes() {
+        val nodes = listOf(
+            node("a", Offset(-100f, -10f)), node("b", Offset(-35f, 3f)),
+            node("c", Offset(0f, 17f)), node("d", Offset(80f, 25f)),
+            node("e", Offset(150f, 38f)),
+        )
+        val widths = questLabelWidths(nodes, 16f)
+        nodes.forEachIndexed { index, left ->
+            nodes.drop(index + 1).forEach { right ->
+                if (kotlin.math.abs(left.center.y - right.center.y) < 16f) {
+                    val gap = right.center.x - left.center.x - (widths.getValue(left.id) + widths.getValue(right.id)) / 2
+                    assertTrue(gap >= 8f, "${left.id} and ${right.id} overlap")
+                }
+            }
+        }
+        val coincident = questLabelWidths(listOf(node("a", Offset.Zero), node("b", Offset.Zero)), 16f)
+        assertTrue(coincident.values.all { it > 0f && it.isFinite() })
+    }
+
+    @Test
     fun zoomPreservesWorldPointUnderCursorAndHitTestingUsesSameTransform() {
         val nodes = listOf(node("a", Offset(-144f, 72f)), node("b", Offset(72f, -144f)))
         val before = QuestViewport(1.5f, Offset(300f, 210f))

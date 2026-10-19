@@ -25,7 +25,11 @@ private sealed interface QuestLoadState {
 
 /** Offline, read-only quest browser. Navigation and the surrounding window belong to the caller. */
 @Composable
-fun QuestViewer(modpackDir: Path, modifier: Modifier = Modifier) {
+fun QuestViewer(
+    modpackDir: Path,
+    modifier: Modifier = Modifier,
+    detailsButton: @Composable (expanded: Boolean, onClick: () -> Unit) -> Unit,
+) {
     var revision by remember(modpackDir) { mutableIntStateOf(0) }
     val state by produceState<QuestLoadState>(QuestLoadState.Loading, modpackDir, revision) {
         value = QuestLoadState.Loading
@@ -40,10 +44,9 @@ fun QuestViewer(modpackDir: Path, modifier: Modifier = Modifier) {
     }
     Surface(modifier) {
         Column(Modifier.fillMaxSize()) {
-            Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text("任务书预览 · 不含玩家进度", Modifier.weight(1f), style = MaterialTheme.typography.labelMedium)
+            /* 暂时不用刷新按钮 直接重进 Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
                 TextButton(onClick = { revision++ }) { Text("刷新") }
-            }
+            }*/
             when (val current = state) {
                 QuestLoadState.Loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
                 is QuestLoadState.Failed -> Column(Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -51,14 +54,18 @@ fun QuestViewer(modpackDir: Path, modifier: Modifier = Modifier) {
                     Text(current.message, color = MaterialTheme.colorScheme.error)
                     TextButton(onClick = { revision++ }) { Text("重试") }
                 }
-                is QuestLoadState.Ready -> key(current.data) { QuestBookView(current.data, Modifier.weight(1f)) }
+                is QuestLoadState.Ready -> key(current.data) { QuestBookView(current.data, Modifier.weight(1f), detailsButton) }
             }
         }
     }
 }
 
 @Composable
-private fun QuestBookView(data: QuestPreviewData, modifier: Modifier) {
+private fun QuestBookView(
+    data: QuestPreviewData,
+    modifier: Modifier,
+    detailsButton: @Composable (expanded: Boolean, onClick: () -> Unit) -> Unit,
+) {
     var chapterId by remember { mutableStateOf(data.book.chapters.firstOrNull()?.id) }
     var selectedQuestId by remember { mutableStateOf<String?>(null) }
     var focusQuestId by remember { mutableStateOf<String?>(null) }
@@ -86,7 +93,7 @@ private fun QuestBookView(data: QuestPreviewData, modifier: Modifier) {
         showDetails = target.questId != null
     }
     Column(modifier) {
-        if (data.issues.isNotEmpty() || cache.failedPages > 0 || data.book.chapters.any { it.images.isNotEmpty() }) {
+        /*普通玩家不需要知道 if (data.issues.isNotEmpty() || cache.failedPages > 0 || data.book.chapters.any { it.images.isNotEmpty() }) {
             TextButton(onClick = { showIssues = !showIssues }, modifier = Modifier.padding(horizontal = 8.dp)) {
                 val imageNotice = if (data.book.chapters.any { it.images.isNotEmpty() }) 1 else 0
                 Text(if (showIssues) "收起读取提示" else "读取提示（${data.issues.size + cache.failedPages + imageNotice}）")
@@ -99,7 +106,7 @@ private fun QuestBookView(data: QuestPreviewData, modifier: Modifier) {
                     if (data.book.chapters.any { it.images.isNotEmpty() }) item { Text("当前素材不含章节装饰图片，预览中暂未显示。") }
                 }
             }
-        }
+        }*/
         if (data.book.chapters.isEmpty()) {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("任务书中没有可浏览的章节") }
             return@Column
@@ -122,7 +129,7 @@ private fun QuestBookView(data: QuestPreviewData, modifier: Modifier) {
                             item { Text("找到${results.size}个任务", style = MaterialTheme.typography.labelSmall) }
                             items(results, key = { it.id }) { quest ->
                                 TextButton(onClick = { data.resolve(quest.id).singleOrNull()?.let(::navigate) }) {
-                                    Text(searchableQuestText(data.questTitle(quest)), maxLines = 2, overflow = TextOverflow.Ellipsis)
+                                    Text(questAnnotatedText(data.questTitle(quest)), maxLines = 2, overflow = TextOverflow.Ellipsis)
                                 }
                             }
                         } else {
@@ -131,7 +138,7 @@ private fun QuestBookView(data: QuestPreviewData, modifier: Modifier) {
                                 if (entry.groupId != previousGroup) {
                                     val group = data.book.chapterGroups.firstOrNull { it.id == entry.groupId }
                                     item(key = "group:${entry.groupId}") {
-                                        Text(group?.title?.let(data::text) ?: "章节", Modifier.padding(top = 8.dp), style = MaterialTheme.typography.labelMedium)
+                                        Text(questAnnotatedText(group?.title?.let(data::text) ?: "章节"), Modifier.padding(top = 8.dp), style = MaterialTheme.typography.labelMedium)
                                     }
                                     previousGroup = entry.groupId
                                 }
@@ -147,7 +154,7 @@ private fun QuestBookView(data: QuestPreviewData, modifier: Modifier) {
                                         },
                                     ) {
                                         Column(Modifier.padding(10.dp)) {
-                                            Text(searchableQuestText(data.chapterTitle(entry)), maxLines = 2, overflow = TextOverflow.Ellipsis)
+                                            Text(questAnnotatedText(data.chapterTitle(entry)), maxLines = 2, overflow = TextOverflow.Ellipsis)
                                             Text("${entry.quests.size}个任务", style = MaterialTheme.typography.labelSmall)
                                         }
                                     }
@@ -160,7 +167,7 @@ private fun QuestBookView(data: QuestPreviewData, modifier: Modifier) {
                 VerticalDivider()
                 Column(Modifier.weight(1f).fillMaxHeight()) {
                     Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Text(chapter?.let(data::chapterTitle).orEmpty(), Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
+                        Text(questAnnotatedText(chapter?.let(data::chapterTitle).orEmpty()), Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
                         if (!wide && showDetails) TextButton(onClick = { showDetails = false }) { Text("返回任务树") }
                     }
                     if (wide || !showDetails) {
@@ -180,11 +187,11 @@ private fun QuestBookView(data: QuestPreviewData, modifier: Modifier) {
                             },
                             modifier = Modifier.fillMaxWidth().weight(1f),
                         )
-                    } else QuestDetailPane(data, data.quests[selectedQuestId], cache, ::navigate, Modifier.weight(1f))
+                    } else QuestDetailPane(data, data.quests[selectedQuestId], cache, ::navigate, Modifier.weight(1f), detailsButton)
                 }
                 if (wide) {
                     VerticalDivider()
-                    QuestDetailPane(data, data.quests[selectedQuestId], cache, ::navigate, Modifier.width(310.dp).fillMaxHeight())
+                    QuestDetailPane(data, data.quests[selectedQuestId], cache, ::navigate, Modifier.width(310.dp).fillMaxHeight(), detailsButton)
                 }
             }
         }

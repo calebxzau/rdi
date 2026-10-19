@@ -91,6 +91,7 @@ import kotlinx.coroutines.withContext
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.SideEffect
 import calebxzhou.rdi.client.ui.comp.TileGlass
+import calebxzhou.rdi.common.DEBUG
 import kotlinx.coroutines.CoroutineScope
 import java.io.File
 import java.nio.file.Files
@@ -820,10 +821,12 @@ private fun InstalledCard(
                     })
                 }
                 HorizontalDivider()
-                RDropdownMenuItem("任务书", "\uF02D", onClick = {
-                    expanded = false
-                    onOpenQuests()
-                })
+                if(DEBUG){
+                    RDropdownMenuItem("任务书", "\uF02D", onClick = {
+                        expanded = false
+                        onOpenQuests()
+                    })
+                }
                 RDropdownMenuItem("配置", "\uDB85\uDF81", onClick = {
                     expanded = false
                     onOpenConfig()

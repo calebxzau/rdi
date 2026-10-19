@@ -4,10 +4,17 @@
 复用`common/quests`和`/rdi preview export`生成的物品素材，无需启动Minecraft。
 
 ```kotlin
-QuestViewer(modpackDir = Path.of("C:/packs/example"), modifier = Modifier.fillMaxSize())
+QuestViewer(modpackDir = Path.of("C:/packs/example"), modifier = Modifier.fillMaxSize()) { expanded, onClick ->
+    CircleIconButton(
+        icon = if (expanded) "\uDB85\uDF8D" else "\uDB80\uDEFD",
+        label = if (expanded) "收起详细字段" else "查看详细字段",
+        showText = false,
+        onClick = onClick,
+    )
+}
 ```
 
-启动器入口：整合包瓷砖菜单→任务书。返回导航由启动器负责。
+启动器入口：整合包瓷砖菜单→任务书。返回导航和详细字段按钮样式由启动器负责。
 
 ## 输入
 

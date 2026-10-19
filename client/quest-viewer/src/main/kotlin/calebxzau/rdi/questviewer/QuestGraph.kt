@@ -5,6 +5,7 @@ import androidx.compose.ui.unit.IntSize
 import calebxzau.rdi.quests.ftb.model.FtbChapter
 import calebxzau.rdi.quests.ftb.model.FtbItemStack
 import kotlin.math.abs
+import kotlin.math.floor
 import kotlin.math.min
 
 internal data class QuestGraphNode(
@@ -20,6 +21,28 @@ internal data class QuestGraphNode(
 
 internal data class QuestGraphEdge(val from: QuestGraphNode, val to: QuestGraphNode)
 internal data class QuestGraph(val nodes: List<QuestGraphNode>, val edges: List<QuestGraphEdge>)
+
+/** Label widths in map coordinates, independent of zoom and display density. */
+internal fun questLabelWidths(nodes: List<QuestGraphNode>, labelHeight: Float): Map<String, Float> {
+    require(labelHeight.isFinite() && labelHeight > 0f)
+    val widths = FloatArray(nodes.size) { 150f }
+    // Staggered bands ensure labels with overlapping vertical spans share a band.
+    // Sorting within each band avoids comparing every pair of nodes in a large chapter.
+    for (shift in listOf(0f, labelHeight)) {
+        val bands = nodes.indices.groupBy { index ->
+            val node = nodes[index]
+            floor((node.center.y.toDouble() + node.radius + shift) / (2.0 * labelHeight)).toLong()
+        }
+        bands.values.forEach { band ->
+            band.sortedBy { nodes[it].center.x }.zipWithNext { left, right ->
+                val available = (nodes[right].center.x - nodes[left].center.x - 8f).coerceIn(1f, 150f)
+                widths[left] = min(widths[left], available)
+                widths[right] = min(widths[right], available)
+            }
+        }
+    }
+    return nodes.indices.associate { nodes[it].id to widths[it] }
+}
 
 internal fun QuestPreviewData.graph(chapter: FtbChapter): QuestGraph {
     val chapterShape = chapter.data.string("default_quest_shape").orEmpty()

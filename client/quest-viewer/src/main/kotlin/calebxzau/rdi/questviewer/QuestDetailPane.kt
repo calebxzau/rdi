@@ -6,6 +6,7 @@ import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import calebxzau.rdi.quests.ftb.model.*
@@ -21,6 +22,7 @@ internal fun QuestDetailPane(
     cache: PreviewAtlasCache,
     onNavigate: (PreviewTarget) -> Unit,
     modifier: Modifier = Modifier,
+    detailsButton: @Composable (expanded: Boolean, onClick: () -> Unit) -> Unit,
 ) {
     val scroll = key(quest?.id) { rememberScrollState() }
     Column(modifier.verticalScroll(scroll).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -29,10 +31,10 @@ internal fun QuestDetailPane(
             Text("点击任务节点，查看目标、奖励和前置任务。")
             return@Column
         }
-        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        RawQuestFields(quest.data, detailsButton, header = {
             PreviewItemIcon(data.questIcon(quest)?.itemId, data.assets, cache)
-            Text(questAnnotatedText(data.questTitle(quest)), style = MaterialTheme.typography.titleLarge)
-        }
+            Text(questAnnotatedText(data.questTitle(quest)), Modifier.weight(1f), style = MaterialTheme.typography.titleLarge)
+        })
         quest.subtitle?.takeIf(String::isNotBlank)?.let { QuestText(data.text(it)) }
         val attributes = listOfNotNull(
             "可选任务".takeIf { quest.optional },
@@ -41,7 +43,7 @@ internal fun QuestDetailPane(
         if (attributes.isNotEmpty()) Text(attributes.joinToString(" · "), style = MaterialTheme.typography.labelMedium)
         SelectionContainer {
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                quest.description.forEach { line -> QuestText(data.text(line)) }
+                quest.description.forEach { line -> QuestDescription(line, data, onNavigate) }
             }
         }
         if (quest.dependencies.isNotEmpty()) {
@@ -63,7 +65,13 @@ internal fun QuestDetailPane(
                 if (targets.isEmpty()) Text("无法解析前置引用：$reference", color = MaterialTheme.colorScheme.error)
                 if (targets.size > 1) Text("标签${reference}对应${targets.size}个对象，无法确定唯一前置条件。")
                 targets.forEach { target ->
-                    TextButton(onClick = { onNavigate(target) }) { Text(searchableQuestText(target.label)) }
+                    TextButton(onClick = { onNavigate(target) }) {
+                        val icon = target.questId?.let(data.quests::get)?.let(data::questIcon)
+                            ?: data.chapters[target.chapterId]?.icon
+                        PreviewItemIcon(icon?.itemId, data.assets, cache)
+                        Spacer(Modifier.width(8.dp))
+                        Text(questAnnotatedText(target.label))
+                    }
                 }
             }
         }
@@ -73,18 +81,19 @@ internal fun QuestDetailPane(
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 PreviewItemIcon((task.icon ?: task.item)?.itemId, data.assets, cache)
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    QuestText(data.taskTitle(task))
-                    val count = task.count ?: task.item?.count
-                    if (count != null) Text("数量${count}")
-                    if (task.optional) Text("可选目标", style = MaterialTheme.typography.labelSmall)
-                    RawQuestFields(task.data)
+                    RawQuestFields(task.data, detailsButton, header = {
+                        Text(questAnnotatedText(data.taskTitle(task)), Modifier.weight(1f))
+                    }, content = {
+                        val count = task.count ?: task.item?.count
+                        if (count != null) Text("数量${count}")
+                        if (task.optional) Text("可选目标", style = MaterialTheme.typography.labelSmall)
+                    })
                 }
             }
         }
         HorizontalDivider()
         Text("奖励（${quest.rewards.size}）", style = MaterialTheme.typography.titleMedium)
-        quest.rewards.forEach { reward -> RewardPreview(data, reward, cache, emptySet(), 0) }
-        RawQuestFields(quest.data)
+        quest.rewards.forEach { reward -> RewardPreview(data, reward, cache, emptySet(), 0, detailsButton) }
     }
 }
 
@@ -95,14 +104,18 @@ private fun RewardPreview(
     cache: PreviewAtlasCache,
     visited: Set<String>,
     depth: Int,
+    detailsButton: @Composable (expanded: Boolean, onClick: () -> Unit) -> Unit,
 ) {
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         PreviewItemIcon((reward.icon ?: reward.item)?.itemId, data.assets, cache)
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            QuestText(data.rewardTitle(reward))
-            (reward.count ?: reward.item?.count)?.let { Text("数量${it}") }
-            reward.data.number("xp")?.let { Text("经验${it.toLong()}") }
-            RawQuestFields(reward.data)
+            val count = reward.count ?: reward.item?.count
+            val title = data.rewardTitle(reward)
+            RawQuestFields(reward.data, detailsButton, header = {
+                Text(questAnnotatedText(if (count != null && count >= 2) "${count}x ${title}" else title), Modifier.weight(1f))
+            }, content = {
+                reward.data.number("xp")?.let { Text("经验${it.toLong()}") }
+            })
         }
     }
     val table = reward.inlineTable ?: data.tables[reward.tableId]
@@ -122,7 +135,7 @@ private fun RewardPreview(
                     table.lootSize?.let { Text("抽取数量${it}") }
                     table.entries.forEach { entry ->
                         Text("权重${entry.weight}", style = MaterialTheme.typography.labelSmall)
-                        RewardPreview(data, entry.reward, cache, visited + listOfNotNull(table.id), depth + 1)
+                        RewardPreview(data, entry.reward, cache, visited + listOfNotNull(table.id), depth + 1, detailsButton)
                     }
                 }
             }
@@ -131,11 +144,22 @@ private fun RewardPreview(
 }
 
 @Composable
-private fun RawQuestFields(data: FtbSnbtData) {
+private fun RawQuestFields(
+    data: FtbSnbtData,
+    detailsButton: @Composable (expanded: Boolean, onClick: () -> Unit) -> Unit,
+    header: @Composable RowScope.() -> Unit,
+    content: @Composable () -> Unit = {},
+) {
     var expanded by remember(data) { mutableStateOf(false) }
-    TextButton(onClick = { expanded = !expanded }, contentPadding = PaddingValues(0.dp)) {
-        Text(if (expanded) "收起详细字段" else "查看详细字段", style = MaterialTheme.typography.labelSmall)
+    Row(
+        Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        header()
+        detailsButton(expanded) { expanded = !expanded }
     }
+    content()
     if (expanded) {
         val raw = remember(data) { detailJson.encodeToString(FtbSnbtData.serializer(), data) }
         SelectionContainer { Text(raw, style = MaterialTheme.typography.bodySmall) }

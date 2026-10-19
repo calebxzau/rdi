@@ -11,19 +11,21 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.rememberTextMeasurer
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -40,7 +42,8 @@ internal fun QuestGraphView(
     onSelect: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val density = LocalDensity.current.density
+    val displayDensity = LocalDensity.current
+    val density = displayDensity.density
     var viewport by remember(graph) { mutableStateOf(QuestViewport()) }
     var canvasSize by remember { mutableStateOf(IntSize.Zero) }
     var fitRequest by remember { mutableIntStateOf(0) }
@@ -56,7 +59,7 @@ internal fun QuestGraphView(
     }
     val visibleNodes = graph.nodes.filter { node ->
         val center = viewport.screen(node.center)
-        val margin = node.radius * viewport.scale + 120 * density
+        val margin = node.radius * viewport.scale + 120 * maxOf(density, viewport.scale)
         center.x >= -margin && center.y >= -margin && center.x <= canvasSize.width + margin && center.y <= canvasSize.height + margin
     }
     val neededPages = visibleNodes.mapNotNull { data.assets.manifest?.items?.get(it.icon?.itemId)?.page }.toSet()
@@ -70,17 +73,21 @@ internal fun QuestGraphView(
     }
     val colors = MaterialTheme.colorScheme
     val measurer = rememberTextMeasurer()
-    val labels = remember(graph, density, colors.onSurface) {
+    val labels = remember(graph, displayDensity, colors.onSurface, measurer) {
+        val style = TextStyle(color = colors.onSurface, fontSize = 11.sp)
+        val labelHeight = measurer.measure("Ag任务", style = style, maxLines = 1).size.height / density
+        val widths = questLabelWidths(graph.nodes, labelHeight)
         graph.nodes.associate { node ->
             node.id to measurer.measure(
-                AnnotatedString(searchableQuestText(node.title)),
-                style = TextStyle(color = colors.onSurface, fontSize = 11.sp),
+                questAnnotatedText(node.title),
+                style = style,
                 maxLines = 1,
-                constraints = Constraints(maxWidth = (150 * density).toInt()),
+                overflow = TextOverflow.Ellipsis,
+                constraints = Constraints(maxWidth = (widths.getValue(node.id) * density).toInt().coerceAtLeast(1)),
             )
         }
     }
-    Box(modifier.background(colors.surfaceContainerLow)) {
+    Box(modifier.clipToBounds().background(colors.surfaceContainerLow)) {
         Canvas(
             Modifier.fillMaxSize().onSizeChanged { canvasSize = it }
                 .pointerInput(graph) {
@@ -160,7 +167,15 @@ internal fun QuestGraphView(
                     drawAtlasItem(image, item, data.assets.manifest.iconSize, center.x - edge / 2, center.y - edge / 2, edge)
                 } else drawCircle(outline.copy(alpha = 0.6f), radius / 4, center)
                 if (viewport.scale >= density * 0.45f) {
-                    labels[node.id]?.let { label -> drawText(label, topLeft = Offset(center.x - label.size.width / 2f, center.y + radius + 4 * density)) }
+                    labels[node.id]?.let { label ->
+                        val labelScale = viewport.scale / density
+                        withTransform({
+                            translate(center.x, center.y + radius + 4 * viewport.scale)
+                            scale(labelScale, labelScale, pivot = Offset.Zero)
+                        }) {
+                            drawText(label, topLeft = Offset(-label.size.width / 2f, 0f))
+                        }
+                    }
                 }
             }
         }
@@ -171,8 +186,10 @@ internal fun QuestGraphView(
         }
         if (graph.nodes.isEmpty()) Text("此章节没有任务", Modifier.align(Alignment.Center))
         Text(
-            hovered?.let { (if (it.link) "任务链接 · " else "") + searchableQuestText(it.title) }
-                ?: "拖动平移 · 滚轮缩放 · 点击查看任务",
+            questAnnotatedText(
+                hovered?.let { (if (it.link) "任务链接 · " else "") + it.title }
+                    ?: "拖动平移 · 滚轮缩放 · 点击查看任务",
+            ),
             Modifier.align(Alignment.BottomStart).padding(12.dp),
             style = MaterialTheme.typography.labelMedium,
         )
