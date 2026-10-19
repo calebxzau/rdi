@@ -144,6 +144,7 @@ dependencies {
     implementation(project(":quest-viewer"))
     implementation(project(":database"))
     implementation(project(":client-store"))
+    implementation(project(":client-core"))
     implementation(project(":misc"))
     implementation(project(":model"))
     implementation(project(":net"))
@@ -230,31 +231,6 @@ tasks.withType<Test>().configureEach {
     }
 }
 
-val localModpackTest by sourceSets.creating {
-    kotlin.srcDir("src/test/kotlin")
-    kotlin.include(
-        "calebxzhou/rdi/client/service/ModpackArchiveReaderTest.kt",
-        "calebxzau/rdi/client/service/LocalModpackScannerTest.kt",
-        "calebxzau/rdi/client/service/ModpackUploadRuntimeGuardTest.kt",
-    )
-    compileClasspath += sourceSets.main.get().output + configurations.testRuntimeClasspath.get()
-    runtimeClasspath += output + compileClasspath
-}
-
-kotlin.target.compilations.getByName("localModpackTest")
-    .associateWith(kotlin.target.compilations.getByName("main"))
-
-configurations[localModpackTest.implementationConfigurationName]
-    .extendsFrom(configurations.testImplementation.get())
-configurations[localModpackTest.runtimeOnlyConfigurationName]
-    .extendsFrom(configurations.testRuntimeOnly.get())
-
-tasks.register<Test>("localModpackTest") {
-    testClassesDirs = localModpackTest.output.classesDirs
-    classpath = localModpackTest.runtimeClasspath
-    useJUnitPlatform()
-}
-
 // Removed custom upToDateWhen — it was breaking Kotlin's incremental compilation,
 // causing full recompilation on every hot reload instead of only changed files.
 
@@ -325,8 +301,7 @@ val runtimeArtifactNames = providers.provider<Map<File, String>> {
 
 val baseWorldTest by sourceSets.creating {
     kotlin.srcDir("src/test/kotlin")
-    kotlin.include("calebxzau/rdi/client/**/BaseWorld*Test.kt")
-    kotlin.include("calebxzau/rdi/client/**/ChunkedUploaderTest.kt")
+    kotlin.include("calebxzau/rdi/client/ui/viewmodel/BaseWorld*Test.kt")
     compileClasspath += sourceSets.main.get().output + configurations.testRuntimeClasspath.get()
     runtimeClasspath += output + compileClasspath
 }
@@ -344,9 +319,6 @@ tasks.register<Test>("baseWorldTest") {
 
 val modpackUploadTest by sourceSets.creating {
     kotlin.srcDir("src/test/kotlin")
-    kotlin.include("calebxzau/rdi/client/service/ModpackChunkedUploaderTest.kt")
-    kotlin.include("calebxzau/rdi/client/service/ModpackUploadApiTest.kt")
-    kotlin.include("calebxzau/rdi/client/service/ModpackClientExtrasInstallTest.kt")
     kotlin.include("calebxzau/rdi/client/ui/viewmodel/ModpackUploadViewModelTest.kt")
     compileClasspath += sourceSets.main.get().output + configurations.testRuntimeClasspath.get()
     runtimeClasspath += output + compileClasspath

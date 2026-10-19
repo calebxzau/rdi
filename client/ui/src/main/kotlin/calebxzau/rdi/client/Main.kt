@@ -1,5 +1,6 @@
 package calebxzau.rdi.client
 
+import calebxzhou.rdi.client.WINDOW_TRANSPARENT
 import calebxzhou.rdi.client.useSystemWindowDecoration
 import calebxzhou.rdi.common.model.LibraryOsArch
 import androidx.compose.foundation.layout.Box
@@ -53,6 +54,9 @@ import calebxzau.rdi.mcinstall.LocalMcDiscovery
 import calebxzau.rdi.mcinstall.McInstallationReuse
 // import calebxzhou.rdi.client.service.LocalMinecraftReuseService
 import calebxzhou.rdi.client.service.NodeRefreshCoordinator
+import calebxzhou.rdi.client.service.RunningGameGuard
+import calebxzhou.rdi.client.service.launcherWindowLogicalSize
+import calebxzau.rdi.mclaunch.MinecraftWindowSize
 import calebxzhou.rdi.client.service.PlayerService
 import calebxzhou.rdi.client.service.UpdateService
 import calebxzhou.rdi.client.service.UpdaterUpdateResult
@@ -95,6 +99,7 @@ fun main() {
     if (DEBUG && LibraryOsArch.detectHostOs().isWindows) {
         System.setProperty("javax.net.ssl.trustStoreType", "Windows-ROOT")
     }
+    RunningGameGuard.register(McPlayStore::aliveCount)
     val databasePath = RDIClient.DIR.toPath().resolve("data.db")
     val databaseHandle = MinecraftInstallationDatabase.open(databasePath)
         .onFailure { cause -> lgr.error(cause) { "初始化客户端数据库失败，RDI将退出" } }
@@ -155,6 +160,7 @@ fun main() {
         // 设置窗口初始大小为屏幕的2/3，并居中显示；笔记本或小屏幕直接最大化
         val screen = remember { Toolkit.getDefaultToolkit().screenSize }
         ScreenSize = (screen.width * 2 / 3).dp to (screen.height * 2 / 3).dp
+        launcherWindowLogicalSize = MinecraftWindowSize(ScreenSize.first.value.toInt(), ScreenSize.second.value.toInt())
         val windowState = rememberWindowState(
             placement = initialWindowPlacement(screen.height, displayDiagonalInches),
             width = ScreenSize.first,
@@ -214,8 +220,8 @@ fun main() {
             title = "RDI ${Const.VERSION_NUMBER}",
             icon = windowIcon,
             state = windowState,
-            transparent = Const.WINDOW_TRANSPARENT,
-            decoration = if (useSystemWindowDecoration(Const.WINDOW_TRANSPARENT)) {
+            transparent = WINDOW_TRANSPARENT,
+            decoration = if (useSystemWindowDecoration(WINDOW_TRANSPARENT)) {
                 WindowDecoration.SystemDefault
             } else {
                 WindowDecoration.Undecorated(resizerThickness = 0.dp)

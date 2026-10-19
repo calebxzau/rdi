@@ -7,7 +7,7 @@ import calebxzhou.rdi.client.database.LocalModpack2ContentRecord
 import calebxzhou.rdi.client.service.content.ClientContentStore
 import calebxzhou.rdi.client.service.content.ContentRequest
 import calebxzhou.rdi.client.ui.McPlayStore
-import calebxzau.rdi.client.ui.moveToOsTrash
+import calebxzau.rdi.client.platform.moveToOsTrash
 import calebxzhou.rdi.common.model.Task2
 import calebxzhou.rdi.common.model.Task2Progress
 import calebxzau.rdi.common.model.ContentSide

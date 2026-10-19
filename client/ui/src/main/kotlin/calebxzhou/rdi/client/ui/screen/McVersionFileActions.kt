@@ -64,7 +64,11 @@ suspend fun exportLogsPack(packdir: ModpackLocalDir): Result<Unit> = withContext
         val sourceDirs = listOf("logs", "crash-reports")
             .map { packdir.dir.resolve(it) }
             .filter { it.exists() && it.isDirectory }
-        if (sourceDirs.isEmpty()) {
+        // JVM崩溃报告：旧版启动器写在版本目录根部，新版写在logs/里
+        val jvmCrashFiles = packdir.dir.listFiles { file ->
+            file.isFile && file.name.startsWith("hs_err_pid") && file.name.endsWith(".log")
+        }.orEmpty().toList()
+        if (sourceDirs.isEmpty() && jvmCrashFiles.isEmpty()) {
             throw IllegalStateException("没有可导出的日志目录")
         }
 
@@ -90,6 +94,11 @@ suspend fun exportLogsPack(packdir: ModpackLocalDir): Result<Unit> = withContext
                         file.inputStream().use { it.copyTo(zipOut) }
                         zipOut.closeEntry()
                     }
+            }
+            jvmCrashFiles.forEach { file ->
+                zipOut.putNextEntry(ZipEntry(file.name))
+                file.inputStream().use { it.copyTo(zipOut) }
+                zipOut.closeEntry()
             }
         }
     }

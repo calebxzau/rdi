@@ -7,7 +7,7 @@ import calebxzau.rdi.client.packproc.Modpack2PackPreview
 import calebxzau.rdi.client.packproc.Modpack2ProcessingResult
 import calebxzau.rdi.client.packproc.Modpack2ExplicitGithubSource
 import calebxzhou.rdi.client.service.content.ClientContentStore
-import calebxzau.rdi.client.ui.moveToOsTrash
+import calebxzau.rdi.client.platform.moveToOsTrash
 import calebxzhou.rdi.client.ui.McPlayStore
 import calebxzhou.rdi.client.service.content.toClientContentRequest
 import calebxzau.rdi.common.model.Modpack2ClientManifestVo

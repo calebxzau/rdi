@@ -322,6 +322,8 @@ class MinecraftLauncher(
             "-XX:ZUncommitDelay=60",
             "-XX:+UseCompactObjectHeaders"
         )
+        // JVM原生崩溃报告写进logs/，日志导出时一并带上
+        processedJvmArgs += "-XX:ErrorFile=${request.versionDir.resolve("logs").resolve("hs_err_pid%p.log").absolutePath}"
         processedJvmArgs += utf8LoggingJvmArgs
         processedJvmArgs += neoForgeLoggingJvmArgs(request.mcVersion, request.loader, request.extraJvmArgs)
         mediaRuntime?.let {

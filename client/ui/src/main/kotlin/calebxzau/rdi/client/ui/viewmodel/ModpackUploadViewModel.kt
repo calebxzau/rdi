@@ -1462,20 +1462,14 @@ private fun mergeHydratedUiMods(
     val currentByKey = current.associateBy { modStableKey(it.mod) }
     return hydrated.map { hydratedMod ->
         currentByKey[modStableKey(hydratedMod.mod)]?.let { currentMod ->
+            // A local val keeps the smart cast now that UiMod lives in client-core.
+            val fabricSide = hydratedMod.fabricEnvironmentSide?.takeIf { loader == ModLoader.Fabric }
             hydratedMod.copy(
                 mod = hydratedMod.mod.copy(
-                    side = if (loader == ModLoader.Fabric && hydratedMod.fabricEnvironmentSide != null) {
-                        hydratedMod.fabricEnvironmentSide
-                    } else {
-                        currentMod.side
-                    }
+                    side = fabricSide ?: currentMod.side
                 ),
                 card = hydratedMod.card?.copy(
-                    side = if (loader == ModLoader.Fabric && hydratedMod.fabricEnvironmentSide != null) {
-                        hydratedMod.fabricEnvironmentSide
-                    } else {
-                        currentMod.side
-                    }
+                    side = fabricSide ?: currentMod.side
                 ),
                 fabricEnvironmentSide = hydratedMod.fabricEnvironmentSide ?: currentMod.fabricEnvironmentSide,
                 file = currentMod.file ?: hydratedMod.file,

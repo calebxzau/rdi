@@ -70,7 +70,7 @@ import calebxzau.rdi.client.ui.TitleRow
 import calebxzau.rdi.client.ui.asIconText
 import calebxzhou.rdi.client.ui.comp.PlatformVerticalScrollbar
 import calebxzau.rdi.client.ui.copyToClipboard
-import calebxzau.rdi.client.ui.loadResourceStream
+import calebxzau.rdi.client.platform.loadResourceStream
 import calebxzhou.rdi.common.DEBUG
 import calebxzhou.rdi.common.DIR
 import calebxzhou.rdi.common.service.OpenaiChatEvent
