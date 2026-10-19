@@ -152,6 +152,11 @@ data class ModpackLocalAdvanceOptionsRoute(
     val versionName: String = "",
 )
 @Serializable
+data class QuestViewerRoute(
+    val modpackPath: String,
+    val modpackName: String = "",
+)
+@Serializable
 data class ModpackVersionEditRoute(
     val modpackId: String,
     val verName: String,

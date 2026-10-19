@@ -370,6 +370,7 @@ internal fun LocalModpackManager.InstalledTile(
     onOpenModpackInfo: (ModpackLocalDir) -> Unit,
     onOpenContent: (ModpackLocalDir, ModpackContentType) -> Unit,
     onOpenOptions: (ModpackLocalDir) -> Unit,
+    onOpenQuests: (ModpackLocalDir) -> Unit,
 ) {
     InstalledCard(
         pack = pack,
@@ -380,6 +381,7 @@ internal fun LocalModpackManager.InstalledTile(
         onOpenContent = { type -> onOpenContent(pack, type) },
         onOpenConfig = { openConfigEditor(pack) },
         onOpenOptions = { onOpenOptions(pack) },
+        onOpenQuests = { onOpenQuests(pack) },
         onOpenCopyData = { openCopyData(pack) },
         onReinstall = { reinstallConfirmPack = pack },
         onOpenFolder = { openFolder(pack) },
@@ -783,6 +785,7 @@ private fun InstalledCard(
     onOpenContent: (ModpackContentType) -> Unit,
     onOpenConfig: () -> Unit,
     onOpenOptions: () -> Unit,
+    onOpenQuests: () -> Unit,
     onOpenCopyData: () -> Unit,
     onReinstall: () -> Unit,
     onOpenFolder: () -> Unit,
@@ -817,6 +820,10 @@ private fun InstalledCard(
                     })
                 }
                 HorizontalDivider()
+                RDropdownMenuItem("任务书", "\uF02D", onClick = {
+                    expanded = false
+                    onOpenQuests()
+                })
                 RDropdownMenuItem("配置", "\uDB85\uDF81", onClick = {
                     expanded = false
                     onOpenConfig()

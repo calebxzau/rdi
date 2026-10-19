@@ -167,8 +167,16 @@ class FtbQuestBookReaderTest {
         assertTrue(wrongType?.message.orEmpty().contains("quests"))
 
         root.resolve("chapters/b.snbt").writeText("{id: \"0000000000000020\", broken: [}")
-        val malformed = FtbQuestBookReader.read(root).exceptionOrNull()
-        assertTrue(malformed?.message.orEmpty().contains("chapters/b.snbt"))
+        val malformed = FtbQuestBookReader.read(root).getOrThrow()
+        assertEquals(listOf("0000000000000010"), malformed.book.chapters.map { it.id })
+        assertEquals("malformed_file", malformed.diagnostics.single().code)
+        assertEquals("chapters/b.snbt", malformed.diagnostics.single().path)
+
+        root.resolve("reward_tables").createDirectories()
+        root.resolve("reward_tables/broken.snbt").writeText("{id:\"0000000000000030\", rewards:[{item:{id:\"minecraft:stone\"}, broken:[}]} ")
+        val malformedTable = FtbQuestBookReader.read(root).getOrThrow()
+        assertTrue(malformedTable.book.rewardTables.isEmpty())
+        assertEquals("reward_tables/broken.snbt", malformedTable.diagnostics.last().path)
     }
 
     @Test
@@ -371,8 +379,8 @@ class FtbQuestBookReaderTest {
         Files.createDirectories(root.resolve("chapters"))
         root.resolve("chapter_groups.snbt").writeText("{chapter_groups:[]}")
         Files.createDirectories(root.resolve("chapters/not-a-file.snbt"))
-        val directoryFailure = FtbQuestBookReader.read(root).exceptionOrNull()
-        assertTrue(directoryFailure?.message.orEmpty().contains("not-a-file.snbt"))
+        val directoryResult = FtbQuestBookReader.read(root).getOrThrow()
+        assertTrue(directoryResult.diagnostics.any { it.path == "chapters/not-a-file.snbt" })
     }
 
     @Test
@@ -385,9 +393,8 @@ class FtbQuestBookReaderTest {
             channel.position(32L * 1024 * 1024 + 1)
             channel.write(java.nio.ByteBuffer.wrap(byteArrayOf(0)))
         }
-        val failure = FtbQuestBookReader.read(root).exceptionOrNull()
-        assertTrue(failure?.message.orEmpty().contains("large.snbt"))
-        assertTrue(failure?.message.orEmpty().contains("large") || failure?.message.orEmpty().contains("too large"))
+        val result = FtbQuestBookReader.read(root).getOrThrow()
+        assertTrue(result.diagnostics.any { it.path == "chapters/large.snbt" && it.message.contains("file too large") })
     }
 
     @Test
@@ -399,8 +406,10 @@ class FtbQuestBookReaderTest {
             val result = FtbQuestBookReader.read(sample).getOrThrow()
             val chapterFiles = Files.list(sample.resolve("chapters")).use { stream -> stream.filter { it.fileName.toString().endsWith(".snbt", true) }.count().toInt() }
             val tableFiles = if (Files.isDirectory(sample.resolve("reward_tables"))) Files.list(sample.resolve("reward_tables")).use { stream -> stream.filter { it.fileName.toString().endsWith(".snbt", true) }.count().toInt() } else 0
-            assertEquals(chapterFiles, result.book.chapters.size)
-            assertEquals(tableFiles, result.book.rewardTables.size)
+            val skippedChapters = result.diagnostics.count { it.code == "malformed_file" && it.path?.startsWith("chapters/") == true }
+            val skippedTables = result.diagnostics.count { it.code == "malformed_file" && it.path?.startsWith("reward_tables/") == true }
+            assertEquals(chapterFiles - skippedChapters, result.book.chapters.size)
+            assertEquals(tableFiles - skippedTables, result.book.rewardTables.size)
             assertTrue(Json.parseToJsonElement(Json.encodeToString(result)) is kotlinx.serialization.json.JsonObject)
             println("FTB sample=$sample groups=${result.book.chapterGroups.size} chapters=${result.book.chapters.size} quests=${result.book.chapters.sumOf { it.quests.size }} tasks=${result.book.chapters.sumOf { chapter -> chapter.quests.sumOf { it.tasks.size } }} rewards=${result.book.chapters.sumOf { chapter -> chapter.quests.sumOf { it.rewards.size } }} tables=${result.book.rewardTables.size} images=${result.book.chapters.sumOf { it.images.size }} links=${result.book.chapters.sumOf { it.links.size }} locales=${result.book.languages.size} diagnostics=${result.diagnostics.size}")
             result.diagnostics.forEach { println("  ${it.code} ${it.path}: ${it.reference} ${it.message}") }

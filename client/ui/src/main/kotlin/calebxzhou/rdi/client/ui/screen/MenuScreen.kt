@@ -10,6 +10,7 @@ import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.hoverable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsHoveredAsState
@@ -23,7 +24,18 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.isAltPressed
+import androidx.compose.ui.input.key.isCtrlPressed
+import androidx.compose.ui.input.key.isMetaPressed
+import androidx.compose.ui.input.key.isShiftPressed
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
@@ -63,7 +75,10 @@ import calebxzhou.rdi.client.ui.comp.TileGridGlassStyle
 import calebxzhou.rdi.client.ui.comp.UnifiedHostCard
 import calebxzhou.rdi.client.ui.comp.iconTileSize
 import calebxzhou.rdi.common.model.isDav
+import calebxzhou.rdi.common.DEBUG
+import calebxzau.rdi.client.ui.comp.DebugQuestPreviewDialog
 import org.koin.compose.viewmodel.koinViewModel
+import java.nio.file.Path
 
 /**
  * calebxzhou @ 2026-02-25 17:51
@@ -103,11 +118,15 @@ fun MenuScreen(
     onOpenModpackInfo: (ModpackLocalDir) -> Unit,
     onOpenModpackContent: (ModpackLocalDir, ModpackContentType) -> Unit,
     onOpenModpackOptions: (ModpackLocalDir) -> Unit,
+    onOpenModpackQuests: (ModpackLocalDir) -> Unit,
+    onOpenDebugQuestPreview: (Path) -> Unit,
     hostListViewModel: HostListViewModel = koinViewModel(),
 ) {
     var showOldMainWarning by remember { mutableStateOf(RDIClient.OLD_MAIN) }
     var showCreateRoomGuide by remember { mutableStateOf(false) }
     var installConfirmTask by remember { mutableStateOf<StartPlayResult.NeedInstall?>(null) }
+    var showDebugQuestPreview by remember { mutableStateOf(false) }
+    val menuFocusRequester = remember { FocusRequester() }
     val sponsorBitmap = remember {
         loadImageBitmap("assets/sponsor.avif")
             .onFailure { lgr.warn(it) { "加载赞助图片失败" } }
@@ -123,6 +142,10 @@ fun MenuScreen(
     val hostGrid = rememberGlassTileGridState()
     val modpackGrid = rememberGlassTileGridState()
     val activeGrid = if (selectedTab == MenuTab.Hosts) hostGrid else modpackGrid
+
+    LaunchedEffect(showDebugQuestPreview) {
+        if (DEBUG && !showDebugQuestPreview) menuFocusRequester.requestFocus()
+    }
 
     LaunchedEffect(hostListViewModel) {
         hostListViewModel.events.collect { event ->
@@ -168,7 +191,23 @@ fun MenuScreen(
         )
     }
 
-    CardHintHost(Modifier.fillMaxSize()) {
+    // Only the menu content owns this shortcut. Dialog text fields use their own focus tree.
+    val debugShortcut = if (DEBUG) {
+        Modifier
+            .focusRequester(menuFocusRequester)
+            .onPreviewKeyEvent { event ->
+                val space = event.key == Key.Spacebar && !event.isAltPressed && !event.isCtrlPressed &&
+                    !event.isMetaPressed && !event.isShiftPressed
+                if (DEBUG && space && !showDebugQuestPreview) {
+                    // Open on release so the opening key cannot insert a space into the path field.
+                    if (event.type == KeyEventType.KeyUp) showDebugQuestPreview = true
+                    true
+                } else false
+            }
+            .focusable()
+    } else Modifier
+
+    CardHintHost(Modifier.fillMaxSize().then(debugShortcut)) {
         /* PlayerPreviewCard(
              modifier = Modifier
                  .align(Alignment.BottomStart)
@@ -236,6 +275,7 @@ fun MenuScreen(
                                             onOpenModpackInfo = onOpenModpackInfo,
                                             onOpenContent = onOpenModpackContent,
                                             onOpenOptions = onOpenModpackOptions,
+                                            onOpenQuests = onOpenModpackQuests,
                                         )
                                     }
                                 }
@@ -311,6 +351,16 @@ fun MenuScreen(
                 }
             }
         }
+    }
+
+    if (DEBUG && showDebugQuestPreview) {
+        DebugQuestPreviewDialog(
+            onDismiss = { showDebugQuestPreview = false },
+            onOpen = { directory ->
+                showDebugQuestPreview = false
+                onOpenDebugQuestPreview(directory)
+            },
+        )
     }
 
     hostState.errorMessage?.let { AlertErr(it, hostListViewModel::clearError) }

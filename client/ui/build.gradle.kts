@@ -141,6 +141,7 @@ dependencies {
     implementation(project(":theme"))
     implementation(project(":code-editor"))
     implementation(project(":code-editor-ui"))
+    implementation(project(":quest-viewer"))
     implementation(project(":database"))
     implementation(project(":client-store"))
     implementation(project(":misc"))

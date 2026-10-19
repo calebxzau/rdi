@@ -26,6 +26,7 @@ import calebxzau.rdi.client.ui.screen.ModpackVersionBaseWorldManageScreen
 import calebxzhou.rdi.client.ui.screen.*
 import calebxzhou.rdi.client.service.ModpackLocalDir
 import calebxzhou.rdi.common.model.McVersion
+import calebxzhou.rdi.common.DEBUG
 import org.koin.compose.viewmodel.koinViewModel
 import org.koin.core.parameter.parametersOf
 
@@ -210,6 +211,14 @@ fun AppNavigation(
                 onOpenModpackInfo = navController::openLocalModpackInfo,
                 onOpenModpackContent = navController::openLocalModpackContent,
                 onOpenModpackOptions = navController::openLocalModpackOptions,
+                onOpenModpackQuests = { pack ->
+                    navController.navigate(QuestViewerRoute(pack.dir.absolutePath, "${pack.name} ${pack.verName}"))
+                },
+                onOpenDebugQuestPreview = { directory ->
+                    if (DEBUG) {
+                        navController.navigate(QuestViewerRoute(directory.toString(), directory.fileName?.toString().orEmpty()))
+                    }
+                },
             )
         }
         composable<BaseWorldListRoute> {
@@ -452,6 +461,18 @@ fun AppNavigation(
                 onBack = {
                     if (!navController.popBackStack()) {
                         navController.navigateRoot(if (AccountSessionStore.isLoggedIn) MenuRoute() else LoginRoute)
+                    }
+                },
+            )
+        }
+        composable<QuestViewerRoute> {
+            val route = it.toRoute<QuestViewerRoute>()
+            calebxzau.rdi.client.ui.screen.QuestViewerScreen(
+                modpackPath = route.modpackPath,
+                modpackName = route.modpackName,
+                onBack = {
+                    if (!navController.popBackStack()) {
+                        navController.navigateAbsolute(MenuRoute(MenuTab.Modpacks.name))
                     }
                 },
             )

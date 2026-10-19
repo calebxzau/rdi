@@ -49,9 +49,7 @@ object FtbQuestBookReader {
 
             val groupsPath = root.resolve("chapter_groups.snbt")
             val groupRoot = if (Files.exists(groupsPath, LinkOption.NOFOLLOW_LINKS)) {
-                withPath("chapter_groups.snbt") {
-                    parse(readRegular(groupsPath), relative(groupsPath))
-                }
+                tryParse(groupsPath, relative(groupsPath))
             } else null
             val groups = groupRoot?.let { rootTag ->
                 withPath("chapter_groups.snbt") {
@@ -97,10 +95,10 @@ object FtbQuestBookReader {
         private fun readChapters(groups: List<FtbChapterGroup>): List<FtbChapter> {
             val dir = optionalDirectory("chapters") ?: return emptyList()
             val files = snbtFiles(dir)
-            val chapters = files.map { file ->
+            val chapters = files.mapNotNull { file ->
                 val relativePath = relative(file)
+                val c = tryParse(file, relativePath) ?: return@mapNotNull null
                 withPath(relativePath) {
-                    val c = parse(readRegular(file), relativePath)
                     val id = c.requiredId(relativePath)
                     register(id, relativePath, ObjectKind.Chapter)
                     val group = c["group"]?.let { groupTag ->
@@ -233,10 +231,10 @@ object FtbQuestBookReader {
 
         private fun readTables(): List<FtbRewardTable> {
             val dir = optionalDirectory("reward_tables") ?: return emptyList()
-            val tables = snbtFiles(dir).map { file ->
+            val tables = snbtFiles(dir).mapNotNull { file ->
                 val path = relative(file)
+                val c = tryParse(file, path) ?: return@mapNotNull null
                 withPath(path) {
-                    val c = parse(readRegular(file), path)
                     val id = c.requiredId(path)
                     register(id, path, ObjectKind.RewardTable)
                     parseTable(c, path, id, true)
@@ -256,9 +254,9 @@ object FtbQuestBookReader {
             val result = linkedMapOf<String, FtbSnbtData>()
             snbtFiles(dir).forEach { file ->
                 val locale = file.fileName.toString().substringBeforeLast('.').lowercase(Locale.ROOT)
-                withPath(relative(file)) {
-                    require(result.put(locale, FtbSnbtData(parse(readRegular(file), relative(file)))) == null) { "duplicate normalized locale '$locale'" }
-                }
+                val path = relative(file)
+                val parsed = tryParse(file, path) ?: return@forEach
+                require(result.put(locale, FtbSnbtData(parsed)) == null) { "duplicate normalized locale '$locale'" }
             }
             return result
         }
@@ -387,17 +385,18 @@ object FtbQuestBookReader {
             while (iterator.hasNext()) {
                 require(++visited <= MAX_FILES) { "too many directory entries in ${relative(dir)}" }
                 val file = iterator.next()
-                require(!Files.isSymbolicLink(file)) {
-                    "symbolic-link quest input is not allowed: ${relative(file)}"
-                }
                 val isSnbt = file.fileName.toString()
                     .substringAfterLast('.', "")
                     .equals("snbt", true)
                 if (isSnbt) {
-                    require(Files.isRegularFile(file)) {
-                        "expected regular file ${relative(file)}"
+                    val path = relative(file)
+                    if (Files.isSymbolicLink(file)) {
+                        diagnostics += FtbQuestDiagnostic("malformed_file", path = path, message = "symbolic-link quest input is not allowed")
+                    } else if (!Files.isRegularFile(file)) {
+                        diagnostics += FtbQuestDiagnostic("malformed_file", path = path, message = "expected regular file")
+                    } else {
+                        entries.add(file)
                     }
-                    entries.add(file)
                 }
             }
             entries.sortedBy { it.fileName.toString() }
@@ -445,6 +444,19 @@ object FtbQuestBookReader {
                 throw IllegalArgumentException("${relative(path)}: invalid UTF-8", exception)
             }
         }
+        private fun tryParse(path: Path, relativePath: String): NbtCompound? = try {
+            parse(readRegular(path), relativePath)
+        } catch (exception: java.util.concurrent.CancellationException) {
+            throw exception
+        } catch (exception: Exception) {
+            diagnostics += FtbQuestDiagnostic(
+                code = "malformed_file",
+                path = relativePath,
+                message = exception.message ?: exception::class.simpleName.orEmpty(),
+            )
+            null
+        }
+
         private fun parse(text: String, path: String): NbtCompound = FtbSnbt.parse(text).getOrElse { throw IllegalArgumentException("$path: ${it.message}", it) }
         private inline fun <T> withPath(path: String, block: () -> T): T = try {
             block()

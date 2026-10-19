@@ -1,0 +1,180 @@
+package calebxzau.rdi.questviewer
+
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.layout.*
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.input.pointer.PointerEventType
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.drawText
+import androidx.compose.ui.text.rememberTextMeasurer
+import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.unit.Constraints
+import kotlin.math.pow
+
+@Composable
+internal fun QuestGraphView(
+    data: QuestPreviewData,
+    graph: QuestGraph,
+    cache: PreviewAtlasCache,
+    selectedQuestId: String?,
+    focusQuestId: String?,
+    onSelect: (String) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val density = LocalDensity.current.density
+    var viewport by remember(graph) { mutableStateOf(QuestViewport()) }
+    var canvasSize by remember { mutableStateOf(IntSize.Zero) }
+    var fitRequest by remember { mutableIntStateOf(0) }
+    var hovered by remember(graph) { mutableStateOf<QuestGraphNode?>(null) }
+    LaunchedEffect(graph, canvasSize, fitRequest) {
+        viewport = fitQuestGraph(graph.nodes, canvasSize, density)
+    }
+    LaunchedEffect(graph, focusQuestId, canvasSize) {
+        val focus = focusQuestId ?: return@LaunchedEffect
+        val node = graph.nodes.firstOrNull { it.questId == focus } ?: return@LaunchedEffect
+        val scale = density.coerceIn(0.5f, 3f)
+        viewport = QuestViewport(scale, Offset(canvasSize.width / 2f, canvasSize.height / 2f) - node.center * scale)
+    }
+    val visibleNodes = graph.nodes.filter { node ->
+        val center = viewport.screen(node.center)
+        val margin = node.radius * viewport.scale + 120 * density
+        center.x >= -margin && center.y >= -margin && center.x <= canvasSize.width + margin && center.y <= canvasSize.height + margin
+    }
+    val neededPages = visibleNodes.mapNotNull { data.assets.manifest?.items?.get(it.icon?.itemId)?.page }.toSet()
+    val images by produceState<Map<Int, ImageBitmap>>(emptyMap(), cache, neededPages) {
+        value = emptyMap()
+        val loaded = linkedMapOf<Int, ImageBitmap>()
+        neededPages.forEach { page ->
+            cache.page(page).onSuccess { loaded[page] = it }
+        }
+        value = loaded
+    }
+    val colors = MaterialTheme.colorScheme
+    val measurer = rememberTextMeasurer()
+    val labels = remember(graph, density, colors.onSurface) {
+        graph.nodes.associate { node ->
+            node.id to measurer.measure(
+                AnnotatedString(searchableQuestText(node.title)),
+                style = TextStyle(color = colors.onSurface, fontSize = 11.sp),
+                maxLines = 1,
+                constraints = Constraints(maxWidth = (150 * density).toInt()),
+            )
+        }
+    }
+    Box(modifier.background(colors.surfaceContainerLow)) {
+        Canvas(
+            Modifier.fillMaxSize().onSizeChanged { canvasSize = it }
+                .pointerInput(graph) {
+                    detectTapGestures { position -> viewport.hit(graph.nodes, position)?.questId?.let(onSelect) }
+                }
+                .pointerInput(graph) {
+                    detectDragGestures { change, drag ->
+                        change.consume()
+                        viewport = viewport.copy(pan = viewport.pan + drag)
+                    }
+                }
+                .pointerInput(graph) {
+                    awaitPointerEventScope {
+                        while (true) {
+                            val event = awaitPointerEvent()
+                            val change = event.changes.firstOrNull() ?: continue
+                            if (event.type == PointerEventType.Scroll) {
+                                viewport = viewport.zoom(1.15f.pow(-change.scrollDelta.y.coerceIn(-5f, 5f)), change.position)
+                                change.consume()
+                            }
+                            if (event.type == PointerEventType.Move) hovered = viewport.hit(graph.nodes, change.position)
+                            if (event.type == PointerEventType.Exit) hovered = null
+                        }
+                    }
+                }
+        ) {
+            graph.edges.forEach { edge ->
+                val from = viewport.screen(edge.from.center)
+                val to = viewport.screen(edge.to.center)
+                val selected = edge.from.questId == selectedQuestId || edge.to.questId == selectedQuestId
+                drawLine(if (selected) colors.primary else colors.outlineVariant, from, to, if (selected) 2.5f * density else density)
+                val delta = to - from
+                val length = delta.getDistance()
+                if (length > 1) {
+                    val unit = delta / length
+                    val tip = to - unit * (edge.to.radius * viewport.scale)
+                    val side = Offset(-unit.y, unit.x) * (4 * density)
+                    drawLine(colors.outline, tip, tip - unit * (8 * density) + side, density)
+                    drawLine(colors.outline, tip, tip - unit * (8 * density) - side, density)
+                }
+            }
+            visibleNodes.forEach { node ->
+                val center = viewport.screen(node.center)
+                val radius = node.radius * viewport.scale
+                val active = node.questId != null && node.questId == selectedQuestId
+                val fill = if (active) colors.primaryContainer else colors.surfaceContainerHighest
+                val outline = when {
+                    active -> colors.primary
+                    node.link -> colors.tertiary
+                    else -> colors.outline
+                }
+                when (node.shape) {
+                    "square" -> {
+                        drawRect(fill, center - Offset(radius, radius), Size(radius * 2, radius * 2))
+                        drawRect(outline, center - Offset(radius, radius), Size(radius * 2, radius * 2), style = Stroke(2 * density))
+                    }
+                    "diamond" -> {
+                        val path = Path().apply {
+                            moveTo(center.x, center.y - radius)
+                            lineTo(center.x + radius, center.y)
+                            lineTo(center.x, center.y + radius)
+                            lineTo(center.x - radius, center.y)
+                            close()
+                        }
+                        drawPath(path, fill)
+                        drawPath(path, outline, style = Stroke(2 * density))
+                    }
+                    else -> {
+                        drawCircle(fill, radius, center)
+                        drawCircle(outline, radius, center, style = Stroke(2 * density))
+                    }
+                }
+                val item = data.assets.manifest?.items?.get(node.icon?.itemId)
+                val image = item?.let { images[it.page] }
+                if (image != null) {
+                    val edge = radius * if (node.shape == "diamond") 0.95f else 1.3f
+                    drawAtlasItem(image, item, data.assets.manifest.iconSize, center.x - edge / 2, center.y - edge / 2, edge)
+                } else drawCircle(outline.copy(alpha = 0.6f), radius / 4, center)
+                if (viewport.scale >= density * 0.45f) {
+                    labels[node.id]?.let { label -> drawText(label, topLeft = Offset(center.x - label.size.width / 2f, center.y + radius + 4 * density)) }
+                }
+            }
+        }
+        Row(Modifier.align(Alignment.TopEnd).padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            TextButton(onClick = { viewport = viewport.zoom(1 / 1.25f, Offset(canvasSize.width / 2f, canvasSize.height / 2f)) }) { Text("缩小") }
+            TextButton(onClick = { fitRequest++ }) { Text("适应窗口") }
+            TextButton(onClick = { viewport = viewport.zoom(1.25f, Offset(canvasSize.width / 2f, canvasSize.height / 2f)) }) { Text("放大") }
+        }
+        if (graph.nodes.isEmpty()) Text("此章节没有任务", Modifier.align(Alignment.Center))
+        Text(
+            hovered?.let { (if (it.link) "任务链接 · " else "") + searchableQuestText(it.title) }
+                ?: "拖动平移 · 滚轮缩放 · 点击查看任务",
+            Modifier.align(Alignment.BottomStart).padding(12.dp),
+            style = MaterialTheme.typography.labelMedium,
+        )
+    }
+}
