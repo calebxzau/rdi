@@ -42,7 +42,10 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.repeatOnLifecycle
 import calebxzau.rdi.client.RDIClient
 import calebxzau.rdi.client.ui.AlertErr
 import calebxzau.rdi.client.ui.CircleIconButton
@@ -58,6 +61,8 @@ import calebxzau.rdi.client.ui.loadImageBitmap
 import calebxzau.rdi.client.ui.rememberGlassTileGridState
 import calebxzau.rdi.client.ui.viewmodel.HostListEvent
 import calebxzau.rdi.client.ui.viewmodel.HostListViewModel
+import calebxzau.rdi.client.ui.viewmodel.OnlinePlayersViewModel
+import calebxzau.rdi.client.ui.comp.OnlinePlayerHeadsRow
 import calebxzhou.rdi.client.net.lgr
 import calebxzhou.rdi.client.net.loggedAccount
 import calebxzhou.rdi.client.service.ClientTaskManager
@@ -115,12 +120,14 @@ fun MenuScreen(
     onOpenTaskList: (String) -> Unit,
     onOpenHostInfo: (HostTarget) -> Unit,
     onOpenModpackPlaza: () -> Unit,
+    onOpenLocalModpackInstall: () -> Unit,
     onOpenModpackInfo: (ModpackLocalDir) -> Unit,
     onOpenModpackContent: (ModpackLocalDir, ModpackContentType) -> Unit,
     onOpenModpackOptions: (ModpackLocalDir) -> Unit,
     onOpenModpackQuests: (ModpackLocalDir) -> Unit,
     onOpenDebugQuestPreview: (Path) -> Unit,
     hostListViewModel: HostListViewModel = koinViewModel(),
+    onlinePlayersViewModel: OnlinePlayersViewModel = koinViewModel(),
 ) {
     var showOldMainWarning by remember { mutableStateOf(RDIClient.OLD_MAIN) }
     var showCreateRoomGuide by remember { mutableStateOf(false) }
@@ -138,6 +145,14 @@ fun MenuScreen(
     val taskEntries by ClientTaskManager.entries.collectAsState()
     val modMigrationInProgress = isClientModMigrationInProgress(taskEntries)
     val hostState by hostListViewModel.uiState.collectAsStateWithLifecycle()
+    val onlinePlayerIds by onlinePlayersViewModel.onlinePlayerIds.collectAsStateWithLifecycle()
+    val lifecycleOwner = LocalLifecycleOwner.current
+    // 只在主菜单可见时轮询在线玩家
+    LaunchedEffect(lifecycleOwner, onlinePlayersViewModel) {
+        lifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
+            onlinePlayersViewModel.pollOnlinePlayers()
+        }
+    }
     val modpacks = rememberLocalModpackManager(onOpenTaskList)
     val hostGrid = rememberGlassTileGridState()
     val modpackGrid = rememberGlassTileGridState()
@@ -157,10 +172,10 @@ fun MenuScreen(
         }
     }
 
-    // 可玩的房间在前，暂不可玩的排在后面并变暗
-    val shownHosts = remember(hostState.hosts, loggedAccount.isDav) {
+    // 可玩的房间在前，暂不可玩的默认隐藏，显示时排在后面并变暗
+    val shownHosts = remember(hostState.hosts, hostState.showOtherHosts, loggedAccount.isDav) {
         val (playable, nonPlayable) = groupUnifiedHosts(applyDavPlayableOverride(hostState.hosts, loggedAccount.isDav))
-        playable + nonPlayable
+        if (hostState.showOtherHosts) playable + nonPlayable else playable
     }
     rememberPlayerInfoPrefetch(shownHosts.flatMap { listOfNotNull(it.ownerId) + it.onlinePlayerIds })
     LaunchedEffect(hostGrid, shownHosts.size) {
@@ -248,6 +263,7 @@ fun MenuScreen(
                             if (tab == MenuTab.Hosts) {
                                 when {
                                     hostState.initialLoading -> CircularProgressIndicator()
+                                    shownHosts.isEmpty() && !hostState.showOtherHosts -> MenuEmptyText("暂无可游玩的房间，可点击显示其他房间")
                                     shownHosts.isEmpty() -> MenuEmptyText("暂无可展示的房间，等待朋友邀请")
                                     else -> MenuTileGrid(items = shownHosts, grid = hostGrid, key = { "${it.target.kind}:${it.target.id}" }) { index, host ->
                                         UnifiedHostCard(
@@ -289,15 +305,21 @@ fun MenuScreen(
             }
         }
 
-        GlassNavBar(
-            hazeState = LocalAppBackgroundHazeState.current,
-            items = MenuNavItems,
-            selectedIndex = selectedTab.ordinal,
-            onSelect = { selectedTab = MenuTab.entries[it] },
+        Column(
             modifier = Modifier
                 .align(Alignment.TopCenter)
-                .padding(top = 16.dp)
-        )
+                .padding(top = 16.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            GlassNavBar(
+                hazeState = LocalAppBackgroundHazeState.current,
+                items = MenuNavItems,
+                selectedIndex = selectedTab.ordinal,
+                onSelect = { selectedTab = MenuTab.entries[it] },
+            )
+            OnlinePlayerHeadsRow(onlinePlayerIds)
+        }
 
         Column(
             modifier = Modifier
@@ -312,6 +334,7 @@ fun MenuScreen(
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 if (selectedTab == MenuTab.Modpacks) {
                     GlassIconButton(icon = "\uDB86\uDDD5", label = "整合广场", onClick = onOpenModpackPlaza)
+                    GlassIconButton(icon = "\uEAEF", label = "整合包本地安装", onClick = onOpenLocalModpackInstall)
                     GlassIconButton(
                         icon = "\uF019",
                         label = "导入rdipack2",
@@ -320,6 +343,11 @@ fun MenuScreen(
                     )
                 }else{
                     GlassIconButton(icon = "\uF067", label = "创建房间") { showCreateRoomGuide = true }
+                    GlassIconButton(
+                        icon = if (hostState.showOtherHosts) "\uF070" else "\uF06E",
+                        label = if (hostState.showOtherHosts) "隐藏其他房间" else "显示其他房间",
+                        onClick = hostListViewModel::toggleOtherHosts,
+                    )
 
                 }
             }

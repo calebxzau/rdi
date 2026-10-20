@@ -107,6 +107,8 @@ registerFocusedTest(
     "calebxzhou/rdi/client/service/ModpackArchiveReaderTest.kt",
     "calebxzau/rdi/client/service/LocalModpackScannerTest.kt",
     "calebxzau/rdi/client/service/ModpackUploadRuntimeGuardTest.kt",
+    "calebxzau/rdi/client/service/LocalModpackInstallerTest.kt",
+    "calebxzau/rdi/client/account/GameAccountServiceTest.kt",
 )
 registerFocusedTest(
     "baseWorldTest",

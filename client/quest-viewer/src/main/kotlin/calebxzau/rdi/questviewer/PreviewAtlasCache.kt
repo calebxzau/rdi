@@ -21,6 +21,21 @@ import org.jetbrains.skia.Image
 import java.nio.file.Files
 import kotlin.math.roundToInt
 
+internal object BuiltinQuestIcons {
+    const val CHECKMARK_RESOURCE = "/calebxzau/rdi/questviewer/icons/accept_gray.png"
+    const val DICE_RESOURCE = "/calebxzau/rdi/questviewer/icons/dice.png"
+
+    val checkmark: ImageBitmap by lazy { load(CHECKMARK_RESOURCE) }
+    val dice: ImageBitmap by lazy { load(DICE_RESOURCE) }
+
+    private fun load(resource: String): ImageBitmap {
+        val bytes = requireNotNull(javaClass.getResourceAsStream(resource)) {
+            "缺少任务默认图标：${resource}"
+        }.use { it.readBytes() }
+        return Image.makeFromEncoded(bytes).toComposeImageBitmap()
+    }
+}
+
 /** One cache per opened book. Both the graph and detail pane reuse whole atlas pages. */
 internal class PreviewAtlasCache(private val assets: PreviewAssets) {
     private val logger = KotlinLogging.logger {}
@@ -73,18 +88,36 @@ internal fun DrawScope.drawAtlasItem(image: ImageBitmap, item: PreviewItem, icon
 }
 
 @Composable
-internal fun PreviewItemIcon(id: String?, assets: PreviewAssets, cache: PreviewAtlasCache) {
-    val item = assets.manifest?.items?.get(id)
+internal fun PreviewItemIcon(icon: PreviewIcon?, assets: PreviewAssets, cache: PreviewAtlasCache) {
+    val item = assets.manifest?.items?.get((icon as? PreviewIcon.Item)?.itemId)
+    val builtin = remember(icon) {
+        when (icon) {
+            PreviewIcon.Checkmark -> BuiltinQuestIcons.checkmark
+            PreviewIcon.Dice -> BuiltinQuestIcons.dice
+            else -> null
+        }
+    }
     val bitmap by produceState<ImageBitmap?>(null, cache, item?.page) {
         value = item?.let { cache.page(it.page).getOrElse { null } }
     }
     val placeholder = MaterialTheme.colorScheme.outlineVariant
     Canvas(Modifier.size(36.dp)) {
         val image = bitmap
-        if (image != null && item != null) {
+        if (builtin != null) {
+            drawBuiltinIcon(builtin, 0f, 0f, size.minDimension)
+        } else if (image != null && item != null) {
             drawAtlasItem(image, item, assets.manifest.iconSize, 0f, 0f, size.minDimension)
         } else {
             drawCircle(placeholder, radius = size.minDimension / 3)
         }
     }
+}
+
+internal fun DrawScope.drawBuiltinIcon(image: ImageBitmap, x: Float, y: Float, edge: Float) {
+    drawImage(
+        image = image,
+        dstOffset = IntOffset(x.roundToInt(), y.roundToInt()),
+        dstSize = IntSize(edge.roundToInt().coerceAtLeast(1), edge.roundToInt().coerceAtLeast(1)),
+        filterQuality = FilterQuality.None,
+    )
 }

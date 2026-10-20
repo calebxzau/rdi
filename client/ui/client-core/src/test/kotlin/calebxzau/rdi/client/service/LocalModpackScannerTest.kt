@@ -95,6 +95,43 @@ class LocalModpackScannerTest {
         }
     }
 
+    @Test
+    fun `picked folders find isolated versions, shared root mods, and single version folders`(): Unit = runBlocking {
+        val root = Files.createTempDirectory("rdi-local-pick")
+        try {
+            val scanner = LocalModpackScanner(Store(emptyList()), root.resolve("managed"))
+            val installation = root.resolve(".minecraft")
+            val isolated = installation.resolve("versions/isolated")
+            createInstance(isolated, "cpw.mods.bootstraplauncher.BootstrapLauncher", "net.minecraftforge:forge:1.20.1-47.2.0", false)
+            val shared = installation.resolve("versions/shared")
+            Files.createDirectories(shared)
+            Files.writeString(
+                shared.resolve("shared.json"),
+                """{"id":"shared","inheritsFrom":"1.21.1","mainClass":"cpw.mods.bootstraplauncher.BootstrapLauncher","libraries":[{"name":"net.neoforged:neoforge:21.1.100"}]}""",
+            )
+            Files.createDirectories(installation.resolve("mods"))
+            Files.write(installation.resolve("mods/root.jar"), byteArrayOf(1))
+            val oldVersion = installation.resolve("versions/old")
+            Files.createDirectories(oldVersion.resolve("mods"))
+            Files.writeString(oldVersion.resolve("old.json"), """{"id":"1.16.5","mainClass":"cpw.mods.modlauncher.Launcher"}""")
+            Files.write(oldVersion.resolve("mods/a.jar"), byteArrayOf(1))
+
+            val fromRoot = scanner.scanDirectory(installation).getOrThrow().associateBy(LocalModpackCandidate::name)
+            val fromVersion = scanner.scanDirectory(isolated).getOrThrow()
+            val bare = scanner.scanDirectory(root).getOrThrow()
+
+            assertEquals(setOf("isolated", "shared"), fromRoot.keys)
+            assertEquals(isolated, fromRoot.getValue("isolated").gameDirectory)
+            assertEquals(installation, fromRoot.getValue("shared").gameDirectory)
+            assertEquals(ModLoader.neoforge, fromRoot.getValue("shared").modLoader)
+            assertEquals(McVersion.V211, fromRoot.getValue("shared").mcVersion)
+            assertEquals(listOf("isolated"), fromVersion.map(LocalModpackCandidate::name))
+            assertTrue(bare.isEmpty())
+        } finally {
+            root.toFile().deleteRecursively()
+        }
+    }
+
     private fun createInstance(
         directory: Path,
         mainClass: String,

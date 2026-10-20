@@ -32,7 +32,7 @@ class HostListViewModelTest {
             mine = listOf(brief("000000000000000000000001", "我的房间")),
             unavailable = listOf(brief("000000000000000000000002", "公开房间")),
         )
-        val viewModel = HostListViewModel(gateway, useMockData = false)
+        val viewModel = HostListViewModel(gateway, useMockData = false, showOtherHosts = true)
 
         awaitLoaded(viewModel)
 
@@ -60,7 +60,7 @@ class HostListViewModelTest {
                 2 to emptyList(),
             ),
         )
-        val viewModel = HostListViewModel(gateway, useMockData = false)
+        val viewModel = HostListViewModel(gateway, useMockData = false, showOtherHosts = true)
         awaitLoaded(viewModel)
 
         viewModel.loadMore()
@@ -83,7 +83,7 @@ class HostListViewModelTest {
             mineResult = Result.failure(IllegalStateException("网络不可用")),
             unavailable = listOf(brief("000000000000000000000005", "公开房间")),
         )
-        val viewModel = HostListViewModel(gateway, useMockData = false)
+        val viewModel = HostListViewModel(gateway, useMockData = false, showOtherHosts = true)
 
         awaitLoaded(viewModel)
 
@@ -102,7 +102,7 @@ class HostListViewModelTest {
                 )
             ),
         )
-        val viewModel = HostListViewModel(gateway, useMockData = false)
+        val viewModel = HostListViewModel(gateway, useMockData = false, showOtherHosts = true)
         awaitLoaded(viewModel)
         assertTrue(viewModel.uiState.value.retryLoadOnError)
 
@@ -119,7 +119,7 @@ class HostListViewModelTest {
     fun `concurrent load more requests only one blocked page`() = runBlocking {
         val pageGate = CompletableDeferred<Result<List<Host.BriefVo>>>()
         val gateway = FakeHostListGateway(pageGate = pageGate)
-        val viewModel = HostListViewModel(gateway, useMockData = false)
+        val viewModel = HostListViewModel(gateway, useMockData = false, showOtherHosts = true)
         gateway.awaitCall("legacy-page-0")
 
         viewModel.loadMore()
@@ -158,7 +158,7 @@ class HostListViewModelTest {
             mineResult = Result.failure(IllegalStateException("错误A")),
             pageGate = secondSource,
         )
-        val viewModel = HostListViewModel(gateway, useMockData = false)
+        val viewModel = HostListViewModel(gateway, useMockData = false, showOtherHosts = true)
         gateway.awaitCall("legacy-page-0")
         withTimeout(5_000) {
             viewModel.uiState.filter { it.errorMessage?.contains("错误A") == true && it.loadingMore }.first()
@@ -273,6 +273,62 @@ class HostListViewModelTest {
             viewModel.uiState.filter { it.errorMessage == "启动失败" && it.launchingHost == null }.first()
         }
         assertFalse(state.retryLoadOnError)
+    }
+
+    @Test
+    fun `other hosts are hidden by default and never requested`() = runBlocking {
+        val gateway = FakeHostListGateway(
+            mine = listOf(brief("000000000000000000000011", "可玩房间")),
+            unavailable = listOf(brief("000000000000000000000012", "其他房间")),
+        )
+        val viewModel = HostListViewModel(gateway, useMockData = false)
+
+        awaitLoaded(viewModel)
+        viewModel.loadMore()
+        kotlinx.coroutines.yield()
+
+        assertEquals(listOf("legacy-mine"), gateway.calls)
+        assertEquals(listOf("可玩房间"), viewModel.uiState.value.hosts.map { it.name })
+        assertFalse(viewModel.uiState.value.showOtherHosts)
+    }
+
+    @Test
+    fun `showing other hosts loads them and hiding keeps loaded data`() = runBlocking {
+        val gateway = FakeHostListGateway(
+            mine = listOf(brief("000000000000000000000013", "可玩房间")),
+            unavailable = listOf(brief("000000000000000000000014", "其他房间")),
+        )
+        val viewModel = HostListViewModel(gateway, useMockData = false)
+        awaitLoaded(viewModel)
+
+        viewModel.toggleOtherHosts()
+        withTimeout(5_000) { viewModel.uiState.filter { !it.loadingMore && it.hosts.size == 2 }.first() }
+        assertEquals(listOf("legacy-mine", "legacy-page-0"), gateway.calls)
+        assertTrue(viewModel.uiState.value.showOtherHosts)
+
+        viewModel.toggleOtherHosts()
+        assertFalse(viewModel.uiState.value.showOtherHosts)
+        assertEquals(2, viewModel.uiState.value.hosts.size)
+        assertEquals(2, gateway.calls.size)
+    }
+
+    @Test
+    fun `showing other hosts during the initial load loads them afterwards`() = runBlocking {
+        val mineGate = CompletableDeferred<Result<List<Host.BriefVo>>>()
+        val gateway = FakeHostListGateway(
+            unavailable = listOf(brief("000000000000000000000015", "其他房间")),
+            mineGate = mineGate,
+        )
+        val viewModel = HostListViewModel(gateway, useMockData = false)
+        gateway.awaitCall("legacy-mine")
+
+        viewModel.toggleOtherHosts()
+        mineGate.complete(Result.success(listOf(brief("000000000000000000000016", "可玩房间"))))
+        withTimeout(5_000) {
+            viewModel.uiState.filter { it.hosts.any { host -> host.name == "其他房间" } && !it.loadingMore }.first()
+        }
+
+        assertEquals(1, gateway.calls.count { it == "legacy-page-0" })
     }
 
     private suspend fun awaitLoaded(viewModel: HostListViewModel): HostListUiState =

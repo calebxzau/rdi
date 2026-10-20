@@ -1,6 +1,12 @@
 {
+  "permissions": {
+    "allow": [
+      "mcp__compose-hot-reload__get_logs",
+      "mcp__intelijIdea__execute_terminal_command"
+    ]
+  },
+  "enableAllProjectMcpServers": true,
   "enabledMcpjsonServers": [
     "compose-hot-reload"
-  ],
-  "enableAllProjectMcpServers": true
+  ]
 }

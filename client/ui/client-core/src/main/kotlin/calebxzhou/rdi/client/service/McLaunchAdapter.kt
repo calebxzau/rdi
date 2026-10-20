@@ -88,6 +88,7 @@ suspend fun McInstall.prepareDesktopLaunch(
     vararg jvmArgs: String,
     account: calebxzau.rdi.mclaunch.MinecraftAccount? = null,
     extraGameArgs: List<String> = emptyList(),
+    rdiRuntime: Boolean = true,
 ): Result<PreparedMinecraftLaunch> = createMinecraftLauncher().prepareLaunch(
     minecraftLaunchRequest(
         mcVersion = mcVer,
@@ -98,6 +99,7 @@ suspend fun McInstall.prepareDesktopLaunch(
         extraJvmArgs = jvmArgs.toList(),
         account = account,
         extraGameArgs = extraGameArgs,
+        rdiRuntime = rdiRuntime,
     ),
 )
 

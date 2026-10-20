@@ -208,6 +208,7 @@ fun AppNavigation(
                     navController.navigate(HostInfoRoute(target.id, false, target.kind.name))
                 },
                 onOpenModpackPlaza = { navController.navigate(ModpackPlazaRoute()) },
+                onOpenLocalModpackInstall = { navController.navigate(LocalModpackInstallRoute) },
                 onOpenModpackInfo = navController::openLocalModpackInfo,
                 onOpenModpackContent = navController::openLocalModpackContent,
                 onOpenModpackOptions = navController::openLocalModpackOptions,
@@ -502,6 +503,19 @@ fun AppNavigation(
             )
         }
         /* Friends navigation is archived with the friend system. */
+        composable<LocalModpackInstallRoute> {
+            LocalModpackInstallScreen(
+                onBack = {
+                    if (!navController.popBackStack()) {
+                        navController.navigateAbsolute(MenuRoute(MenuTab.Modpacks.name))
+                    }
+                },
+                onStarted = { runId ->
+                    navController.navigateAbsolute(MenuRoute(MenuTab.Modpacks.name))
+                    onOpenTask(runId)
+                },
+            )
+        }
         composable<ModpackPlazaRoute> {
             val route = it.toRoute<ModpackPlazaRoute>()
             ModpackPlazaScreen(

@@ -61,6 +61,7 @@ internal fun minecraftLaunchRequest(
     extraJvmArgs: List<String> = emptyList(),
     account: MinecraftAccount? = null,
     extraGameArgs: List<String> = emptyList(),
+    rdiRuntime: Boolean = true,
 ): MinecraftLaunchRequest = MinecraftLaunchRequest(
     mcVersion = mcVersion,
     loader = loader,
@@ -75,6 +76,7 @@ internal fun minecraftLaunchRequest(
     launchOverrides = launchOverrides,
     extraJvmArgs = extraJvmArgs,
     extraGameArgs = extraGameArgs,
+    rdiRuntime = rdiRuntime,
 )
 
 /** Logical (unscaled) size of the launcher window; the UI sets it before any game can start. */

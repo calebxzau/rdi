@@ -46,6 +46,20 @@ internal fun earlyDisplayJvmArgs(
         emptyList()
     }
 
+/** Reads JAVA_VERSION from the `release` file next to `bin/` of [javaExecutable]; null when it is missing or unreadable. */
+internal fun readJdkReleaseMajor(javaExecutable: File): Int? {
+    val release = javaExecutable.absoluteFile.parentFile?.parentFile?.resolve("release")
+        ?.takeIf(File::isFile) ?: return null
+    val version = runCatching { release.readLines() }.getOrNull()
+        ?.firstOrNull { it.startsWith("JAVA_VERSION=") }
+        ?.substringAfter('=')
+        ?.trim('"', ' ')
+        ?: return null
+    val parts = version.split('.', '_', '-', '+')
+    val first = parts.firstOrNull()?.toIntOrNull() ?: return null
+    return if (first == 1) parts.getOrNull(1)?.toIntOrNull() else first
+}
+
 internal const val RDI_ROOT_LOG_LEVEL_PROPERTY = "rdi.logging.rootLevel"
 
 /**
@@ -157,7 +171,7 @@ class MinecraftLauncher(
 
     /** Prepares media on IO before entering the caller's synchronous process ownership section. */
     suspend fun prepareLaunch(request: MinecraftLaunchRequest): Result<PreparedMinecraftLaunch> = try {
-        val mediaRuntime = withContext(Dispatchers.IO) { resolveMediaRuntime(request.mcVersion) }
+        val mediaRuntime = withContext(Dispatchers.IO) { resolveMediaRuntime(request) }
         currentCoroutineContext().ensureActive()
         Result.success(PreparedMinecraftLaunch { onLine ->
             launchInternal(request, onLine) { mediaRuntime }
@@ -171,10 +185,11 @@ class MinecraftLauncher(
     fun launch(
         request: MinecraftLaunchRequest,
         onLine: (String) -> Unit,
-    ): Result<Process> = launchInternal(request, onLine) { resolveMediaRuntime(request.mcVersion) }
+    ): Result<Process> = launchInternal(request, onLine) { resolveMediaRuntime(request) }
 
-    private fun resolveMediaRuntime(mcVersion: McVersion): MediaProcGameRuntime? {
-        if (mcVersion != McVersion.V201 && mcVersion != McVersion.V211) return null
+    private fun resolveMediaRuntime(request: MinecraftLaunchRequest): MediaProcGameRuntime? {
+        if (!request.rdiRuntime) return null
+        if (request.mcVersion != McVersion.V201 && request.mcVersion != McVersion.V211) return null
         return environment.mediaRuntimeResolver(directories.toolsDir.resolve("mediaproc-natives"))
             .getOrElse { error ->
                 lgr.error(error) { "Minecraft媒体模块不可用" }
@@ -218,7 +233,7 @@ class MinecraftLauncher(
                     .replace("\${assets_index_name}", manifest.assets ?: manifest.assetIndex?.id ?: manifest.id)
                     .replace("\${auth_uuid}", request.account.uuid.replace("-", ""))
                     .replace("\${auth_access_token}", request.account.accessToken)
-                    .replace("\${user_type}", "msa")
+                    .replace("\${user_type}", request.account.userType)
                     .replace("\${version_type}", "RDI")
                     .replace("\${user_properties}", "{}")
             }
@@ -233,7 +248,8 @@ class MinecraftLauncher(
 
         val resolvedJvmArgs = manifest.resolveJvmArgumentList() + loaderManifest.resolveJvmArgumentList()
         val needsForgeRuntime = request.loader != ModLoader.Fabric
-        val hasRdiManagedRuntime = request.mcVersion == McVersion.V201 || request.mcVersion == McVersion.V211
+        val hasRdiManagedRuntime = request.rdiRuntime &&
+            (request.mcVersion == McVersion.V201 || request.mcVersion == McVersion.V211)
         val kotlinClasspath = if (needsForgeRuntime && hasRdiManagedRuntime) {
             GameKotlinRuntime.prepare(
                 mcVersion = request.mcVersion,
@@ -312,6 +328,7 @@ class MinecraftLauncher(
         if (launchClasspath.isNotEmpty() && !hasClasspathDeclaration) {
             processedJvmArgs += listOf("-cp", classpath)
         }
+        val javaPath = resolveJavaPath(request.launchOverrides.javaPath)
         val maxMemoryMb = resolveMaxMemory(request.launchOverrides.maxMemoryMb)
         processedJvmArgs += "-Xmx${maxMemoryMb}M"
         //memory-efficient params
@@ -320,12 +337,17 @@ class MinecraftLauncher(
             "-XX:+UseZGC",
             "-XX:SoftMaxHeapSize=${maxMemoryMb * 3 / 4}M",
             "-XX:ZUncommitDelay=60",
-            "-XX:+UseCompactObjectHeaders"
         )
+        // A product flag only since Java 25; older JVMs refuse to start with it.
+        if ((resolveJavaMajor(javaPath) ?: 0) >= 25) {
+            processedJvmArgs += "-XX:+UseCompactObjectHeaders"
+        }
         // JVM原生崩溃报告写进logs/，日志导出时一并带上
         processedJvmArgs += "-XX:ErrorFile=${request.versionDir.resolve("logs").resolve("hs_err_pid%p.log").absolutePath}"
         processedJvmArgs += utf8LoggingJvmArgs
-        processedJvmArgs += neoForgeLoggingJvmArgs(request.mcVersion, request.loader, request.extraJvmArgs)
+        if (request.rdiRuntime) {
+            processedJvmArgs += neoForgeLoggingJvmArgs(request.mcVersion, request.loader, request.extraJvmArgs)
+        }
         mediaRuntime?.let {
             processedJvmArgs += "-Dorg.bytedeco.javacpp.pathsFirst=true"
             // FfmpegNativePreloader loads FFmpeg from preloadpath; JavaCPP's class-path probing scans every mod for seconds.
@@ -350,7 +372,7 @@ class MinecraftLauncher(
 
         val mainClass = loaderManifest.mainClass ?: error("缺少启动主类")
         val command = buildList {
-            add(resolveJavaPath(request.launchOverrides.javaPath))
+            add(javaPath)
             addAll(processedJvmArgs)
             add(mainClass)
             addAll(gameArgs)
@@ -483,6 +505,13 @@ class MinecraftLauncher(
 
     private fun resolveJavaPath(overridePath: String?): String =
         overridePath?.trim()?.takeIf(String::isNotEmpty) ?: resolveJava25Path()
+
+    private fun resolveJavaMajor(javaPath: String): Int? =
+        if (javaPath == environment.java.currentJavaPath) {
+            environment.java.currentJavaMajor
+        } else {
+            readJdkReleaseMajor(File(javaPath))
+        }
 
     private fun resolveMaxMemory(overrideMaxMemoryMb: Int?): Long {
         val maxMemoryMb = overrideMaxMemoryMb ?: environment.java.maxMemoryMb

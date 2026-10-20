@@ -32,7 +32,7 @@ internal fun QuestDetailPane(
             return@Column
         }
         RawQuestFields(quest.data, detailsButton, header = {
-            PreviewItemIcon(data.questIcon(quest)?.itemId, data.assets, cache)
+            PreviewItemIcon(data.questIcon(quest), data.assets, cache)
             Text(questAnnotatedText(data.questTitle(quest)), Modifier.weight(1f), style = MaterialTheme.typography.titleLarge)
         })
         quest.subtitle?.takeIf(String::isNotBlank)?.let { QuestText(data.text(it)) }
@@ -67,8 +67,8 @@ internal fun QuestDetailPane(
                 targets.forEach { target ->
                     TextButton(onClick = { onNavigate(target) }) {
                         val icon = target.questId?.let(data.quests::get)?.let(data::questIcon)
-                            ?: data.chapters[target.chapterId]?.icon
-                        PreviewItemIcon(icon?.itemId, data.assets, cache)
+                            ?: data.chapters[target.chapterId]?.icon?.let { PreviewIcon.Item(it.itemId) }
+                        PreviewItemIcon(icon, data.assets, cache)
                         Spacer(Modifier.width(8.dp))
                         Text(questAnnotatedText(target.label))
                     }
@@ -79,7 +79,7 @@ internal fun QuestDetailPane(
         Text("任务目标（${quest.tasks.size}）", style = MaterialTheme.typography.titleMedium)
         quest.tasks.forEach { task ->
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                PreviewItemIcon((task.icon ?: task.item)?.itemId, data.assets, cache)
+                PreviewItemIcon(task.previewIcon(), data.assets, cache)
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     RawQuestFields(task.data, detailsButton, header = {
                         Text(questAnnotatedText(data.taskTitle(task)), Modifier.weight(1f))
@@ -107,7 +107,7 @@ private fun RewardPreview(
     detailsButton: @Composable (expanded: Boolean, onClick: () -> Unit) -> Unit,
 ) {
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        PreviewItemIcon((reward.icon ?: reward.item)?.itemId, data.assets, cache)
+        PreviewItemIcon(reward.previewIcon(), data.assets, cache)
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             val count = reward.count ?: reward.item?.count
             val title = data.rewardTitle(reward)

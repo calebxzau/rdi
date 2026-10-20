@@ -3,7 +3,6 @@ package calebxzau.rdi.questviewer
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.unit.IntSize
 import calebxzau.rdi.quests.ftb.model.FtbChapter
-import calebxzau.rdi.quests.ftb.model.FtbItemStack
 import kotlin.math.abs
 import kotlin.math.floor
 import kotlin.math.min
@@ -15,7 +14,7 @@ internal data class QuestGraphNode(
     val radius: Float,
     val shape: String,
     val title: String,
-    val icon: FtbItemStack?,
+    val icon: PreviewIcon?,
     val link: Boolean = false,
 )
 

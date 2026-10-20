@@ -109,20 +109,22 @@ fun McPlayScreen(
 
                 val versionDir = args.versionDir?.let(Paths::get)
                     ?: mcInstall.versionListDir.resolve(args.versionId).toPath()
-                RemovedModCleanupService.cleanup(versionDir, args.modLoader).getOrThrow().forEach { fileName ->
-                    session.appendLog("[RDI] 已移除不兼容Mod $fileName")
-                }
+                if (args.withRdiCore) {
+                    RemovedModCleanupService.cleanup(versionDir, args.modLoader).getOrThrow().forEach { fileName ->
+                        session.appendLog("[RDI] 已移除不兼容Mod $fileName")
+                    }
 
-                UpdateService.prepareMcCore(
-                    mcVersion = args.mcVer,
-                    modLoader = args.modLoader,
-                    modsDir = mcInstall.versionListDir.resolve(args.versionId).resolve("mods"),
-                    onStatus = { session.appendLog("[RDI] $it") },
-                    onDetail = { if (it.isNotBlank()) session.appendLog("[RDI] $it") },
-                    onProgress = { progress -> appendSyncProgress(session, coreProgress, progress) },
-                ).getOrThrow()
-                session.appendLog("[RDI] RDI核心Mod已同步")
-                if (session.stopRequested) return@launchSessionTask
+                    UpdateService.prepareMcCore(
+                        mcVersion = args.mcVer,
+                        modLoader = args.modLoader,
+                        modsDir = mcInstall.versionListDir.resolve(args.versionId).resolve("mods"),
+                        onStatus = { session.appendLog("[RDI] $it") },
+                        onDetail = { if (it.isNotBlank()) session.appendLog("[RDI] $it") },
+                        onProgress = { progress -> appendSyncProgress(session, coreProgress, progress) },
+                    ).getOrThrow()
+                    session.appendLog("[RDI] RDI核心Mod已同步")
+                    if (session.stopRequested) return@launchSessionTask
+                }
 
                 session.appendLog("[RDI] 检查游戏安装...")
                 mcInstall.prepareForLaunch(
@@ -137,27 +139,29 @@ fun McPlayScreen(
                 session.appendLog("[RDI] 游戏安装已就绪")
                 if (session.stopRequested) return@launchSessionTask
 
-                EarlyDisplayMount.mount(
-                    mcVersion = args.mcVer,
-                    modLoader = args.modLoader,
-                    versionDir = mcInstall.versionListDir.resolve(args.versionId),
-                ).fold(
-                    onSuccess = {
-                        EarlyDisplayMount.configureProvider(
-                            mcVersion = args.mcVer,
-                            modLoader = args.modLoader,
-                            versionDir = mcInstall.versionListDir.resolve(args.versionId),
-                        ).onFailure { error ->
-                            session.appendLog("[RDI] Early Display Provider配置失败，将使用游戏默认窗口: ${error.message ?: error.javaClass.simpleName}")
-                        }
-                        Unit
-                    },
-                    onFailure = { error ->
-                        session.appendLog("[RDI] Early Display未挂载，将使用游戏默认窗口: ${error.message ?: error.javaClass.simpleName}")
-                    },
-                )
+                if (args.withRdiCore) {
+                    EarlyDisplayMount.mount(
+                        mcVersion = args.mcVer,
+                        modLoader = args.modLoader,
+                        versionDir = mcInstall.versionListDir.resolve(args.versionId),
+                    ).fold(
+                        onSuccess = {
+                            EarlyDisplayMount.configureProvider(
+                                mcVersion = args.mcVer,
+                                modLoader = args.modLoader,
+                                versionDir = mcInstall.versionListDir.resolve(args.versionId),
+                            ).onFailure { error ->
+                                session.appendLog("[RDI] Early Display Provider配置失败，将使用游戏默认窗口: ${error.message ?: error.javaClass.simpleName}")
+                            }
+                            Unit
+                        },
+                        onFailure = { error ->
+                            session.appendLog("[RDI] Early Display未挂载，将使用游戏默认窗口: ${error.message ?: error.javaClass.simpleName}")
+                        },
+                    )
+                }
 
-                val windowJvmArgs = gameWindowService.prepareJvmArgs(
+                val windowJvmArgs = if (!args.withRdiCore) emptyList() else gameWindowService.prepareJvmArgs(
                     versionDir = versionDir,
                     modpackName = args.modpackName,
                     versionName = args.versionName,
@@ -179,15 +183,17 @@ fun McPlayScreen(
                         add("-Xlog:os+exit=trace")
                         add(it)
                     }
-                    if (Modpack.supportForgeGuard(args.modpackName)) {
+                    if (args.withRdiCore && Modpack.supportForgeGuard(args.modpackName)) {
                         val forgeguardAgent = RDIClient.DIR.resolve("lib/$FORGEGUARD_AGENT_FILE_NAME")
                         require(forgeguardAgent.isFile) { "缺少Forgeguard启动保护文件: ${forgeguardAgent.absolutePath}" }
                         add("\"-javaagent:${forgeguardAgent.absolutePath}\"")
                     }
-                    val localGameAddr = LocalMcProxyService.start(McPlayStore::appendProxyLog).getOrThrow()
-                    val proxiedPlayArg = args.playArg.withGameAddr(localGameAddr)
-                    add("-Drdi.play=${proxiedPlayArg.encodeBase64}")
+                    if (args.withRdiCore) {
+                        val localGameAddr = LocalMcProxyService.start(McPlayStore::appendProxyLog).getOrThrow()
+                        val proxiedPlayArg = args.playArg.withGameAddr(localGameAddr)
+                        add("-Drdi.play=${proxiedPlayArg.encodeBase64}")
                         args.hostId?.let { add("-Drdi.host.id=${it}") }
+                    }
 
                 }
                 if (session.stopRequested) return@launchSessionTask
@@ -203,6 +209,7 @@ fun McPlayScreen(
                     *launchJvmArgs.toTypedArray(),
                     account = args.account,
                     extraGameArgs = args.extraGameArgs,
+                    rdiRuntime = args.withRdiCore,
                 ).getOrThrow()
                 if (session.stopRequested) return@launchSessionTask
 

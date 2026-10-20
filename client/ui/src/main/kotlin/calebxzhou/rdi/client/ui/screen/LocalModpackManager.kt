@@ -116,6 +116,9 @@ private val personalDataCopyEntries = listOf(
     PersonalDataCopyEntry("options", "键位画质设置", "options.txt", isDirectory = false),
 )
 
+/** A local-only pack waiting for the player to pick offline or online play. */
+internal data class LocalPlayRequest(val pack: ModpackLocalDir, val onOpenPlay: (McPlayArgs) -> Unit)
+
 private const val MAX_LOCAL_CONFIG_FILE_BYTES = 2L * 1024 * 1024
 private val localConfigEditableExtensions = setOf(
     "cfg", "conf", "ini", "json", "json5", "js", "lang", "list", "properties",
@@ -145,6 +148,7 @@ internal class LocalModpackManager(val scope: CoroutineScope) {
     var copyDataTargetVersionId by mutableStateOf<String?>(null)
     var copyDataSelectedKeys by mutableStateOf(personalDataCopyEntries.map { it.key }.toSet())
     var configEditorPack by mutableStateOf<ModpackLocalDir?>(null)
+    var localPlayRequest by mutableStateOf<LocalPlayRequest?>(null)
     var localConfigFilesLoading by mutableStateOf(false)
     var localConfigContentLoading by mutableStateOf(false)
     var localConfigSaving by mutableStateOf(false)
@@ -376,7 +380,10 @@ internal fun LocalModpackManager.InstalledTile(
     InstalledCard(
         pack = pack,
         glass = glass,
-        onOpenPlay = { onOpenPlay(pack.toPlayArgs()) },
+        onOpenPlay = {
+            if (pack.isLocal) localPlayRequest = LocalPlayRequest(pack, onOpenPlay)
+            else onOpenPlay(pack.toPlayArgs())
+        },
         onOpenModpackInfo = { onOpenModpackInfo(pack) },
         isRunning = McPlayStore.aliveCount(pack.versionId) > 0,
         onOpenContent = { type -> onOpenContent(pack, type) },
@@ -406,6 +413,17 @@ internal fun LocalModpackManager.Dialogs() {
             legacyError = null
             actionError = null
         }
+    }
+
+    localPlayRequest?.let { request ->
+        LocalPlayDialog(
+            pack = request.pack,
+            onDismiss = { localPlayRequest = null },
+            onPlay = { args ->
+                localPlayRequest = null
+                request.onOpenPlay(args)
+            },
+        )
     }
 
     configEditorPack?.let { pack ->
@@ -795,15 +813,18 @@ private fun InstalledCard(
     onDelete: () -> Unit,
 ) {
     var expanded by remember(pack.versionId) { mutableStateOf(false) }
-    val hint = remember(pack.name, pack.verName, pack.createTime) {
+    val hint = remember(pack.name, pack.verName, pack.createTime, pack.vo) {
         CardHint(
             title = pack.name,
             titleVersion = pack.verName,
-            detail = "安装于${INSTALL_TIME_FORMAT.format(Instant.ofEpochMilli(pack.createTime))}",
-            actions = listOf(
+            detail = buildString {
+                if (pack.isLocal) append("本地导入 · ")
+                append("安装于${INSTALL_TIME_FORMAT.format(Instant.ofEpochMilli(pack.createTime))}")
+            },
+            actions = listOfNotNull(
                 CardHintAction(HintMouseButton.Left, "菜单"),
                 CardHintAction(HintMouseButton.Right, "单机玩"),
-                CardHintAction(HintMouseButton.Middle, "发布页"),
+                CardHintAction(HintMouseButton.Middle, "发布页").takeIf { pack.vo != null },
             ),
         )
     }

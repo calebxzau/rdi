@@ -3,6 +3,7 @@ package calebxzhou.rdi.client.service
 import calebxzhou.rdi.client.database.MinecraftInstallationStore
 import calebxzhou.rdi.common.model.McVersion
 import calebxzhou.rdi.common.model.ModLoader
+import calebxzhou.rdi.common.model.supportsModpackUpload
 import calebxzhou.rdi.common.model.supportsRuntime
 import calebxzhou.rdi.common.serdesJson
 import calebxzau.rdi.mclaunch.model.MojangVersionManifest
@@ -24,6 +25,8 @@ data class LocalModpackCandidate(
     val versionDirectory: Path,
     val mcVersion: McVersion,
     val modLoader: ModLoader,
+    /** Where mods and configs live: the version directory with version isolation, otherwise the installation root. */
+    val gameDirectory: Path = versionDirectory,
 )
 
 internal fun detectLocalModLoader(
@@ -84,6 +87,23 @@ class LocalModpackScanner(
         }
     }
 
+    /**
+     * Candidates in a folder the player picked: a `.minecraft` with `versions/`, or one version directory.
+     * An empty list means the folder holds no recognizable version manifest.
+     */
+    suspend fun scanDirectory(directory: Path): Result<List<LocalModpackCandidate>> = withContext(Dispatchers.IO) {
+        runCatching {
+            val normalized = directory.toAbsolutePath().normalize()
+            require(Files.isDirectory(normalized)) { "找不到文件夹：$normalized" }
+            when {
+                Files.isDirectory(normalized.resolve("versions")) -> scanInstallation(normalized).toList()
+                Files.isRegularFile(normalized.resolve("${normalized.fileName}.json")) ->
+                    listOfNotNull(scanCandidate(normalized))
+                else -> emptyList()
+            }
+        }
+    }
+
     private fun scanInstallation(installation: Path): Sequence<LocalModpackCandidate> {
         val versionsDirectory = installation.resolve("versions")
         if (!Files.isDirectory(versionsDirectory)) return emptySequence()
@@ -105,8 +125,11 @@ class LocalModpackScanner(
         val name = directory.fileName.toString()
         val manifestFile = directory.resolve("$name.json")
         require(Files.isRegularFile(manifestFile)) { "缺少版本清单" }
-        val modsDirectory = directory.resolve("mods")
-        require(Files.isDirectory(modsDirectory) && hasDirectJar(modsDirectory)) { "没有Mod文件" }
+        val installation = directory.parent?.parent ?: directory
+        val gameDirectory = listOf(directory, installation).firstOrNull { candidate ->
+            val modsDirectory = candidate.resolve("mods")
+            Files.isDirectory(modsDirectory) && hasDirectJar(modsDirectory)
+        } ?: error("没有Mod文件")
 
         val manifest = serdesJson.decodeFromString<MojangVersionManifest>(Files.readString(manifestFile))
         val minecraftVersion = manifest.clientVersion ?: manifest.inheritsFrom ?: manifest.id
@@ -119,13 +142,15 @@ class LocalModpackScanner(
             mcVersion,
         ).getOrThrow()
         require(mcVersion.supportsRuntime(modLoader)) { "不支持${mcVersion.mcVer}/$modLoader" }
+        require(mcVersion.supportsModpackUpload()) { "暂不支持导入MC${mcVersion.mcVer}" }
 
         LocalModpackCandidate(
             name = name,
-            minecraftInstallation = directory.parent.parent,
+            minecraftInstallation = installation,
             versionDirectory = directory,
             mcVersion = mcVersion,
             modLoader = modLoader,
+            gameDirectory = gameDirectory,
         )
     }.onFailure { cause ->
         logger.info { "忽略外部整合包$directory：${cause.message}" }

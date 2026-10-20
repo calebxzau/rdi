@@ -30,4 +30,6 @@ data class McPlayArgs(
     val hostName: String? = null,
     val modpackIconUrl: String? = null,
     val versionName: String,
+    /** False for packs installed only on this computer: vanilla launch, no RDI core or RDI runtimes. */
+    val withRdiCore: Boolean = true,
 )

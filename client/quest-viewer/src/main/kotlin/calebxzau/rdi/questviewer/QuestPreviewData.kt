@@ -56,8 +56,8 @@ internal class QuestPreviewData(
     fun text(raw: String): String = previewPlainText(raw, assets.language)
     fun chapterTitle(chapter: FtbChapter): String = chapter.title?.takeIf(String::isNotBlank)?.let(::text)
         ?: chapter.sourcePath.substringAfterLast('/').removeSuffix(".snbt")
-    fun questIcon(quest: FtbQuest): FtbItemStack? = quest.icon
-        ?: quest.tasks.firstNotNullOfOrNull { it.icon ?: it.item }
+    fun questIcon(quest: FtbQuest): PreviewIcon? = quest.icon?.let { PreviewIcon.Item(it.itemId) }
+        ?: quest.tasks.firstNotNullOfOrNull { it.previewIcon() }
     fun questTitle(quest: FtbQuest): String = quest.title?.takeIf(String::isNotBlank)?.let(::text)
         ?: quest.tasks.firstOrNull()?.let(::taskTitle) ?: "任务${quest.id}"
     fun repeatable(quest: FtbQuest): Boolean = quest.repeatable

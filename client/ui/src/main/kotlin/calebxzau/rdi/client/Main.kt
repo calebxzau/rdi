@@ -83,6 +83,8 @@ import calebxzhou.rdi.common.model.RAccount
 import calebxzhou.rdi.common.model.Task2Entry
 import calebxzhou.rdi.common.serdesJson
 import calebxzhou.rdi.common.net.ktorClient
+import calebxzau.rdi.client.account.MsaSessionStore
+import calebxzhou.rdi.client.service.LocalModpackStore
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.launch
@@ -112,6 +114,7 @@ fun main() {
     initializePlayerInfoCache(databaseHandle.playerInfoStore)
     ModpackLaunchOptionsService.initialize(databaseHandle.modpackLaunchOptionsStore)
     clearClientContentTempDirOnStartup()
+    clearLocalModpackStagingOnStartup()
     clearPackProcDirOnStartup()
     // LocalMinecraftReuseService.start()
     GlobalScope.launch(Dispatchers.IO) {
@@ -265,6 +268,12 @@ fun main() {
                             LocalCredentials.read().setAutoLoginDisabled(true).onFailure {
                                 lgr.error(it) { "保存自动登录设置失败" }
                             }
+                            val loggedOutId = loggedAccount._id.toHexString()
+                            GlobalScope.launch {
+                                MsaSessionStore.shared.clear(loggedOutId).onFailure {
+                                    lgr.error(it) { "清除正版会话失败" }
+                                }
+                            }
                             AccountSessionStore.logout()
                             navController.navigateRoot(LoginRoute)
                         },
@@ -355,6 +364,11 @@ private fun clearClientContentTempDirOnStartup() {
         ClientDirs.dlcDir.resolve(".tmp").deleteRecursivelyNoSymlink()
     }.onFailure {
         lgr.warn(it) { "清理客户端内容临时目录失败" }
+    }
+}
+private fun clearLocalModpackStagingOnStartup() {
+    LocalModpackStore.deleteStaleStagingDirs(ClientDirs.versionsDir).onFailure {
+        lgr.warn(it) { "清理未完成的本地整合包安装失败" }
     }
 }
 

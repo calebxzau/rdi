@@ -394,14 +394,20 @@ data class ModpackLocalDir(
     val verName: String,
     val vo: Modpack.BriefVo?,
     val createTime: Long,
+    /** Set for packs installed only on this computer; they launch without the RDI core. */
+    val local: LocalModpackInfo? = null,
 ) {
     val versionId = dir.name
-    val name get() = requireNotNull(vo).name
-    val comment get() = vo?.info
-    val iconUrl get() = vo?.icon
-    val mcVersion get() = requireNotNull(vo).mcVer
-    val modLoader get() = requireNotNull(vo).modloader
+    val isLocal get() = local != null
+    val name get() = local?.name ?: requireNotNull(vo).name
+    val comment get() = local?.comment ?: vo?.info
+    val iconUrl get() = local?.iconUrl ?: vo?.icon
+    val mcVersion get() = local?.mcVersion ?: requireNotNull(vo).mcVer
+    val modLoader get() = local?.modLoader ?: requireNotNull(vo).modloader
 }
+
+internal fun LocalModpackInfo.toLocalDir(dir: File): ModpackLocalDir =
+    ModpackLocalDir(dir = dir, verName = mcVersion.mcVer, vo = null, createTime = createdAt, local = this)
 
 /**
  * Prepares playing this host. With [startHost] false the host is not started and no play is counted;
@@ -577,5 +583,13 @@ suspend fun ModpackService.getLocalPackDirs(): List<ModpackLocalDir> {
         val createTime = localPackCreateTime(ref)
         ModpackLocalDir(ref.dir, ref.verName, vo, createTime)
     }
-    return remotePacks.sortedByDescending(ModpackLocalDir::createTime)
+    return (remotePacks + scanLocalOnlyPacks(mcInstall.versionListDir)).sortedByDescending(ModpackLocalDir::createTime)
 }
+
+/** Packs imported without uploading; a directory with unreadable metadata is logged and skipped. */
+internal fun scanLocalOnlyPacks(versionsDir: File): List<ModpackLocalDir> =
+    LocalModpackStore.scan(versionsDir).mapNotNull { (dir, info) ->
+        info.map { it.toLocalDir(dir) }
+            .onFailure { lgr.warn(it) { "读取本地整合包${dir.name}失败，将跳过该目录" } }
+            .getOrNull()
+    }

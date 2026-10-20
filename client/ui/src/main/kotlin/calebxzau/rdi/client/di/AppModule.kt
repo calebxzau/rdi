@@ -7,6 +7,10 @@ import calebxzhou.rdi.client.service.CatalogModpackArchiveCatalog
 import calebxzhou.rdi.client.service.ModpackArchiveReader
 import calebxzhou.rdi.client.service.ModpackArchiveContentResolutionSource
 import calebxzhou.rdi.client.service.ModpackArchiveContentResolver
+import calebxzhou.rdi.client.service.ClientDirs
+import calebxzhou.rdi.client.service.LocalModpackInstaller
+import calebxzhou.rdi.client.service.LocalModpackScanner
+import calebxzau.rdi.client.ui.viewmodel.LocalModpackInstallViewModel
 import calebxzau.rdi.client.ui.viewmodel.ModpackOptionViewModel
 import calebxzau.rdi.client.ui.viewmodel.ModpackOptionRuntime
 import calebxzau.rdi.client.ui.viewmodel.HostCreateGateway
@@ -31,6 +35,9 @@ import calebxzau.rdi.client.ui.viewmodel.SettingsViewModel
 import calebxzau.rdi.client.ui.viewmodel.HostListGateway
 import calebxzau.rdi.client.ui.viewmodel.HostListViewModel
 import calebxzau.rdi.client.ui.viewmodel.RdiHostListGateway
+import calebxzau.rdi.client.ui.viewmodel.OnlinePlayersGateway
+import calebxzau.rdi.client.ui.viewmodel.OnlinePlayersViewModel
+import calebxzau.rdi.client.ui.viewmodel.RdiOnlinePlayersGateway
 import calebxzau.rdi.client.ui.viewmodel.ModCatalogViewModel
 import calebxzau.rdi.client.ui.viewmodel.ModCatalogInfoViewModel
 import calebxzau.rdi.client.ui.viewmodel.ModpackUploadGateway
@@ -50,10 +57,14 @@ fun appModule(
     factory<ModpackUploadGateway> { RdiModpackUploadGateway(get()) }
     single { ModpackArchiveReader(CatalogModpackArchiveCatalog(modCatalog)) }
     single<ModpackArchiveContentResolutionSource> { ModpackArchiveContentResolver(modCatalog) }
+    single { LocalModpackScanner(get(), ClientDirs.mcDir.toPath()) }
+    single { LocalModpackInstaller(ClientDirs.versionsDir.toPath()) }
+    viewModel { LocalModpackInstallViewModel(get(), get(), get(), get()) }
     single<ModpackOptionRuntime> { SettingsModpackOptionRuntime }
     single<HostCreateGateway> { RdiHostCreateGateway() }
     single<HostGateway> { RdiHostGateway() }
     single<HostListGateway> { RdiHostListGateway() }
+    single<OnlinePlayersGateway> { RdiOnlinePlayersGateway() }
     single<SettingsGateway> { RdiSettingsGateway() }
     single<ModpackInfoGateway> { RdiModpackInfoGateway() }
     single<ModpackUploaderManageGateway> { RdiModpackUploaderManageGateway() }
@@ -77,6 +88,7 @@ fun appModule(
     }
     viewModel { SettingsViewModel(gateway = get()) }
     viewModel { HostListViewModel(gateway = get(), useMockData = calebxzhou.rdi.client.Const.USE_MOCK_DATA) }
+    viewModel { OnlinePlayersViewModel(gateway = get()) }
     viewModel { parameters ->
         ModpackOptionViewModel(
             versionId = parameters.get(),

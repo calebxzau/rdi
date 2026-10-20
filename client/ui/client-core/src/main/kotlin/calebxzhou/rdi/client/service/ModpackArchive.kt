@@ -88,6 +88,8 @@ data class ModpackArchivePreview(
     val overrides: List<ModpackArchiveOverride>,
     /** Original root manifest bytes, retained verbatim for server validation. */
     val manifestJson: String = "",
+    /** CurseForge manifest entries that cannot be resolved or downloaded automatically. */
+    val unavailableFiles: List<ModpackArchiveUnavailableFile> = emptyList(),
 ) {
     val requiredFiles get() = files.filter(ModpackArchiveFile::required)
     val optionalFiles get() = files.filterNot(ModpackArchiveFile::required)
@@ -118,6 +120,12 @@ data class ModpackArchiveFile(
     /** Authoritative catalog metadata for manifest entries; null only for legacy test fixtures. */
     val content: Modpack2ContentDto? = null,
     val manifestSource: Modpack2ContentSourceDto? = null,
+)
+
+data class ModpackArchiveUnavailableFile(
+    val key: String,
+    val displayName: String,
+    val required: Boolean,
 )
 
 data class ModpackArchiveEmbeddedMod(
@@ -156,6 +164,8 @@ data class ArchiveCatalogFile(
     val side: ContentSide = ContentSide.Both,
     val minecraftVersions: Set<String> = emptySet(),
     val loaders: Set<ModLoader> = emptySet(),
+    /** The file is known, but its author does not allow third-party downloads. */
+    val downloadUnavailable: Boolean = false,
 )
 
 interface ModpackArchiveCatalog {
@@ -193,17 +203,21 @@ class CatalogModpackArchiveCatalog(
             }
             val sha1 = file.digests.firstOrNull { it.algorithm == CatalogDigestAlgorithm.SHA1 }?.value
                 ?: error("整合包文件校验信息不完整：${ref.fileId}")
-            val download = catalog.resolveDownload(file).getOrThrow()
+            val download = catalog.resolveDownload(file).getOrElse { cause ->
+                lgr.warn(cause) { "CurseForge文件无法自动下载：${ref.projectId}/${ref.fileId}" }
+                null
+            }
             val project = projects[file.project]
             val projectSource = project?.sources?.firstOrNull { it.ref == file.project }
             result[ref.fileId] = ArchiveCatalogFile(
                 projectId = ref.projectId,
                 displayName = project?.nameCn ?: project?.name ?: file.displayName,
-                fileName = download.fileName,
+                fileName = download?.fileName ?: file.fileName,
                 size = file.fileSize,
                 sha1 = sha1,
-                url = download.url,
-                headers = download.headers,
+                url = download?.url.orEmpty(),
+                headers = download?.headers.orEmpty(),
+                downloadUnavailable = download == null,
                 summary = project?.summary,
                 iconUrls = project?.iconUrls.orEmpty(),
                 contentType = projectSource?.contentType ?: CatalogContentType.OTHER,
@@ -234,12 +248,13 @@ class CatalogModpackArchiveCatalog(
             CatalogFileHashes(ref.path, ref.sha1, null)
         }
         val matched = catalog.matchFiles(hashes).getOrThrow()
-        require(matched.keys.containsAll(refs.map(ModrinthArchiveRef::path))) {
-            "无法解析Modrinth清单文件：${refs.filterNot { it.path in matched }.joinToString { it.path }}"
+        // Entries hosted outside Modrinth keep the index's own download URLs.
+        refs.filterNot { it.path in matched }.takeIf { it.isNotEmpty() }?.let { unmatched ->
+            lgr.info { "Modrinth清单中${unmatched.size}个文件不在Modrinth上，使用清单下载地址" }
         }
         val files = matched.values.toSet()
         val projects = catalog.getMods(files.mapTo(linkedSetOf(), CatalogFile::project)).getOrThrow().value
-        Result.success(refs.associate { ref ->
+        Result.success(refs.filter { it.path in matched }.associate { ref ->
             val file = matched.getValue(ref.path)
             val sha1 = file.digests.firstOrNull { it.algorithm == CatalogDigestAlgorithm.SHA1 }
                 ?.value?.trim()?.lowercase()
@@ -395,10 +410,17 @@ open class ModpackArchiveReader(
                 total = manifest.files.size,
             )
         )
-        require(refs.all { it.fileId in resolved }) {
-            "无法解析CurseForge文件：${refs.filterNot { it.fileId in resolved }.joinToString { it.fileId.toString() }}"
-        }
-        val files = manifest.files.mapIndexed { index, item ->
+        val unavailable = manifest.files.filter { resolved[it.fileId]?.downloadUnavailable != false }
+            .map { item ->
+                ModpackArchiveUnavailableFile(
+                    key = "cf:${item.projectId}:${item.fileId}",
+                    displayName = resolved[item.fileId]?.displayName ?: "CurseForge项目${item.projectId}／文件${item.fileId}",
+                    required = item.required,
+                )
+            }
+        val unavailableKeys = unavailable.mapTo(hashSetOf(), ModpackArchiveUnavailableFile::key)
+        val files = manifest.files.mapIndexedNotNull { index, item ->
+            if ("cf:${item.projectId}:${item.fileId}" in unavailableKeys) return@mapIndexedNotNull null
             val file = resolved.getValue(item.fileId)
             require(file.projectId == item.projectId) { "CurseForge项目与文件不匹配：${item.projectId}/${item.fileId}" }
             require(file.fileId.isBlank() || file.fileId == item.fileId.toString()) {
@@ -456,6 +478,7 @@ open class ModpackArchiveReader(
             files = files,
             overrides = overrides,
             manifestJson = manifestJson,
+            unavailableFiles = unavailable,
         )
     }
 
@@ -508,8 +531,7 @@ open class ModpackArchiveReader(
                     val sha1 = validSha1(entry.hashes["sha1"].orEmpty())
                     val resolvedFile = resolved[targetPath]
                     val archiveType = contentTypeFromPath(targetPath)
-                    if (resolved.isNotEmpty()) {
-                        require(resolvedFile != null) { "无法解析Modrinth清单文件：$targetPath" }
+                    if (resolvedFile != null) {
                         require(resolvedFile.sha1.equals(sha1, true)) { "Modrinth文件SHA-1不匹配：$targetPath" }
                         require(resolvedFile.fileName == targetPath.substringAfterLast('/')) {
                             "Modrinth文件名不匹配：$targetPath"
@@ -575,6 +597,7 @@ open class ModpackArchiveReader(
         files: List<ModpackArchiveFile>,
         overrides: List<ModpackArchiveOverride>,
         manifestJson: String,
+        unavailableFiles: List<ModpackArchiveUnavailableFile> = emptyList(),
     ): ModpackArchivePreview {
         val embeddedMods = overrides.filter {
             it.targetPath.startsWith("mods/", ignoreCase = true) && it.targetPath.endsWith(".jar", ignoreCase = true)
@@ -606,6 +629,7 @@ open class ModpackArchiveReader(
             embeddedMods = embeddedMods,
             overrides = overrides,
             manifestJson = manifestJson,
+            unavailableFiles = unavailableFiles,
         )
     }
 

@@ -190,6 +190,7 @@ enum class MenuTab { Hosts, Modpacks }
 /** [tab]为[MenuTab]的名称，返回主菜单时落在对应标签页。 */
 @Serializable
 data class MenuRoute(val tab: String = MenuTab.Hosts.name)
+@Serializable object LocalModpackInstallRoute
 @Serializable object BaseWorldListRoute
 @Serializable object BaseWorldUploadRoute
 /*@Serializable data class AiChat(

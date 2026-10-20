@@ -25,6 +25,8 @@ data class HostListUiState(
     val launchingHost: HostTarget? = null,
     val errorMessage: String? = null,
     val retryLoadOnError: Boolean = false,
+    /** 是否显示当前玩不了的房间；隐藏时也不去请求它们。 */
+    val showOtherHosts: Boolean = false,
 )
 
 sealed interface HostListEvent {
@@ -68,8 +70,9 @@ class RdiHostListGateway : HostListGateway {
 class HostListViewModel(
     private val gateway: HostListGateway,
     private val useMockData: Boolean = Const.USE_MOCK_DATA,
+    private var showOtherHosts: Boolean = false,
 ) : ViewModel() {
-    private val _uiState = MutableStateFlow(HostListUiState())
+    private val _uiState = MutableStateFlow(HostListUiState(showOtherHosts = showOtherHosts))
     val uiState: StateFlow<HostListUiState> = _uiState.asStateFlow()
 
     private val eventChannel = Channel<HostListEvent>(Channel.BUFFERED)
@@ -81,6 +84,8 @@ class HostListViewModel(
     private var nextErrorId = 0L
     private var activeErrorId: Long? = null
     private var retryLoadAfterCurrentErrorId: Long? = null
+    /** 加载途中打开了“显示其他房间”，当前这轮结束后再补一轮。 */
+    private var loadOtherHostsAfterCurrentJob = false
 
     init {
         refresh()
@@ -95,12 +100,14 @@ class HostListViewModel(
         loadJob = null
         activeErrorId = null
         retryLoadAfterCurrentErrorId = null
-        _uiState.value = HostListUiState(initialLoading = true)
+        loadOtherHostsAfterCurrentJob = false
+        _uiState.value = HostListUiState(initialLoading = true, showOtherHosts = showOtherHosts)
 
         if (useMockData) {
             _uiState.value = HostListUiState(
                 hosts = generateMockHosts().map(UnifiedHostBrief::fromLegacy),
                 initialLoading = false,
+                showOtherHosts = showOtherHosts,
             )
             currentSourceState.legacyAvailableEnded = true
             currentSourceState.legacyUnavailableEnded = true
@@ -110,6 +117,13 @@ class HostListViewModel(
         loadJob = viewModelScope.launch {
             loadMoreInternal(currentGeneration, currentSourceState)
         }
+    }
+
+    fun toggleOtherHosts() {
+        showOtherHosts = !showOtherHosts
+        _uiState.update { it.copy(showOtherHosts = showOtherHosts) }
+        if (!showOtherHosts) return
+        if (loadJob?.isActive == true) loadOtherHostsAfterCurrentJob = true else loadMore()
     }
 
     fun loadMore() {
@@ -141,7 +155,7 @@ class HostListViewModel(
                     showSourceError("加载我的房间失败", result.exceptionOrNull() ?: IllegalStateException("未知错误"))
                 }
             }
-            if (!currentSourceState.legacyUnavailableEnded) {
+            if (showOtherHosts && !currentSourceState.legacyUnavailableEnded) {
                 val result = resultOf {
                     gateway.loadLegacyUnavailable(currentSourceState.legacyUnavailablePage).getOrThrow()
                 }
@@ -174,6 +188,10 @@ class HostListViewModel(
                 retryLoadAfterCurrentErrorId = null
                 if (deferredErrorId != null && activeErrorId == null) {
                     _uiState.update { it.copy(retryLoadOnError = false) }
+                    retryAfterFinish = true
+                }
+                if (loadOtherHostsAfterCurrentJob) {
+                    loadOtherHostsAfterCurrentJob = false
                     retryAfterFinish = true
                 }
                 loadJob = null
@@ -252,7 +270,7 @@ class HostListViewModel(
 
     private fun allSourcesEnded(state: HostListSourceState): Boolean = allHostSourcesEnded(
         state.legacyAvailableEnded,
-        state.legacyUnavailableEnded,
+        state.legacyUnavailableEnded || !showOtherHosts,
     )
 
     private fun isCurrent(currentGeneration: Long, currentSourceState: HostListSourceState): Boolean =

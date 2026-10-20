@@ -62,7 +62,10 @@ internal fun QuestGraphView(
         val margin = node.radius * viewport.scale + 120 * maxOf(density, viewport.scale)
         center.x >= -margin && center.y >= -margin && center.x <= canvasSize.width + margin && center.y <= canvasSize.height + margin
     }
-    val neededPages = visibleNodes.mapNotNull { data.assets.manifest?.items?.get(it.icon?.itemId)?.page }.toSet()
+    val neededPages = visibleNodes.mapNotNull {
+        data.assets.manifest?.items?.get((it.icon as? PreviewIcon.Item)?.itemId)?.page
+    }.toSet()
+    val checkmark = if (visibleNodes.any { it.icon == PreviewIcon.Checkmark }) remember { BuiltinQuestIcons.checkmark } else null
     val images by produceState<Map<Int, ImageBitmap>>(emptyMap(), cache, neededPages) {
         value = emptyMap()
         val loaded = linkedMapOf<Int, ImageBitmap>()
@@ -160,10 +163,12 @@ internal fun QuestGraphView(
                         drawCircle(outline, radius, center, style = Stroke(2 * density))
                     }
                 }
-                val item = data.assets.manifest?.items?.get(node.icon?.itemId)
+                val item = data.assets.manifest?.items?.get((node.icon as? PreviewIcon.Item)?.itemId)
                 val image = item?.let { images[it.page] }
-                if (image != null) {
-                    val edge = radius * if (node.shape == "diamond") 0.95f else 1.3f
+                val edge = radius * if (node.shape == "diamond") 0.95f else 1.3f
+                if (node.icon == PreviewIcon.Checkmark && checkmark != null) {
+                    drawBuiltinIcon(checkmark, center.x - edge / 2, center.y - edge / 2, edge)
+                } else if (image != null) {
                     drawAtlasItem(image, item, data.assets.manifest.iconSize, center.x - edge / 2, center.y - edge / 2, edge)
                 } else drawCircle(outline.copy(alpha = 0.6f), radius / 4, center)
                 if (viewport.scale >= density * 0.45f) {

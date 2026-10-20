@@ -2,7 +2,6 @@ package calebxzhou.rdi.client.ui.comp
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
@@ -11,11 +10,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import calebxzau.rdi.client.ui.SimpleTooltip
 import calebxzau.rdi.client.ui.comp.NameInitialIcon
-import calebxzhou.rdi.client.service.rememberPlayerHeadState
+import calebxzau.rdi.client.ui.comp.PlayerHeadBadge
 import calebxzhou.rdi.client.service.rememberPlayerInfoPrefetch
 import calebxzhou.rdi.client.ui.screen.UnifiedHostBrief
 import calebxzhou.rdi.client.ui.screen.HostTarget
@@ -125,42 +122,17 @@ private fun UnifiedHostIcon(
                 verticalArrangement = Arrangement.spacedBy(2.dp),
             ) {
                 onlinePlayerIds.forEach { uid ->
-                    HeadBadge(uid, ONLINE_HEAD_SIZE)
+                    PlayerHeadBadge(uid, ONLINE_HEAD_SIZE)
                 }
             }
         }
         if (ownerId != null) {
-            HeadBadge(
+            PlayerHeadBadge(
                 uid = ownerId,
                 size = OWNER_HEAD_SIZE,
                 modifier = Modifier.align(Alignment.BottomEnd).offset(x = 3.dp, y = 3.dp),
                 tooltipPrefix = "房主 ",
             )
-        }
-    }
-}
-
-/** Player head pinned onto the icon, [size] wide; the surface-colored ring keeps it readable on any icon. */
-@Composable
-private fun HeadBadge(uid: ObjectId, size: Dp, modifier: Modifier = Modifier, tooltipPrefix: String = "") {
-    val state = rememberPlayerHeadState(uid)
-    // 圆角与描边随头像尺寸等比缩放
-    val scale = size / ONLINE_HEAD_SIZE
-    val badgeShape = RoundedCornerShape(4.dp * scale)
-    Box(modifier) {
-        SimpleTooltip("${tooltipPrefix}${state.name}") {
-            Box(
-                modifier = Modifier
-                    .size(size)
-                    .clip(badgeShape)
-                    .background(MaterialTheme.colorScheme.surface, badgeShape)
-                    .padding(1.5.dp * scale),
-            ) {
-                PlayerHead(
-                    skinImage = state.skinImage,
-                    modifier = Modifier.fillMaxSize().clip(RoundedCornerShape(2.dp * scale)),
-                )
-            }
         }
     }
 }

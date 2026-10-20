@@ -43,7 +43,6 @@ import calebxzhou.rdi.client.ui.comp.BaseWorldSelectionModal
 import kotlinx.coroutines.flow.collect
 import org.koin.compose.viewmodel.koinViewModel
 import org.koin.core.parameter.parametersOf
-import kotlin.random.Random
 
 /**
  * calebxzhou @ 2026-02-28 22:46
@@ -54,8 +53,10 @@ fun HostNewCreateScreen(
     arg: HostCreateRoute,
     onBack: () -> Unit,
 ) {
-    val defaultHostName = remember(arg.hostId) {
-        "${loggedAccount.name}的世界${Random.nextInt(1000)}"
+    val defaultHostName = remember(arg.hostId, arg.displayName) {
+        val packPrefix = arg.displayName?.trim().orEmpty().take(4)
+        if (packPrefix.isNotEmpty()) "${loggedAccount.name}的${packPrefix}"
+        else "${loggedAccount.name}的世界"
     }
     val routeKey = arg.hostId?.trim()?.ifBlank { "create" }
         ?: "create:${arg.kind}:${arg.sourceId}:${arg.legacyVersionName}:${arg.legacyMcVersion}"

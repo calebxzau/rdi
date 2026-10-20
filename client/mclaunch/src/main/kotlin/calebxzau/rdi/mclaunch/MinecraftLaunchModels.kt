@@ -18,6 +18,8 @@ data class MinecraftAccount(
     val name: String,
     val uuid: String,
     val accessToken: String,
+    /** `msa` for RDI and Microsoft sessions, `legacy` for offline play. */
+    val userType: String = "msa",
 )
 
 data class MinecraftJava25Config(
@@ -97,6 +99,8 @@ data class MinecraftLaunchRequest(
     val extraJvmArgs: List<String> = emptyList(),
     /** Appended after the standard game arguments, e.g. `--quickPlaySingleplayer <world>`. */
     val extraGameArgs: List<String> = emptyList(),
+    /** False for packs launched without the RDI core: no Kotlin/Zstd/media runtimes or RDI JVM tuning. */
+    val rdiRuntime: Boolean = true,
 )
 
 data class MinecraftLaunchOverrides(

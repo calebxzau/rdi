@@ -437,6 +437,43 @@ class ModpackArchiveReaderTest {
         }
     }
 
+    @Test
+    fun `curseforge files that cannot be resolved or downloaded are listed instead of failing`(): Unit = runBlocking {
+        val archive = zip(
+            "manifest.json" to
+                """
+                {"name":"缺文件包","minecraft":{"version":"1.20.1","modLoaders":[{"id":"forge-47.1.0"}]},"files":[
+                  {"projectID":12,"fileID":34,"required":true},
+                  {"projectID":13,"fileID":35,"required":false}
+                ]}
+                """.trimIndent(),
+        )
+        val catalog = object : ModpackArchiveCatalog {
+            override suspend fun resolveCurseForgeFiles(refs: List<CurseForgeArchiveRef>) = Result.success(
+                mapOf(
+                    34 to ArchiveCatalogFile(
+                        projectId = 12,
+                        displayName = "禁止下载的模组",
+                        fileName = "blocked.jar",
+                        size = 1,
+                        sha1 = "9999999999999999999999999999999999999999",
+                        url = "",
+                        contentType = CatalogContentType.MOD,
+                        downloadUnavailable = true,
+                    ),
+                ),
+            )
+        }
+
+        val preview = ModpackArchiveReader(catalog).inspect(archive).getOrThrow()
+
+        assertTrue(preview.files.isEmpty())
+        assertEquals(
+            listOf("禁止下载的模组" to true, "CurseForge项目13／文件35" to false),
+            preview.unavailableFiles.map { it.displayName to it.required },
+        )
+    }
+
     private fun zip(vararg entries: Pair<String, String>): Path {
         val file = Files.createTempFile("rdi-modpack-archive", ".zip")
         ZipOutputStream(Files.newOutputStream(file)).use { output ->
