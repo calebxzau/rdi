@@ -32,47 +32,59 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.unit.Constraints
 import kotlin.math.pow
 
+/** Each navigation creates a new instance, so repeating the same target still re-centers the graph. */
+internal class QuestFocus(val questId: String)
+
 @Composable
 internal fun QuestGraphView(
     data: QuestPreviewData,
     graph: QuestGraph,
     cache: PreviewAtlasCache,
     selectedQuestId: String?,
-    focusQuestId: String?,
+    focus: QuestFocus?,
     onSelect: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val displayDensity = LocalDensity.current
     val density = displayDensity.density
+    val currentOnSelect by rememberUpdatedState(onSelect)
     var viewport by remember(graph) { mutableStateOf(QuestViewport()) }
     var canvasSize by remember { mutableStateOf(IntSize.Zero) }
     var fitRequest by remember { mutableIntStateOf(0) }
     var hovered by remember(graph) { mutableStateOf<QuestGraphNode?>(null) }
-    LaunchedEffect(graph, canvasSize, fitRequest) {
-        viewport = fitQuestGraph(graph.nodes, canvasSize, density)
+    val sizeReady = canvasSize.width > 0 && canvasSize.height > 0
+    // Resizes only shift the view (see onSizeChanged); fitting happens per chapter or on request.
+    LaunchedEffect(graph, sizeReady, fitRequest) {
+        if (sizeReady) viewport = fitQuestGraph(graph.nodes, canvasSize, density)
     }
-    LaunchedEffect(graph, focusQuestId, canvasSize) {
-        val focus = focusQuestId ?: return@LaunchedEffect
-        val node = graph.nodes.firstOrNull { it.questId == focus } ?: return@LaunchedEffect
+    LaunchedEffect(graph, sizeReady, focus) {
+        if (!sizeReady) return@LaunchedEffect
+        val node = focus?.let { target -> graph.nodes.firstOrNull { it.questId == target.questId } } ?: return@LaunchedEffect
         val scale = density.coerceIn(0.5f, 3f)
         viewport = QuestViewport(scale, Offset(canvasSize.width / 2f, canvasSize.height / 2f) - node.center * scale)
     }
-    val visibleNodes = graph.nodes.filter { node ->
-        val center = viewport.screen(node.center)
-        val margin = node.radius * viewport.scale + 120 * maxOf(density, viewport.scale)
-        center.x >= -margin && center.y >= -margin && center.x <= canvasSize.width + margin && center.y <= canvasSize.height + margin
-    }
-    val neededPages = visibleNodes.mapNotNull {
-        data.assets.manifest?.items?.get((it.icon as? PreviewIcon.Item)?.itemId)?.page
-    }.toSet()
-    val checkmark = if (visibleNodes.any { it.icon == PreviewIcon.Checkmark }) remember { BuiltinQuestIcons.checkmark } else null
-    val images by produceState<Map<Int, ImageBitmap>>(emptyMap(), cache, neededPages) {
-        value = emptyMap()
-        val loaded = linkedMapOf<Int, ImageBitmap>()
-        neededPages.forEach { page ->
-            cache.page(page).onSuccess { loaded[page] = it }
+    // Only a change of the needed atlas pages recomposes; panning itself just redraws.
+    val neededPages by remember(graph, data, density) {
+        derivedStateOf {
+            visibleQuestNodes(graph.nodes, viewport, canvasSize, density).mapNotNullTo(mutableSetOf()) {
+                data.assets.manifest?.items?.get((it.icon as? PreviewIcon.Item)?.itemId)?.page
+            }
         }
-        value = loaded
+    }
+    val checkmark = remember(graph) {
+        if (graph.nodes.any { it.icon == PreviewIcon.Checkmark }) BuiltinQuestIcons.checkmark else null
+    }
+    var images by remember(cache) { mutableStateOf<Map<Int, ImageBitmap>>(emptyMap()) }
+    LaunchedEffect(cache, neededPages) {
+        // Pages that stay visible are kept, so icons do not blink while new pages load.
+        val loaded = images.filterKeys(neededPages::contains).toMutableMap()
+        neededPages.filterNot(loaded::containsKey).forEach { page ->
+            cache.page(page).onSuccess {
+                loaded[page] = it
+                images = loaded.toMap()
+            }
+        }
+        images = loaded.toMap()
     }
     val colors = MaterialTheme.colorScheme
     val measurer = rememberTextMeasurer()
@@ -92,9 +104,12 @@ internal fun QuestGraphView(
     }
     Box(modifier.clipToBounds().background(colors.surfaceContainerLow)) {
         Canvas(
-            Modifier.fillMaxSize().onSizeChanged { canvasSize = it }
+            Modifier.fillMaxSize().onSizeChanged { size ->
+                if (canvasSize.width > 0 && canvasSize.height > 0) viewport = viewport.resized(canvasSize, size)
+                canvasSize = size
+            }
                 .pointerInput(graph) {
-                    detectTapGestures { position -> viewport.hit(graph.nodes, position)?.questId?.let(onSelect) }
+                    detectTapGestures { position -> viewport.hit(graph.nodes, position)?.questId?.let(currentOnSelect) }
                 }
                 .pointerInput(graph) {
                     detectDragGestures { change, drag ->
@@ -132,7 +147,7 @@ internal fun QuestGraphView(
                     drawLine(colors.outline, tip, tip - unit * (8 * density) - side, density)
                 }
             }
-            visibleNodes.forEach { node ->
+            visibleQuestNodes(graph.nodes, viewport, canvasSize, density).forEach { node ->
                 val center = viewport.screen(node.center)
                 val radius = node.radius * viewport.scale
                 val active = node.questId != null && node.questId == selectedQuestId

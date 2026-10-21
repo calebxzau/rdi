@@ -1,6 +1,5 @@
 package calebxzau.rdi.questviewer
 
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.LinkAnnotation
 import calebxzau.rdi.quests.ftb.model.FtbChapter
 import calebxzau.rdi.quests.ftb.model.FtbQuest
@@ -37,7 +36,7 @@ class QuestDescriptionTest {
         var selected: PreviewTarget? = null
         val text = questDescriptionText(link(questId), data) { selected = it }
         assertEquals("灾厄之册", text.text)
-        assertTrue(text.spanStyles.any { it.item.color == Color(0xFFFF55FF) })
+        assertTrue(text.spanStyles.any { it.item.color == MINECRAFT_COLORS[0xd] })
         val annotation = text.getLinkAnnotations(0, text.length).single()
         assertEquals(0, annotation.start)
         assertEquals(text.length, annotation.end)

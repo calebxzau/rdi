@@ -72,7 +72,9 @@ internal fun QuestPreviewData.graph(chapter: FtbChapter): QuestGraph {
         quest.dependencies.flatMap references@{ reference ->
             // Ambiguous tags remain explicit in the detail pane; do not invent a unique edge.
             val target = resolve(reference).singleOrNull() ?: return@references emptyList()
-            val origin = nodeIndex[target.questId] ?: nodes.firstOrNull { it.link && it.questId == target.questId }
+            // Book, group and chapter dependencies have no node; never match an unresolved link.
+            val targetQuestId = target.questId ?: return@references emptyList()
+            val origin = nodeIndex[targetQuestId] ?: nodes.firstOrNull { it.link && it.questId == targetQuestId }
             if (origin == null || quests[origin.questId]?.data?.flag("hide_dependent_lines") == true) emptyList()
             else listOf(QuestGraphEdge(origin, destination))
         }
@@ -100,6 +102,18 @@ internal data class QuestViewport(val scale: Float = 1f, val pan: Offset = Offse
         }
     }
 }
+
+/** Nodes whose shape or label may intersect the canvas. */
+internal fun visibleQuestNodes(nodes: List<QuestGraphNode>, viewport: QuestViewport, size: IntSize, density: Float): List<QuestGraphNode> =
+    nodes.filter { node ->
+        val center = viewport.screen(node.center)
+        val margin = node.radius * viewport.scale + 120 * maxOf(density, viewport.scale)
+        center.x >= -margin && center.y >= -margin && center.x <= size.width + margin && center.y <= size.height + margin
+    }
+
+/** Keeps the world point at the canvas center fixed when the canvas is resized. */
+internal fun QuestViewport.resized(old: IntSize, new: IntSize): QuestViewport =
+    copy(pan = pan + Offset((new.width - old.width) / 2f, (new.height - old.height) / 2f))
 
 internal fun fitQuestGraph(nodes: List<QuestGraphNode>, size: IntSize, density: Float): QuestViewport {
     if (size.width <= 0 || size.height <= 0) return QuestViewport()

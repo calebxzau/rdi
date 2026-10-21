@@ -11,10 +11,12 @@ import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
 
-private val MINECRAFT_COLORS = listOf(
-    0x000000, 0x0000AA, 0x00AA00, 0x00AAAA, 0xAA0000, 0xAA00AA, 0xFFAA00, 0xAAAAAA,
-    0x555555, 0x5555FF, 0x55FF55, 0x55FFFF, 0xFF5555, 0xFF55FF, 0x8A6500, 0xFFFFFF,
-)
+// The launcher uses a light color scheme; quest books are colored for the game's dark GUI.
+// Bright codes are darkened for contrast and §f inherits the theme's text color.
+internal val MINECRAFT_COLORS = listOf(
+    0x000000, 0x0000AA, 0x006400, 0x006B6B, 0xAA0000, 0xAA00AA, 0x9A5C00, 0x6B6B6B,
+    0x555555, 0x3B3BE0, 0x1A7A1A, 0x00757F, 0xD12F2F, 0xB82DB8, 0x8A6500, null,
+).map { rgb -> rgb?.let { Color(0xFF000000 or it.toLong()) } ?: Color.Unspecified }
 
 internal fun questAnnotatedText(raw: String): AnnotatedString = buildAnnotatedString {
     var style = SpanStyle()
@@ -33,7 +35,7 @@ internal fun questAnnotatedText(raw: String): AnnotatedString = buildAnnotatedSt
             if (code in "0123456789abcdefklmnor") {
                 flush(index)
                 style = when (code) {
-                    in '0'..'9', in 'a'..'f' -> SpanStyle(color = Color(0xFF000000 or MINECRAFT_COLORS[code.digitToInt(16)].toLong()))
+                    in '0'..'9', in 'a'..'f' -> SpanStyle(color = MINECRAFT_COLORS[code.digitToInt(16)])
                     'l' -> style.copy(fontWeight = FontWeight.Bold)
                     'o' -> style.copy(fontStyle = FontStyle.Italic)
                     'n' -> style.copy(textDecoration = TextDecoration.Underline)

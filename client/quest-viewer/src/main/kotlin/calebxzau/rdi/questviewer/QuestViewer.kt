@@ -68,28 +68,19 @@ private fun QuestBookView(
 ) {
     var chapterId by remember { mutableStateOf(data.book.chapters.firstOrNull()?.id) }
     var selectedQuestId by remember { mutableStateOf<String?>(null) }
-    var focusQuestId by remember { mutableStateOf<String?>(null) }
+    var focus by remember { mutableStateOf<QuestFocus?>(null) }
     var query by remember { mutableStateOf("") }
     var showDetails by remember { mutableStateOf(false) }
     var showIssues by remember { mutableStateOf(false) }
     val cache = remember(data) { PreviewAtlasCache(data.assets) }
     val chapter = data.chapters[chapterId]
     val graph = remember(data, chapter) { chapter?.let(data::graph) ?: QuestGraph(emptyList(), emptyList()) }
-    val results = remember(data, query) {
-        if (query.isBlank()) emptyList() else data.quests.values.filter { quest ->
-            val content = listOf(
-                quest.id, data.questTitle(quest), quest.subtitle.orEmpty(),
-                quest.description.joinToString("\n") { data.text(it) },
-                quest.tasks.joinToString(" ") { data.taskTitle(it) + " " + it.item?.itemId.orEmpty() },
-                quest.rewards.joinToString(" ") { data.rewardTitle(it) + " " + it.item?.itemId.orEmpty() },
-            ).joinToString("\n")
-            searchableQuestText(content).contains(query.trim(), ignoreCase = true)
-        }
-    }
+    val results = remember(data, query) { data.search(query) }
     fun navigate(target: PreviewTarget) {
-        chapterId = target.chapterId
+        // The whole book has no chapter to open; keep the current one.
+        target.chapterId?.let { chapterId = it }
         selectedQuestId = target.questId
-        focusQuestId = target.questId
+        focus = target.questId?.let(::QuestFocus)
         showDetails = target.questId != null
     }
     Column(modifier) {
@@ -133,23 +124,18 @@ private fun QuestBookView(
                                 }
                             }
                         } else {
-                            var previousGroup: String? = "__initial__"
-                            data.book.chapters.forEach { entry ->
-                                if (entry.groupId != previousGroup) {
-                                    val group = data.book.chapterGroups.firstOrNull { it.id == entry.groupId }
-                                    item(key = "group:${entry.groupId}") {
-                                        Text(questAnnotatedText(group?.title?.let(data::text) ?: "章节"), Modifier.padding(top = 8.dp), style = MaterialTheme.typography.labelMedium)
-                                    }
-                                    previousGroup = entry.groupId
+                            data.chapterSections.forEach { section ->
+                                item(key = "group:${section.groupId}") {
+                                    Text(questAnnotatedText(section.group?.title?.let(data::text) ?: "章节"), Modifier.padding(top = 8.dp), style = MaterialTheme.typography.labelMedium)
                                 }
-                                item(key = entry.id) {
+                                items(section.chapters, key = { it.id }) { entry ->
                                     Surface(
                                         color = if (chapterId == entry.id) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surface,
                                         shape = MaterialTheme.shapes.small,
                                         modifier = Modifier.fillMaxWidth().clickable {
                                             chapterId = entry.id
                                             selectedQuestId = null
-                                            focusQuestId = null
+                                            focus = null
                                             showDetails = false
                                         },
                                     ) {
@@ -170,24 +156,30 @@ private fun QuestBookView(
                         Text(questAnnotatedText(chapter?.let(data::chapterTitle).orEmpty()), Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
                         if (!wide && showDetails) TextButton(onClick = { showDetails = false }) { Text("返回任务树") }
                     }
-                    if (wide || !showDetails) {
+                    // The graph stays composed under the narrow detail pane so its view survives.
+                    Box(Modifier.fillMaxWidth().weight(1f)) {
                         QuestGraphView(
-                            data, graph, cache, selectedQuestId, focusQuestId,
+                            data, graph, cache, selectedQuestId, focus,
                             onSelect = { id ->
                                 val target = data.resolve(id).singleOrNull()
                                 if (target != null) {
                                     val crossChapter = target.chapterId != chapterId
                                     selectedQuestId = id
-                                    focusQuestId = if (crossChapter) id else null
+                                    focus = if (crossChapter) QuestFocus(id) else null
                                     if (crossChapter) {
-                                        chapterId = target.chapterId
+                                        target.chapterId?.let { chapterId = it }
                                     }
                                     showDetails = true
                                 }
                             },
-                            modifier = Modifier.fillMaxWidth().weight(1f),
+                            modifier = Modifier.fillMaxSize(),
                         )
-                    } else QuestDetailPane(data, data.quests[selectedQuestId], cache, ::navigate, Modifier.weight(1f), detailsButton)
+                        if (!wide && showDetails) {
+                            Surface(Modifier.fillMaxSize()) {
+                                QuestDetailPane(data, data.quests[selectedQuestId], cache, ::navigate, Modifier.fillMaxSize(), detailsButton)
+                            }
+                        }
+                    }
                 }
                 if (wide) {
                     VerticalDivider()

@@ -32,7 +32,8 @@ internal object BuiltinQuestIcons {
         val bytes = requireNotNull(javaClass.getResourceAsStream(resource)) {
             "缺少任务默认图标：${resource}"
         }.use { it.readBytes() }
-        return Image.makeFromEncoded(bytes).toComposeImageBitmap()
+        // toComposeImageBitmap copies the pixels, so the native image can be released at once.
+        return Image.makeFromEncoded(bytes).use { it.toComposeImageBitmap() }
     }
 }
 
@@ -41,6 +42,8 @@ internal class PreviewAtlasCache(private val assets: PreviewAssets) {
     private val logger = KotlinLogging.logger {}
     private val mutex = Mutex()
     private val pages = LinkedHashMap<Int, Result<ImageBitmap>>(16, 0.75f, true)
+    private val failedIndices = mutableSetOf<Int>()
+    /** Distinct pages that failed; an evicted failure that fails again is not counted twice. */
     var failedPages by mutableStateOf(0)
         private set
 
@@ -53,15 +56,15 @@ internal class PreviewAtlasCache(private val assets: PreviewAssets) {
                 val limit = 64 * 1024 * 1024
                 val bytes = Files.newInputStream(file).use { it.readNBytes(limit + 1) }
                 require(bytes.size <= limit) { "图集文件过大：${descriptor.file}" }
-                val image = Image.makeFromEncoded(bytes)
-                if (image.width != descriptor.width || image.height != descriptor.height) {
-                    image.close()
-                    error("图集尺寸与manifest不一致：${descriptor.file}")
+                Image.makeFromEncoded(bytes).use { image ->
+                    require(image.width == descriptor.width && image.height == descriptor.height) {
+                        "图集尺寸与manifest不一致：${descriptor.file}"
+                    }
+                    image.toComposeImageBitmap()
                 }
-                image.toComposeImageBitmap()
             }.onFailure { exception ->
                 logger.warn(exception) { "读取物品图集失败：${assets.root}，page=$index" }
-                failedPages++
+                if (failedIndices.add(index)) failedPages = failedIndices.size
             }
             pages[index] = result
             fun cacheBytes(): Long = pages.values.sumOf { entry ->

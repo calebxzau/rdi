@@ -66,9 +66,7 @@ internal fun QuestDetailPane(
                 if (targets.size > 1) Text("标签${reference}对应${targets.size}个对象，无法确定唯一前置条件。")
                 targets.forEach { target ->
                     TextButton(onClick = { onNavigate(target) }) {
-                        val icon = target.questId?.let(data.quests::get)?.let(data::questIcon)
-                            ?: data.chapters[target.chapterId]?.icon?.let { PreviewIcon.Item(it.itemId) }
-                        PreviewItemIcon(icon, data.assets, cache)
+                        PreviewItemIcon(data.targetIcon(target), data.assets, cache)
                         Spacer(Modifier.width(8.dp))
                         Text(questAnnotatedText(target.label))
                     }

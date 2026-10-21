@@ -8,9 +8,13 @@ import kotlinx.serialization.json.*
 import net.benwoodworth.knbt.*
 import java.nio.file.Files
 import java.nio.file.Path
+import java.util.Locale
 import java.util.concurrent.CancellationException
 
-internal data class PreviewTarget(val id: String, val chapterId: String, val questId: String?, val label: String)
+/** [chapterId] is null for the whole book, and for a chapter group without chapters. */
+internal data class PreviewTarget(val id: String, val chapterId: String?, val questId: String?, val label: String)
+
+internal data class ChapterSection(val group: FtbChapterGroup?, val groupId: String?, val chapters: List<FtbChapter>)
 
 internal class QuestPreviewData(
     val book: FtbQuestBook,
@@ -18,17 +22,30 @@ internal class QuestPreviewData(
     val issues: List<String>,
 ) {
     val chapters = book.chapters.associateBy { it.id }
+    val groups = book.chapterGroups.associateBy { it.id }
     val quests = book.chapters.flatMap { it.quests }.associateBy { it.id }
     val tables = book.rewardTables.mapNotNull { table -> table.id?.let { it to table } }.toMap()
+    /** Each group appears once even if its chapters are not contiguous in the sorted book. */
+    val chapterSections = book.chapters.groupBy { it.groupId }.map { (groupId, entries) ->
+        ChapterSection(groups[groupId], groupId, entries)
+    }
     private val targets = linkedMapOf<String, PreviewTarget>()
     private val tags = linkedMapOf<String, MutableSet<String>>()
 
     init {
-        fun register(id: String, chapter: FtbChapter, quest: FtbQuest?, title: String, data: FtbSnbtData) {
-            targets[id] = PreviewTarget(id, chapter.id, quest?.id, title)
+        fun register(id: String, chapterId: String?, quest: FtbQuest?, title: String, data: FtbSnbtData) {
+            targets[id] = PreviewTarget(id, chapterId, quest?.id, title)
             (data.nbt["tags"] as? NbtList<*>)?.forEach { tag ->
                 (tag as? NbtString)?.value?.let { tags.getOrPut(it) { linkedSetOf() }.add(id) }
             }
+        }
+        fun register(id: String, chapter: FtbChapter, quest: FtbQuest?, title: String, data: FtbSnbtData) =
+            register(id, chapter.id, quest, title, data)
+        // FTB reserves this ID for the book; quests may depend on it or on a chapter group.
+        register(BOOK_ID, null, null, book.title?.takeIf(String::isNotBlank)?.let(::text) ?: "整本任务书", book.settings)
+        book.chapterGroups.forEach { group ->
+            val title = group.title?.takeIf(String::isNotBlank)?.let(::text) ?: "章节组${group.id}"
+            register(group.id, book.chapters.firstOrNull { it.groupId == group.id }?.id, null, title, group.data)
         }
         book.chapters.forEach { chapter ->
             register(chapter.id, chapter, null, chapterTitle(chapter), chapter.data)
@@ -49,6 +66,22 @@ internal class QuestPreviewData(
         }
     }
 
+    // Built once off the UI thread by the loader; lowercase so each keystroke is a plain scan.
+    private val searchIndex = quests.values.map { quest ->
+        quest to searchableQuestText(listOf(
+            quest.id, questTitle(quest), quest.subtitle?.let(::text).orEmpty(),
+            quest.description.joinToString("\n") { text(it) },
+            quest.tasks.joinToString(" ") { taskTitle(it) + " " + it.item?.itemId.orEmpty() },
+            quest.rewards.joinToString(" ") { rewardTitle(it) + " " + it.item?.itemId.orEmpty() },
+        ).joinToString("\n")).lowercase(Locale.ROOT)
+    }
+
+    fun search(query: String): List<FtbQuest> {
+        val needle = query.trim().lowercase(Locale.ROOT)
+        if (needle.isEmpty()) return emptyList()
+        return searchIndex.mapNotNull { (quest, content) -> quest.takeIf { needle in content } }
+    }
+
     fun resolve(reference: String): List<PreviewTarget> = if (reference.startsWith('#')) {
         tags[reference.drop(1)].orEmpty().mapNotNull(targets::get)
     } else listOfNotNull(targets[reference])
@@ -58,6 +91,8 @@ internal class QuestPreviewData(
         ?: chapter.sourcePath.substringAfterLast('/').removeSuffix(".snbt")
     fun questIcon(quest: FtbQuest): PreviewIcon? = quest.icon?.let { PreviewIcon.Item(it.itemId) }
         ?: quest.tasks.firstNotNullOfOrNull { it.previewIcon() }
+    fun targetIcon(target: PreviewTarget): PreviewIcon? = target.questId?.let(quests::get)?.let(::questIcon)
+        ?: (chapters[target.id]?.icon ?: groups[target.id]?.icon)?.let { PreviewIcon.Item(it.itemId) }
     fun questTitle(quest: FtbQuest): String = quest.title?.takeIf(String::isNotBlank)?.let(::text)
         ?: quest.tasks.firstOrNull()?.let(::taskTitle) ?: "任务${quest.id}"
     fun repeatable(quest: FtbQuest): Boolean = quest.repeatable
@@ -84,6 +119,8 @@ internal class QuestPreviewData(
         }
     }
 }
+
+private const val BOOK_ID = "0000000000000001"
 
 internal object QuestPreviewLoader {
     fun load(modpackDir: Path): Result<QuestPreviewData> = try {

@@ -101,6 +101,32 @@ class QuestGraphTest {
     }
 
     @Test
+    fun nonQuestDependenciesDoNotAttachToUnresolvedQuestLinks() {
+        val chapter = FtbChapter("c", "chapters/c.snbt", groupId = "g", quests = listOf(
+            FtbQuest("a", dependencies = listOf("c", "g", "0000000000000001")),
+        ), links = listOf(FtbQuestLink("broken", "missing", x = 2.0)))
+        val book = FtbQuestBook(dataVersion = 13, chapterGroups = listOf(FtbChapterGroup("g")), chapters = listOf(chapter))
+        val data = QuestPreviewData(book, PreviewAssets(Path.of(".")), emptyList())
+        val graph = data.graph(chapter)
+        assertNull(graph.nodes.single { it.link }.questId)
+        assertTrue(graph.edges.isEmpty())
+        listOf("c", "g", "0000000000000001").forEach { assertNull(data.resolve(it).single().questId) }
+    }
+
+    @Test
+    fun cullingKeepsNearbyNodesAndResizeKeepsCenteredWorldPoint() {
+        val near = node("near", Offset(0f, 0f))
+        val far = node("far", Offset(5000f, 0f))
+        val viewport = QuestViewport(1f, Offset(100f, 100f))
+        assertEquals(listOf("near"), visibleQuestNodes(listOf(near, far), viewport, IntSize(400, 300), 1f).map { it.id })
+        val old = IntSize(400, 300)
+        val new = IntSize(800, 500)
+        val resized = viewport.resized(old, new)
+        assertEquals(viewport.world(Offset(200f, 150f)), resized.world(Offset(400f, 250f)))
+        assertEquals(viewport.scale, resized.scale)
+    }
+
+    @Test
     fun chapterDefaultsRespectExplicitFalseAndQuestLinkHasIndependentDefaultSize() {
         fun raw(text: String) = calebxzau.rdi.quests.ftb.snbt.FtbSnbtData(
             calebxzau.rdi.quests.ftb.snbt.FtbSnbt.parse(text).getOrThrow(),
