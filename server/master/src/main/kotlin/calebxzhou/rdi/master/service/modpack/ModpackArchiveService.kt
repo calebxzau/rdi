@@ -204,7 +204,7 @@ object ModpackArchiveService {
                             return@forEachArchiveEntryStreaming
                         }
                     }
-                    if (relativeLower.endsWith(".mca")) {
+                    if (ClientPackJarStripper.isRegionFile(relativeLower)) {
                         return@forEachArchiveEntryStreaming
                     }
                     if (entry.isDirectory) {
@@ -214,7 +214,11 @@ object ModpackArchiveService {
                         return@forEachArchiveEntryStreaming
                     }
                     ensureArchiveParents(relative, output, addedDirs)
-                    output.addFileStreaming(relative, input, entry.size, entry.time)
+                    if (ClientPackJarStripper.isJar(relativeLower)) {
+                        addClientPackJar(relative, input, entry.size, entry.time, output, clientArchive.parentFile)
+                    } else {
+                        output.addFileStreaming(relative, input, entry.size, entry.time)
+                    }
                     entriesCopied++
                 }
             }
@@ -231,6 +235,34 @@ object ModpackArchiveService {
             Files.deleteIfExists(version.clientZip.toPath())
         } finally {
             Files.deleteIfExists(tempClientArchive.toPath())
+        }
+    }
+
+    /** Adds a jar without the region files it or its nested jars hold; an unreadable jar is added unchanged. */
+    private fun addClientPackJar(relative: String, input: java.io.InputStream, size: Long, time: Long, output: TarZstArchiveWriter, tempDir: File) {
+        val original = File.createTempFile(".client-jar.", ".jar", tempDir)
+        val stripped = File.createTempFile(".client-jar-stripped.", ".jar", tempDir)
+        try {
+            original.outputStream().buffered().use { copy ->
+                val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+                var remaining = size
+                while (remaining > 0) {
+                    val count = input.read(buffer, 0, minOf(buffer.size.toLong(), remaining).toInt())
+                    if (count < 0) throw java.io.EOFException("客户端整合包文件提前结束: ${relative}")
+                    copy.write(buffer, 0, count)
+                    remaining -= count
+                }
+            }
+            val removed = ClientPackJarStripper.strip(original, stripped).getOrElse { exception ->
+                lgr.warn(exception) { "客户端整合包jar无法读取，保持原样: ${relative}" }
+                0
+            }
+            if (removed > 0) lgr.info { "客户端整合包jar移除了${removed}个区块文件: ${relative}" }
+            val source = if (removed > 0) stripped else original
+            source.inputStream().buffered().use { output.addFileStreaming(relative, it, source.length(), time) }
+        } finally {
+            Files.deleteIfExists(original.toPath())
+            Files.deleteIfExists(stripped.toPath())
         }
     }
 

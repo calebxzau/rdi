@@ -8,10 +8,15 @@ import calebxzau.rdi.common.model.Content
 import calebxzau.rdi.common.model.ContentPlatform
 import calebxzau.rdi.common.model.ContentSide
 import calebxzau.rdi.common.model.ContentType
+import java.io.ByteArrayInputStream
+import java.io.ByteArrayOutputStream
+import java.util.zip.CRC32
 import java.util.zip.ZipEntry
+import java.util.zip.ZipInputStream
 import java.util.zip.ZipOutputStream
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
+import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
@@ -84,8 +89,8 @@ class ModpackServiceArchiveTest {
             assertFalse("shaderpacks/unmatched.txt" in entries)
             assertFalse(copiedBytes.keys.any { it.startsWith("shaderpacks/") && !it.endsWith(".zip.txt") })
             assertFalse("world/region/r.0.0.mca" in entries)
-            assertContentEquals(byteArrayOf(), copiedBytes["world/region/r.1.0.MCA"])
-            assertContentEquals(byteArrayOf(8), copiedBytes["world/region/c.0.0.mcc"])
+            assertFalse("world/region/r.1.0.MCA" in entries)
+            assertFalse("world/region/c.0.0.mcc" in entries)
             assertFalse(entries.any { it.startsWith("server/") })
         } finally {
             pack.dir.deleteRecursivelyNoSymlink()
@@ -198,6 +203,85 @@ class ModpackServiceArchiveTest {
             root.deleteRecursivelyNoSymlink()
         }
     }
+
+    @Test
+    fun `client archive strips region files from jars and nested jars`() {
+        val pack = ModpackServiceTestFixtures.modpack()
+        val version = ModpackServiceTestFixtures.version(pack, "client-jar-strip")
+        val clean = jar("com/y/B.class" to byteArrayOf(5))
+        val nested = jar("data/x/structure.mca" to byteArrayOf(1), "assets/x/a.json" to "{}".toByteArray())
+        val deeper = jar(
+            "inner.jar" to jar("w/c.0.0.MCC" to byteArrayOf(2), "keep.txt" to "k".toByteArray()),
+            "clean-inner.jar" to clean,
+        )
+        val withWorld = jar(
+            "pack/r.0.0.mca" to byteArrayOf(3),
+            "META-INF/jarjar/nested.jar" to nested,
+            "META-INF/jarjar/deeper.jar" to deeper,
+            "META-INF/jarjar/clean.jar" to clean,
+            "com/x/A.class" to byteArrayOf(4),
+            stored = setOf("META-INF/jarjar/nested.jar"),
+        )
+        val broken = "not a jar".toByteArray()
+        try {
+            version.storageDir.mkdirs()
+            TarZstArchiveWriter(version.zstdPack).use { writer ->
+                writer.addFile("overrides/mods/with-world.jar", withWorld)
+                writer.addFile("overrides/mods/clean.jar", clean)
+                writer.addFile("overrides/mods/broken.jar", broken)
+            }
+            ModpackService.buildClientPackForTest(version)
+            val copiedBytes = mutableMapOf<String, ByteArray>()
+            forEachArchiveEntry(version.clientZstdPack) { entry ->
+                if (!entry.isDirectory) copiedBytes[entry.path] = entry.bytes ?: byteArrayOf()
+            }
+            assertContentEquals(clean, copiedBytes["mods/clean.jar"])
+            assertContentEquals(broken, copiedBytes["mods/broken.jar"])
+
+            val stripped = jarEntries(copiedBytes.getValue("mods/with-world.jar"))
+            assertFalse("pack/r.0.0.mca" in stripped)
+            assertContentEquals(byteArrayOf(4), stripped.getValue("com/x/A.class").bytes)
+            assertContentEquals(clean, stripped.getValue("META-INF/jarjar/clean.jar").bytes)
+            val strippedNested = stripped.getValue("META-INF/jarjar/nested.jar")
+            assertEquals(ZipEntry.STORED, strippedNested.method)
+            val nestedEntries = jarEntries(strippedNested.bytes)
+            assertFalse("data/x/structure.mca" in nestedEntries)
+            assertContentEquals("{}".toByteArray(), nestedEntries.getValue("assets/x/a.json").bytes)
+            val deeperEntries = jarEntries(stripped.getValue("META-INF/jarjar/deeper.jar").bytes)
+            assertContentEquals(clean, deeperEntries.getValue("clean-inner.jar").bytes)
+            val innerEntries = jarEntries(deeperEntries.getValue("inner.jar").bytes)
+            assertFalse("w/c.0.0.MCC" in innerEntries)
+            assertContentEquals("k".toByteArray(), innerEntries.getValue("keep.txt").bytes)
+        } finally {
+            pack.dir.deleteRecursivelyNoSymlink()
+        }
+    }
+
+    private class JarEntryData(val method: Int, val bytes: ByteArray)
+
+    private fun jar(vararg entries: Pair<String, ByteArray>, stored: Set<String> = emptySet()): ByteArray {
+        val buffer = ByteArrayOutputStream()
+        ZipOutputStream(buffer).use { output ->
+            entries.forEach { (name, bytes) ->
+                val entry = ZipEntry(name)
+                if (name in stored) {
+                    entry.method = ZipEntry.STORED
+                    entry.size = bytes.size.toLong()
+                    entry.compressedSize = bytes.size.toLong()
+                    entry.crc = CRC32().apply { update(bytes) }.value
+                }
+                output.putNextEntry(entry)
+                output.write(bytes)
+                output.closeEntry()
+            }
+        }
+        return buffer.toByteArray()
+    }
+
+    private fun jarEntries(jar: ByteArray): Map<String, JarEntryData> =
+        ZipInputStream(ByteArrayInputStream(jar)).use { input ->
+            generateSequence { input.nextEntry }.associate { it.name to JarEntryData(it.method, input.readBytes()) }
+        }
 
     private fun assertEqualsPath(expected: String, actual: String?) {
         kotlin.test.assertEquals(expected, actual)
