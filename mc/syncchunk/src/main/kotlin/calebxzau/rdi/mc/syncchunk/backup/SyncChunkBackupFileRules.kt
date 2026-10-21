@@ -29,6 +29,9 @@ object SyncChunkBackupFileRules {
     /** `PlayerDataStorage` writes `<uuid>-<random>.dat` first and renames it. */
     private val PLAYER_DATA_TEMP = Regex("${UUID_TEXT}-\\d+\\.dat")
 
+    /** NeoForge writes saved data to `<name><random>.neoforge-tmp` on an IO thread and renames it. */
+    private const val NEOFORGE_TEMP_SUFFIX = ".neoforge-tmp"
+
     fun isSafeRelativePath(path: String): Boolean {
         if (path.isEmpty() || path.startsWith("/") || '\\' in path || ':' in path) return false
         val segments = path.split('/')
@@ -39,7 +42,7 @@ object SyncChunkBackupFileRules {
         if (!isSafeRelativePath(path)) return false
         val segments = path.split('/')
         val name = segments.last()
-        if (name.startsWith(".") || name.endsWith(".dat_old") || name.endsWith(".tmp")) return false
+        if (name.startsWith(".") || name.endsWith(".dat_old") || name.endsWith(".tmp") || name.endsWith(NEOFORGE_TEMP_SUFFIX)) return false
         if (segments.first() == "data" && segments.size == 2) {
             if (name.startsWith(RDI_DATA_PREFIX) || name in EXCLUDED_DATA_FILES) return false
         }

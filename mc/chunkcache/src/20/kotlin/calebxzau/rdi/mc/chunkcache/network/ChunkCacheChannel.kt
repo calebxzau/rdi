@@ -15,13 +15,16 @@ import net.minecraftforge.network.simple.SimpleChannel
  * keep receiving full chunks. Handlers run on the game thread, in order with vanilla packets.
  *
  * Warm-up messages use a second optional channel, so the indices of the first stay as older peers know them;
- * a peer has warm-up exactly when it has both channels.
+ * a peer has warm-up exactly when it has both channels. The status channel likewise carries only the client's
+ * pause report.
  */
 object ChunkCacheChannel {
     private val channelId = ResourceLocation.fromNamespaceAndPath("rdi", "chunk_cache")
     private val warmupChannelId = ResourceLocation.fromNamespaceAndPath("rdi", "chunk_cache_v2")
+    private val statusChannelId = ResourceLocation.fromNamespaceAndPath("rdi", "chunk_cache_status")
     private var channel: SimpleChannel? = null
     private var warmupChannel: SimpleChannel? = null
+    private var statusChannel: SimpleChannel? = null
 
     /** [handler] receives every message; each side ignores the directions it does not handle. */
     @JvmStatic
@@ -39,8 +42,11 @@ object ChunkCacheChannel {
         val warmupMessages = Messages(warmup, handler)
         warmupMessages.add(ChunkCacheWarmupPayload::class.java, NetworkDirection.PLAY_TO_CLIENT) { ChunkCacheWarmupPayload(it) }
         warmupMessages.add(ChunkCacheAbsentPayload::class.java, NetworkDirection.PLAY_TO_SERVER) { ChunkCacheAbsentPayload(it) }
+        val status = newChannel(statusChannelId, STATUS_VERSION)
+        Messages(status, handler).add(ChunkCachePausedPayload::class.java, NetworkDirection.PLAY_TO_SERVER) { ChunkCachePausedPayload(it) }
         channel = created
         warmupChannel = warmup
+        statusChannel = status
     }
 
     private fun newChannel(id: ResourceLocation, version: String): SimpleChannel = NetworkRegistry.newSimpleChannel(
@@ -71,6 +77,11 @@ object ChunkCacheChannel {
     fun isWarmupRemotePresent(connection: Connection): Boolean =
         isRemotePresent(connection) && warmupChannel?.isRemotePresent(connection) == true
 
+    /** The peer logs pause reports. */
+    @JvmStatic
+    fun isStatusRemotePresent(connection: Connection): Boolean =
+        isRemotePresent(connection) && statusChannel?.isRemotePresent(connection) == true
+
     @JvmStatic
     fun sendToServer(payload: ChunkCachePayload) {
         channelFor(payload)?.sendToServer(payload)
@@ -89,8 +100,10 @@ object ChunkCacheChannel {
 
     private fun channelFor(payload: ChunkCachePayload): SimpleChannel? = when (payload) {
         is ChunkCacheWarmupPayload, is ChunkCacheAbsentPayload -> warmupChannel
+        is ChunkCachePausedPayload -> statusChannel
         else -> channel
     }
 
     const val WARMUP_VERSION = "chunk-cache-2"
+    const val STATUS_VERSION = "chunk-cache-status-1"
 }

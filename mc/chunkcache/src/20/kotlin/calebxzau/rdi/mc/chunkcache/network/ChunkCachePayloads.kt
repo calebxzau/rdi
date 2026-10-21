@@ -249,6 +249,25 @@ data class ChunkCacheAbsentPayload(
     }
 }
 
+/**
+ * Client to server, once per connection: the client's chunk cache paused after [reason], so it offers nothing until it
+ * reconnects. Sent on [ChunkCacheChannel]'s status channel, which only peers that log it have.
+ */
+data class ChunkCachePausedPayload(val epoch: UUID, val reason: String) : ChunkCachePayload {
+    init {
+        require(reason.length <= ChunkCacheLimits.MAX_PAUSE_REASON_CHARS) { "Pause reason exceeds limit" }
+    }
+
+    constructor(buffer: FriendlyByteBuf) : this(
+        ChunkCachePayloads.readEpoch(buffer), buffer.readUtf(ChunkCacheLimits.MAX_PAUSE_REASON_CHARS),
+    )
+
+    override fun write(buffer: FriendlyByteBuf) {
+        ChunkCachePayloads.writeEpoch(buffer, epoch)
+        buffer.writeUtf(reason, ChunkCacheLimits.MAX_PAUSE_REASON_CHARS)
+    }
+}
+
 private fun readIds(buffer: FriendlyByteBuf): List<Long> =
     List(ChunkCachePayloads.readCount(buffer, ChunkCacheLimits.MAX_IDS_PER_MESSAGE)) {
         buffer.readLong().also(ChunkCachePayloads::validateId)

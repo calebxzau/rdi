@@ -42,6 +42,8 @@ object ChunkCacheCompat {
     fun sendToServer(@Suppress("UNUSED_PARAMETER") listener: ClientPacketListener, payload: ChunkCacheServerboundPayload) =
         ChunkCacheChannel.sendToServer(payload)
 
+    fun canReportPause(listener: ClientPacketListener): Boolean = ChunkCacheChannel.isStatusRemotePresent(listener.connection)
+
     fun restoreReuse(metadata: ByteArray, sections: ByteArray, @Suppress("UNUSED_PARAMETER") level: ClientLevel): ClientboundLevelChunkWithLightPacket =
         ChunkReuseCodec.restore(metadata, sections)
 

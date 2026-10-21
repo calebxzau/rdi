@@ -40,6 +40,11 @@ public final class RdiChunkCache {
         final LongAdder networkCaptures = new LongAdder();
         final AtomicLong networkMaxNanos = new AtomicLong();
         final AtomicLong skippedCaptures = new AtomicLong();
+        /** Packet copies or chunk bindings that threw; each only drops the chunks involved. */
+        final AtomicLong rejectedChunks = new AtomicLong();
+        /** Set once, after {@link #failed}; null while saving continues. */
+        volatile String failureReason;
+        final AtomicBoolean failureReported = new AtomicBoolean();
         long invalidatedChunks;
         long mainBindNanos;
         long baseCaptures;
@@ -157,6 +162,11 @@ public final class RdiChunkCache {
         } catch (ClientChunkSnapshot.TooLargeException tooLarge) {
             skipCapture(session);
             return -1;
+        } catch (RuntimeException error) {
+            // A failed copy leaves nothing handed off, so the client thread invalidates the chunks it touches.
+            reject(session, error);
+            skipCapture(session);
+            return -1;
         } catch (Throwable error) {
             fail(session, error);
             return -1;
@@ -182,6 +192,14 @@ public final class RdiChunkCache {
         }
     }
 
+    /** Logs only the first; the counter is in the periodic stats. */
+    private static void reject(Session session, Throwable error) {
+        if (session.rejectedChunks.incrementAndGet() == 1) {
+            LOGGER.warn("Chunk cache could not save a chunk for room {}; it is saved again on its next full send",
+                    session.hostId, error);
+        }
+    }
+
     /** Called during vanilla's ordered game-thread application, before packet-owned tags are applied. */
     public static void receivedBase(ClientLevel level, int x, int z, ClientboundLevelChunkPacketData data,
                                     PacketCaptureContext context) {
@@ -204,6 +222,9 @@ public final class RdiChunkCache {
                     base, List.of(), packet.estimatedBytes());
             submit(session, write);
             session.baseCaptures++;
+        } catch (RuntimeException error) {
+            reject(session, error);
+            invalidate(session, level, x, z);
         } catch (Throwable error) {
             fail(session, error);
         } finally {
@@ -289,9 +310,22 @@ public final class RdiChunkCache {
         }
     }
 
+    /**
+     * Why this listener's connection paused saving, returned once so the client can report it to the server;
+     * null while saving continues or after it was returned.
+     */
+    public static String claimPauseReason(PacketCaptureContext context) {
+        if (context == null) return null;
+        Session session = context.owner;
+        String reason = session.failureReason;
+        if (current != session || reason == null || !session.failureReported.compareAndSet(false, true)) return null;
+        return reason;
+    }
+
     private static void fail(Session session, Throwable error) {
         if (!session.failed.compareAndSet(false, true)) return;
         LOGGER.error("Client chunk saving paused for room {}", session.hostId, error);
+        session.failureReason = describe(error);
         PacketCaptureContext context = session.packetCaptureContext;
         if (context != null) context.close();
         ClientChunkDeltaWriter writer = session.writer;
@@ -308,10 +342,18 @@ public final class RdiChunkCache {
         });
     }
 
+    /** The failure and its root cause, e.g. {@code IOException: Chunk delta store is failed <- NullPointerException}. */
+    private static String describe(Throwable error) {
+        Throwable root = error;
+        while (root.getCause() != null && root.getCause() != root) root = root.getCause();
+        String text = error.toString();
+        return root == error ? text : text + " <- " + root;
+    }
+
     private static void logStats(Session session) {
         session.lastLogNanos = System.nanoTime();
-        LOGGER.info("CHUNK_CACHE room={} base_captures={} delta_writes={} skipped_copies={} invalidated_chunks={} network_captures={} network_copy_ms={} network_max_ms={} main_bind_ms={} writer={}",
-                session.hostId, session.baseCaptures, session.deltaWrites, session.skippedCaptures.get(), session.invalidatedChunks,
+        LOGGER.info("CHUNK_CACHE room={} base_captures={} delta_writes={} skipped_copies={} rejected_chunks={} invalidated_chunks={} network_captures={} network_copy_ms={} network_max_ms={} main_bind_ms={} writer={}",
+                session.hostId, session.baseCaptures, session.deltaWrites, session.skippedCaptures.get(), session.rejectedChunks.get(), session.invalidatedChunks,
                 session.networkCaptures.sum(),
                 session.networkCaptureNanos.sum() / 1_000_000.0, session.networkMaxNanos.get() / 1_000_000.0,
                 session.mainBindNanos / 1_000_000.0, session.writer == null ? "starting" : session.writer.stats());

@@ -97,7 +97,7 @@ class ClientChunkDeltaStore(root: Path) : AutoCloseable {
         try {
             acceptInternal(write)
         } catch (failure: Throwable) {
-            if (!isChunkLimit(failure)) {
+            if (!isChunkRejected(failure)) {
                 failed = true
                 throw failure
             }
@@ -140,7 +140,7 @@ class ClientChunkDeltaStore(root: Path) : AutoCloseable {
             val header = peekBaseGeneration(encoded) ?: return
             if (header.first != sessionId) return // Never attach this session's deltas to an old base.
             val (diskGeneration, snapshot) = decodeBase(encoded, key)
-            if (header != (diskGeneration.id to diskGeneration.sequence)) throw IOException("Inconsistent base generation header")
+            if (header != (diskGeneration.id to diskGeneration.sequence)) throw ChunkRejectedException("Inconsistent base generation header")
             baseGenerations[key] = diskGeneration
             enforceGenerationLimit()
             diskGeneration
@@ -159,10 +159,10 @@ class ClientChunkDeltaStore(root: Path) : AutoCloseable {
                     validatePosition(key, update.position())
                     val blockPosition = BlockPos.of(update.position())
                     if ((blockPosition.y shr 4) !in generation.minSection until generation.minSection + generation.sectionCount) {
-                        throw IOException("Delta block is outside base section range")
+                        throw ChunkRejectedException("Delta block is outside base section range")
                     }
                     if (update.stateId() < 0 || Block.BLOCK_STATE_REGISTRY.byId(update.stateId()) == null) {
-                        throw IOException("Unknown block state id")
+                        throw ChunkRejectedException("Unknown block state id")
                     }
                     val prior = overlay.blocks[update.position()]
                     if (prior == null) overlay.estimatedBytes += BLOCK_ENTRY_BYTES
@@ -182,7 +182,7 @@ class ClientChunkDeltaStore(root: Path) : AutoCloseable {
                     val type = update.type()
                     if (type == null || type.length > MAX_NAME_BYTES || BuiltInRegistries.BLOCK_ENTITY_TYPE.get(
                             net.minecraft.resources.ResourceLocation.tryParse(type)) == null) {
-                        throw IOException("Invalid block entity type")
+                        throw ChunkRejectedException("Invalid block entity type")
                     }
                     // 1.20.1 encodes an empty block-entity update tag as null. There is no
                     // NBT to replay; keep prior data and continue the rest of this ordered batch.
@@ -265,10 +265,15 @@ class ClientChunkDeltaStore(root: Path) : AutoCloseable {
     private fun readBaseAndOverlay(key: Key): Pair<Snapshot, Overlay?>? {
         ensureOpen()
         val raw = baseSink.readEncoded(key) ?: return null
-        val (generation, snapshot) = decodeBase(raw, key)
+        val (generation, snapshot) = try {
+            decodeBase(raw, key)
+        } catch (failure: ChunkRejectedException) {
+            discardChunkOrFail(key, failure)
+            return null
+        }
         val overlay = try {
             overlays[key]?.takeIf { it.generation == generation } ?: readOverlay(key, generation)
-        } catch (failure: ChunkLimitException) {
+        } catch (failure: ChunkRejectedException) {
             discardChunkOrFail(key, failure)
             return null
         }
@@ -325,7 +330,7 @@ class ClientChunkDeltaStore(root: Path) : AutoCloseable {
     private fun persistOrDiscard(key: Key, overlay: Overlay) {
         try {
             persist(key, overlay)
-        } catch (failure: ChunkLimitException) {
+        } catch (failure: ChunkRejectedException) {
             discardChunk(key, failure, overlay)
         }
     }
@@ -341,12 +346,13 @@ class ClientChunkDeltaStore(root: Path) : AutoCloseable {
     }
 
     /**
-     * Forgets one chunk that outgrew a per-chunk limit, on disk as well, so no stale terrain is offered. Later deltas
-     * find no base and are ignored until the server sends this chunk in full again; other chunks keep saving.
+     * Forgets one chunk that outgrew a per-chunk limit or whose update or record cannot be kept, on disk as well, so
+     * no stale terrain is offered. Later deltas find no base and are ignored until the server sends this chunk in full
+     * again; other chunks keep saving.
      */
     private fun discardChunk(key: Key, cause: Throwable, overlay: Overlay?) {
-        logger.warn("Chunk cache dropped chunk {} ({}, {}) after a per-chunk limit: {} blocks={} events={} estimatedBytes={}",
-            key.dimension(), key.x(), key.z(), cause.message, overlay?.blocks?.size ?: 0, overlay?.eventCount ?: 0,
+        logger.warn("Chunk cache dropped chunk {} ({}, {}): {} blocks={} events={} estimatedBytes={}",
+            key.dimension(), key.x(), key.z(), describe(cause), overlay?.blocks?.size ?: 0, overlay?.eventCount ?: 0,
             overlay?.estimatedBytes ?: 0)
         forgetChunk(key)
     }
@@ -424,7 +430,12 @@ class ClientChunkDeltaStore(root: Path) : AutoCloseable {
             if (body.available() != 0) throw IOException("Trailing base record bytes")
             validateKey(key, snapshot)
             return BaseGeneration(id, sequence, snapshot.minSection(), snapshot.sectionCount()) to snapshot
-        } catch (failure: RuntimeException) { throw IOException("Malformed base record", failure) }
+        } catch (failure: ChunkRejectedException) {
+            throw failure
+        } catch (failure: IOException) {
+            // The record is already in memory, so a read failure here means its bytes are corrupt.
+            throw ChunkRejectedException("Malformed base record", failure)
+        } catch (failure: RuntimeException) { throw ChunkRejectedException("Malformed base record", failure) }
     }
 
     private fun peekBaseGeneration(bytes: ByteArray): Pair<UUID, Long>? {
@@ -530,7 +541,11 @@ class ClientChunkDeltaStore(root: Path) : AutoCloseable {
             return overlay
         } catch (failure: ClientChunkSnapshot.TooLargeException) {
             throw ChunkLimitException(failure.message ?: "Decoded chunk overlay exceeds limit")
-        } catch (failure: RuntimeException) { throw IOException("Malformed delta record", failure) }
+        } catch (failure: ChunkRejectedException) {
+            throw failure
+        } catch (failure: IOException) {
+            throw ChunkRejectedException("Malformed delta record", failure)
+        } catch (failure: RuntimeException) { throw ChunkRejectedException("Malformed delta record", failure) }
     }
 
     private fun validateKey(key: Key, snapshot: Snapshot) {
@@ -623,14 +638,23 @@ class ClientChunkDeltaStore(root: Path) : AutoCloseable {
         if (failed) throw IOException("Chunk delta store is failed")
     }
 
-    /** A single chunk outgrew a cache bound; only that chunk is dropped, not the whole store. */
-    private class ChunkLimitException(message: String) : IOException(message)
+    /**
+     * One chunk's update or stored record cannot be kept, for example a block state or block entity type this client
+     * does not know; only that chunk is dropped, not the whole store.
+     */
+    private open class ChunkRejectedException(message: String, cause: Throwable? = null) : IOException(message, cause)
+
+    /** A single chunk outgrew a cache bound. */
+    private class ChunkLimitException(message: String) : ChunkRejectedException(message)
 
     companion object {
         private val logger = LogUtils.getLogger()
 
-        private fun isChunkLimit(failure: Throwable): Boolean =
-            failure is ChunkLimitException || failure is ClientChunkSnapshot.TooLargeException
+        private fun isChunkRejected(failure: Throwable): Boolean =
+            failure is ChunkRejectedException || failure is ClientChunkSnapshot.TooLargeException
+
+        private fun describe(failure: Throwable): String =
+            failure.cause?.let { "${failure.message} (${it})" } ?: failure.message.orEmpty()
 
         @Throws(IOException::class)
         private fun decodeTerrainSections(

@@ -1,6 +1,7 @@
 package calebxzau.rdi.mc.client.chunkcache
 
 import calebxzau.rdi.mc.chunkcache.ChunkReuseCodec
+import calebxzau.rdi.mc.chunkcache.network.ChunkCachePausedPayload
 import net.minecraft.client.Minecraft
 import net.minecraft.client.multiplayer.ClientLevel
 import net.minecraft.client.multiplayer.ClientPacketListener
@@ -35,6 +36,8 @@ object ChunkCacheCompat {
 
     fun sendToServer(listener: ClientPacketListener, payload: ChunkCacheServerboundPayload) =
         listener.send(ServerboundCustomPayloadPacket(payload))
+
+    fun canReportPause(listener: ClientPacketListener): Boolean = listener.hasChannel(ChunkCachePausedPayload.TYPE)
 
     fun restoreReuse(metadata: ByteArray, sections: ByteArray, level: ClientLevel): ClientboundLevelChunkWithLightPacket =
         ChunkReuseCodec.restore(metadata, sections, level.registryAccess())

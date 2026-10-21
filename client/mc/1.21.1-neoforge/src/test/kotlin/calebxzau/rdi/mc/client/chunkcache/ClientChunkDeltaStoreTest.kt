@@ -265,8 +265,10 @@ class ClientChunkDeltaStoreTest {
         val key = key()
         ClientChunkRegionSink(directory).use { sink -> sink.writeEncoded(key, byteArrayOf(1, 2, 3, 4)) }
         ClientChunkDeltaStore(directory).use { store ->
-            kotlin.test.assertFailsWith<IOException> { store.read(key) }
+            // A corrupt record drops only that chunk, on disk as well, so it is never offered.
+            assertNull(store.read(key))
         }
+        ClientChunkRegionSink(directory).use { sink -> assertNull(sink.readEncoded(key)) }
 
         val cleanDirectory = directory.resolve("failed-accept")
         val position = BlockPos.asLong(1, 0, 1)
@@ -342,6 +344,31 @@ class ClientChunkDeltaStoreTest {
             // AIR -> CHEST is the last type change: the block entity is replaced, then only the facing changes.
             assertEquals(listOf(Block.getId(air), Block.getId(chest), Block.getId(chestEast)),
                 replay.drop(1).map { assertIs<ClientChunkDeltaStore.ReplayEvent.Block>(it).stateId })
+        }
+    }
+
+    @Test
+    fun invalidDeltaDropsOnlyItsChunkAndTheStoreKeepsSaving(): Unit {
+        val key = key()
+        val other = ClientChunkRegionSink.Key(key.dimension(), 1, 0)
+        val third = ClientChunkRegionSink.Key(key.dimension(), 2, 0)
+        val stone = Block.getId(Blocks.STONE.defaultBlockState())
+        ClientChunkDeltaStore(directory).use { store ->
+            store.accept(write(key, 1, base = base(key, 1)))
+            store.accept(write(other, 2, base = base(other, 2)))
+            // A block above the cached sections, as a mod updating outside the world height would send.
+            store.accept(write(key, 3, updates = listOf(ClientChunkCacheWrite.BlockChange(BlockPos.asLong(1, 40, 1), stone, false))))
+            store.accept(write(other, 4, updates = listOf(ClientChunkCacheWrite.BlockChange(BlockPos.asLong(17, 0, 0), Int.MAX_VALUE, false))))
+            assertNull(store.readTerrain(key))
+            assertNull(store.readTerrain(other))
+            store.accept(write(third, 5, base = base(third, 5)))
+            store.accept(write(third, 6, updates = listOf(ClientChunkCacheWrite.BlockChange(BlockPos.asLong(33, 0, 0), stone, false))))
+            store.flush()
+        }
+        ClientChunkDeltaStore(directory).use { reopened ->
+            assertNull(reopened.readTerrain(key))
+            assertNull(reopened.readTerrain(other))
+            assertEquals(stone, assertNotNull(reopened.readTerrain(third)).blockStates.getValue(BlockPos.asLong(33, 0, 0)).stateId)
         }
     }
 

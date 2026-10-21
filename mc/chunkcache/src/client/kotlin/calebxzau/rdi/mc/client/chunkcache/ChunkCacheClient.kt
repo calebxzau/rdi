@@ -8,6 +8,7 @@ import calebxzau.rdi.mc.chunkcache.network.ChunkCacheCancelPayload
 import calebxzau.rdi.mc.chunkcache.network.ChunkCacheContextPayload
 import calebxzau.rdi.mc.chunkcache.network.ChunkCacheOffer
 import calebxzau.rdi.mc.chunkcache.network.ChunkCacheOfferPayload
+import calebxzau.rdi.mc.chunkcache.network.ChunkCachePausedPayload
 import calebxzau.rdi.mc.chunkcache.network.ChunkCacheResultPayload
 import calebxzau.rdi.mc.chunkcache.network.ChunkCacheRetirePayload
 import calebxzau.rdi.mc.chunkcache.network.ChunkCacheReusePayload
@@ -128,7 +129,11 @@ object ChunkCacheClient {
         if (minecraft.connection !== listener || level.dimension().location() != payload.dimension) return
         close()
         val capture = (listener as? ChunkCachePacketAccess)?.`rdi$cacheContext`() ?: return
-        if (!RdiChunkCache.isCacheActive(capture) || minecraft.hasSingleplayerServer()) return
+        if (minecraft.hasSingleplayerServer()) return
+        if (!RdiChunkCache.isCacheActive(capture)) {
+            reportPause(listener, payload.epoch, capture)
+            return
+        }
         current = State(listener, level, capture, payload.epoch)
     }
 
@@ -233,6 +238,7 @@ object ChunkCacheClient {
             return
         }
         val canPrepare = RdiChunkCache.isCacheActive(state.capture)
+        if (!canPrepare) reportPause(state.listener, state.epoch, state.capture)
         if (!updateView(state)) return
         val now = nowMillis()
         cancel(state, state.pins.cancelWhere { pin ->
@@ -466,6 +472,13 @@ object ChunkCacheClient {
         if (state.listener !== listener || state.repairs.isEmpty()) return packet
         val retained = packet.chunkBiomeData.filter { !waitingForRepair(state.level, it.pos.x, it.pos.z) }
         return if (retained.size == packet.chunkBiomeData.size) packet else ClientboundChunksBiomesPacket(retained)
+    }
+
+    /** Tells the server once per connection why this client stopped offering cached chunks, so its log shows it. */
+    private fun reportPause(listener: ClientPacketListener, epoch: UUID, capture: RdiChunkCache.PacketCaptureContext) {
+        if (!ChunkCacheCompat.canReportPause(listener)) return
+        val reason = RdiChunkCache.claimPauseReason(capture) ?: return
+        ChunkCacheCompat.sendToServer(listener, ChunkCachePausedPayload(epoch, reason.take(ChunkCacheLimits.MAX_PAUSE_REASON_CHARS)))
     }
 
     private fun state(listener: ClientPacketListener): State? = current?.takeIf {

@@ -4,6 +4,7 @@ import calebxzau.rdi.mc.chunkcache.network.ChunkCacheAbsentPayload
 import calebxzau.rdi.mc.chunkcache.network.ChunkCacheCancelPayload
 import calebxzau.rdi.mc.chunkcache.network.ChunkCacheChannel
 import calebxzau.rdi.mc.chunkcache.network.ChunkCacheOfferPayload
+import calebxzau.rdi.mc.chunkcache.network.ChunkCachePausedPayload
 import calebxzau.rdi.mc.chunkcache.network.ChunkCacheResultPayload
 
 /** Registers the optional chunk cache channels; client-bound messages are ignored here. */
@@ -16,6 +17,7 @@ object ChunkCacheServerNetwork {
             is ChunkCacheCancelPayload -> ChunkCacheServerService.cancel(player, payload)
             is ChunkCacheResultPayload -> ChunkCacheServerService.result(player, payload)
             is ChunkCacheAbsentPayload -> ChunkCacheServerService.absent(player, payload)
+            is ChunkCachePausedPayload -> ChunkCacheServerService.paused(player, payload)
             else -> Unit
         }
     }

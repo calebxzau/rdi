@@ -136,6 +136,18 @@ class ChunkCachePayloadsTest {
     }
 
     @Test
+    fun pauseReportRoundTripsAndEnforcesLimit(): Unit {
+        val epoch = UUID(9, 10)
+        val reason = "IllegalStateException: Chunk cache writer rejected an ordered update"
+        val paused = roundTrip(ChunkCachePausedPayload(epoch, reason), ChunkCachePausedPayload.STREAM_CODEC)
+        assertEquals(epoch, paused.epoch)
+        assertEquals(reason, paused.reason)
+        val longest = "x".repeat(ChunkCacheLimits.MAX_PAUSE_REASON_CHARS)
+        assertEquals(longest, roundTrip(ChunkCachePausedPayload(epoch, longest), ChunkCachePausedPayload.STREAM_CODEC).reason)
+        assertFailsWith<IllegalArgumentException> { ChunkCachePausedPayload(epoch, longest + "x") }
+    }
+
+    @Test
     fun largestServerboundMessagesFitVanillaLimit(): Unit {
         val epoch = UUID(7, 8)
         val dimension = ResourceLocation.fromNamespaceAndPath("minecraft", "overworld")

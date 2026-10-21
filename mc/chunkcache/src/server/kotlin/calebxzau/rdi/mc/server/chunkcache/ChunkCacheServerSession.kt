@@ -24,6 +24,8 @@ internal open class ChunkCacheServerSession(
 ) {
     val ledger = ChunkCacheOfferLedger(capacity)
     val metrics = ChunkCacheServerMetrics()
+    /** The client reported that its cache paused; logged once per session. */
+    var clientPaused = false
     /** Token bucket for offers: [offersPerTick] per server tick, up to [ChunkCacheLimits.OFFER_BURST_TICKS] ticks' worth. */
     private val maxOfferTokens = offersPerTick.toLong() * ChunkCacheLimits.OFFER_BURST_TICKS
     private var offerTokens = maxOfferTokens

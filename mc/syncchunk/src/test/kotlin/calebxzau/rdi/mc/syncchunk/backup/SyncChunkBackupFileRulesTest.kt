@@ -44,6 +44,7 @@ class SyncChunkBackupFileRulesTest {
             "playerdata/1512ef02-2b79-4494-a4e9-e35cd8e03923.dat_old",
             "playerdata/1512ef02-2b79-4494-a4e9-e35cd8e03923-4471236471827.dat",
             "data/map_0.dat.tmp",
+            "data/ae_universal_cell_data/e370c6a6-4049-48ab-a0c2-529256eca3ff.dat3885261413984011556.neoforge-tmp",
             "data/.hidden",
             "level.dat",
             "region/r.0.0.mca",

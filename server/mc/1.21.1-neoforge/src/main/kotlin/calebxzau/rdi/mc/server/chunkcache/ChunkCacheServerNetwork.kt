@@ -4,6 +4,7 @@ import calebxzau.rdi.mc.chunkcache.network.ChunkCacheAbsentPayload
 import calebxzau.rdi.mc.chunkcache.network.ChunkCacheCancelPayload
 import calebxzau.rdi.mc.chunkcache.network.ChunkCacheContextPayload
 import calebxzau.rdi.mc.chunkcache.network.ChunkCacheOfferPayload
+import calebxzau.rdi.mc.chunkcache.network.ChunkCachePausedPayload
 import calebxzau.rdi.mc.chunkcache.network.ChunkCacheResultPayload
 import calebxzau.rdi.mc.chunkcache.network.ChunkCacheRetirePayload
 import calebxzau.rdi.mc.chunkcache.network.ChunkCacheReusePayload
@@ -38,6 +39,9 @@ object ChunkCacheServerNetwork {
             })
             .playToServer(ChunkCacheResultPayload.TYPE, ChunkCacheResultPayload.STREAM_CODEC, IPayloadHandler { payload, context ->
                 onMain(context) { player -> ChunkCacheServerService.result(player, payload) }
+            })
+            .playToServer(ChunkCachePausedPayload.TYPE, ChunkCachePausedPayload.STREAM_CODEC, IPayloadHandler { payload, context ->
+                onMain(context) { player -> ChunkCacheServerService.paused(player, payload) }
             })
     }
 

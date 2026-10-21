@@ -94,6 +94,17 @@ class ChunkCachePayloads20Test {
     }
 
     @Test
+    fun pauseReportRoundTripsAndEnforcesLimit() {
+        val reason = "IllegalStateException: Chunk cache writer rejected an ordered update"
+        val paused = roundTrip(ChunkCachePausedPayload(epoch, reason)) { ChunkCachePausedPayload(it) }
+        assertEquals(epoch, paused.epoch)
+        assertEquals(reason, paused.reason)
+        val longest = "x".repeat(ChunkCacheLimits.MAX_PAUSE_REASON_CHARS)
+        assertEquals(longest, roundTrip(ChunkCachePausedPayload(epoch, longest)) { ChunkCachePausedPayload(it) }.reason)
+        assertFailsWith<IllegalArgumentException> { ChunkCachePausedPayload(epoch, longest + "x") }
+    }
+
+    @Test
     fun oversizedListsAreRejectedOnRead() {
         val buffer = FriendlyByteBuf(Unpooled.buffer())
         try {

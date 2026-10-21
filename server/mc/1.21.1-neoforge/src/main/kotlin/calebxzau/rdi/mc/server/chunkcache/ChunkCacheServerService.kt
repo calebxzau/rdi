@@ -6,6 +6,7 @@ import calebxzau.rdi.mc.chunkcache.network.ChunkCacheAbsentPayload
 import calebxzau.rdi.mc.chunkcache.network.ChunkCacheCancelPayload
 import calebxzau.rdi.mc.chunkcache.network.ChunkCacheContextPayload
 import calebxzau.rdi.mc.chunkcache.network.ChunkCacheOfferPayload
+import calebxzau.rdi.mc.chunkcache.network.ChunkCachePausedPayload
 import calebxzau.rdi.mc.chunkcache.network.ChunkCacheResultPayload
 import calebxzau.rdi.mc.chunkcache.network.ChunkCacheRetirePayload
 import calebxzau.rdi.mc.chunkcache.network.ChunkCacheReusePayload
@@ -85,6 +86,15 @@ object ChunkCacheServerService {
         val warmup = session.warmup ?: return
         val view = player.chunkTrackingView
         warmup.markAbsent(payload.positions.filter { withinPrefetchView(view, ChunkPos.getX(it), ChunkPos.getZ(it)) })
+    }
+
+    /** The client keeps receiving full chunks until it reconnects; the reason is only logged. */
+    @JvmStatic
+    fun paused(player: ServerPlayer, payload: ChunkCachePausedPayload) {
+        val session = activeSession(player, payload.epoch, player.level().dimension().location()) ?: return
+        if (session.clientPaused) return
+        session.clientPaused = true
+        logger.warn("Chunk cache paused on the client player={} reason={}", player.scoreboardName, payload.reason)
     }
 
     /**

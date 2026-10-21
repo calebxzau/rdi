@@ -296,6 +296,29 @@ data class ChunkCacheAbsentPayload(
     }
 }
 
+/** Client to server, once per connection: the client's chunk cache paused after [reason], so it offers nothing until it reconnects. */
+data class ChunkCachePausedPayload(val epoch: UUID, val reason: String) : CustomPacketPayload {
+    init {
+        require(reason.length <= ChunkCacheLimits.MAX_PAUSE_REASON_CHARS) { "Pause reason exceeds limit" }
+    }
+
+    constructor(buffer: RegistryFriendlyByteBuf) : this(
+        ChunkCachePayloads.readEpoch(buffer), buffer.readUtf(ChunkCacheLimits.MAX_PAUSE_REASON_CHARS),
+    )
+
+    override fun type(): CustomPacketPayload.Type<out CustomPacketPayload> = TYPE
+    fun write(buffer: RegistryFriendlyByteBuf) {
+        ChunkCachePayloads.writeEpoch(buffer, epoch)
+        buffer.writeUtf(reason, ChunkCacheLimits.MAX_PAUSE_REASON_CHARS)
+    }
+
+    companion object {
+        val TYPE = CustomPacketPayload.Type<ChunkCachePausedPayload>(ResourceLocation.fromNamespaceAndPath("rdi", "chunk_cache_status_paused"))
+        val STREAM_CODEC: StreamCodec<RegistryFriendlyByteBuf, ChunkCachePausedPayload> =
+            CustomPacketPayload.codec(ChunkCachePausedPayload::write, ::ChunkCachePausedPayload)
+    }
+}
+
 private fun readIds(buffer: RegistryFriendlyByteBuf): List<Long> =
     List(ChunkCachePayloads.readCount(buffer, ChunkCacheLimits.MAX_IDS_PER_MESSAGE)) {
         buffer.readLong().also(ChunkCachePayloads::validateId)

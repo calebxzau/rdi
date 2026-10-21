@@ -20,6 +20,8 @@ object ChunkCacheLimits {
     const val OFFER_BURST_TICKS = 4
     /** Positions in one "no cached terrain" report. */
     const val MAX_ABSENT_BATCH = 256
+    /** Characters of the reason a client reports when its cache paused. */
+    const val MAX_PAUSE_REASON_CHARS = 512
     const val MAX_PREPARED_BYTES = 128 * 1024 * 1024
     const val MAX_SECTION_BYTES = 2 * 1024 * 1024
     const val MAX_METADATA_BYTES = 900 * 1024

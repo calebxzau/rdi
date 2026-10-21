@@ -30,6 +30,7 @@ object ChunkCacheClientNetwork {
             .playToServer(ChunkCacheOfferPayload.TYPE, ChunkCacheOfferPayload.STREAM_CODEC) { _, _ -> }
             .playToServer(ChunkCacheCancelPayload.TYPE, ChunkCacheCancelPayload.STREAM_CODEC) { _, _ -> }
             .playToServer(ChunkCacheResultPayload.TYPE, ChunkCacheResultPayload.STREAM_CODEC) { _, _ -> }
+            .playToServer(ChunkCachePausedPayload.TYPE, ChunkCachePausedPayload.STREAM_CODEC) { _, _ -> }
     }
 
     private fun listener(context: IPayloadContext): ClientPacketListener? = context.listener() as? ClientPacketListener
