@@ -3,6 +3,7 @@ package calebxzhou.rdi.master.service.host
 import calebxzhou.rdi.common.exception.RequestError
 import calebxzhou.rdi.common.model.Host
 import calebxzhou.rdi.master.service.PlayerService
+import calebxzhou.rdi.master.service.host.HostService.needAdmin
 import calebxzhou.rdi.model.Role
 import com.mongodb.client.model.Filters.and
 import com.mongodb.client.model.Filters.eq
@@ -13,6 +14,7 @@ import com.mongodb.client.model.Updates.set
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import org.bson.Document
+import org.bson.conversions.Bson
 import org.bson.types.ObjectId
 import java.util.concurrent.ConcurrentHashMap
 
@@ -39,13 +41,7 @@ object HostMemberService {
     }
 
     suspend fun HostContext.delMember() {
-        if (targetMember.role.level <= Role.ADMIN.level && member.role != Role.OWNER) {
-            throw RequestError("无法踢出管理员")
-        }
-        dbcl.updateOne(
-            eq("_id", host._id),
-            Updates.pull(Host::members.name, eq("id", targetMember.id))
-        )
+        removeMember(this, quitting = false)
     }
 
     /**
@@ -124,8 +120,33 @@ object HostMemberService {
         return null
     }
 
-    const val MAX_MEMBERS = 20
+    const val MAX_MEMBERS = Host.MAX_MEMBERS
     private const val MAX_JOINED_HOSTS = 10
+
+    /** Keep admission and the initial insert under the same player locks as later invitations. */
+    internal suspend fun <T> withInitialMembers(
+        ownerId: ObjectId,
+        requestedIds: List<ObjectId>,
+        accountExists: suspend (ObjectId) -> Boolean = { PlayerService.getById(it) != null },
+        joinedHostCount: suspend (ObjectId) -> Long = {
+            dbcl.countDocuments(eq("${Host::members.name}.${Host.Member::id.name}", it))
+        },
+        persist: suspend (List<Host.Member>) -> T,
+    ): T {
+        val ids = requestedIds.distinct()
+        if (ids.isEmpty()) throw RequestError("至少邀请1位好友一起玩")
+        if (ownerId in ids) throw RequestError("不能邀请自己，请添加其他好友")
+        if (ids.size >= MAX_MEMBERS) throw RequestError("该房间最多只能有${MAX_MEMBERS}名成员")
+        return withMemberMutationLocks(*(ids + ownerId).map { "player:${it}" }.toTypedArray()) {
+            for (id in ids) {
+                if (!accountExists(id)) throw RequestError("受邀玩家账号不存在，请移除后重新添加")
+                if (joinedHostCount(id) >= MAX_JOINED_HOSTS) {
+                    throw RequestError("受邀玩家加入的房间已达上限，请调整好友名单")
+                }
+            }
+            persist(listOf(Host.Member(ownerId, Role.OWNER)) + ids.map { Host.Member(it, Role.MEMBER) })
+        }
+    }
 
     suspend fun HostContext.addMember(qq: String) {
         val target = PlayerService.getByQQ(qq) ?: throw RequestError("无此账号")
@@ -166,15 +187,60 @@ object HostMemberService {
     }
 
     suspend fun HostContext.quit() {
-        if (host.members.none { it.id == player._id }) {
-            throw RequestError("你不是此房间成员")
-        }
-        if (host.ownerId == player._id) {
-            throw RequestError("拥有者无法退出房间")
-        }
-        dbcl.updateOne(
-            eq("_id", host._id),
-            Updates.pull(Host::members.name, Document(Host.Member::id.name, player._id))
-        )
+        removeMember(this, quitting = true)
     }
+
+    /** Fresh permissions and the minimum size are checked before an atomic snapshot-guarded pull. */
+    internal suspend fun removeMember(
+        context: HostContext,
+        quitting: Boolean,
+        loadCurrent: suspend () -> HostContext = { context.fresh() },
+        persist: suspend (Host, ObjectId) -> Boolean = { current, targetId ->
+            dbcl.updateOne(
+                memberRemovalFilter(current),
+                Updates.pull(Host::members.name, eq(Host.Member::id.name, targetId)),
+            ).matchedCount == 1L
+        },
+    ) {
+        HostLifecycleLock.withLock(context.host._id) {
+            withMemberMutationLocks("host:${context.host._id}") {
+                val current = loadCurrent()
+                val targetId = if (quitting) {
+                    if (current.host.members.none { it.id == current.player._id }) {
+                        throw RequestError("你不是此房间成员")
+                    }
+                    if (current.host.ownerId == current.player._id) {
+                        throw RequestError("拥有者无法退出房间")
+                    }
+                    current.player._id
+                } else {
+                    current.needAdmin
+                    val target = current.targetMember
+                    if (target.id == current.host.ownerId || target.role == Role.OWNER) {
+                        throw RequestError("无法踢出房间拥有者")
+                    }
+                    if (target.role.level <= Role.ADMIN.level && current.member.role != Role.OWNER) {
+                        throw RequestError("无法踢出管理员")
+                    }
+                    target.id
+                }
+                val remaining = current.host.members.map { it.id }.toSet() - targetId
+                if (remaining.size < 2) {
+                    val action = if (quitting) "退出房间" else "踢出成员"
+                    throw RequestError("房间至少需要保留2名成员，无法${action}")
+                }
+                if (!persist(current.host, targetId)) {
+                    throw RequestError("房间成员已变化，请重试")
+                }
+            }
+        }
+    }
+
+    internal fun memberRemovalFilter(current: Host): Bson = and(
+        eq("_id", current._id),
+        eq(Host::ownerId.name, current.ownerId),
+        eq(Host::members.name, current.members.map {
+            Document(Host.Member::id.name, it.id).append(Host.Member::role.name, it.role.name)
+        }),
+    )
 }

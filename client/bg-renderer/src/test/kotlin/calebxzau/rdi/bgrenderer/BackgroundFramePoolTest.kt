@@ -9,6 +9,9 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicReference
+import java.util.concurrent.locks.LockSupport
 
 class BackgroundFramePoolTest {
     private class Payload : AutoCloseable {
@@ -123,10 +126,12 @@ class BackgroundFramePoolTest {
     }
 
     @Test
-    fun closeSeesThreadPublishedBeforeStartReturns() {
+    fun closeReturnsWhileThreadStartIsStillBlocked() {
         val startEntered = CountDownLatch(1)
         val releaseStart = CountDownLatch(1)
         val closeReturned = CountDownLatch(1)
+        val loopEntered = AtomicBoolean(false)
+        lateinit var renderThread: Thread
         val state = RendererState(
             threadFactory = { runnable, name ->
                 object : Thread(runnable, name) {
@@ -135,22 +140,115 @@ class BackgroundFramePoolTest {
                         releaseStart.await(5, TimeUnit.SECONDS)
                         super.start()
                     }
-                }
+                }.also { renderThread = it }
             },
-            renderLoopOverride = {}
+            renderLoopOverride = { loopEntered.set(true) }
         )
         val ensureThread = Thread { state.ensureThread() }
-        ensureThread.start()
-        assertTrue(startEntered.await(5, TimeUnit.SECONDS))
         val closeThread = Thread {
             state.close()
             closeReturned.countDown()
         }
-        closeThread.start()
-        assertFalse(closeReturned.await(100, TimeUnit.MILLISECONDS))
-        releaseStart.countDown()
-        assertTrue(closeReturned.await(5, TimeUnit.SECONDS))
-        ensureThread.join(5_000)
-        closeThread.join(5_000)
+        try {
+            ensureThread.start()
+            assertTrue(startEntered.await(5, TimeUnit.SECONDS))
+            closeThread.start()
+            assertTrue(closeReturned.await(1, TimeUnit.SECONDS))
+            assertEquals(1L, releaseStart.count)
+        } finally {
+            state.close()
+            releaseStart.countDown()
+            ensureThread.join(5_000)
+            closeThread.join(5_000)
+            renderThread.join(5_000)
+        }
+        assertFalse(renderThread.isAlive)
+        assertFalse(loopEntered.get())
+        assertTrue(state.framePool.isClosed())
+        assertNull(state.failure.value)
+        assertNull(state.thread)
+    }
+
+    @Test
+    fun closeBeforeActivationNeverStartsAWorker() {
+        val starts = AtomicBoolean(false)
+        val state = RendererState(renderLoopOverride = { starts.set(true) })
+        val session = BackgroundRenderSession(state)
+        session.close()
+        session.close()
+        session.setActive(true)
+        assertFalse(starts.get())
+        assertNull(state.thread)
+        assertEquals(0, state.framePool.createdSlotCount)
+    }
+
+    @Test
+    fun closeDoesNotWaitForBlockedWorkAndCheckpointSkipsNextStage() {
+        val entered = CountDownLatch(1)
+        val releaseWork = CountDownLatch(1)
+        val closeReturned = CountDownLatch(1)
+        val nextStageEntered = AtomicBoolean(false)
+        val cleanupThread = AtomicReference<Thread?>()
+        lateinit var state: RendererState
+        state = RendererState(renderLoopOverride = {
+            try {
+                entered.countDown()
+                releaseWork.await(5, TimeUnit.SECONDS)
+                state.checkRunning()
+                nextStageEntered.set(true)
+            } finally {
+                cleanupThread.set(Thread.currentThread())
+            }
+        })
+        state.ensureThread()
+        val renderThread = assertNotNull(state.thread)
+        val closeThread = Thread {
+            state.close()
+            closeReturned.countDown()
+        }
+        try {
+            assertTrue(entered.await(5, TimeUnit.SECONDS))
+            closeThread.start()
+            assertTrue(closeReturned.await(1, TimeUnit.SECONDS))
+            assertTrue(renderThread.isAlive)
+            assertFalse(state.framePool.isClosed())
+            assertNull(cleanupThread.get())
+        } finally {
+            state.close()
+            releaseWork.countDown()
+            closeThread.join(5_000)
+            renderThread.join(5_000)
+        }
+        assertFalse(renderThread.isAlive)
+        assertFalse(nextStageEntered.get())
+        assertEquals(renderThread, cleanupThread.get())
+        assertTrue(state.framePool.isClosed())
+        assertNull(state.failure.value)
+        assertFalse(state.lowPerformance.value)
+    }
+
+    @Test
+    fun closeWakesAParkedWorker() {
+        val entered = CountDownLatch(1)
+        lateinit var state: RendererState
+        state = RendererState(renderLoopOverride = {
+            entered.countDown()
+            while (true) {
+                state.checkRunning()
+                LockSupport.park()
+            }
+        })
+        state.ensureThread()
+        val renderThread = assertNotNull(state.thread)
+        try {
+            assertTrue(entered.await(5, TimeUnit.SECONDS))
+        } finally {
+            state.close()
+            renderThread.join(5_000)
+        }
+        assertFalse(renderThread.isAlive)
+        assertTrue(state.framePool.isClosed())
+        assertNull(state.thread)
+        assertNull(state.failure.value)
     }
 }

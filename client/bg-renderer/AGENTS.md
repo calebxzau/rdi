@@ -17,6 +17,66 @@ The Gradle project name is `:bg-renderer`. The consuming Gradle root is `client/
 
 ## Golden Valley Scene (in progress)
 
+### Optional scene: Grassland (2026-10-22)
+
+`BackgroundRenderer.openSession()` and `AppBackgroundProvider()` default to
+`BackgroundSceneKind.GoldenValley`, showing the account avatar plus the downloaded skin crowd.
+Grassland is disabled by default; explicitly pass `BackgroundSceneKind.Grassland` to select it.
+
+### Golden-valley hill crowd (2026-10-22)
+
+- `HillCrowdSimulation.kt` follows authored cell-center steps up the left slope, around the
+  summit (back -> right -> front -> left), then across the back again and down the right slope.
+  Slope progress is 2.4 blocks/s (1.5x the original); summit progress stays at 1.6 blocks/s.
+  Both loop endpoints are outside
+  the entire camera orbit. Heights use the same `terrainCellHeight` sampling as the rendered
+  one-block terrain; the route avoids `SUMMIT_BOULDERS`.
+- Actors lift before crossing an upward riser and clear the edge before dropping down. Stable
+  time slots keep up to 50 identities through incremental skin downloads. A lap takes an integer
+  plus half a queue interval, interleaving first and second crossings at the shared back edge.
+  Actors wait invisibly offscreen between circuits, so all 50 participate without crowding the
+  summit. All use the same segmented speed profile. Zero/inactive time does not advance them;
+  catch-up is bounded to 0.1s.
+- `BackgroundCrowdSimulation.kt` supplies shared poses to `GrasslandCrowdRenderer.kt`, which
+  now selects lighting by scene, uses each actor's foot/shadow height, and supports the valley
+  reflection clip plane. Hill contact shadows stay inside their supporting block. Simulation
+  advances once per frame, never again in the reflection pass.
+- UI loads the existing unique-skin list in both scenes. Golden valley also retains the
+  logged-in account's stationary skin/cape. No server or Minecraft runtime changes are needed.
+- Preview accepts `RDI_BG_PREVIEW_SCENE=valley` and optional `RDI_BG_PREVIEW_PLAYERS=50`;
+  the latter repeats available local skins under distinct actor IDs for population stress checks.
+
+### Grassland behavior
+
+- `GrasslandScene.kt` owns the treeless meadow with loose distant grass patches, fixed camera, and bounded
+  fixed-step random movement with steering/separation for up to 50 skin identities.
+  Ground and grass tufts use a scene-local dark-green tint, targeting the reference grass-block
+  top's approximate display average `#436939` under midday lighting and tonemapping.
+  `SceneMeshBuilder` accepts optional authored color overrides; other scenes keep material defaults.
+- `BackgroundLighting.kt` selects the scene's sun and linear HDR light intensities. Grassland
+  uses a 70-degree midday sun, neutral direct light, a blue-to-pale horizon sky without
+  distance haze, and white/blue-gray clouds at height 144 with 0.65 coverage. Valley retains the
+  original 20-degree golden-hour preset. Terrain, players, clouds, sky, and the shadow bake
+  share this selection; the noon shader branch must not affect the valley preset.
+- `GrasslandCrowdRenderer.kt` caches a texture per skin and a mesh per classic/slim/legacy
+  variant, animates running limbs, and draws soft contact shadows. All GL handles stay on
+  the background render thread and are released with the scene.
+- UI `BackgroundCrowdLoader.kt` reads `GET /player/unique-skin-list` (currently at most 50
+  unique non-default URLs), downloads with concurrency 4, normalizes HD skins to 64px,
+  detects slim arms from alpha, and publishes incremental snapshots. Failed downloads are
+  logged/skipped; Steve is shown until the first successful skin, or for an empty/failed list.
+  These are skin representatives, not online-player presence or named account identities.
+- Grassland skips water/reflection and volumetric fog passes, and bypasses atmospheric haze
+  and world-edge color blending. Valley retains the documented pass order below.
+  Both retain the shared HDR/post-processing, 720p/20FPS publication, and fallback policy.
+- Inactive time does not advance animation; shutdown requests never join on the UI thread.
+  Initialization checks shutdown between stages and cleanup stays on the render thread.
+- `:bg-renderer:renderPreview` defaults to grassland and reads optional PNGs from
+  `build/bg-preview/skins`; otherwise it exercises 50 bundled-skin actors. Set
+  `RDI_BG_PREVIEW_SCENE=valley` to preview the preserved scene.
+
+The remaining scene notes describe the preserved golden valley.
+
 The scene recreates a reference composition: a player standing on a grassy summit seen from behind, a stepped dirt cliff on the left, a valley with a lake, two broken ridge lines, and a snow-capped range under a golden-hour sky. It replaced the former harbor/boat scene (2026-10-14; the old code is in git history). Agreed phases:
 
 1. Done (2026-10-14): harbor/boat removed; golden sky, low sun, lighting and camera; heightmap terrain, snowy range and lake; analytic atmospheric fog.
@@ -104,7 +164,7 @@ One `2048x2048` static depth map is baked in `initialize()` from `terrainShadowB
 
 ## Required Invariants
 
-- Each frame (in `BackgroundFramePipeline.render`) follows `MSAA bind -> pre-water scene -> HDR color/depth capture -> 640x360 planar reflection -> MSAA rebind -> reflection mipmaps -> water -> raw HDR resolve -> 640x360 valley fog march -> HDR linear copy with fog composite -> mipmaps -> Bloom atlas -> Bloom/Tonemap/saturation -> final RGBA8 READ framebuffer -> BGRA glReadPixels`. Call `pixels.clear()` immediately before every `glReadPixels`.
+- Each golden-valley frame (in `BackgroundFramePipeline.render`) follows `MSAA bind -> pre-water scene -> HDR color/depth capture -> 640x360 planar reflection -> MSAA rebind -> reflection mipmaps -> water -> raw HDR resolve -> 640x360 valley fog march -> HDR linear copy with fog composite -> mipmaps -> Bloom atlas -> Bloom/Tonemap/saturation -> final RGBA8 READ framebuffer -> BGRA glReadPixels`. Call `pixels.clear()` immediately before every `glReadPixels`.
 - The MSAA framebuffer has 4x `GL_R11F_G11F_B10F` color and `DEPTH_COMPONENT24`; scene capture, reflection and raw resolve use the same alpha-less HDR format; the final post target is `GL_RGBA8`. Release all GL objects on the render thread.
 - Color contract: authored colors are display-space and converted with the exact sRGB transfer function; `TextureEncoding.SrgbColor` for block, sun, cloud, skin and cape PNGs and `LinearData` for the water normal/noise maps. Do not pre-transform bytes or enable `GL_FRAMEBUFFER_SRGB`. The final tonemap performs the sole linear-to-sRGB conversion.
 - `SunState` stays the only sun source; do not add a second sun or animate it independently.
@@ -134,6 +194,14 @@ Do not move route, window, Compose theme, or fallback-resource policy into `:bg-
 Bundled vanilla textures were extracted from `client/mc/1.21.1-neoforge/build/moddev/artifacts/neoforge-21.1.250-client-extra-aka-minecraft-resources.jar`: `grass_block_top`, `grass_block_side`, `dirt`, `stone`, `snow`, `sand`, `gravel`, `oak_planks`, `oak_log`, `oak_log_top` (currently unused), `birch_log`, `spruce_log`, `oak_leaves`, `birch_leaves`, `spruce_leaves`, `short_grass`, `spruce_planks`, `cobblestone`, `glowstone`, first-frame `lantern`, `environment/sun`, and `environment/clouds`. The user accepted responsibility for redistributing them. Leaves and short grass are grayscale and tinted with Minecraft's plains/birch/spruce foliage colors. The removed cactus textures were archived under `DEL/bg-renderer-golden-valley-phase1-20261014/`. `grass_block_top` is grayscale and tinted by the material color; `grass_block_side` already carries its green fringe.
 
 ## Validation
+
+Hill crowd lap/speed revision verified 2026-10-22: Windows `:bg-renderer:test` (105 tests, including 7 hill
+simulation tests; no failures or skips) and UI `:compileKotlin` passed. The GPU valley preview
+on Radeon 780M with a 50-identity queue (3 local skins repeated, offscreen waiting actors hidden)
+rendered at 6.59ms average / 10.64ms max over 60 frames. Frames at 0.75, 1.75, 15.75 and 45.75 seconds
+are under `build/bg-preview/valley`; the logs are `build/hill-lap-validation.log` and
+`build/hill-lap-preview.log`. This checks the standalone
+render pipeline, not live API loading or the launcher's complete Compose frame path.
 
 Run Gradle on Windows from `client/ui` (IntelliJ MCP `execute_terminal_command` with `executeInShell=true`, or `pwsh.exe`). Do not use the WSL Gradle environment.
 

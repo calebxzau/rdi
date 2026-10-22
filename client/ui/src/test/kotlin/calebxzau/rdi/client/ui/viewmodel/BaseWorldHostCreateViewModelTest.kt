@@ -2,6 +2,7 @@ package calebxzau.rdi.client.ui.viewmodel
 
 import calebxzau.rdi.common.model.BaseWorld
 import calebxzhou.rdi.common.model.Host
+import calebxzhou.rdi.common.model.RAccount
 import calebxzhou.rdi.common.model.Modpack
 import calebxzhou.rdi.client.ui.screen.HostKind
 import kotlinx.coroutines.CompletableDeferred
@@ -25,6 +26,7 @@ class BaseWorldHostCreateViewModelTest {
         awaitLoaded(viewModel)
 
         viewModel.updateHostName("新房间")
+        addTestFriend(viewModel)
         viewModel.submit()
         awaitSubmission(gateway)
 
@@ -46,6 +48,7 @@ class BaseWorldHostCreateViewModelTest {
         awaitBaseWorlds(viewModel)
         viewModel.commitBaseWorldSelection(world.id)
         viewModel.updateHostName("模板房间")
+        addTestFriend(viewModel)
         viewModel.submit()
         awaitSubmission(gateway)
 
@@ -87,6 +90,7 @@ class BaseWorldHostCreateViewModelTest {
 
         viewModel.cancelCustomLevelType()
         viewModel.updateHostName("自定义房间")
+        addTestFriend(viewModel)
         viewModel.submit()
         awaitSubmission(gateway)
         assertNull((gateway.submission as HostCreateSubmission.CreateLegacy).dto.baseWorldId)
@@ -108,6 +112,7 @@ class BaseWorldHostCreateViewModelTest {
         assertEquals("minecraft:flat", viewModel.uiState.value.levelType)
         assertNull(viewModel.uiState.value.selectedBaseWorldId)
         viewModel.updateHostName("普通房间")
+        addTestFriend(viewModel)
         viewModel.submit()
         awaitSubmission(gateway)
         assertNull((gateway.submission as HostCreateSubmission.CreateLegacy).dto.baseWorldId)
@@ -122,6 +127,7 @@ class BaseWorldHostCreateViewModelTest {
         viewModel.openBaseWorldSelection()
         awaitBaseWorlds(viewModel)
         viewModel.updateHostName("模板房间")
+        addTestFriend(viewModel)
         viewModel.submit()
 
         awaitSubmission(gateway)
@@ -216,6 +222,7 @@ class BaseWorldHostCreateViewModelTest {
         assertEquals("此版本推荐的地图模板不可用，请重新选择地图模板", viewModel.uiState.value.baseWorldBindingErrorMessage)
 
         viewModel.updateHostName("模板房间")
+        addTestFriend(viewModel)
         viewModel.submit()
         assertNull(gateway.submission)
         assertEquals(viewModel.uiState.value.baseWorldBindingErrorMessage, viewModel.uiState.value.statusMessage)
@@ -223,6 +230,7 @@ class BaseWorldHostCreateViewModelTest {
         viewModel.selectLevelChoice(1)
         assertEquals(HostCreateWorldSource.Generate, viewModel.uiState.value.worldSource)
         assertNull(viewModel.uiState.value.baseWorldBindingErrorMessage)
+        addTestFriend(viewModel)
         viewModel.submit()
         awaitSubmission(gateway)
         assertNull((gateway.submission as HostCreateSubmission.CreateLegacy).dto.baseWorldId)
@@ -257,6 +265,14 @@ class BaseWorldHostCreateViewModelTest {
         gateway,
     )
 
+    private suspend fun addTestFriend(viewModel: HostCreateViewModel) {
+        if (!viewModel.uiState.value.isLegacyCreate || viewModel.uiState.value.initialMembers.isNotEmpty()) return
+        viewModel.openFriendDialog()
+        viewModel.updateFriendQq("12345678")
+        viewModel.addFriend()
+        withTimeout(5_000) { viewModel.uiState.filter { !it.friendLookupLoading }.first() }
+    }
+
     private suspend fun awaitLoaded(viewModel: HostCreateViewModel) {
         withTimeout(5_000) { viewModel.uiState.filter { !it.loading }.first() }
     }
@@ -281,6 +297,10 @@ class BaseWorldHostCreateViewModelTest {
         var baseWorldLoadCalls = 0
         var submission: HostCreateSubmission? = null
         val submissionReady = CompletableDeferred<Unit>()
+
+        override suspend fun findFriend(qq: String): Result<RAccount.Dto> = Result.success(
+            RAccount.Dto(ObjectId("66a000000000000000000005"), "好友", RAccount.Cloth()),
+        )
 
         override suspend fun loadInitial(hostId: ObjectId?): Result<HostCreateInitialData> =
             Result.success(initial)

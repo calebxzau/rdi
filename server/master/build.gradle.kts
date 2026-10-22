@@ -139,6 +139,17 @@ tasks.register<Test>("modpackServiceTest") {
     useJUnitPlatform()
 }
 
+tasks.register<Test>("hostMemberTest") {
+    group = "verification"
+    description = "Runs focused host member admission and removal tests."
+    dependsOn(tasks.named("testClasses"))
+    testClassesDirs = sourceSets["test"].output.classesDirs
+    classpath = sourceSets["test"].runtimeClasspath
+    include("**/calebxzhou/rdi/master/service/host/HostInitialMembersTest.class")
+    include("**/calebxzhou/rdi/master/service/host/HostMemberRemovalTest.class")
+    useJUnitPlatform()
+}
+
 tasks.register<Test>("baseWorldTest") {
     group = "verification"
     description = "Runs focused BaseWorld persistence and route tests."

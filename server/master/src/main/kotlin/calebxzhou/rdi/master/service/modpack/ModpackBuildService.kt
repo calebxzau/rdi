@@ -233,6 +233,14 @@ object ModpackBuildService {
                 }
             })
 
+            add(leaf("生成文件清单") { ctx ->
+                val msg = "生成文件清单"
+                progress(msg)
+                ctx.emit(LoadProgress.Phase(msg))
+                ModpackManifestService.generate(version).getOrThrow()
+                ctx.emit(LoadProgress.Percent("文件清单生成完成", 1f))
+            })
+
             add(leaf("完成构建") { ctx ->
                 val msg = "整合包构建完成"
                 progress(msg)
@@ -402,6 +410,8 @@ object ModpackBuildService {
                 onProgress("迁移整合包归档到tar.zst..")
                 ModpackArchiveService.upgradeFullPackArchive(version)
             }
+            onProgress("生成文件清单..")
+            ModpackManifestService.generate(version).getOrThrow()
             onProgress("整合包构建完成！")
             version.setStatus(Modpack.Status.OK)
         } catch (e: Exception) {

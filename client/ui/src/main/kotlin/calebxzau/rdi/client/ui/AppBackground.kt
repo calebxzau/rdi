@@ -20,6 +20,7 @@ import androidx.compose.ui.layout.ContentScale
 import calebxzau.rdi.bgrenderer.BackgroundRenderSession
 import calebxzau.rdi.bgrenderer.BackgroundRenderer
 import calebxzau.rdi.bgrenderer.BackgroundPlayerAppearance
+import calebxzau.rdi.bgrenderer.BackgroundSceneKind
 import calebxzhou.rdi.client.auth.AccountSessionStore
 import calebxzau.rdi.client.lgr
 import calebxzhou.rdi.client.service.HttpImageState
@@ -47,7 +48,7 @@ val LocalAppBackgroundHazeState = staticCompositionLocalOf<HazeState> {
 }
 
 @Composable
-fun AppBackgroundProvider(content: @Composable () -> Unit) {
+fun AppBackgroundProvider(scene: BackgroundSceneKind = BackgroundSceneKind.GoldenValley, content: @Composable () -> Unit) {
     val background: Painter = remember {
         loadImageBitmap("assets/bg.avif").fold(
             onSuccess = { BitmapPainter(it) },
@@ -58,10 +59,11 @@ fun AppBackgroundProvider(content: @Composable () -> Unit) {
         )
     }
 
-    val renderer = remember { if (RenderFeatures.available) BackgroundRenderer.openSession() else null }
+    val renderer = remember(scene) { if (RenderFeatures.available) BackgroundRenderer.openSession(scene) else null }
     val hazeState = rememberHazeState()
     if (renderer != null) {
-        BackgroundPlayerAppearanceEffect(renderer)
+        BackgroundCrowdEffect(renderer)
+        if (scene == BackgroundSceneKind.GoldenValley) BackgroundPlayerAppearanceEffect(renderer)
         DisposableEffect(renderer) {
             onDispose { renderer.close() }
         }

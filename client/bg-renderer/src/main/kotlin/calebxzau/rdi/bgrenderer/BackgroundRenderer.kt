@@ -80,6 +80,12 @@ class BackgroundRenderSession internal constructor(
         state.thread?.let(LockSupport::unpark)
     }
 
+    fun setCrowd(players: List<BackgroundCrowdPlayer>) {
+        state.crowd.set(players.distinctBy { it.id }.take(MAX_BACKGROUND_PLAYERS).toList())
+        state.thread?.let(LockSupport::unpark)
+    }
+
+    /** Requests shutdown without waiting for native calls; cleanup stays on the render thread. */
     override fun close() {
         state.close()
     }
@@ -91,12 +97,16 @@ data class BackgroundPlayerAppearance(
 )
 
 object BackgroundRenderer {
-    fun openSession(): BackgroundRenderSession = BackgroundRenderSession(RendererState())
+    fun openSession(scene: BackgroundSceneKind = BackgroundSceneKind.GoldenValley): BackgroundRenderSession =
+        BackgroundRenderSession(RendererState(scene = scene))
 }
+
+private class BackgroundRenderStopped : RuntimeException(null, null, false, false)
 
 internal class RendererState(
     private val threadFactory: (Runnable, String) -> Thread = { runnable, name -> Thread(runnable, name) },
-    private val renderLoopOverride: (() -> Unit)? = null
+    private val renderLoopOverride: (() -> Unit)? = null,
+    private val scene: BackgroundSceneKind = BackgroundSceneKind.GoldenValley
 ) {
     private val logger = KotlinLogging.logger {}
     private val running = AtomicBoolean(true)
@@ -112,6 +122,7 @@ internal class RendererState(
     /** One realization per session for seeded details; the terrain layout itself is fixed. */
     private val sessionSeed = Random.nextLong()
     val appearance = java.util.concurrent.atomic.AtomicReference<BackgroundPlayerAppearance?>(null)
+    val crowd = java.util.concurrent.atomic.AtomicReference<List<BackgroundCrowdPlayer>>(emptyList())
     private val threadLock = Any()
     internal val framePool = createBackgroundFramePool()
     @Volatile
@@ -121,7 +132,7 @@ internal class RendererState(
         if (!running.get() || terminalFailure.get() || lowPerformance.value || thread?.isAlive == true) return
         synchronized(threadLock) {
             if (!running.get() || terminalFailure.get() || lowPerformance.value || thread?.isAlive == true) return
-            val newThread = threadFactory(Runnable { (renderLoopOverride ?: ::renderLoop).invoke() }, "rdi-background-renderer").apply {
+            val newThread = threadFactory(Runnable { runRenderThread() }, "rdi-background-renderer").apply {
                 isDaemon = true
             }
             thread = newThread
@@ -132,31 +143,63 @@ internal class RendererState(
     fun close() {
         running.set(false)
         active.set(false)
-        val renderThread = synchronized(threadLock) { thread }
-        renderThread?.let {
-            LockSupport.unpark(it)
-            if (it !== Thread.currentThread()) it.join()
+        // Do not take threadLock: Thread.start() may still be in progress. A late-starting
+        // worker checks running before initialization. An unstarted pool has no native payloads.
+        thread?.let(LockSupport::unpark)
+    }
+
+    internal fun checkRunning() {
+        if (!running.get()) throw BackgroundRenderStopped()
+    }
+
+    private fun runRenderThread() {
+        try {
+            checkRunning()
+            (renderLoopOverride ?: ::renderLoop).invoke()
+        } catch (_: BackgroundRenderStopped) {
+            // Cooperative shutdown between initialization/render stages.
+        } catch (error: Throwable) {
+            if (running.get()) {
+                terminalFailure.set(true)
+                _failure.value = "实时背景渲染不可用"
+            }
+            logger.error(error) { "GPU background renderer failed" }
+        } finally {
+            try {
+                _frame.value = null
+                framePool.close()
+            } finally {
+                synchronized(threadLock) {
+                    if (thread === Thread.currentThread()) thread = null
+                }
+            }
         }
-        framePool.close()
     }
 
     private fun renderLoop() {
         var window = NULL
         var glfwLease: GlfwRuntime.Lease? = null
         try {
+            checkRunning()
             glfwLease = GlfwRuntime.acquire()
+            checkRunning()
             window = GlfwRuntime.createHiddenWindow("rdi-background")
             check(window != NULL) { "Failed to create the background OpenGL context" }
+            checkRunning()
             glfwMakeContextCurrent(window)
             GL.createCapabilities()
-            val pipeline = BackgroundFramePipeline(sessionSeed)
-            val pixels = BufferUtils.createByteBuffer(RENDER_WIDTH * RENDER_HEIGHT * 4)
+            checkRunning()
+            val pipeline = BackgroundFramePipeline(sessionSeed, ::checkRunning, scene)
             try {
                 pipeline.initialize()
+                checkRunning()
+                val pixels = BufferUtils.createByteBuffer(RENDER_WIDTH * RENDER_HEIGHT * 4)
                 var nextFrame = 0L
-                val started = System.nanoTime()
+                var previousFrameTime: Long? = null
+                var elapsed = 0.0
                 while (running.get()) {
                     if (!active.get()) {
+                        previousFrameTime = null
                         LockSupport.park()
                         continue
                     }
@@ -165,9 +208,11 @@ internal class RendererState(
                         LockSupport.parkNanos(nextFrame - now)
                         continue
                     }
-                    val elapsed = (now - started).toDouble() / 1_000_000_000.0
+                    previousFrameTime?.let { elapsed += (now - it).toDouble().coerceAtMost(100_000_000.0) / 1_000_000_000.0 }
+                    previousFrameTime = now
                     val frameStarted = System.nanoTime()
-                    pipeline.render(elapsed, appearance.get(), pixels)
+                    pipeline.render(elapsed, appearance.get(), pixels, crowd.get())
+                    checkRunning()
                     framePool.write()?.let { write ->
                         try {
                             write.payload.copyFrom(pixels, RENDER_WIDTH, RENDER_HEIGHT)
@@ -186,24 +231,17 @@ internal class RendererState(
                     nextFrame = now + 1_000_000_000L / TARGET_FPS
                 }
             } finally {
-                framePool.close()
                 pipeline.close()
             }
-        } catch (error: Throwable) {
-            if (running.get()) {
-                terminalFailure.set(true)
-                _failure.value = "实时背景渲染不可用"
-                logger.error(error) { "GPU background renderer failed" }
-            }
         } finally {
-            GL.setCapabilities(null)
-            if (window != NULL) {
-                glfwMakeContextCurrent(NULL)
-                GlfwRuntime.destroyWindow(window)
-            }
-            glfwLease?.close()
-            synchronized(threadLock) {
-                if (thread === Thread.currentThread()) thread = null
+            try {
+                GL.setCapabilities(null)
+                if (window != NULL) {
+                    glfwMakeContextCurrent(NULL)
+                    GlfwRuntime.destroyWindow(window)
+                }
+            } finally {
+                glfwLease?.close()
             }
         }
     }
@@ -213,8 +251,15 @@ internal class RendererState(
  * Owns every GL object of one renderer context and runs the fixed per-frame pass order.
  * Must be created, used and closed on the thread that owns the current OpenGL context.
  */
-internal class BackgroundFramePipeline(sceneSeed: Long) : AutoCloseable {
-    private val renderer = SceneGlRenderer(sceneSeed)
+internal class BackgroundFramePipeline(
+    sceneSeed: Long,
+    private val checkRunning: () -> Unit = {},
+    private val scene: BackgroundSceneKind = BackgroundSceneKind.GoldenValley
+) : AutoCloseable {
+    private val renderer = run {
+        checkRunning()
+        SceneGlRenderer(sceneSeed, scene).also { checkRunning() }
+    }
     private val framebuffer = OffscreenFramebuffer(RENDER_WIDTH, RENDER_HEIGHT)
     private var valleyFog: ValleyFogRenderer? = null
     private var postProcessor: BackgroundPostProcessor? = null
@@ -225,43 +270,56 @@ internal class BackgroundFramePipeline(sceneSeed: Long) : AutoCloseable {
     internal val shadowMapTexture: Int get() = renderer.shadowMapTexture
 
     fun initialize() {
-        renderer.initialize()
-        valleyFog = ValleyFogRenderer(VALLEY_FOG_WIDTH, VALLEY_FOG_HEIGHT)
+        checkRunning()
+        renderer.initialize(checkRunning)
+        checkRunning()
+        if (scene == BackgroundSceneKind.GoldenValley) {
+            valleyFog = ValleyFogRenderer(VALLEY_FOG_WIDTH, VALLEY_FOG_HEIGHT)
+        }
+        checkRunning()
         postProcessor = BackgroundPostProcessor(RENDER_WIDTH, RENDER_HEIGHT)
+        checkRunning()
         glPixelStorei(GL_PACK_ALIGNMENT, 1)
     }
 
     /** Renders one frame and reads the final BGRA pixels (bottom row first) into [pixels]. */
-    fun render(elapsed: Double, appearance: BackgroundPlayerAppearance?, pixels: ByteBuffer) {
+    fun render(elapsed: Double, appearance: BackgroundPlayerAppearance?, pixels: ByteBuffer, crowd: List<BackgroundCrowdPlayer> = emptyList()) {
         val initializedPostProcessor = checkNotNull(postProcessor) { "Pipeline is not initialized" }
-        val initializedValleyFog = checkNotNull(valleyFog) { "Pipeline is not initialized" }
+        val initializedValleyFog = if (scene == BackgroundSceneKind.GoldenValley) {
+            checkNotNull(valleyFog) { "Pipeline is not initialized" }
+        } else null
         framebuffer.bindForRender()
+        renderer.updateCrowd(crowd, elapsed)
         val state = renderer.renderSceneBeforeWater(elapsed, appearance)
         framebuffer.captureSceneInputs()
-        framebuffer.bindForReflection()
-        renderer.renderReflectionScene(state, appearance)
-        framebuffer.bindForRender()
-        framebuffer.generateReflectionMipmaps()
-        renderer.renderWater(
-            state,
-            framebuffer.sceneColorTexture(),
-            framebuffer.sceneDepthTexture(),
-            framebuffer.reflectionColorTexture()
-        )
+        if (scene == BackgroundSceneKind.GoldenValley) {
+            framebuffer.bindForReflection()
+            renderer.renderReflectionScene(state, appearance)
+            framebuffer.bindForRender()
+            framebuffer.generateReflectionMipmaps()
+            renderer.renderWater(
+                state,
+                framebuffer.sceneColorTexture(),
+                framebuffer.sceneDepthTexture(),
+                framebuffer.reflectionColorTexture()
+            )
+        }
         framebuffer.resolveRawHdr()
-        initializedValleyFog.render(
-            elapsed,
-            renderer.eyePosition,
-            renderer.inverseViewProjectionMatrix,
-            framebuffer.sceneDepthTexture(),
-            renderer.shadowMapTexture,
-            renderer.shadowViewProjectionMatrix,
-            renderer.shadowDepthRange,
-            BackgroundScene.sun()
-        )
+        if (initializedValleyFog != null) {
+            initializedValleyFog.render(
+                elapsed,
+                renderer.eyePosition,
+                renderer.inverseViewProjectionMatrix,
+                framebuffer.sceneDepthTexture(),
+                renderer.shadowMapTexture,
+                renderer.shadowViewProjectionMatrix,
+                renderer.shadowDepthRange,
+                renderer.lighting.sun
+            )
+        }
         initializedPostProcessor.process(
             framebuffer.rawHdrTexture(),
-            initializedValleyFog.texture,
+            initializedValleyFog?.texture ?: 0,
             framebuffer.sceneDepthTexture()
         )
         pixels.clear()
@@ -465,7 +523,19 @@ private class OffscreenFramebuffer(private val width: Int, private val height: I
     }
 }
 
-internal class SceneGlRenderer(@Suppress("unused") private val sceneSeed: Long) : AutoCloseable {
+internal class SceneGlRenderer(
+    private val sceneSeed: Long,
+    private val scene: BackgroundSceneKind = BackgroundSceneKind.GoldenValley
+) : AutoCloseable {
+    internal val lighting = backgroundLighting(scene)
+    private val crowdRenderer = GrasslandCrowdRenderer(scene)
+    private val crowdSimulation: BackgroundCrowdSimulation = if (scene == BackgroundSceneKind.Grassland) {
+        GrasslandSimulation(sceneSeed)
+    } else {
+        HillCrowdSimulation()
+    }
+    private var crowdPlayers: List<BackgroundCrowdPlayer>? = null
+    private var previousCrowdTime: Double? = null
     private var program = 0
     private var vertexArray = 0
     private var vertexBuffer = 0
@@ -581,7 +651,7 @@ internal class SceneGlRenderer(@Suppress("unused") private val sceneSeed: Long) 
         private set
     internal var vegetationStats = VegetationStats(0, 0, 0)
         private set
-    private val sceneMesh = buildSceneMesh()
+    private val sceneMesh = if (scene == BackgroundSceneKind.Grassland) buildGrasslandMesh() else buildSceneMesh()
     private val waterBatch = sceneMesh.batches.single { it.material == BlockMaterial.WATER }
     /**
      * Vegetation (near-to-far within each batch) is drawn before the terrain so canopies depth-reject
@@ -595,7 +665,7 @@ internal class SceneGlRenderer(@Suppress("unused") private val sceneSeed: Long) 
     private val sunVertices = buildSunVertices()
     private val shadowFrame = buildStaticShadowFrame(
         listOf(sceneMesh.shadowBounds),
-        BackgroundScene.sun(),
+        lighting.sun,
         lightDistance = STATIC_SHADOW_LIGHT_DISTANCE
     )
     private val shadowViewProjection = shadowFrame.viewProjection
@@ -610,7 +680,8 @@ internal class SceneGlRenderer(@Suppress("unused") private val sceneSeed: Long) 
     internal val shadowViewProjectionMatrix: Matrix4f get() = shadowViewProjection
     internal val shadowDepthRange: Float get() = shadowFrame.far - shadowFrame.near
 
-    fun initialize() {
+    fun initialize(checkRunning: () -> Unit = {}) {
+        checkRunning()
         program = createProgram(VERTEX_SHADER, FRAGMENT_SHADER)
         projectionLocation = glGetUniformLocation(program, "uProjection")
         viewLocation = glGetUniformLocation(program, "uView")
@@ -647,6 +718,7 @@ internal class SceneGlRenderer(@Suppress("unused") private val sceneSeed: Long) 
         glBufferData(GL_ELEMENT_ARRAY_BUFFER, indices, GL_STATIC_DRAW)
         glBindVertexArray(0)
 
+        checkRunning()
         skyProgram = createProgram(SKY_VERTEX_SHADER, SKY_FRAGMENT_SHADER)
         skyInverseProjectionLocation = glGetUniformLocation(skyProgram, "uInverseProjection")
         skyInverseViewLocation = glGetUniformLocation(skyProgram, "uInverseView")
@@ -661,6 +733,7 @@ internal class SceneGlRenderer(@Suppress("unused") private val sceneSeed: Long) 
         glEnableVertexAttribArray(0)
         glBindVertexArray(0)
 
+        checkRunning()
         sunProgram = createProgram(SUN_VERTEX_SHADER, SUN_FRAGMENT_SHADER)
         sunProjectionLocation = glGetUniformLocation(sunProgram, "uProjection")
         sunViewLocation = glGetUniformLocation(sunProgram, "uView")
@@ -679,10 +752,12 @@ internal class SceneGlRenderer(@Suppress("unused") private val sceneSeed: Long) 
         glBindVertexArray(0)
 
         BlockMaterial.entries.forEachIndexed { index, material ->
+            checkRunning()
             material.texturePath?.let { path ->
                 materialTextures[index] = uploadClasspathTexture(path, TextureEncoding.SrgbColor, mipmaps = true)
             }
         }
+        checkRunning()
         waterCloudNormalTexture = uploadClasspathTexture(
             "assets/complementary/textures/cloud-water.png",
             TextureEncoding.LinearData,
@@ -690,6 +765,7 @@ internal class SceneGlRenderer(@Suppress("unused") private val sceneSeed: Long) 
             linear = true,
             mipmaps = true
         )
+        checkRunning()
         waterNoiseTexture = uploadClasspathTexture(
             "assets/complementary/textures/noise.png",
             TextureEncoding.LinearData,
@@ -697,17 +773,20 @@ internal class SceneGlRenderer(@Suppress("unused") private val sceneSeed: Long) 
             linear = true,
             mipmaps = true
         )
+        checkRunning()
         sunTexture = uploadClasspathTexture(
             "assets/minecraft/textures/environment/sun.png",
             TextureEncoding.SrgbColor,
             repeat = false
         )
+        checkRunning()
         cloudTexture = uploadClasspathTexture(
             "assets/minecraft/textures/environment/clouds.png",
             TextureEncoding.SrgbColor,
             linear = CLOUD_TEXTURE_LINEAR_FILTER
-        ) { rgba, width, height -> thinCloudCover(rgba, width, height, CLOUD_COVER_KEEP_FRACTION, CLOUD_COVER_SEED) }
+        ) { rgba, width, height -> thinCloudCover(rgba, width, height, lighting.cloudCoverage, CLOUD_COVER_SEED) }
 
+        checkRunning()
         waterProgram = createProgram(WATER_VERTEX_SHADER, WATER_FRAGMENT_SHADER)
         waterProjectionLocation = glGetUniformLocation(waterProgram, "uProjection")
         waterViewLocation = glGetUniformLocation(waterProgram, "uView")
@@ -723,6 +802,7 @@ internal class SceneGlRenderer(@Suppress("unused") private val sceneSeed: Long) 
         waterInverseViewProjectionLocation = glGetUniformLocation(waterProgram, "uInverseViewProjection")
         waterReflectionViewProjectionLocation = glGetUniformLocation(waterProgram, "uReflectionViewProjection")
 
+        checkRunning()
         cloudProgram = createProgram(CLOUD_VERTEX_SHADER, CLOUD_FRAGMENT_SHADER)
         cloudProjectionLocation = glGetUniformLocation(cloudProgram, "uProjection")
         cloudViewLocation = glGetUniformLocation(cloudProgram, "uView")
@@ -751,6 +831,7 @@ internal class SceneGlRenderer(@Suppress("unused") private val sceneSeed: Long) 
         glEnable(GL_CULL_FACE)
         glCullFace(GL_BACK)
 
+        checkRunning()
         playerProgram = createProgram(PLAYER_VERTEX_SHADER, PLAYER_FRAGMENT_SHADER)
         playerProjectionLocation = glGetUniformLocation(playerProgram, "uProjection")
         playerViewLocation = glGetUniformLocation(playerProgram, "uView")
@@ -761,6 +842,7 @@ internal class SceneGlRenderer(@Suppress("unused") private val sceneSeed: Long) 
         playerCapeLocation = glGetUniformLocation(playerProgram, "uCape")
         playerBoneLocations.indices.forEach { playerBoneLocations[it] = glGetUniformLocation(playerProgram, "uBones[$it]") }
 
+        checkRunning()
         shadowProgram = createProgram(SHADOW_VERTEX_SHADER, SHADOW_FRAGMENT_SHADER)
         shadowProjectionLocation = glGetUniformLocation(shadowProgram, "uShadowViewProjection")
         shadowTextureLocation = glGetUniformLocation(shadowProgram, "uTexture")
@@ -788,7 +870,24 @@ internal class SceneGlRenderer(@Suppress("unused") private val sceneSeed: Long) 
             "Background static shadow framebuffer is incomplete"
         }
         glBindFramebuffer(GL_FRAMEBUFFER, 0)
+        checkRunning()
         renderStaticShadowMap()
+        checkRunning()
+        listOf(program, skyProgram, sunProgram, cloudProgram, playerProgram, waterProgram).forEach {
+            configureBackgroundLighting(it, lighting)
+        }
+        crowdRenderer.initialize()
+    }
+
+    fun updateCrowd(players: List<BackgroundCrowdPlayer>, elapsed: Double) {
+        if (crowdPlayers !== players) {
+            val bounded = players.distinctBy { it.id }.take(MAX_BACKGROUND_PLAYERS)
+            crowdRenderer.sync(bounded)
+            crowdSimulation.setPlayers(bounded.map { it.id })
+            crowdPlayers = players
+        }
+        previousCrowdTime?.let { crowdSimulation.advance(elapsed - it) }
+        previousCrowdTime = elapsed
     }
 
     /** Renders the immutable terrain once; water is intentionally omitted. */
@@ -872,11 +971,11 @@ internal class SceneGlRenderer(@Suppress("unused") private val sceneSeed: Long) 
 
     fun renderSceneBeforeWater(time: Double, appearance: BackgroundPlayerAppearance?): BackgroundScene.FrameState {
         val state = BackgroundScene.frameState(time)
-        val camera = state.camera
+        val camera = if (scene == BackgroundSceneKind.Grassland) grasslandCamera() else state.camera
         eye.set(camera.eyeX, camera.eyeY, camera.eyeZ)
         target.set(camera.targetX, camera.targetY, camera.targetZ)
         projection.identity().perspective(
-            Math.toRadians(CAMERA_FOV_DEGREES.toDouble()).toFloat(),
+            Math.toRadians(if (scene == BackgroundSceneKind.Grassland) 60.0 else CAMERA_FOV_DEGREES.toDouble()).toFloat(),
             RENDER_WIDTH.toFloat() / RENDER_HEIGHT,
             CAMERA_NEAR_PLANE,
             CAMERA_FAR_PLANE
@@ -922,7 +1021,7 @@ internal class SceneGlRenderer(@Suppress("unused") private val sceneSeed: Long) 
         glDisable(GL_CLIP_DISTANCE0)
         glFrontFace(GL_CCW)
         try {
-            val sun = BackgroundScene.sun()
+            val sun = lighting.sun
             renderCelestial(sun, passView, passEye)
 
             glUseProgram(program)
@@ -960,7 +1059,10 @@ internal class SceneGlRenderer(@Suppress("unused") private val sceneSeed: Long) 
             glUseProgram(0)
             glActiveTexture(GL_TEXTURE0)
 
-            renderPlayer(appearance, passView, sun, state.playerPose)
+            if (scene == BackgroundSceneKind.GoldenValley) {
+                renderPlayer(appearance, passView, sun, state.playerPose)
+            }
+            crowdRenderer.render(crowdSimulation, projection, passView, sun, reflection)
             glDisable(GL_CLIP_DISTANCE0)
             renderClouds(state.cloudTimeSeconds, passView, reflection, sun)
         } finally {
@@ -981,7 +1083,7 @@ internal class SceneGlRenderer(@Suppress("unused") private val sceneSeed: Long) 
         sceneDepthTexture: Int,
         reflectionColorTexture: Int
     ) {
-        val sun = BackgroundScene.sun()
+        val sun = lighting.sun
         glUseProgram(waterProgram)
         uploadMatrix(waterProjectionLocation, projection)
         uploadMatrix(waterViewLocation, view)
@@ -1176,6 +1278,7 @@ internal class SceneGlRenderer(@Suppress("unused") private val sceneSeed: Long) 
     }
 
     override fun close() {
+        crowdRenderer.close()
         materialTextures.forEach { if (it != 0) glDeleteTextures(it) }
         if (shadowTexture != 0) glDeleteTextures(shadowTexture)
         if (shadowFramebuffer != 0) glDeleteFramebuffers(shadowFramebuffer)
@@ -1268,7 +1371,7 @@ internal class SceneGlRenderer(@Suppress("unused") private val sceneSeed: Long) 
         val coordinates = if (reflection) {
             requireNotNull(mainCloudCoordinates) { "Reflection cloud pass requires the main cloud cache" }
         } else {
-            BackgroundScene.cloudCoordinates(time, eye.x.toDouble(), eye.y.toDouble(), eye.z.toDouble()).also {
+            BackgroundScene.cloudCoordinates(time, eye.x.toDouble(), eye.y.toDouble(), eye.z.toDouble(), lighting.cloudHeight).also {
                 mainCloudCoordinates = it
             }
         }
@@ -1349,13 +1452,14 @@ internal class SceneGlRenderer(@Suppress("unused") private val sceneSeed: Long) 
 
     private fun buildSunVertices(): FloatArray {
         // Local right/up coordinates are expanded into a camera-facing billboard in the shader.
+        val halfSize = lighting.sunHalfSize
         return floatArrayOf(
-            -SUN_BILLBOARD_HALF_SIZE, -SUN_BILLBOARD_HALF_SIZE,
-            SUN_BILLBOARD_HALF_SIZE, -SUN_BILLBOARD_HALF_SIZE,
-            SUN_BILLBOARD_HALF_SIZE, SUN_BILLBOARD_HALF_SIZE,
-            -SUN_BILLBOARD_HALF_SIZE, -SUN_BILLBOARD_HALF_SIZE,
-            SUN_BILLBOARD_HALF_SIZE, SUN_BILLBOARD_HALF_SIZE,
-            -SUN_BILLBOARD_HALF_SIZE, SUN_BILLBOARD_HALF_SIZE
+            -halfSize, -halfSize,
+            halfSize, -halfSize,
+            halfSize, halfSize,
+            -halfSize, -halfSize,
+            halfSize, halfSize,
+            -halfSize, halfSize
         )
     }
 }
@@ -1580,6 +1684,7 @@ void main() {
 
 /** Shared display-space golden-hour sky; callers convert its result to linear exactly once. */
 internal const val GOLDEN_SKY_FUNCTIONS = """
+uniform bool uNoon;
 float srgbToLinear(float value) {
     return value <= 0.04045
         ? value / 12.92
@@ -1597,7 +1702,20 @@ float sunAzimuthAlignment(vec3 direction, vec3 toSun) {
     return dot(direction.xz / flatLength, normalize(toSun.xz)) * 0.5 + 0.5;
 }
 
+// Clear midday palette: deeper overhead blue, pale horizon, and a compact white solar aureole.
+vec3 noonSkyDisplayColor(vec3 ray, vec3 toSun) {
+    float altitude = max(ray.y, 0.0);
+    vec3 zenith = vec3(0.16, 0.40, 0.77);
+    vec3 horizon = vec3(0.73, 0.84, 0.94);
+    float horizonWeight = exp(-altitude * 6.0);
+    vec3 sky = mix(zenith, horizon, horizonWeight);
+    float sunDot = max(dot(ray, toSun), 0.0);
+    sky += vec3(1.0, 0.98, 0.94) * (pow(sunDot, 64.0) * 0.07 + pow(sunDot, 512.0) * 0.20);
+    return mix(sky, horizon * 0.92, smoothstep(0.0, 0.20, -ray.y));
+}
+
 vec3 goldenSkyDisplayColor(vec3 ray, vec3 toSun) {
+    if (uNoon) return noonSkyDisplayColor(ray, toSun);
     float up = clamp(ray.y, -1.0, 1.0);
     float height = max(up, 0.0);
     float alignment = sunAzimuthAlignment(ray, toSun);
@@ -1637,6 +1755,8 @@ vec3 atmosphereHazeColor(vec3 viewDirection, vec3 toSun) {
 }
 
 vec3 applyAtmosphere(vec3 color, vec3 from, vec3 to, vec3 toSun) {
+    // The midday grassland keeps the original surface color at every distance.
+    if (uNoon) return color;
     float transmittance = exp(-atmosphereOpticalDepth(from, to));
     vec3 hazed = mix(atmosphereHazeColor(to - from, toSun), color, transmittance);
     // Distant terrain and water dissolve into the sky behind them, so the edge of the world never shows.
@@ -1673,6 +1793,8 @@ uniform bool uAlphaCutout;
 uniform float uTextureVScale;
 uniform bool uEmissive;
 uniform bool uDoubleSided;
+uniform vec3 uAmbientLight;
+uniform vec3 uDirectLight;
 out vec4 color;
 
 ${GOLDEN_SKY_FUNCTIONS}
@@ -1711,8 +1833,8 @@ void main() {
     }
     // Minecraft-like face shading: tops see the whole sky, sides less, undersides little.
     float skyLight = 0.68 + 0.32 * normal.y;
-    vec3 ambientLight = vec3(0.33, 0.40, 0.56) * skyLight * mix(1.0, vAmbientOcclusion, 0.55);
-    vec3 directLight = vec3(1.70, 1.18, 0.66) * (ndotl + translucency) * shadowFactor;
+    vec3 ambientLight = uAmbientLight * skyLight * mix(1.0, vAmbientOcclusion, 0.55);
+    vec3 directLight = uDirectLight * (ndotl + translucency) * shadowFactor;
     vec3 litColor = vColor * texel.rgb * (ambientLight + directLight);
     if (uEmissive) {
         float lanternBrightness = max(texel.r, max(texel.g, texel.b));
@@ -1923,6 +2045,8 @@ flat in int vTexture;
 uniform sampler2D uSkin;
 uniform sampler2D uCape;
 uniform vec3 uSunDirection;
+uniform vec3 uAmbientLight;
+uniform vec3 uDirectLight;
 out vec4 color;
 void main() {
     vec4 skin = vTexture == 0
@@ -1933,7 +2057,7 @@ void main() {
     // Wrapped diffuse keeps the back-lit player readable against the bright valley.
     float wrapped = clamp((dot(normal, normalize(-uSunDirection)) + 0.4) / 1.4, 0.0, 1.0);
     float skyLight = 0.78 + 0.22 * normal.y;
-    vec3 light = vec3(0.33, 0.40, 0.56) * skyLight * 1.35 + vec3(1.70, 1.18, 0.66) * wrapped;
+    vec3 light = uAmbientLight * skyLight * 1.35 + uDirectLight * wrapped;
     color = vec4(skin.rgb * light, skin.a);
 }
 """
@@ -2007,6 +2131,7 @@ internal const val SUN_FRAGMENT_SHADER = """
 #version 450 core
 in vec2 vUv;
 uniform sampler2D uSunTexture;
+uniform bool uNoon;
 out vec4 color;
 void main() {
     vec2 centered = vUv - 0.5;
@@ -2020,6 +2145,10 @@ void main() {
     float radial = max(1.0 - length(centered) * 2.0, 0.0);
     float halo = pow(radial, 3.0) * 0.65;
     vec3 hdrSun = discColor * discCoverage * 2.0 + vec3(1.0, 0.66, 0.36) * halo;
+    if (uNoon) {
+        halo *= 0.30;
+        hdrSun = vec3(1.0, 0.98, 0.94) * (discCoverage * 2.2 + halo);
+    }
     float alpha = max(discCoverage, halo);
     if (alpha < 0.01) discard;
     color = vec4(hdrSun, alpha);
@@ -2084,6 +2213,11 @@ void main() {
     vec3 warmLight = srgbToLinear(vec3(1.00, 0.86, 0.74));
     vec3 lighting = mix(coolLight, warmLight, warmth);
     lighting += warmLight * pow(max(dot(viewDirection, toSun), 0.0), 6.0) * 0.5;
+    if (uNoon) {
+        vec3 underside = srgbToLinear(vec3(0.72, 0.79, 0.88));
+        vec3 sunlit = srgbToLinear(vec3(1.0, 0.99, 0.97));
+        lighting = mix(underside, sunlit, clamp(0.35 + max(ndotl, 0.0) * 0.65, 0.0, 1.0));
+    }
     vec3 litRgb = cloudColor.rgb * lighting;
     color = vec4(litRgb, cloudColor.a * fade);
 }

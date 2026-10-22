@@ -71,6 +71,19 @@ class HostExtraModSyncTest {
         )
     }
 
+    @Test
+    fun `server only and unknown side extra mods are not synced to client`() {
+        val both = mod("both")
+        val client = mod("client").copy(side = Mod.Side.CLIENT)
+        val server = mod("server").copy(side = Mod.Side.SERVER)
+        val unknown = mod("unknown").copy(side = Mod.Side.UNKNOWN)
+
+        assertEquals(
+            listOf(both, client),
+            prepareHostExtraModSyncMods(listOf(both, client, server, unknown)),
+        )
+    }
+
     private fun mod(name: String) = Mod(
         platform = "mr",
         projectId = name,

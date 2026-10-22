@@ -517,6 +517,7 @@ object ModpackVersionService {
             freshVersion.zstdPack.delete()
             freshVersion.clientZip.delete()
             freshVersion.clientZstdPack.delete()
+            ModpackManifestService.deleteManifests(freshVersion)
             ModpackBuildService.cleanupVersionBuildDirs(freshVersion)
         }
     }

@@ -186,6 +186,15 @@ fun Route.modpackRoutes() {
                 get("/client/hash") {
                     call.modpackGuardContext().version.clientPackFile.let { response(data = it.sha1) }
                 }
+                route("/manifest") {
+                    get("/client") {
+                        response(data = ModpackManifestService.clientManifest(call.modpackGuardContext().version))
+                    }
+                    get("/full") {
+                        val ctx = call.modpackGuardContext().requireCanManageVersion()
+                        response(data = ModpackManifestService.fullManifest(ctx.version))
+                    }
+                }
                 route("/mods"){
                     get{
                         call.modpackGuardContext().version.mods.let { response(data = it) }

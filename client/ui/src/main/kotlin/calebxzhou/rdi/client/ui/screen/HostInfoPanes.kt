@@ -63,6 +63,7 @@ internal fun HostModsPane(
     addExtraModLoadingText: String,
     onChangeDisabledMods: (List<Mod>, Boolean, () -> Unit) -> Unit,
     onRemoveExtraMods: (List<Mod>) -> Unit,
+    onChangeExtraModSide: (Mod, Mod.Side) -> Unit,
     onOpenResourceMods: () -> Unit,
     onAddExtraModAdvanced: () -> Unit,
     onOk: (String) -> Unit,
@@ -131,7 +132,10 @@ internal fun HostModsPane(
     val uiModsByKey = hydratedUiMods.associateBy { it.key }
     val activeUiMods = baseVersionMods.mapNotNull { uiModsByKey[extraModKey(it)] }
     val disabledUiMods = disabledMods.mapNotNull { uiModsByKey[extraModKey(it)] }
-    val extraUiMods = extraMods.mapNotNull { uiModsByKey[extraModKey(it)] }
+    // Hydrated cards can lag behind a side change until re-hydration finishes.
+    val extraUiMods = extraMods.mapNotNull { mod ->
+        uiModsByKey[extraModKey(mod)]?.let { if (it.side == mod.side) it else it.withSide(mod.side) }
+    }
 
     val activeArea: @Composable (Modifier) -> Unit = { areaModifier ->
         HostModArea(
@@ -247,6 +251,7 @@ internal fun HostModsPane(
                 onToggleSelected = { mod, selected ->
                     selectedExtraKeys = selectedExtraKeys.toggle(extraModKey(mod), selected)
                 },
+                onSideChange = if (canManage) onChangeExtraModSide else null,
             )
         }
     }
@@ -665,6 +670,7 @@ internal fun HostExtraModsPane(
     selectedExtraModKeys: Set<String>,
     extraModsLoading: Boolean,
     onToggleSelected: (Mod, Boolean) -> Unit,
+    onSideChange: ((Mod, Mod.Side) -> Unit)? = null,
 ) {
     if (extraModsLoading && extraUiMods.isEmpty()) {
         Box(
@@ -697,6 +703,9 @@ internal fun HostExtraModsPane(
                     onToggleSelected((item as ContentGridItem.ModItem).mod.mod, !selected)
                 },
                 showTypeFilters = false,
+                onModSideChange = onSideChange?.let { callback ->
+                    { uiMod, side -> callback(uiMod.mod, side) }
+                },
             )
         }
     }

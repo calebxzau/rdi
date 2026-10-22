@@ -51,6 +51,8 @@ interface HostGateway {
 
     suspend fun removeExtraMods(hostId: ObjectId, projectIds: List<String>): Result<List<Mod>>
 
+    suspend fun updateExtraModSide(hostId: ObjectId, projectId: String, side: Mod.Side): Result<List<Mod>>
+
     suspend fun loadGithubReleases(repoUrl: String): Result<Pair<GithubRepoRef, List<GithubRelease>>>
 
     suspend fun buildGithubExtraMod(
@@ -115,6 +117,22 @@ class RdiHostGateway : HostGateway {
         ) {
             json()
             setBody(projectIds)
+        }
+        if (!response.ok) throw RequestError(response.msg)
+        response.data.orEmpty()
+    }
+
+    override suspend fun updateExtraModSide(
+        hostId: ObjectId,
+        projectId: String,
+        side: Mod.Side,
+    ): Result<List<Mod>> = resultOf {
+        val response = server.makeRequest<List<Mod>>(
+            path = "host/${hostId.toHexString()}/mods/extra/side",
+            method = HttpMethod.Put,
+        ) {
+            json()
+            setBody(Host.ExtraModSideDto(projectId, side))
         }
         if (!response.ok) throw RequestError(response.msg)
         response.data.orEmpty()
@@ -246,6 +264,7 @@ data class HostModsUiState(
     val extraModError: String? = null,
     val pendingDisabledModKeys: Set<String> = emptySet(),
     val removingExtraMods: Boolean = false,
+    val updatingExtraModSide: Boolean = false,
     val errorMessage: String? = null,
 ) {
     val extraMods: List<Mod> get() = host?.extraMods.orEmpty()
@@ -496,6 +515,33 @@ class HostModsViewModel(
                 reportError("删除附加Mod失败", cause)
             } finally {
                 _uiState.update { it.copy(removingExtraMods = false) }
+            }
+        }
+    }
+
+    fun updateExtraModSide(mod: Mod, side: Mod.Side) {
+        if (_uiState.value.updatingExtraModSide) return
+        if (side == mod.side) return
+        if (side == Mod.Side.UNKNOWN) {
+            viewModelScope.launch { eventChannel.send(HostModsEvent.ShowSnackbar("至少保留客户端或服务端之一")) }
+            return
+        }
+        _uiState.update { it.copy(updatingExtraModSide = true, errorMessage = null) }
+        viewModelScope.launch {
+            try {
+                val updated = withContext(Dispatchers.IO) {
+                    gateway.updateExtraModSide(hostId, mod.projectId, side).getOrThrow()
+                }
+                _uiState.update { state ->
+                    state.copy(host = state.host?.copy(extraMods = updated))
+                }
+                eventChannel.send(HostModsEvent.ShowSnackbar("已修改为${side.text}，重启房间后生效"))
+            } catch (cancel: CancellationException) {
+                throw cancel
+            } catch (cause: Throwable) {
+                reportError("修改附加Mod运行侧失败", cause)
+            } finally {
+                _uiState.update { it.copy(updatingExtraModSide = false) }
             }
         }
     }

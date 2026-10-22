@@ -48,6 +48,7 @@ data class Host(
 ) {
     val realVersion get() = version?:1
     companion object {
+        const val MAX_MEMBERS = 20
         var portNow: Int = 0
         fun getGameModeText(modeId: Int): String {
             return when (modeId) {
@@ -152,6 +153,7 @@ data class Host(
         val gameRules: MutableMap<String, String>,
         @Contextual
         val baseWorldId: UUID? = null,
+        val initialMemberIds: List<@Contextual ObjectId> = emptyList(),
     )
 
     @Serializable
@@ -245,6 +247,12 @@ data class Host(
     @Serializable
     data class DeleteDto(
         val deleteWorld: Boolean = false
+    )
+
+    @Serializable
+    data class ExtraModSideDto(
+        val projectId: String,
+        val side: Mod.Side,
     )
 
 }

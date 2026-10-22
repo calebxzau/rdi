@@ -91,4 +91,6 @@ private fun extraModTargetFileName(mod: Mod): String = EXTRA_MOD_PREFIX + mod.fi
 internal fun prepareHostExtraModSyncMods(
     mods: List<Mod>,
     loader: ModLoader = ModLoader.forge,
-): List<Mod> = mods.filterNot { it.normalizedSlug in ModpackModProcessor.removedSlugsFor(loader) }
+): List<Mod> = mods
+    .filter { it.side != Mod.Side.SERVER && it.side != Mod.Side.UNKNOWN }
+    .filterNot { it.normalizedSlug in ModpackModProcessor.removedSlugsFor(loader) }

@@ -9,6 +9,7 @@ import calebxzhou.rdi.common.exception.RequestError
 import calebxzhou.rdi.common.model.Host
 import calebxzhou.rdi.common.model.McVersion
 import calebxzhou.rdi.common.model.Modpack
+import calebxzhou.rdi.common.model.RAccount
 import calebxzau.rdi.common.model.BaseWorld
 import calebxzhou.rdi.client.ui.screen.HostKind
 import calebxzhou.rdi.common.net.json
@@ -113,15 +114,26 @@ data class HostCreateUiState(
     val statusMessage: String? = null,
     val submitting: Boolean = false,
     val updatingPack: Boolean = false,
+    val friendQq: String = "",
+    val friendLookupLoading: Boolean = false,
+    val friendLookupError: String? = null,
+    val friendDialogOpen: Boolean = false,
+    val initialMembers: List<RAccount.Dto> = emptyList(),
 ) {
     val isEditMode: Boolean get() = editHostId != null
     val isLegacyCreate: Boolean get() = !isEditMode && hostKind == HostKind.Legacy
+    val canSubmit: Boolean
+        get() = !loading && !submitting && !friendLookupLoading &&
+            (!isLegacyCreate || initialMembers.isNotEmpty())
     val selectedPackTitle: String
         get() = packDisplayName.ifBlank { "未选择整合包" }
 }
 
 interface HostCreateGateway {
     suspend fun loadInitial(hostId: ObjectId?): Result<HostCreateInitialData>
+
+    suspend fun findFriend(qq: String): Result<RAccount.Dto> =
+        Result.failure(UnsupportedOperationException("好友查询暂不可用"))
 
     suspend fun loadBaseWorlds(): Result<List<BaseWorld>> =
         Result.failure(UnsupportedOperationException("地图模板加载暂不可用"))
@@ -137,6 +149,9 @@ interface HostCreateGateway {
 }
 
 class RdiHostCreateGateway : HostCreateGateway {
+    override suspend fun findFriend(qq: String): Result<RAccount.Dto> =
+        loadRemote("player/by-qq/${qq.encodeURLPathPart()}")
+
     override suspend fun loadInitial(hostId: ObjectId?): Result<HostCreateInitialData> = resultOf {
         val host = hostId?.let { loadRemote<Host.DetailVo>("host/${it.toHexString()}/detail") }
         val issues = buildList {
@@ -242,6 +257,81 @@ class HostCreateViewModel(
     private var baseWorldGeneration = 0L
     private var baseWorldLoadJob: kotlinx.coroutines.Job? = null
     private var sessionIdentity: String? = null
+    private var currentPlayerId: ObjectId? = null
+    private var friendLookupGeneration = 0L
+    private var friendLookupJob: kotlinx.coroutines.Job? = null
+
+    fun openFriendDialog() {
+        if (!_uiState.value.isLegacyCreate || _uiState.value.submitting) return
+        updateFriendQq("")
+        _uiState.update { it.copy(friendDialogOpen = true) }
+    }
+
+    fun dismissFriendDialog() {
+        updateFriendQq("")
+        _uiState.update { it.copy(friendDialogOpen = false) }
+    }
+
+    fun updateFriendQq(value: String) {
+        if (_uiState.value.submitting) return
+        friendLookupGeneration++
+        friendLookupJob?.cancel()
+        _uiState.update {
+            it.copy(friendQq = value, friendLookupLoading = false, friendLookupError = null)
+        }
+    }
+
+    fun addFriend() {
+        val state = _uiState.value
+        if (!state.isLegacyCreate || !state.friendDialogOpen || state.submitting || state.friendLookupLoading) return
+        if (state.initialMembers.size >= Host.MAX_MEMBERS - 1) {
+            _uiState.update { it.copy(friendLookupError = "最多添加${Host.MAX_MEMBERS - 1}位好友") }
+            return
+        }
+        val qq = state.friendQq.trim()
+        if (qq.isEmpty() || qq.length > 20 || !qq.all { it.isDigit() }) {
+            _uiState.update { it.copy(friendLookupError = "请输入正确的QQ号") }
+            return
+        }
+        val generation = ++friendLookupGeneration
+        _uiState.update { it.copy(friendLookupLoading = true, friendLookupError = null) }
+        friendLookupJob = viewModelScope.launch {
+            try {
+                val friend = withContext(Dispatchers.IO) { gateway.findFriend(qq).getOrThrow() }
+                if (generation != friendLookupGeneration) return@launch
+                val problem = when {
+                    friend.id == currentPlayerId -> "不能邀请自己，请添加其他好友"
+                    _uiState.value.initialMembers.any { it.id == friend.id } -> "已添加这位好友"
+                    else -> null
+                }
+                _uiState.update {
+                    if (problem != null) it.copy(friendLookupError = problem)
+                    else it.copy(
+                        initialMembers = it.initialMembers + friend,
+                        friendQq = "",
+                        friendDialogOpen = false,
+                        friendLookupError = null,
+                    )
+                }
+            } catch (cancel: CancellationException) {
+                throw cancel
+            } catch (error: Exception) {
+                if (generation == friendLookupGeneration) {
+                    lgr.warn(error) { "添加好友失败" }
+                    _uiState.update { it.copy(friendLookupError = error.message ?: "添加失败，请重试") }
+                }
+            } finally {
+                if (generation == friendLookupGeneration) {
+                    _uiState.update { it.copy(friendLookupLoading = false) }
+                }
+            }
+        }
+    }
+
+    fun removeFriend(id: ObjectId) {
+        if (_uiState.value.submitting) return
+        _uiState.update { it.copy(initialMembers = it.initialMembers.filterNot { friend -> friend.id == id }) }
+    }
 
     fun clearStatusMessage() {
         _uiState.update { it.copy(statusMessage = null) }
@@ -415,9 +505,12 @@ class HostCreateViewModel(
         loadBaseWorldChoices()
     }
 
-    fun updateSessionIdentity(identity: String) {
+    fun updateSessionIdentity(identity: String, playerId: ObjectId? = null) {
+        currentPlayerId = playerId
         if (sessionIdentity == identity) return
         sessionIdentity = identity
+        friendLookupGeneration++
+        friendLookupJob?.cancel()
         baseWorldGeneration++
         baseWorldLoadJob?.cancel()
         val shouldRefresh = _uiState.value.isLegacyCreate &&
@@ -431,6 +524,11 @@ class HostCreateViewModel(
                 baseWorldsErrorMessage = null,
                 baseWorldSelectionOpen = false,
                 baseWorldSelectionOverridden = false,
+                friendQq = "",
+                friendDialogOpen = false,
+                friendLookupLoading = false,
+                friendLookupError = null,
+                initialMembers = emptyList(),
             )
         }
         if (shouldRefresh) refreshBaseWorlds()
@@ -487,7 +585,7 @@ class HostCreateViewModel(
 
     fun submit() {
         val state = _uiState.value
-        if (state.submitting) return
+        if (state.loading || state.submitting || state.friendLookupLoading) return
         val trimmedName = state.hostName.trim()
         if (trimmedName.isEmpty()) {
             _uiState.update {
@@ -685,6 +783,10 @@ class HostCreateViewModel(
                     _uiState.update { it.copy(statusMessage = "此版本指定的地图模板不可用") }
                     return null
                 }
+                if (state.initialMembers.isEmpty()) {
+                    _uiState.update { it.copy(statusMessage = "至少邀请1位好友一起玩") }
+                    return null
+                }
                 HostCreateSubmission.CreateLegacy(
                     Host.CreateDto(
                         name = trimmedName,
@@ -697,6 +799,7 @@ class HostCreateViewModel(
                         whitelist = state.whitelist,
                         gameRules = state.gameRules.toMutableMap(),
                         baseWorldId = selectedBaseWorld?.id,
+                        initialMemberIds = state.initialMembers.map(RAccount.Dto::id),
                     )
                 )
             }

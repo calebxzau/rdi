@@ -479,8 +479,8 @@ fun ContentGrid(
                     iconOnly = iconOnly,
                     onIconOnlyChange = { iconOnly = it },
                     modifier = Modifier
-                        .align(Alignment.TopEnd)
-                        .padding(top = 8.dp, end = 18.dp),
+                        .align(Alignment.BottomEnd)
+                        .padding(bottom = 12.dp, end = 18.dp),
                 )
             }
             val anchor = tooltipAnchor?.takeIf { iconOnly && it.key in visibleKeys }

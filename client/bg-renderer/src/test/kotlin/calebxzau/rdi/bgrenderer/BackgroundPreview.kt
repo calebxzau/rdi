@@ -19,7 +19,9 @@ import javax.imageio.ImageIO
  * Arguments: output directory, then optional elapsed times in seconds.
  */
 fun main(args: Array<String>) {
-    val outputDirectory = File(args.getOrElse(0) { "build/bg-preview" }).apply { mkdirs() }
+    val scene = if (System.getenv("RDI_BG_PREVIEW_SCENE") == "valley") BackgroundSceneKind.GoldenValley else BackgroundSceneKind.Grassland
+    val outputRoot = File(args.getOrElse(0) { "build/bg-preview" })
+    val outputDirectory = (if (scene == BackgroundSceneKind.GoldenValley) File(outputRoot, "valley") else outputRoot).apply { mkdirs() }
     val times = args.drop(1).map(String::toDouble).ifEmpty { listOf(0.0, 15.0, 45.0) }
     val lease = GlfwRuntime.acquire()
     var window = NULL
@@ -30,7 +32,7 @@ fun main(args: Array<String>) {
         GL.createCapabilities()
         println("GL renderer: ${glGetString(GL_RENDERER)}")
         val buildStarted = System.nanoTime()
-        BackgroundFramePipeline(123L).use { pipeline ->
+        BackgroundFramePipeline(123L, scene = scene).use { pipeline ->
             println("Scene build: ${(System.nanoTime() - buildStarted) / 1_000_000}ms")
             val initStarted = System.nanoTime()
             pipeline.initialize()
@@ -39,25 +41,37 @@ fun main(args: Array<String>) {
             println("Scene vertices=${mesh.vertices.size / SCENE_VERTEX_FLOATS} indices=${mesh.indices.size} terrain=${pipeline.terrainStats} vegetation=${pipeline.vegetationStats}")
             writeShadowMap(pipeline.shadowMapTexture, File(outputDirectory, "shadow-depth.png"))
             val appearance = loadPreviewAppearance()
+            val availableSkins = loadPreviewCrowd(outputRoot, appearance)
+            val requestedCount = System.getenv("RDI_BG_PREVIEW_PLAYERS")?.toInt()?.also { require(it in 1..MAX_BACKGROUND_PLAYERS) }
+            val crowd = if (requestedCount != null && availableSkins.isNotEmpty()) {
+                List(requestedCount) { index -> BackgroundCrowdPlayer("preview-$index", availableSkins[index % availableSkins.size].skin) }
+            } else availableSkins
+            println("Preview scene=$scene players=${crowd.size}")
             val pixels = BufferUtils.createByteBuffer(RENDER_WIDTH * RENDER_HEIGHT * 4)
-            repeat(30) { frame -> pipeline.render(frame * 0.05, appearance, pixels) }
+            pipeline.render(0.0, appearance, pixels, crowd)
+            if (scene == BackgroundSceneKind.GoldenValley) reportShadowContrast(pipeline.shadowMapTexture, pixels)
+            var simulatedTime = 0.0
+            times.sorted().forEach { time ->
+                while (simulatedTime < time) {
+                    simulatedTime = minOf(time, simulatedTime + 0.05)
+                    pipeline.render(simulatedTime, appearance, pixels, crowd)
+                }
+                pipeline.render(time, appearance, pixels, crowd)
+                val file = File(outputDirectory, "frame-${time}.png")
+                ImageIO.write(toImage(pixels), "png", file)
+                println("Wrote ${file.absolutePath}")
+            }
+            repeat(30) { frame -> pipeline.render(simulatedTime + (frame + 1) * 0.05, appearance, pixels, crowd) }
             val samples = (0 until 60).map { frame ->
                 val started = System.nanoTime()
-                pipeline.render(10.0 + frame * 0.05, appearance, pixels)
+                pipeline.render(simulatedTime + 1.5 + (frame + 1) * 0.05, appearance, pixels, crowd)
                 System.nanoTime() - started
             }
             println(
                 "Frame time over ${samples.size} frames: avg=${"%.2f".format(samples.average() / 1_000_000.0)}ms " +
                     "max=${"%.2f".format(samples.max() / 1_000_000.0)}ms (fallback threshold 45ms)"
             )
-            pipeline.render(0.0, appearance, pixels)
-            reportShadowContrast(pipeline.shadowMapTexture, pixels)
-            times.forEach { time ->
-                pipeline.render(time, appearance, pixels)
-                val file = File(outputDirectory, "frame-${time}.png")
-                ImageIO.write(toImage(pixels), "png", file)
-                println("Wrote ${file.absolutePath}")
-            }
+
         }
     } finally {
         if (window != NULL) {
@@ -175,4 +189,25 @@ private fun toImage(pixels: ByteBuffer): BufferedImage {
         }
     }
     return image
+}
+
+/** Optional downloaded API skins; without them, stress-test 50 actors using the bundled skin. */
+private fun loadPreviewCrowd(directory: File, fallback: BackgroundPlayerAppearance?): List<BackgroundCrowdPlayer> {
+    val skins = File(directory, "skins").listFiles()?.filter { it.extension == "png" }?.sortedBy { it.name }.orEmpty()
+    if (skins.isEmpty()) return fallback?.let { player -> List(50) { BackgroundCrowdPlayer("preview-$it", player.skin) } }.orEmpty()
+    return skins.take(50).map { file ->
+        val image = requireNotNull(ImageIO.read(file))
+        require(image.width >= 64 && (image.height == image.width || image.height * 2 == image.width))
+        val height = if (image.width == image.height) 64 else 32
+        val rgba = ByteArray(64 * height * 4)
+        for (y in 0 until height) for (x in 0 until 64) {
+            val argb = image.getRGB(x * image.width / 64, y * image.height / height)
+            val offset = (y * 64 + x) * 4
+            rgba[offset] = (argb shr 16).toByte()
+            rgba[offset + 1] = (argb shr 8).toByte()
+            rgba[offset + 2] = argb.toByte()
+            rgba[offset + 3] = (argb ushr 24).toByte()
+        }
+        BackgroundCrowdPlayer(file.name, PlayerSkinTexture(64, height, rgba))
+    }
 }

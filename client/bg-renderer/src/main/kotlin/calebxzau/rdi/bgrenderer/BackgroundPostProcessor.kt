@@ -33,6 +33,7 @@ internal class BackgroundPostProcessor(
     private val finalProgram = createProgram(POST_VERTEX_SHADER, FINAL_TONEMAP_FRAGMENT_SHADER)
     private val hdrCopyInputLocation = glGetUniformLocation(hdrCopyProgram, "uRawHdr")
     private val hdrCopyValleyFogLocation = glGetUniformLocation(hdrCopyProgram, "uValleyFog")
+    private val hdrCopyFogEnabledLocation = glGetUniformLocation(hdrCopyProgram, "uFogEnabled")
     private val hdrCopySceneDepthLocation = glGetUniformLocation(hdrCopyProgram, "uSceneDepth")
     private val hdrCopyDepthPlanesLocation = glGetUniformLocation(hdrCopyProgram, "uDepthPlanes")
     private val bloomInputLocation = glGetUniformLocation(bloomProgram, "uLinearHdr")
@@ -85,7 +86,7 @@ internal class BackgroundPostProcessor(
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE)
     }
 
-    /** Composites the half-resolution valley fog over the raw HDR scene, then runs Bloom and the tonemap. */
+    /** A zero fog texture bypasses fog composition; Bloom and tonemapping still run. */
     fun process(rawHdrTexture: Int, valleyFogTexture: Int, sceneDepthTexture: Int) {
         glDisable(GL_DEPTH_TEST)
         glDepthMask(false)
@@ -104,6 +105,7 @@ internal class BackgroundPostProcessor(
         glUseProgram(hdrCopyProgram)
         glUniform1i(hdrCopyInputLocation, 0)
         glUniform1i(hdrCopyValleyFogLocation, 1)
+        glUniform1i(hdrCopyFogEnabledLocation, if (valleyFogTexture != 0) 1 else 0)
         glUniform1i(hdrCopySceneDepthLocation, 2)
         glUniform2f(hdrCopyDepthPlanesLocation, CAMERA_NEAR_PLANE, CAMERA_FAR_PLANE)
         drawFullscreen()
@@ -185,6 +187,7 @@ internal const val HDR_COPY_FRAGMENT_SHADER = """
 in vec2 texCoord;
 uniform sampler2D uRawHdr;
 uniform sampler2D uValleyFog;
+uniform bool uFogEnabled;
 uniform sampler2D uSceneDepth;
 uniform vec2 uDepthPlanes;
 out vec4 color;
@@ -219,7 +222,7 @@ vec4 upsampleValleyFog(vec2 uv) {
 
 void main() {
     vec3 raw = texture(uRawHdr, texCoord).rgb;
-    vec4 fog = upsampleValleyFog(texCoord);
+    vec4 fog = uFogEnabled ? upsampleValleyFog(texCoord) : vec4(0.0, 0.0, 0.0, 1.0);
     color = vec4(max(raw * fog.a + fog.rgb, vec3(0.0)), 1.0);
 }
 """

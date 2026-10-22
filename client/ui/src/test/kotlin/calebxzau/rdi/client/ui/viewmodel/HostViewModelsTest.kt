@@ -211,6 +211,34 @@ class HostViewModelsTest {
         assertTrue(state.errorMessage.orEmpty().contains("busy"))
     }
 
+    @Test
+    fun `changing extra mod side updates host and reports success`() = runBlocking {
+        val mod = testMod("first")
+        val gateway = FakeHostGateway(host = testHost(extraMods = listOf(mod)), modpack = testModpack())
+        val viewModel = HostModsViewModel(HOST_ID, gateway)
+        viewModel.uiState.filter { !it.loading }.first()
+
+        viewModel.updateExtraModSide(mod, Mod.Side.CLIENT)
+        assertIs<HostModsEvent.ShowSnackbar>(viewModel.events.first())
+
+        assertEquals(listOf(mod.copy(side = Mod.Side.CLIENT)), viewModel.uiState.value.host?.extraMods)
+        assertEquals(listOf(mod.projectId to Mod.Side.CLIENT), gateway.sideChanges)
+    }
+
+    @Test
+    fun `extra mod side cannot be changed to neither side`() = runBlocking {
+        val mod = testMod("first")
+        val gateway = FakeHostGateway(host = testHost(extraMods = listOf(mod)), modpack = testModpack())
+        val viewModel = HostModsViewModel(HOST_ID, gateway)
+        viewModel.uiState.filter { !it.loading }.first()
+
+        viewModel.updateExtraModSide(mod, Mod.Side.UNKNOWN)
+        assertIs<HostModsEvent.ShowSnackbar>(viewModel.events.first())
+
+        assertEquals(listOf(mod), viewModel.uiState.value.host?.extraMods)
+        assertTrue(gateway.sideChanges.isEmpty())
+    }
+
     private class FakeHostGateway(
         var host: Host.DetailVo? = null,
         var modpack: Modpack.DetailVo? = null,
@@ -224,6 +252,7 @@ class HostViewModelsTest {
         val disabledChanges = mutableListOf<Pair<List<Mod>, Boolean>>()
         val addedMods = mutableListOf<List<Mod>>()
         val removedProjectIds = mutableListOf<List<String>>()
+        val sideChanges = mutableListOf<Pair<String, Mod.Side>>()
 
         override suspend fun loadHost(hostId: ObjectId): Result<Host.DetailVo?> =
             if (loadHostFailure == null) Result.success(host) else Result.failure(loadHostFailure)
@@ -261,6 +290,17 @@ class HostViewModelsTest {
             removedProjectIds += projectIds
             removeFailure?.let { return Result.failure(it) }
             val updated = host?.extraMods.orEmpty().filterNot { it.projectId in projectIds }
+            host = host?.copy(extraMods = updated)
+            return Result.success(updated)
+        }
+
+        override suspend fun updateExtraModSide(
+            hostId: ObjectId,
+            projectId: String,
+            side: Mod.Side,
+        ): Result<List<Mod>> {
+            sideChanges += projectId to side
+            val updated = host?.extraMods.orEmpty().map { if (it.projectId == projectId) it.copy(side = side) else it }
             host = host?.copy(extraMods = updated)
             return Result.success(updated)
         }

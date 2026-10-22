@@ -1,6 +1,7 @@
 package calebxzau.rdi.client.ui.viewmodel
 
 import calebxzhou.rdi.common.model.Host
+import calebxzhou.rdi.common.model.RAccount
 import calebxzhou.rdi.common.model.Host2
 import calebxzhou.rdi.common.model.Host2PackStatus
 import calebxzhou.rdi.common.model.HostStatus
@@ -87,6 +88,7 @@ class HostCreateViewModelTest {
         viewModel.updateHostName("  新房间  ")
         viewModel.updateIntro("  和朋友一起玩  ")
         viewModel.updateWhitelist(false)
+        addTestFriend(viewModel)
         viewModel.submit()
 
         val event = assertIs<HostCreateEvent.LegacyCreateSubmitted>(viewModel.events.first())
@@ -117,8 +119,10 @@ class HostCreateViewModelTest {
         viewModel.selectLevelChoice(1)
         assertEquals(HostCreateWorldSource.Template, viewModel.uiState.value.worldSource)
         viewModel.updateHostName("强制模板房间")
+        addTestFriend(viewModel)
         viewModel.submit()
 
+        withTimeout(5_000) { gateway.submissionStarted.await() }
         val create = assertIs<HostCreateSubmission.CreateLegacy>(gateway.submissions.single()).dto
         assertEquals(worldId, create.baseWorldId)
     }
@@ -159,6 +163,7 @@ class HostCreateViewModelTest {
         )
         awaitTemplateLoaded(viewModel)
         viewModel.updateHostName("缺失模板房间")
+        addTestFriend(viewModel)
         viewModel.submit()
 
         assertTrue(viewModel.uiState.value.statusMessage?.contains("地图模板") == true)
@@ -179,6 +184,7 @@ class HostCreateViewModelTest {
 
         viewModel.updateHostName("1.20房间")
         viewModel.selectLevelChoice(2)
+        addTestFriend(viewModel)
         viewModel.submit()
 
         assertIs<HostCreateEvent.LegacyCreateSubmitted>(viewModel.events.first())
@@ -215,6 +221,7 @@ class HostCreateViewModelTest {
         awaitLoaded(viewModel)
 
         viewModel.updateHostName("新房间")
+        addTestFriend(viewModel)
         viewModel.submit()
 
         assertEquals("请从“我的整合包”的菜单发起创建多人房间", viewModel.uiState.value.statusMessage)
@@ -277,6 +284,7 @@ class HostCreateViewModelTest {
         awaitLoaded(viewModel)
 
         viewModel.updateHostName("新房间")
+        addTestFriend(viewModel)
         viewModel.submit()
         gateway.submissionStarted.await()
         viewModel.submit()
@@ -291,6 +299,7 @@ class HostCreateViewModelTest {
         val viewModel = createViewModel(FakeHostCreateGateway())
         awaitLoaded(viewModel)
 
+        viewModel.updateHostName("")
         viewModel.submit()
 
         assertEquals("请输入房间名称", viewModel.uiState.value.statusMessage)
@@ -319,6 +328,14 @@ class HostCreateViewModelTest {
         gateway = gateway,
     )
 
+    private suspend fun addTestFriend(viewModel: HostCreateViewModel) {
+        if (!viewModel.uiState.value.isLegacyCreate || viewModel.uiState.value.initialMembers.isNotEmpty()) return
+        viewModel.openFriendDialog()
+        viewModel.updateFriendQq("12345678")
+        viewModel.addFriend()
+        withTimeout(5_000) { viewModel.uiState.filter { !it.friendLookupLoading }.first() }
+    }
+
     private suspend fun awaitLoaded(viewModel: HostCreateViewModel): HostCreateUiState =
         withTimeout(5_000) { viewModel.uiState.filter { !it.loading }.first() }
 
@@ -335,6 +352,10 @@ class HostCreateViewModelTest {
         var loadInitialCalls = 0
         val submissions = mutableListOf<HostCreateSubmission>()
         val submissionStarted = CompletableDeferred<Unit>()
+
+        override suspend fun findFriend(qq: String): Result<RAccount.Dto> = Result.success(
+            RAccount.Dto(ObjectId("66a000000000000000000005"), "好友", RAccount.Cloth()),
+        )
 
         override suspend fun loadInitial(hostId: ObjectId?): Result<HostCreateInitialData> {
             loadInitialCalls++

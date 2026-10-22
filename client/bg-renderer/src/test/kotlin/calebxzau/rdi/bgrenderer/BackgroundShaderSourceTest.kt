@@ -49,8 +49,8 @@ class BackgroundShaderSourceTest {
         assertTrue(FRAGMENT_SHADER.contains("float shadowBias = mix(0.06, 0.30, 1.0 - ndotl) / uShadowDepthRange;"))
         assertTrue(FRAGMENT_SHADER.contains("shadowFactor /= 4.0;"))
         assertTrue(FRAGMENT_SHADER.contains("color = vec4(litColor, 1.0);"))
-        assertTrue(FRAGMENT_SHADER.contains("vec3 ambientLight = vec3(0.33, 0.40, 0.56) * skyLight * mix(1.0, vAmbientOcclusion, 0.55);"))
-        assertTrue(FRAGMENT_SHADER.contains("vec3 directLight = vec3(1.70, 1.18, 0.66) * (ndotl + translucency) * shadowFactor;"))
+        assertTrue(FRAGMENT_SHADER.contains("vec3 ambientLight = uAmbientLight * skyLight * mix(1.0, vAmbientOcclusion, 0.55);"))
+        assertTrue(FRAGMENT_SHADER.contains("vec3 directLight = uDirectLight * (ndotl + translucency) * shadowFactor;"))
         // Only double-sided leaves and grass let the low sun shine through toward the viewer.
         assertTrue(FRAGMENT_SHADER.contains("float translucency = uDoubleSided ? pow(max(dot(viewDirection, lightDirection), 0.0), 3.0) * 0.45 : 0.0;"))
         assertTrue(FRAGMENT_SHADER.contains("float skyLight = 0.68 + 0.32 * normal.y;"))
@@ -161,7 +161,7 @@ class BackgroundShaderSourceTest {
     }
 
     @Test
-    fun skyShaderReconstructsWorldRayAndUsesTheSharedGoldenGradient() {
+    fun skyShaderReconstructsWorldRayAndSelectsTheScenePalette() {
         assertTrue(SKY_FRAGMENT_SHADER.contains("uInverseProjection * vec4(vNdc, 1.0, 1.0)"))
         assertTrue(SKY_FRAGMENT_SHADER.contains("mat3(uInverseView)"))
         assertTrue(SKY_FRAGMENT_SHADER.contains("goldenSkyDisplayColor(worldRay, normalize(uSunDirection))"))
@@ -169,14 +169,14 @@ class BackgroundShaderSourceTest {
         assertTrue(SKY_FRAGMENT_SHADER.contains("color = vec4(srgbToLinear(max(finalSky, vec3(0.0))), 1.0);"))
         assertTrue(WATER_FRAGMENT_SHADER.contains("srgbToLinear(max(goldenSkyDisplayColor(reflectedDirection, toSun), vec3(0.0)))"))
         assertTrue(!SKY_FRAGMENT_SHADER.contains("clamp(finalSky, 0.0, 1.0)"))
-        assertTrue(!rendererSource.contains("noonSkyDisplayColor"))
+        assertTrue(SKY_FRAGMENT_SHADER.contains("if (uNoon) return noonSkyDisplayColor(ray, toSun);"))
     }
 
     @Test
     fun hdrAndPostProcessSourcesPreserveTheFixedBloomAndTonemapPipeline() {
         assertTrue(HDR_COLOR_FORMAT == org.lwjgl.opengl.GL30.GL_R11F_G11F_B10F)
         assertTrue(FINAL_COLOR_FORMAT == org.lwjgl.opengl.GL11.GL_RGBA8)
-        assertTrue(HDR_COPY_FRAGMENT_SHADER.contains("vec4 fog = upsampleValleyFog(texCoord);"))
+        assertTrue(HDR_COPY_FRAGMENT_SHADER.contains("vec4 fog = uFogEnabled ? upsampleValleyFog(texCoord) : vec4(0.0, 0.0, 0.0, 1.0);"))
         assertTrue(!HDR_COPY_FRAGMENT_SHADER.contains("2.2"))
         assertTrue(BLOOM_ATLAS_FRAGMENT_SHADER.contains("textureLod(uLinearHdr, bloomCoord, lod)"))
         val mainBody = FINAL_TONEMAP_FRAGMENT_SHADER.substringAfter("void main()")
@@ -209,7 +209,7 @@ class BackgroundShaderSourceTest {
             cursor = next
         }
         val loop = body("private fun renderLoop", "\n/**\n * Owns every GL object")
-        assertTrue(loop.contains("pipeline.render(elapsed, appearance.get(), pixels)"))
+        assertTrue(loop.contains("pipeline.render(elapsed, appearance.get(), pixels, crowd.get())"))
         assertTrue(loop.indexOf("pipeline.render") < loop.indexOf("performance.record"))
         assertTrue(loop.contains("pipeline.close()"))
     }

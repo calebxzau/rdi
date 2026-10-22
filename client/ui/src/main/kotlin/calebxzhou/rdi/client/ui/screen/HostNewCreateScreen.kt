@@ -28,6 +28,7 @@ import calebxzau.rdi.client.ui.Space8w
 import calebxzau.rdi.client.ui.TitleRow
 import calebxzau.rdi.client.ui.AlertErr
 import calebxzau.rdi.client.ui.AlertOk
+import calebxzau.rdi.client.ui.RRow
 import calebxzau.rdi.client.ui.themeNow
 import calebxzau.rdi.client.ui.viewmodel.HostCreateEvent
 import calebxzau.rdi.client.ui.viewmodel.HostCreateViewModel
@@ -39,6 +40,7 @@ import calebxzhou.rdi.client.net.RServer
 import calebxzhou.rdi.client.ui.*
 import calebxzhou.rdi.client.ui.comp.GameRuleModal
 import calebxzhou.rdi.client.ui.comp.ImageCard
+import calebxzhou.rdi.client.ui.comp.HeadButton
 import calebxzhou.rdi.client.ui.comp.BaseWorldSelectionModal
 import kotlinx.coroutines.flow.collect
 import org.koin.compose.viewmodel.koinViewModel
@@ -84,7 +86,7 @@ fun HostNewCreateScreen(
     var showBaseWorldSelection by remember { mutableStateOf(false) }
     LaunchedEffect(account._id, serverRoute) {
         showBaseWorldSelection = false
-        viewModel.updateSessionIdentity("${account._id}:${RServer.now.hqUrl}")
+        viewModel.updateSessionIdentity("${account._id}:${RServer.now.hqUrl}", account._id)
     }
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner, viewModel, state.worldSource, state.isLegacyCreate, showBaseWorldSelection) {
@@ -159,6 +161,38 @@ fun HostNewCreateScreen(
         )
     }
 
+    if (state.friendDialogOpen && state.isLegacyCreate) {
+        AlertDialog(
+            onDismissRequest = viewModel::dismissFriendDialog,
+            title = { Text("添加好友") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(
+                        value = state.friendQq,
+                        onValueChange = viewModel::updateFriendQq,
+                        label = { Text("好友的QQ号") },
+                        singleLine = true,
+                        enabled = !state.friendLookupLoading,
+                        isError = state.friendLookupError != null,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    state.friendLookupError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = viewModel::addFriend,
+                    enabled = !state.friendLookupLoading && state.friendQq.isNotBlank(),
+                ) {
+                    Text(if (state.friendLookupLoading) "添加中…" else "添加")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = viewModel::dismissFriendDialog) { Text("取消") }
+            },
+        )
+    }
+
     MaxBox {
         ScreenContentSurface(size = ScreenContentSize.MEDIUM) {
             TitleRow(state.title, onBack) {
@@ -174,7 +208,7 @@ fun HostNewCreateScreen(
                         showUpdateConfirm = true
                     }
                 }
-                CircleIconButton("\uDB82\uDE50","提交", bgColor = themeNow.primary) {
+                CircleIconButton("\uDB82\uDE50", "提交", bgColor = themeNow.primary, enabled = state.canSubmit) {
                     viewModel.submit()
                 }
             }
@@ -272,134 +306,157 @@ fun HostNewCreateScreen(
                                     }
                                 }
 
-                                Column(
+                                Row(
                                     modifier = gameplaySettingSectionModifier,
-                                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                                    horizontalArrangement = Arrangement.spacedBy(24.dp),
+                                    verticalAlignment = Alignment.Top,
                                 ) {
-                                    BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
-                                        val compactGameplayLayout = maxWidth < 960.dp
-                                        val optionSectionModifier = if (compactGameplayLayout) {
-                                            Modifier.fillMaxWidth()
-                                        } else {
-                                            Modifier.widthIn(min = 220.dp, max = 340.dp)
+                                    Column(
+                                        modifier = Modifier.weight(1f),
+                                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                                    ) {
+                                        Column(modifier = Modifier.fillMaxWidth()) {
+                                            Text("难度", fontWeight = FontWeight.Bold)
+                                            Space8h()
+                                            Row(
+                                                modifier = Modifier
+                                                    .horizontalScroll(rememberScrollState())
+                                                    .padding(horizontal = 2.dp),
+                                                horizontalArrangement = Arrangement.spacedBy(2.dp)
+                                            ) {
+                                                ImageCard(
+                                                    title = "和平",
+                                                    iconPath = "assets/icons/difficulty_peaceful.avif",
+                                                    selected = state.difficulty == 0,
+                                                    onClick = { viewModel.updateDifficulty(0) }
+                                                )
+                                                ImageCard(
+                                                    title = "简单",
+                                                    iconPath = "assets/icons/difficulty_easy.avif",
+                                                    selected = state.difficulty == 1,
+                                                    onClick = { viewModel.updateDifficulty(1) }
+                                                )
+                                                ImageCard(
+                                                    title = "普通",
+                                                    iconPath = "assets/icons/difficulty_normal.avif",
+                                                    selected = state.difficulty == 2,
+                                                    onClick = { viewModel.updateDifficulty(2) }
+                                                )
+                                                ImageCard(
+                                                    title = "困难",
+                                                    iconPath = "assets/icons/difficulty_hard.avif",
+                                                    selected = state.difficulty == 3,
+                                                    onClick = { viewModel.updateDifficulty(3) }
+                                                )
+                                            }
                                         }
-                                        FlowRow(
-                                            modifier = Modifier.fillMaxWidth(),
-                                            horizontalArrangement = Arrangement.spacedBy(12.dp),
-                                            verticalArrangement = Arrangement.spacedBy(12.dp),
-                                            maxItemsInEachRow = if (compactGameplayLayout) 1 else 3
+                                        Column(modifier = Modifier.fillMaxWidth()) {
+                                            Text("模式", fontWeight = FontWeight.Bold)
+                                            Space8h()
+                                            Row(
+                                                modifier = Modifier.horizontalScroll(rememberScrollState()),
+                                                horizontalArrangement = Arrangement.spacedBy(2.dp)
+                                            ) {
+                                                ImageCard(
+                                                    title = "生存",
+                                                    iconPath = "assets/icons/gamemode_survival.avif",
+                                                    selected = state.gameMode == 0,
+                                                    onClick = { viewModel.updateGameMode(0) }
+                                                )
+                                                ImageCard(
+                                                    title = "创造",
+                                                    iconPath = "assets/icons/gamemode_creative.avif",
+                                                    selected = state.gameMode == 1,
+                                                    onClick = { viewModel.updateGameMode(1) }
+                                                )
+                                            }
+                                        }
+                                        Column(modifier = Modifier.fillMaxWidth()) {
+                                            Text("地形", fontWeight = FontWeight.Bold)
+                                            if (state.configuredBaseWorld?.required == true) {
+                                                Text(
+                                                    "此版本强制使用指定的地图模板",
+                                                    color = MaterialTheme.colorScheme.error,
+                                                )
+                                                state.baseWorldBindingErrorMessage?.let { message ->
+                                                    Text(message, color = MaterialTheme.colorScheme.error)
+                                                }
+                                            }
+                                            Space8h()
+                                            Row(
+                                                modifier = Modifier.horizontalScroll(rememberScrollState()),
+                                                horizontalArrangement = Arrangement.spacedBy(2.dp)
+                                            ) {
+                                                ImageCard(
+                                                    title = "普通",
+                                                    iconPath = "assets/icons/worldtype_normal.avif",
+                                                    selected = state.worldSource == HostCreateWorldSource.Generate && state.levelChoice == 0,
+                                                    onClick = { viewModel.selectLevelChoice(0) },
+                                                    enabled = state.configuredBaseWorld?.required != true,
+                                                )
+                                                ImageCard(
+                                                    title = "超平坦",
+                                                    iconPath = "assets/icons/worldtype_flat.avif",
+                                                    selected = state.worldSource == HostCreateWorldSource.Generate && state.levelChoice == 1,
+                                                    onClick = { viewModel.selectLevelChoice(1) },
+                                                    enabled = state.configuredBaseWorld?.required != true,
+                                                )
+                                                ImageCard(
+                                                    title = "空岛",
+                                                    iconPath = "assets/icons/worldtype_skyblock.avif",
+                                                    selected = state.worldSource == HostCreateWorldSource.Generate && state.levelChoice == 2,
+                                                    onClick = { viewModel.selectLevelChoice(2) },
+                                                    enabled = state.configuredBaseWorld?.required != true,
+                                                )
+                                                ImageCard(
+                                                    title = "自定义",
+                                                    iconPath = "assets/icons/worldtype_normal.avif",
+                                                    selected = state.worldSource == HostCreateWorldSource.Generate && state.levelChoice == 3,
+                                                    onClick = {
+                                                        viewModel.selectLevelChoice(3)
+                                                        viewModel.beginCustomLevelType()
+                                                        showCustomLevelTypeDialog = true
+                                                    },
+                                                    enabled = state.configuredBaseWorld?.required != true,
+                                                )
+                                                if (state.isLegacyCreate) ImageCard(
+                                                    title = state.selectedBaseWorldId?.let { id -> state.baseWorlds.firstOrNull { it.id == id }?.let { "模板·${it.name}" } } ?: "模板",
+                                                    iconPath = "assets/icons/worldtype_normal.avif",
+                                                    selected = state.worldSource == HostCreateWorldSource.Template,
+                                                    onClick = { if (!state.submitting && state.configuredBaseWorld?.required != true) showBaseWorldSelection = true },
+                                                    enabled = state.configuredBaseWorld?.required != true,
+                                                )
+                                            }
+                                        }
+                                    }
+                                    if (state.isLegacyCreate) {
+                                        Column(
+                                            modifier = Modifier.weight(1f),
+                                            verticalArrangement = Arrangement.spacedBy(8.dp),
                                         ) {
-                                            Column(modifier = optionSectionModifier) {
-                                                Text("难度", fontWeight = FontWeight.Bold)
-                                                Space8h()
-                                                Row(
-                                                    modifier = Modifier
-                                                        .horizontalScroll(rememberScrollState())
-                                                        .padding(horizontal = 2.dp),
-                                                    horizontalArrangement = Arrangement.spacedBy(2.dp)
-                                                ) {
-                                                    ImageCard(
-                                                        title = "和平",
-                                                        iconPath = "assets/icons/difficulty_peaceful.avif",
-                                                        selected = state.difficulty == 0,
-                                                        onClick = { viewModel.updateDifficulty(0) }
-                                                    )
-                                                    ImageCard(
-                                                        title = "简单",
-                                                        iconPath = "assets/icons/difficulty_easy.avif",
-                                                        selected = state.difficulty == 1,
-                                                        onClick = { viewModel.updateDifficulty(1) }
-                                                    )
-                                                    ImageCard(
-                                                        title = "普通",
-                                                        iconPath = "assets/icons/difficulty_normal.avif",
-                                                        selected = state.difficulty == 2,
-                                                        onClick = { viewModel.updateDifficulty(2) }
-                                                    )
-                                                    ImageCard(
-                                                        title = "困难",
-                                                        iconPath = "assets/icons/difficulty_hard.avif",
-                                                        selected = state.difficulty == 3,
-                                                        onClick = { viewModel.updateDifficulty(3) }
-                                                    )
-                                                }
+                                            RRow {
+
+                                                Text("拉朋友玩", fontWeight = FontWeight.Bold)
+                                                CircleIconButton(
+                                                    icon = "\uDB80\uDD2C",
+                                                    label = "添加",
+                                                    enabled = !state.submitting,
+                                                    onClick = viewModel::openFriendDialog,
+                                                )
                                             }
-                                            Column(modifier = optionSectionModifier) {
-                                                Text("模式", fontWeight = FontWeight.Bold)
-                                                Space8h()
-                                                Row(
-                                                    modifier = Modifier.horizontalScroll(rememberScrollState()),
-                                                    horizontalArrangement = Arrangement.spacedBy(2.dp)
-                                                ) {
-                                                    ImageCard(
-                                                        title = "生存",
-                                                        iconPath = "assets/icons/gamemode_survival.avif",
-                                                        selected = state.gameMode == 0,
-                                                        onClick = { viewModel.updateGameMode(0) }
-                                                    )
-                                                    ImageCard(
-                                                        title = "创造",
-                                                        iconPath = "assets/icons/gamemode_creative.avif",
-                                                        selected = state.gameMode == 1,
-                                                        onClick = { viewModel.updateGameMode(1) }
-                                                    )
-                                                }
-                                            }
-                                            Column(modifier = optionSectionModifier) {
-                                                Text("地形", fontWeight = FontWeight.Bold)
-                                                if (state.configuredBaseWorld?.required == true) {
-                                                    Text(
-                                                        "此版本强制使用指定的地图模板",
-                                                        color = MaterialTheme.colorScheme.error,
-                                                    )
-                                                    state.baseWorldBindingErrorMessage?.let { message ->
-                                                        Text(message, color = MaterialTheme.colorScheme.error)
+                                            state.initialMembers.forEach { friend ->
+                                                key(friend.id) {
+                                                    Row(
+                                                        verticalAlignment = Alignment.CenterVertically,
+                                                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                                    ) {
+                                                        HeadButton(uid = friend.id, showName = false)
+                                                        Text(friend.name, modifier = Modifier.weight(1f))
+                                                        CircleIconButton(
+                                                            icon = "\uDB80\uDD56", label = "移除",
+                                                            enabled = !state.submitting,
+                                                        ) { viewModel.removeFriend(friend.id) }
                                                     }
-                                                }
-                                                Space8h()
-                                                Row(
-                                                    modifier = Modifier.horizontalScroll(rememberScrollState()),
-                                                    horizontalArrangement = Arrangement.spacedBy(2.dp)
-                                                ) {
-                                                    ImageCard(
-                                                        title = "普通",
-                                                        iconPath = "assets/icons/worldtype_normal.avif",
-                                                        selected = state.worldSource == HostCreateWorldSource.Generate && state.levelChoice == 0,
-                                                        onClick = { viewModel.selectLevelChoice(0) },
-                                                        enabled = state.configuredBaseWorld?.required != true,
-                                                    )
-                                                    ImageCard(
-                                                        title = "超平坦",
-                                                        iconPath = "assets/icons/worldtype_flat.avif",
-                                                        selected = state.worldSource == HostCreateWorldSource.Generate && state.levelChoice == 1,
-                                                        onClick = { viewModel.selectLevelChoice(1) },
-                                                        enabled = state.configuredBaseWorld?.required != true,
-                                                    )
-                                                    ImageCard(
-                                                        title = "空岛",
-                                                        iconPath = "assets/icons/worldtype_skyblock.avif",
-                                                        selected = state.worldSource == HostCreateWorldSource.Generate && state.levelChoice == 2,
-                                                        onClick = { viewModel.selectLevelChoice(2) },
-                                                        enabled = state.configuredBaseWorld?.required != true,
-                                                    )
-                                                    ImageCard(
-                                                        title = "自定义",
-                                                        iconPath = "assets/icons/worldtype_normal.avif",
-                                                        selected = state.worldSource == HostCreateWorldSource.Generate && state.levelChoice == 3,
-                                                        onClick = {
-                                                            viewModel.selectLevelChoice(3)
-                                                            viewModel.beginCustomLevelType()
-                                                            showCustomLevelTypeDialog = true
-                                                        },
-                                                        enabled = state.configuredBaseWorld?.required != true,
-                                                    )
-                                                    if (state.isLegacyCreate) ImageCard(
-                                                        title = state.selectedBaseWorldId?.let { id -> state.baseWorlds.firstOrNull { it.id == id }?.let { "模板·${it.name}" } } ?: "模板",
-                                                        iconPath = "assets/icons/worldtype_normal.avif",
-                                                        selected = state.worldSource == HostCreateWorldSource.Template,
-                                                        onClick = { if (!state.submitting && state.configuredBaseWorld?.required != true) showBaseWorldSelection = true },
-                                                        enabled = state.configuredBaseWorld?.required != true,
-                                                    )
                                                 }
                                             }
                                         }

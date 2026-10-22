@@ -23,7 +23,6 @@ import calebxzhou.rdi.master.service.host.HostContainerService.makeContainer
 import calebxzhou.rdi.master.service.host.HostContainerService.requireModernLog4j2Config
 import calebxzhou.rdi.master.service.host.HostRuntimeService.listenCrashOnStart
 import calebxzau.rdi.server.service.baseworld.BaseWorldService
-import calebxzhou.rdi.model.Role
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.toList
@@ -200,58 +199,60 @@ object HostInstallService {
             if (!freshPack.mcVer.supportsRuntime(freshPack.modloader)) {
                 throw RequestError("此整合包使用的Minecraft版本与Mod加载器组合暂不支持")
             }
-            val binding = freshVersion.baseWorld
-            val selectedBaseWorldId = resolveBaseWorldId(binding, host.baseWorldId)
-            var snapshotLease: BaseWorldService.SnapshotLease? = selectedBaseWorldId?.let { worldId ->
-                (baseWorldService ?: throw RequestError("地图模板服务不可用"))
-                    .acquireSnapshotLease(worldId)
-                    .getOrThrow()
-            }
-            val baseWorld = snapshotLease?.world
-            val createdHost = Host(
-                    name = host.name,
-                    ownerId = playerId,
-                    modpackId = host.modpackId,
-                    packVer = freshVersion.name,
-                    worldId = null,
-                    port = allocateRoomPort(),
-                    difficulty = host.difficulty,
-                    allowCheats = host.allowCheats,
-                    whitelist = host.whitelist,
-                    gameMode = host.gameMode,
-                    levelType = baseWorld?.levelType ?: host.levelType,
-                    generatorSettings = baseWorld?.generatorSettings,
-                    baseWorldId = baseWorld?.id,
-                    members = listOf(Host.Member(id = playerId, role = Role.OWNER)),
-                    gameRules = host.gameRules,
-                    version = 2
-                )
-            var mailId: ObjectId? = null
-            try {
-                mailId = MailService.sendSystemMail(
-                    playerId,
-                    "房间创建中",
-                    "${createdHost.name}正在创建中，请稍等几分钟..."
-                )._id
-                HostService.dbcl.insertOne(createdHost)
-                HostCreateAdmission(
-                    freshPack,
-                    freshVersion,
-                    createdHost,
-                    mailId ?: error("房间创建通知ID不存在"),
-                    snapshotLease,
-                )
-            } catch (error: Throwable) {
-                snapshotLease?.release()
-                snapshotLease = null
-                mailId?.let { createdMailId ->
-                    runCatching {
-                        MailService.changeMail(createdMailId, "房间创建失败", newContent = "无法创建房间，错误：$error")
-                    }.onFailure { mailError ->
-                        lgr.error(mailError) { "更新房间创建失败通知失败: ${createdHost._id}" }
-                    }
+            HostMemberService.withInitialMembers(playerId, host.initialMemberIds) { initialMembers ->
+                val binding = freshVersion.baseWorld
+                val selectedBaseWorldId = resolveBaseWorldId(binding, host.baseWorldId)
+                var snapshotLease: BaseWorldService.SnapshotLease? = selectedBaseWorldId?.let { worldId ->
+                    (baseWorldService ?: throw RequestError("地图模板服务不可用"))
+                        .acquireSnapshotLease(worldId)
+                        .getOrThrow()
                 }
-                throw error
+                val baseWorld = snapshotLease?.world
+                val createdHost = Host(
+                        name = host.name,
+                        ownerId = playerId,
+                        modpackId = host.modpackId,
+                        packVer = freshVersion.name,
+                        worldId = null,
+                        port = allocateRoomPort(),
+                        difficulty = host.difficulty,
+                        allowCheats = host.allowCheats,
+                        whitelist = host.whitelist,
+                        gameMode = host.gameMode,
+                        levelType = baseWorld?.levelType ?: host.levelType,
+                        generatorSettings = baseWorld?.generatorSettings,
+                        baseWorldId = baseWorld?.id,
+                        members = initialMembers,
+                        gameRules = host.gameRules,
+                        version = 2
+                    )
+                var mailId: ObjectId? = null
+                try {
+                    mailId = MailService.sendSystemMail(
+                        playerId,
+                        "房间创建中",
+                        "${createdHost.name}正在创建中，请稍等几分钟..."
+                    )._id
+                    HostService.dbcl.insertOne(createdHost)
+                    HostCreateAdmission(
+                        freshPack,
+                        freshVersion,
+                        createdHost,
+                        mailId ?: error("房间创建通知ID不存在"),
+                        snapshotLease,
+                    )
+                } catch (error: Throwable) {
+                    snapshotLease?.release()
+                    snapshotLease = null
+                    mailId?.let { createdMailId ->
+                        runCatching {
+                            MailService.changeMail(createdMailId, "房间创建失败", newContent = "无法创建房间，错误：$error")
+                        }.onFailure { mailError ->
+                            lgr.error(mailError) { "更新房间创建失败通知失败: ${createdHost._id}" }
+                        }
+                    }
+                    throw error
+                }
             }
         }
         try {

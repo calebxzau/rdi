@@ -36,6 +36,7 @@ import calebxzhou.rdi.master.service.host.HostModsService.addDisabledMods
 import calebxzhou.rdi.master.service.host.HostModsService.addExtraMods
 import calebxzhou.rdi.master.service.host.HostModsService.deleteDisabledMods
 import calebxzhou.rdi.master.service.host.HostModsService.deleteExtraMods
+import calebxzhou.rdi.master.service.host.HostModsService.updateExtraModSide
 import calebxzhou.rdi.master.service.host.HostLifecycleService.changeOptions
 import calebxzhou.rdi.master.service.host.HostLifecycleService.changeVersion
 import calebxzhou.rdi.master.service.host.HostLifecycleService.delete
@@ -187,6 +188,10 @@ fun Route.hostRoutes() = route("/host") {
                 delete {
                     val ctx = call.hostContext().needAdmin
                     response(data = ctx.deleteExtraMods(call.receive()))
+                }
+                put("/side") {
+                    val ctx = call.hostContext().needAdmin
+                    response(data = ctx.updateExtraModSide(call.receive()))
                 }
                 get {
                     response(data = call.hostContext().host.extraMods)

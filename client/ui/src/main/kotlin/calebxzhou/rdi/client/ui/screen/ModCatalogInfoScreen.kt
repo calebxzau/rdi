@@ -2,6 +2,7 @@ package calebxzhou.rdi.client.ui.screen
 
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
@@ -353,109 +354,144 @@ private fun CatalogDownloadDialog(
     onOpenDependencyMod: (CatalogMod) -> Unit,
 ) {
     val selectedLocalPack = (state.target as? CatalogInstallTarget.Local)?.pack
+    val listState = rememberLazyListState()
     Dialog(onDismissRequest = { if (!state.submitting) onDismiss() }) {
-        Surface(
-            modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(16.dp),
-            color = MaterialTheme.colorScheme.surface,
-            shadowElevation = 8.dp,
-        ) {
-            Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text("安装${fileName}", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                state.errorMessage?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-                if (state.loading) CircularProgressIndicator()
-                if (state.fileDetailsLoading) {
-                    CircularProgressIndicator()
-                } else {
-                    state.dependencySummary?.let {
-                        Text(it, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                    state.dependencyMods.forEach { dependency ->
-                        CatalogModCard(
-                            dependency,
-                            compact = true,
-                            onClick = { onOpenDependencyMod(dependency) },
-                        )
-                    }
-                    if (state.changelog.isNotBlank()) {
-                        Text("更新说明", fontWeight = FontWeight.Bold)
-                        Text(state.changelog.toReadableDescription())
-                    }
-                    if (state.changelog.isBlank() && state.dependencyMods.isEmpty()) {
-                        Text("没有更多说明")
-                    }
-                }
-
-                if (state.allowTargetSelection) {
-                    Text("本地整合包", fontWeight = FontWeight.Bold)
-                    LazyColumn(Modifier.fillMaxWidth().heightIn(max = 180.dp)) {
-                        items(state.localPacks, key = { "local:${it.versionId}" }) { pack ->
-                            TextButton(
-                                onClick = { onSelectTarget(CatalogInstallTarget.Local(pack)) },
-                                modifier = Modifier.fillMaxWidth(),
-                            ) {
-                                Text(
-                                    if ((state.target as? CatalogInstallTarget.Local)?.pack?.versionId == pack.versionId) {
-                                        "✓ ${pack.name}"
-                                    } else {
-                                        pack.name
-                                    }
-                                )
-                            }
-                        }
-                    }
-                    Text("房间", fontWeight = FontWeight.Bold)
-                    LazyColumn(Modifier.fillMaxWidth().heightIn(max = 180.dp)) {
-                        items(state.hosts, key = { "host:${it.brief._id}" }) { host ->
-                            TextButton(
-                                onClick = {
-                                    onSelectTarget(
-                                        CatalogInstallTarget.HostTarget(
-                                            host.brief._id,
-                                            host.brief.name,
-                                            host.detail.modpack.mcVer,
-                                        )
-                                    )
-                                },
-                                modifier = Modifier.fillMaxWidth(),
-                            ) {
-                                Text(
-                                    if ((state.target as? CatalogInstallTarget.HostTarget)?.id == host.brief._id) {
-                                        "✓ ${host.brief.name}"
-                                    } else {
-                                        host.brief.name
-                                    }
-                                )
-                            }
-                        }
-                    }
-                }
-
-                when (val target = state.target) {
-                    is CatalogInstallTarget.Local -> Text(
-                        "安装到整合包：${target.pack.name} ${target.pack.verName}"
+        BoxWithConstraints(Modifier.padding(vertical = 24.dp)) {
+            Surface(
+                modifier = Modifier.fillMaxWidth().heightIn(max = maxHeight),
+                shape = RoundedCornerShape(16.dp),
+                color = MaterialTheme.colorScheme.surface,
+                shadowElevation = 8.dp,
+            ) {
+                Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text(
+                        "安装${fileName}",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
                     )
-                    is CatalogInstallTarget.HostTarget -> Text("安装到房间：${target.name}")
-                    null -> Unit
-                }
-                if (selectedLocalPack != null && !state.dependenciesLoading && state.localInstallMods.isNotEmpty()) {
-                    Text("自动安装前置mod:${state.localInstallMods.size - 1}个")
-                    if (state.updateCount > 0) Text("其中${state.updateCount}个已安装Mod将被替换")
-                }
-                if (!state.loading && state.target == null) Text("没有兼容的安装目标")
+                    Box(Modifier.fillMaxWidth().weight(1f, fill = false)) {
+                        LazyColumn(
+                            modifier = Modifier.fillMaxWidth().padding(end = 12.dp),
+                            state = listState,
+                            verticalArrangement = Arrangement.spacedBy(12.dp),
+                        ) {
+                            state.errorMessage?.let { message ->
+                                item { Text(message, color = MaterialTheme.colorScheme.error) }
+                            }
+                            if (state.loading) {
+                                item { CircularProgressIndicator() }
+                            }
+                            if (state.fileDetailsLoading) {
+                                item { CircularProgressIndicator() }
+                            } else {
+                                state.dependencySummary?.let { summary ->
+                                    item { Text(summary, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                                }
+                                items(state.dependencyMods) { dependency ->
+                                    CatalogModCard(
+                                        dependency,
+                                        compact = true,
+                                        onClick = { onOpenDependencyMod(dependency) },
+                                    )
+                                }
+                                if (state.changelog.isNotBlank()) {
+                                    item { Text("更新说明", fontWeight = FontWeight.Bold) }
+                                    item { Text(state.changelog.toReadableDescription()) }
+                                }
+                                if (state.changelog.isBlank() && state.dependencyMods.isEmpty()) {
+                                    item { Text("没有更多说明") }
+                                }
+                            }
 
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                    TextButton(onClick = onDismiss, enabled = !state.submitting) { Text("取消") }
-                    TextButton(
-                        enabled = state.target != null &&
-                                !state.loading &&
-                                !state.fileDetailsLoading &&
-                                !state.submitting &&
-                                !state.dependenciesLoading &&
-                                (selectedLocalPack == null || state.localInstallMods.isNotEmpty()),
-                        onClick = onSubmit,
-                    ) {
-                        Text(if (state.submitting) "提交中..." else "开始安装")
+                            if (state.allowTargetSelection) {
+                                item { Text("本地整合包", fontWeight = FontWeight.Bold) }
+                                items(state.localPacks, key = { "local:${it.versionId}" }) { pack ->
+                                    TextButton(
+                                        onClick = { onSelectTarget(CatalogInstallTarget.Local(pack)) },
+                                        modifier = Modifier.fillMaxWidth(),
+                                    ) {
+                                        Text(
+                                            if ((state.target as? CatalogInstallTarget.Local)?.pack?.versionId == pack.versionId) {
+                                                "✓ ${pack.name}"
+                                            } else {
+                                                pack.name
+                                            }
+                                        )
+                                    }
+                                }
+                                item { Text("房间", fontWeight = FontWeight.Bold) }
+                                items(state.hosts, key = { "host:${it.brief._id}" }) { host ->
+                                    TextButton(
+                                        onClick = {
+                                            onSelectTarget(
+                                                CatalogInstallTarget.HostTarget(
+                                                    host.brief._id,
+                                                    host.brief.name,
+                                                    host.detail.modpack.mcVer,
+                                                )
+                                            )
+                                        },
+                                        modifier = Modifier.fillMaxWidth(),
+                                    ) {
+                                        Text(
+                                            if ((state.target as? CatalogInstallTarget.HostTarget)?.id == host.brief._id) {
+                                                "✓ ${host.brief.name}"
+                                            } else {
+                                                host.brief.name
+                                            }
+                                        )
+                                    }
+                                }
+                            }
+
+                            if (selectedLocalPack != null && !state.dependenciesLoading && state.localInstallMods.isNotEmpty()) {
+                                item { Text("自动安装前置mod:${state.localInstallMods.size - 1}个") }
+                                if (state.updateCount > 0) {
+                                    item { Text("其中${state.updateCount}个已安装Mod将被替换") }
+                                }
+                            }
+                            if (!state.loading && state.target == null) {
+                                item { Text("没有兼容的安装目标") }
+                            }
+                        }
+                        // Keep the scrollbar from stretching a short list to the maximum dialog height.
+                        Box(Modifier.matchParentSize()) {
+                            RVerticalScrollbar(
+                                listState = listState,
+                                modifier = Modifier.align(Alignment.CenterEnd),
+                            )
+                        }
+                    }
+
+                    HorizontalDivider()
+                    when (val target = state.target) {
+                        is CatalogInstallTarget.Local -> Text(
+                            "安装到整合包：${target.pack.name} ${target.pack.verName}",
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        is CatalogInstallTarget.HostTarget -> Text(
+                            "安装到房间：${target.name}",
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        null -> Unit
+                    }
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                        TextButton(onClick = onDismiss, enabled = !state.submitting) { Text("取消") }
+                        TextButton(
+                            enabled = state.target != null &&
+                                    !state.loading &&
+                                    !state.fileDetailsLoading &&
+                                    !state.submitting &&
+                                    !state.dependenciesLoading &&
+                                    (selectedLocalPack == null || state.localInstallMods.isNotEmpty()),
+                            onClick = onSubmit,
+                        ) {
+                            Text(if (state.submitting) "提交中..." else "开始安装")
+                        }
                     }
                 }
             }

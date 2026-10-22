@@ -635,6 +635,7 @@ object ModpackUploadService {
         version.zstdPack.delete()
         version.clientZip.delete()
         version.clientZstdPack.delete()
+        ModpackManifestService.deleteManifests(version)
         ModpackBuildService.cleanupVersionBuildDirs(version)
     }
 

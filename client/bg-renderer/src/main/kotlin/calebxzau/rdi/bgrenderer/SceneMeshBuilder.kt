@@ -48,10 +48,10 @@ internal class IntList(initialCapacity: Int = 1024) {
 }
 
 /** Collects indexed scene geometry into one contiguous index range per [BlockMaterial]. */
-internal class SceneMeshBuilder {
+internal class SceneMeshBuilder(colorOverrides: Map<BlockMaterial, SkyColor> = emptyMap()) {
     private val values = Array(BlockMaterial.entries.size) { FloatList() }
     private val indexValues = Array(BlockMaterial.entries.size) { IntList() }
-    private val linearColors = BlockMaterial.entries.map { it.linearColor() }
+    private val linearColors = BlockMaterial.entries.map { colorOverrides[it]?.toLinear() ?: it.linearColor() }
 
     /**
      * Emits one quad as four shared-corner vertices and six indices. Corners must be

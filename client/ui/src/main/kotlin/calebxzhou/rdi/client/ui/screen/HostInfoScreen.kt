@@ -282,6 +282,7 @@ fun HostModsScreen(
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     var showAddDialog by remember(hostId) { mutableStateOf(false) }
     var removeConfirm by remember(hostId) { mutableStateOf<List<Mod>?>(null) }
+    var sideChangeConfirm by remember(hostId) { mutableStateOf<Pair<Mod, Mod.Side>?>(null) }
 
     LaunchedEffect(viewModel) {
         viewModel.events.collect { event ->
@@ -323,6 +324,13 @@ fun HostModsScreen(
                 addExtraModLoadingText = state.extraModLoadingText,
                 onChangeDisabledMods = viewModel::changeDisabledMods,
                 onRemoveExtraMods = { removeConfirm = it },
+                onChangeExtraModSide = { mod, side ->
+                    if (side == Mod.Side.UNKNOWN) {
+                        viewModel.updateExtraModSide(mod, side)
+                    } else {
+                        sideChangeConfirm = mod to side
+                    }
+                },
                 onOpenResourceMods = { onOpenResourceMods(host.modpack.mcVer, host.modpack.modloader) },
                 onAddExtraModAdvanced = {
                     viewModel.resetExtraModDraft()
@@ -361,6 +369,17 @@ fun HostModsScreen(
                 removeConfirm = null
             },
             onDismiss = { removeConfirm = null },
+        )
+    }
+    sideChangeConfirm?.let { (mod, side) ->
+        ConfirmDialog(
+            title = "更改运行侧",
+            message = "更改模组运行侧可能会导致整合包运行异常，确定吗？",
+            onConfirm = {
+                viewModel.updateExtraModSide(mod, side)
+                sideChangeConfirm = null
+            },
+            onDismiss = { sideChangeConfirm = null },
         )
     }
 }

@@ -377,6 +377,35 @@ object HostModsService {
         return updatedMods
     }
 
+    suspend fun HostContext.updateExtraModSide(dto: Host.ExtraModSideDto): List<Mod> {
+        val projectId = dto.projectId.trim()
+        if (projectId.isBlank()) throw RequestError("projectId不能为空")
+        if (dto.side == Mod.Side.UNKNOWN) throw RequestError("至少保留客户端或服务端之一")
+        val target = host.extraMods.firstOrNull { projectIdentity(it) == projectId }
+            ?: throw RequestError("这个Mod不在附加Mod列表中: $projectId")
+        if (target.side == dto.side) return host.extraMods
+
+        val updatedMods = host.extraMods.map { mod ->
+            if (projectIdentity(mod) == projectId) mod.copy(side = dto.side) else mod
+        }
+        HostService.dbcl.updateOne(
+            eq("_id", host._id),
+            set(Host::extraMods.name, updatedMods)
+        )
+        lgr.info { "Host ${host._id} 附加Mod ${modLabel(target)} 运行侧 ${target.side} -> ${dto.side}" }
+        if (dto.side == Mod.Side.CLIENT) {
+            target.fileNames.forEach { fileName ->
+                val hostModPath = host.dir.resolve("mods").resolve(fileName).toPath()
+                runCatching { Files.deleteIfExists(hostModPath) }
+                    .onFailure { err ->
+                        lgr.warn(err) { "Host ${host._id} 删除仅客户端附加Mod文件失败 ${hostModPath.fileName}" }
+                    }
+            }
+        }
+        host.extraMods = updatedMods
+        return updatedMods
+    }
+
     suspend fun HostContext.deleteDisabledMods(mods: List<Mod>): List<Mod> {
         if (mods.isEmpty()) throw RequestError("禁用Mod列表不能为空")
         val modsToReEnable = mods.filter { requestMod ->

@@ -23,6 +23,8 @@ val Modpack.Version.fullPackFile get() = zstdPack.takeIf(File::exists) ?: zip
 val Modpack.Version.clientZip get() = storageDir.resolve("${name}-client.zip")
 val Modpack.Version.clientZstdPack get() = storageDir.resolve("${name}-client.tar.zst")
 val Modpack.Version.clientPackFile get() = clientZstdPack.takeIf(File::exists) ?: clientZip
+val Modpack.Version.fullManifestFile get() = storageDir.resolve("${name}-manifest-full.json")
+val Modpack.Version.clientManifestFile get() = storageDir.resolve("${name}-manifest-client.json")
 
 const val CLIENT_ONLY_MARK_PREFIX = "C" + "$$" + "_"
 val MAX_PACK_SIZE = MODPACK_UPLOAD_MAX_BYTES

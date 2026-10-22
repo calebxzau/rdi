@@ -426,6 +426,12 @@ object ModpackArchiveService {
     internal fun shouldSkipHostClientOnlyJarForTest(relativePath: String): Boolean =
         shouldSkipHostClientOnlyJar(relativePath)
 
+    /** Whether a host install copies this server-relative path, with the filters [ModpackInstallService] always applies. */
+    internal fun isInstalledOnHost(relativePath: String): Boolean =
+        !isClientOnlyMarkedModPath(relativePath) &&
+            !shouldSkipHostClientOnlyJar(relativePath) &&
+            !shouldSkipHostAssetFile(relativePath)
+
     internal enum class BuildArchiveRoot(val dirName: String) {
         SERVER("server"),
         OVERRIDES("overrides")
