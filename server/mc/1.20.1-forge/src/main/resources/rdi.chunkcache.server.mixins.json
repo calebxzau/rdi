@@ -1,6 +1,7 @@
 {
   "required": true,
   "package": "calebxzau.rdi.mc.server.chunkcache.mixin",
+  "plugin": "calebxzau.rdi.mc.server.chunkcache.mixin.ChunkCacheMixinPlugin",
   "compatibilityLevel": "JAVA_17",
   "refmap": "rdi.mixins.refmap.json",
   "injectors": {

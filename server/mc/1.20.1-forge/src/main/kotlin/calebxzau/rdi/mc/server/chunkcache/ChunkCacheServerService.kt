@@ -314,6 +314,8 @@ object ChunkCacheServerService {
     }
 
     private fun ensureContext(player: ServerPlayer): Session? {
+        // Without the send hooks no session could ever reuse terrain; the client then never starts one.
+        if (!ChunkCacheCompat.isAvailable()) return null
         val connection = player.connection.connection
         if (!ChunkCacheChannel.isRemotePresent(connection)) return null
         val dimension = player.level().dimension().location()
