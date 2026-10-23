@@ -5,7 +5,6 @@ import calebxzhou.rdi.mc.client.mcp.McpClientNetwork1710
 import calebxzhou.rdi.mc.client.mcp.McpLifecycle1710
 import cpw.mods.fml.common.FMLCommonHandler
 import cpw.mods.fml.common.event.FMLInitializationEvent
-import net.minecraftforge.common.MinecraftForge
 
 class ClientProxy : CommonProxy() {
     // Override CommonProxy methods here, if you want a different behaviour on the client (e.g. registering renders).
@@ -15,7 +14,5 @@ class ClientProxy : CommonProxy() {
         register()
         McpClientNetwork1710.register()
         FMLCommonHandler.instance().bus().register(McpLifecycle1710)
-        FMLCommonHandler.instance().bus().register(JoinServerSubtitle1710)
-        MinecraftForge.EVENT_BUS.register(JoinServerSubtitle1710)
     }
 }

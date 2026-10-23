@@ -3,7 +3,7 @@ package calebxzhou.rdi.mc.client.mixin;
 import calebxzhou.rdi.mc.client.gui.RdiGlobalTabRow;
 import calebxzhou.rdi.mc.client.gui.RdiPlayerAvatarCache;
 import calebxzhou.rdi.mc.client.network.GlobalPlayerListState;
-import calebxzhou.rdi.mc.common2.player.RGlobalPlayerList;
+import calebxzhou.rdi.mc.common.RGlobalPlayerList;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.FontRenderer;
 import net.minecraft.client.gui.Gui;

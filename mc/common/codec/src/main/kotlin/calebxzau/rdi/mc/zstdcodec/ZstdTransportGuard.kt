@@ -139,7 +139,7 @@ internal class ZstdTransportGuard private constructor(private val channel: Chann
     companion object {
         private const val INBOUND = "rdi_zstd_inbound_guard"
         private const val OUTBOUND = "rdi_zstd_outbound_guard"
-        private val KEY = AttributeKey.valueOf<ZstdTransportGuard>("rdi.zstd.transport-guard")
+        private val KEY: AttributeKey<ZstdTransportGuard> = NettyCompat.attributeKey("rdi.zstd.transport-guard")
         private val LOGGER = System.getLogger("rdi.zstd.guard")
 
         fun get(channel: Channel): ZstdTransportGuard {

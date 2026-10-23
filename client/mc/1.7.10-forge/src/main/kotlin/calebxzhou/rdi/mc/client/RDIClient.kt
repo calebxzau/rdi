@@ -1,5 +1,6 @@
 package calebxzhou.rdi.mc.client
 
+import calebxzau.rdi.mc.zstdcodec.v1710.Zstd1710
 import cpw.mods.fml.common.Mod
 import cpw.mods.fml.common.SidedProxy
 import cpw.mods.fml.common.event.FMLInitializationEvent
@@ -19,6 +20,7 @@ import org.apache.logging.log4j.Logger
 class RDIClient {
     @Mod.EventHandler
     fun preInit(event: FMLPreInitializationEvent) {
+        Zstd1710.verifyNativeLoaded()
         proxy!!.preInit(event)
     }
 

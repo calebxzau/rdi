@@ -4,7 +4,6 @@ import com.github.luben.zstd.EndDirective
 import com.github.luben.zstd.Zstd
 import com.github.luben.zstd.ZstdCompressCtx
 import io.netty.buffer.ByteBuf
-import io.netty.buffer.ByteBufUtil
 import io.netty.buffer.Unpooled
 import io.netty.channel.ChannelHandlerContext
 import io.netty.channel.ChannelDuplexHandler
@@ -23,6 +22,7 @@ internal class ZstdCompressionEncoder(
     private val varIntCodec: MinecraftVarIntCodec,
     private val flushTimeoutMillis: Long? = null,
     private val nanoTime: () -> Long = System::nanoTime,
+    private val limits: ZstdPacketLimits = ZstdPacketLimits.DEFAULT,
 ) : ChannelDuplexHandler() {
     private val compressionContext = ZstdCompressCtx()
         .setLevel(COMPRESSION_LEVEL)
@@ -827,7 +827,7 @@ internal class ZstdCompressionEncoder(
         val hit: Boolean
         val frame: ByteBuf
         try {
-            content = ByteBufUtil.getBytes(sending.content)
+            content = NettyCompat.copyReadable(sending.content)
             hash = PersistentPacketHash.of(content)
             hit = session.holds(kind, hash)
             frame = if (hit) {
@@ -879,7 +879,7 @@ internal class ZstdCompressionEncoder(
         if (WILDCARD_NAMESPACE !in namespaces && identity.namespace !in namespaces) return null
         val size = sending.content.readableBytes()
         if (size < ZlibTailFormat.MINIMUM_PACKET_BYTES || size > ZstdCompressionPipeline.MAXIMUM_UNCOMPRESSED_LENGTH) return null
-        val unwrapped = ZlibTail.unwrap(ByteBufUtil.getBytes(sending.content)) ?: return null
+        val unwrapped = ZlibTail.unwrap(NettyCompat.copyReadable(sending.content)) ?: return null
         return unwrapped.takeIf { it.unwrapped.size <= ZstdCompressionPipeline.MAXIMUM_UNCOMPRESSED_LENGTH }
     }
 
@@ -1078,8 +1078,8 @@ internal class ZstdCompressionEncoder(
     /** [independent] compresses into a standalone Zstd frame even on a stream; only telemetry may use it. */
     private fun encodeLegacyFrame(context: ChannelHandlerContext, input: ByteBuf, independent: Boolean = false): EncodedFrame {
         val size = input.readableBytes()
-        if (size > ZstdCompressionPipeline.MAXIMUM_UNCOMPRESSED_LENGTH) {
-            throw EncoderException("Packet too big (is $size, should be less than or equal to ${ZstdCompressionPipeline.MAXIMUM_UNCOMPRESSED_LENGTH})")
+        if (size > limits.maximumUncompressedBytes) {
+            throw EncoderException("Packet too big (is $size, should be less than or equal to ${limits.maximumUncompressedBytes})")
         }
         val stream = if (independent) null else streamContext
         // From START onwards a compressed envelope must not declare the reference marker as its size.

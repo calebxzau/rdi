@@ -14,6 +14,8 @@ import calebxzhou.rdi.mc.server.rcmd.PlayerNbtChatRangeStore
 import calebxzhou.rdi.mc.server.rcmd.RcmdServerCommands1710
 import calebxzhou.rdi.mc.server.rcmd.RcmdServerSource1710
 import cpw.mods.fml.common.FMLCommonHandler
+import calebxzau.rdi.mc.zstdcodec.v1710.Zstd1710
+import cpw.mods.fml.common.event.FMLPreInitializationEvent
 import cpw.mods.fml.common.Mod
 import cpw.mods.fml.common.event.FMLServerStartedEvent
 import cpw.mods.fml.common.event.FMLServerStartingEvent
@@ -49,6 +51,11 @@ class RDI {
         McpServerNetwork1710.register()
         FMLCommonHandler.instance().bus().register(this)
         MinecraftForge.EVENT_BUS.register(this)
+    }
+
+    @Mod.EventHandler
+    fun preInit(event: FMLPreInitializationEvent) {
+        Zstd1710.verifyNativeLoaded()
     }
 
     @Mod.EventHandler

@@ -1,6 +1,6 @@
 package calebxzhou.rdi.mc.client.gui;
 
-import calebxzhou.rdi.mc.common2.player.RGlobalPlayerList;
+import calebxzhou.rdi.mc.common.RGlobalPlayerList;
 import com.mojang.authlib.GameProfile;
 import com.mojang.authlib.minecraft.MinecraftProfileTexture;
 import net.minecraft.client.Minecraft;

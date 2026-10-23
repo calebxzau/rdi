@@ -1,6 +1,6 @@
 package calebxzhou.rdi.mc.client.network
 
-import calebxzhou.rdi.mc.common2.player.RGlobalPlayerList
+import calebxzhou.rdi.mc.common.RGlobalPlayerList
 import kotlin.concurrent.Volatile
 
 object GlobalPlayerListState {

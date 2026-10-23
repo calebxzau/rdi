@@ -80,6 +80,16 @@ internal fun neoForgeLoggingJvmArgs(mcVersion: McVersion, loader: ModLoader, ext
     ).filter { it.substringBefore('=') !in userKeys }
 }
 
+/** Runtime ownership differs for GTNH, which supplies Kotlin through Forgelin. */
+internal data class RdiRuntimeSelection(val kotlin: Boolean, val zstd: Boolean) {
+    companion object {
+        fun forVersion(version: McVersion, rdiRuntime: Boolean): RdiRuntimeSelection {
+            val modern = version == McVersion.V201 || version == McVersion.V211
+            return RdiRuntimeSelection(rdiRuntime && modern, rdiRuntime && (modern || version == McVersion.V071))
+        }
+    }
+}
+
 private data class LaunchManifests(
     val manifest: MojangVersionManifest,
     val loaderManifest: MojangVersionManifest,
@@ -248,9 +258,8 @@ class MinecraftLauncher(
 
         val resolvedJvmArgs = manifest.resolveJvmArgumentList() + loaderManifest.resolveJvmArgumentList()
         val needsForgeRuntime = request.loader != ModLoader.Fabric
-        val hasRdiManagedRuntime = request.rdiRuntime &&
-            (request.mcVersion == McVersion.V201 || request.mcVersion == McVersion.V211)
-        val kotlinClasspath = if (needsForgeRuntime && hasRdiManagedRuntime) {
+        val runtimes = RdiRuntimeSelection.forVersion(request.mcVersion, request.rdiRuntime)
+        val kotlinClasspath = if (needsForgeRuntime && runtimes.kotlin) {
             GameKotlinRuntime.prepare(
                 mcVersion = request.mcVersion,
                 modsDir = request.versionDir.resolve("mods"),
@@ -262,7 +271,7 @@ class MinecraftLauncher(
         } else {
             emptyList()
         }
-        val zstdClasspath = if (hasRdiManagedRuntime) {
+        val zstdClasspath = if (runtimes.zstd) {
             RdiZstdRuntime.resolve().getOrElse { error ->
                 lgr.error(error) { "Minecraft Zstd运行库不可用" }
                 throw RequestError("Zstd运行库缺失或损坏，请先修复", error)

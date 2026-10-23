@@ -48,6 +48,7 @@ sourceSets.main {
     kotlin.srcDir '../../../mc/20/src/main/kotlin'
     java.srcDir '../../../mc/common/codec/src/server/java'
     kotlin.srcDir '../../../mc/common/codec/src/main/kotlin'
+    kotlin.srcDir '../../../mc/common/codec/src/netty41/kotlin'
     kotlin.srcDir '../../../mc/common/network-metrics/src/main/kotlin'
     kotlin.srcDir '../../../mc/rcmd/src/main/kotlin'
     kotlin.srcDir '../../../mc/syncchunk/src/main/kotlin'

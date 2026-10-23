@@ -1,6 +1,6 @@
 package calebxzhou.rdi.mc.client.rcmd
 
-import calebxzhou.rdi.mc.common2.rcmd.client.RcmdClientBridge
+import calebxzhou.rdi.mc.rcmd.RcmdClientBridge
 import calebxzhou.rdi.mc.rcmd.RcmdSource
 import net.minecraft.client.Minecraft
 import net.minecraft.util.ChatComponentText

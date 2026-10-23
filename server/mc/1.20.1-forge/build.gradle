@@ -34,6 +34,7 @@ sourceSets.main {
     kotlin.srcDir '../../../mc/common/2021/src/main/kotlin'
     java.srcDir '../../../mc/common/codec/src/server/java'
     kotlin.srcDir '../../../mc/common/codec/src/main/kotlin'
+    kotlin.srcDir '../../../mc/common/codec/src/netty41/kotlin'
     kotlin.srcDir '../../../mc/common/network-metrics/src/main/kotlin'
     kotlin.srcDir '../../../mc/syncchunk/src/main/kotlin'
     kotlin.srcDir '../../../mc/syncchunk/src/2021/kotlin'
@@ -43,6 +44,7 @@ sourceSets.main {
 }
 sourceSets.create('zstdTest') {
     kotlin.srcDir '../../../mc/common/codec/src/main/kotlin'
+    kotlin.srcDir '../../../mc/common/codec/src/netty41/kotlin'
     kotlin.srcDir '../../../mc/common/codec/src/test/kotlin'
 }
 sourceSets.test.kotlin.srcDir '../../../mc/20/src/serverTest/kotlin'

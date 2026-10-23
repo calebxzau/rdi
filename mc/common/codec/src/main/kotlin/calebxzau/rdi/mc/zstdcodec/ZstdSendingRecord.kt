@@ -1,7 +1,6 @@
 package calebxzau.rdi.mc.zstdcodec
 
 import io.netty.buffer.ByteBuf
-import io.netty.util.ReferenceCounted
 
 /**
  * Owns one encoded packet buffer together with its batching decision until the codec releases it.
@@ -12,7 +11,9 @@ internal class ZstdSendingRecord(
     val policy: ZstdBatchPolicy,
     val identity: ZstdPacketIdentity?,
     val persistentKind: Int = PersistentPacketKind.NONE,
-) : ReferenceCounted {
+) : NettyRefCountedBase() {
+    override val touchTarget: ByteBuf get() = content
+
     override fun refCnt(): Int = content.refCnt()
 
     override fun retain(): ZstdSendingRecord {
@@ -22,16 +23,6 @@ internal class ZstdSendingRecord(
 
     override fun retain(increment: Int): ZstdSendingRecord {
         content.retain(increment)
-        return this
-    }
-
-    override fun touch(): ZstdSendingRecord {
-        content.touch()
-        return this
-    }
-
-    override fun touch(hint: Any?): ZstdSendingRecord {
-        content.touch(hint)
         return this
     }
 

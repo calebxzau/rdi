@@ -72,6 +72,19 @@ class MinecraftLauncherRuntimeTest {
     )
 
     @Test
+    fun `RDI GTNH receives zstd but keeps its own Kotlin runtime`() {
+        val runtimes = RdiRuntimeSelection.forVersion(McVersion.V071, true)
+        assertTrue(runtimes.zstd)
+        assertFalse(runtimes.kotlin)
+        assertTrue(RdiZstdRuntime.resolve().getOrThrow().any { it.name.contains("zstd-jni") })
+        assertEquals(RdiRuntimeSelection(false, false), RdiRuntimeSelection.forVersion(McVersion.V071, false))
+        for (version in listOf(McVersion.V201, McVersion.V211)) {
+            assertEquals(RdiRuntimeSelection(true, true), RdiRuntimeSelection.forVersion(version, true))
+            assertEquals(RdiRuntimeSelection(false, false), RdiRuntimeSelection.forVersion(version, false))
+        }
+    }
+
+    @Test
     fun `local packs launch without RDI runtimes and with the offline user type`() {
         var command: List<String>? = null
         var mediaResolved = false

@@ -1,7 +1,7 @@
 package calebxzhou.rdi.mc.client.network
 
 import calebxzhou.rdi.mc.client.network.GlobalPlayerListState.update
-import calebxzhou.rdi.mc.common2.player.RGlobalPlayerList
+import calebxzhou.rdi.mc.common.RGlobalPlayerList
 import com.google.gson.Gson
 import cpw.mods.fml.common.network.ByteBufUtils
 import cpw.mods.fml.common.network.simpleimpl.IMessage

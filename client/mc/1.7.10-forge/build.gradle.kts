@@ -47,10 +47,17 @@ java {
     }
 }
 kotlin.sourceSets.named("main") {
+    kotlin.srcDir(file("../../../mc/common/codec/src/main/kotlin"))
+    kotlin.srcDir(file("../../../mc/common/codec/src/netty40/kotlin"))
+    kotlin.srcDir(file("../../../mc/common/codec/src/1710/kotlin"))
     kotlin.srcDir(file("../../../mc/rcmd/src/main/kotlin"))
     kotlin.srcDir(file("../../../mc/rmcp/common/src/main/kotlin"))
     kotlin.srcDir(file("../../../mc/rmcp/client/src/main/kotlin"))
     kotlin.srcDir(file("../../../ktutils/std/src/main/kotlin"))
+}
+
+kotlin.sourceSets.named("test") {
+    kotlin.srcDir(file("../../../mc/common/codec/src/netty40Test/kotlin"))
 }
 
 val shaded = configurations.create("shaded")
@@ -59,6 +66,13 @@ configurations.named("implementation") {
 }
 
 dependencies {
+    compileOnly("com.github.luben:zstd-jni:1.5.7-11")
+    runtimeOnly("com.github.luben:zstd-jni:1.5.7-11")
+    testImplementation("com.github.luben:zstd-jni:1.5.7-11")
+    testImplementation("io.netty:netty-all:4.0.10.Final")
+    testImplementation(kotlin("test-junit5"))
+    testRuntimeOnly("org.junit.jupiter:junit-jupiter-engine:6.1.1")
+    testRuntimeOnly("org.junit.platform:junit-platform-launcher:6.1.1")
     add("shaded", "io.fusionauth:java-http:1.4.0")
     implementation( "org.jetbrains.kotlinx:kotlinx-serialization-json:1.11.0")
     add("shaded", "io.heapy.kotaml:kotaml:0.108.0") {
@@ -133,12 +147,15 @@ registerClientCopyTask.call(project)
 // Run tests and launch tasks from this module's run directory.
 val rdiRunDirectory = layout.projectDirectory.dir("run").asFile
 tasks.withType<Test>().configureEach {
-    workingDir = rdiRunDirectory
-    doFirst { rdiRunDirectory.mkdirs() }
+    useJUnitPlatform()
+    val testRunDirectory = rdiRunDirectory
+    workingDir = testRunDirectory
+    doFirst { testRunDirectory.mkdirs() }
 }
 tasks.withType<JavaExec>().configureEach {
     // Keep explicit run directories such as run2, run/client, or run/server.
     if (workingDir != project.projectDir) return@configureEach
-    workingDir = rdiRunDirectory
-    doFirst { rdiRunDirectory.mkdirs() }
+    val execRunDirectory = rdiRunDirectory
+    workingDir = execRunDirectory
+    doFirst { execRunDirectory.mkdirs() }
 }

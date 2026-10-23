@@ -29,6 +29,7 @@ sourceSets.named("main") {
 }
 
 kotlin {
+    jvmToolchain(21)
     compilerOptions {
         jvmTarget = JvmTarget.JVM_21
     }
@@ -40,6 +41,9 @@ kotlin {
 }
 
 kotlin.sourceSets.named("main") {
+    kotlin.srcDir(file("../../../mc/common/codec/src/main/kotlin"))
+    kotlin.srcDir(file("../../../mc/common/codec/src/netty40/kotlin"))
+    kotlin.srcDir(file("../../../mc/common/codec/src/1710/kotlin"))
     kotlin.srcDir(file("../../../mc/rcmd/src/main/kotlin"))
     kotlin.srcDir(file("../../../mc/rmcp/common/src/main/kotlin"))
     kotlin.srcDir(file("../../../ktutils/std/src/main/kotlin"))
@@ -51,6 +55,8 @@ configurations.named("implementation") {
 }
 
 dependencies {
+    add("shaded", "com.github.luben:zstd-jni:1.5.7-11:linux_amd64")
+    runtimeOnly("com.github.luben:zstd-jni:1.5.7-11:win_amd64")
     add("shaded", "org.jetbrains.kotlinx:kotlinx-serialization-json:1.11.0")
 }
 
@@ -80,12 +86,14 @@ registerServerCopyTask.call(project)
 // Run tests and launch tasks from this module's run directory.
 val rdiRunDirectory = layout.projectDirectory.dir("run").asFile
 tasks.withType<Test>().configureEach {
-    workingDir = rdiRunDirectory
-    doFirst { rdiRunDirectory.mkdirs() }
+    val testRunDirectory = rdiRunDirectory
+    workingDir = testRunDirectory
+    doFirst { testRunDirectory.mkdirs() }
 }
 tasks.withType<JavaExec>().configureEach {
     // Keep explicit run directories such as run2, run/client, or run/server.
     if (workingDir != project.projectDir) return@configureEach
-    workingDir = rdiRunDirectory
-    doFirst { rdiRunDirectory.mkdirs() }
+    val execRunDirectory = rdiRunDirectory
+    workingDir = execRunDirectory
+    doFirst { execRunDirectory.mkdirs() }
 }

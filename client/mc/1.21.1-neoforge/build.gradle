@@ -240,6 +240,7 @@ sourceSets.named('main') {
     kotlin.srcDir '../../../mc/syncchunk/src/2021Client/kotlin'
     kotlin.srcDir '../../../mc/syncchunk/src/21/kotlin'
     kotlin.srcDir '../../../mc/common/codec/src/main/kotlin'
+    kotlin.srcDir '../../../mc/common/codec/src/netty41/kotlin'
     kotlin.srcDir '../../../mc/common/codec/src/21/kotlin'
     java.srcDir '../../../mc/common/codec/src/server/java'
     kotlin.srcDir '../../../mc/common/2021/src/main/kotlin'

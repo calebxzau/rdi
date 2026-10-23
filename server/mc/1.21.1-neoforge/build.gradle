@@ -111,6 +111,7 @@ sourceSets.named('main') {
     kotlin.srcDir '../../../mc/common/2021/src/main/kotlin'
     java.srcDir '../../../mc/common/codec/src/server/java'
     kotlin.srcDir '../../../mc/common/codec/src/main/kotlin'
+    kotlin.srcDir '../../../mc/common/codec/src/netty41/kotlin'
     kotlin.srcDir '../../../mc/common/codec/src/21/kotlin'
     kotlin.srcDir '../../../mc/common/network-metrics/src/main/kotlin'
     kotlin.srcDir '../../../mc/common/all/src/main/kotlin'

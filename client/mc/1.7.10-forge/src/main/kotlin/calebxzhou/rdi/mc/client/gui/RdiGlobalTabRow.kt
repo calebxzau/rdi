@@ -1,6 +1,6 @@
 package calebxzhou.rdi.mc.client.gui
 
-import calebxzhou.rdi.mc.common2.player.RGlobalPlayerList
+import calebxzhou.rdi.mc.common.RGlobalPlayerList
 
 class RdiGlobalTabRow(
     @JvmField val text: String,

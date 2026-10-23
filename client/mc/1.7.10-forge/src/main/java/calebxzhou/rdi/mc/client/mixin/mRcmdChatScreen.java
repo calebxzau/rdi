@@ -1,7 +1,7 @@
 package calebxzhou.rdi.mc.client.mixin;
 
 import calebxzhou.rdi.mc.client.rcmd.RcmdClientBridge1710;
-import calebxzhou.rdi.mc.common2.rcmd.client.RcmdClientCommands;
+import calebxzhou.rdi.mc.rcmd.RcmdClientCommands;
 import calebxzhou.rdi.mc.rcmd.RcmdDispatchResult;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiChat;

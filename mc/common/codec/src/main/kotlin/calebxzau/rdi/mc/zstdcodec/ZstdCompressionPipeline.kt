@@ -59,11 +59,13 @@ object ZstdCompressionPipeline {
     }
 
     @JvmStatic
+    @JvmOverloads
     fun setup(
         channel: Channel,
         threshold: Int,
         validateDecompressed: Boolean,
         varIntCodec: MinecraftVarIntCodec,
+        limits: ZstdPacketLimits = ZstdPacketLimits.DEFAULT,
     ) {
         val pipeline = channel.pipeline()
         val guard = ZstdTransportGuard.existing(channel)
@@ -84,8 +86,8 @@ object ZstdCompressionPipeline {
             return
         }
 
-        installDecoder(pipeline, threshold, validateDecompressed, varIntCodec)
-        installEncoder(pipeline, threshold, varIntCodec)
+        installDecoder(pipeline, threshold, validateDecompressed, varIntCodec, limits)
+        installEncoder(pipeline, threshold, varIntCodec, limits)
     }
 
     /**
@@ -265,6 +267,7 @@ object ZstdCompressionPipeline {
         threshold: Int,
         validateDecompressed: Boolean,
         varIntCodec: MinecraftVarIntCodec,
+        limits: ZstdPacketLimits,
     ) {
         val handler = pipeline.get(DECOMPRESS_HANDLER_NAME)
         when (handler) {
@@ -272,12 +275,12 @@ object ZstdCompressionPipeline {
             null -> pipeline.addAfter(
                 SPLITTER_HANDLER_NAME,
                 DECOMPRESS_HANDLER_NAME,
-                ZstdCompressionDecoder(threshold, validateDecompressed, varIntCodec),
+                ZstdCompressionDecoder(threshold, validateDecompressed, varIntCodec, limits),
             )
             else -> pipeline.replace(
                 DECOMPRESS_HANDLER_NAME,
                 DECOMPRESS_HANDLER_NAME,
-                ZstdCompressionDecoder(threshold, validateDecompressed, varIntCodec),
+                ZstdCompressionDecoder(threshold, validateDecompressed, varIntCodec, limits),
             )
         }
     }
@@ -286,6 +289,7 @@ object ZstdCompressionPipeline {
         pipeline: ChannelPipeline,
         threshold: Int,
         varIntCodec: MinecraftVarIntCodec,
+        limits: ZstdPacketLimits,
     ) {
         val handler = pipeline.get(COMPRESS_HANDLER_NAME)
         when (handler) {
@@ -293,12 +297,12 @@ object ZstdCompressionPipeline {
             null -> pipeline.addAfter(
                 PREPENDER_HANDLER_NAME,
                 COMPRESS_HANDLER_NAME,
-                ZstdCompressionEncoder(threshold, varIntCodec),
+                ZstdCompressionEncoder(threshold, varIntCodec, limits = limits),
             )
             else -> pipeline.replace(
                 COMPRESS_HANDLER_NAME,
                 COMPRESS_HANDLER_NAME,
-                ZstdCompressionEncoder(threshold, varIntCodec),
+                ZstdCompressionEncoder(threshold, varIntCodec, limits = limits),
             )
         }
     }

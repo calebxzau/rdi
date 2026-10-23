@@ -67,8 +67,8 @@ class PersistentPacketClientSession(
 
 /** Channel attributes that carry the sessions from login, before compression starts, to the codec. */
 internal object PersistentPacketSessions {
-    private val SERVER = AttributeKey.valueOf<PersistentPacketServerSession>("rdi.pcache.server")
-    private val CLIENT = AttributeKey.valueOf<PersistentPacketClientSession>("rdi.pcache.client")
+    private val SERVER: AttributeKey<PersistentPacketServerSession> = NettyCompat.attributeKey("rdi.pcache.server")
+    private val CLIENT: AttributeKey<PersistentPacketClientSession> = NettyCompat.attributeKey("rdi.pcache.client")
 
     fun attach(channel: Channel, session: PersistentPacketServerSession) = channel.attr(SERVER).set(session)
 
