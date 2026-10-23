@@ -72,6 +72,7 @@ import calebxzhou.rdi.client.ui.McGameSession
 import calebxzhou.rdi.client.ui.McPlayStore
 import calebxzau.rdi.client.ui.RTheme
 import calebxzhou.rdi.client.ui.navigateRoot
+import calebxzhou.rdi.client.ui.returnToMenu
 import calebxzhou.rdi.client.ui.screen.*
 import calebxzau.rdi.client.ui.window.WindowChrome
 import calebxzau.rdi.client.ui.window.activeMcSessions
@@ -247,7 +248,11 @@ fun main() {
                         appIcon = windowIcon,
                         onCloseRequest = requestClose,
                         onOpenHome = {
-                            navController.navigateRoot(if (AccountSessionStore.isLoggedIn) MenuRoute() else LoginRoute)
+                            if (AccountSessionStore.isLoggedIn) {
+                                navController.returnToMenu()
+                            } else {
+                                navController.navigateRoot(LoginRoute)
+                            }
                         },
                         onOpenMail = { navController.navigate(MailListScreen) { launchSingleTop = true } },
                         onOpenSettings = {

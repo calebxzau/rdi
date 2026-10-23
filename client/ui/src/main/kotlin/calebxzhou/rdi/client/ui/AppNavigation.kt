@@ -6,8 +6,11 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+import androidx.navigation.NavDestination.Companion.hasRoute
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -30,6 +33,7 @@ import calebxzhou.rdi.common.DEBUG
 import org.koin.compose.viewmodel.koinViewModel
 import org.koin.core.parameter.parametersOf
 
+private const val MENU_SELECTED_TAB_KEY = "menuSelectedTab"
 private const val SCREEN_FADE_DURATION_MS = 500
 private const val BLESSING_SKIN_BASE_URL = "https://littleskin.cn"
 
@@ -64,8 +68,8 @@ private fun ModCatalogInfoRoute.toBrowseRouteOrNull(clearLocalTarget: Boolean = 
 
 private fun NavHostController.returnFromModCatalogInfo(route: ModCatalogInfoRoute, clearLocalTarget: Boolean) {
     route.toBrowseRouteOrNull(clearLocalTarget)?.let(::navigateAbsolute) ?: when {
-        !clearLocalTarget && route.localCatalogTarget() != null -> navigateAbsolute(MenuRoute(MenuTab.Modpacks.name))
-        else -> navigateAbsolute(MenuRoute())
+        !clearLocalTarget && route.localCatalogTarget() != null -> returnToMenu(MenuTab.Modpacks)
+        else -> returnToMenu()
     }
 }
 
@@ -80,8 +84,8 @@ private fun NavHostController.returnFromModCatalog(route: ModCatalogRoute) {
                 navigateAbsolute(HostInfoRoute(hostId, route.fromAllHosts, HostKind.Legacy.name))
             }
         }
-        route.localCatalogTarget() != null -> navigateAbsolute(MenuRoute(MenuTab.Modpacks.name))
-        else -> navigateAbsolute(MenuRoute())
+        route.localCatalogTarget() != null -> returnToMenu(MenuTab.Modpacks)
+        else -> returnToMenu()
     }
 }
 
@@ -95,7 +99,7 @@ private fun NavHostController.returnFromModpackPlaza(route: ModpackPlazaRoute) {
                 navigateAbsolute(HostInfoRoute(route.fromHostId, route.fromAllHosts, HostKind.Legacy.name))
             }
         }
-        else -> navigateAbsolute(MenuRoute(MenuTab.Modpacks.name))
+        else -> returnToMenu(MenuTab.Modpacks)
     }
 }
 
@@ -104,6 +108,17 @@ inline fun <reified T : Any> NavHostController.navigateAbsolute(route: T) {
         popUpTo<T> { inclusive = true }
         launchSingleTop = true
         restoreState = false
+    }
+}
+
+/** 返回已有菜单，保留房间分页与滚动位置；只有明确指定时才切换标签。 */
+fun NavHostController.returnToMenu(tab: MenuTab? = null) {
+    if (currentDestination?.hasRoute<MenuRoute>() == true || popBackStack<MenuRoute>(inclusive = false)) {
+        if (tab != null) {
+            currentBackStackEntry?.savedStateHandle?.set(MENU_SELECTED_TAB_KEY, tab.name)
+        }
+    } else {
+        navigateAbsolute(MenuRoute((tab ?: MenuTab.Hosts).name))
     }
 }
 
@@ -170,7 +185,7 @@ fun AppNavigation(
     }
     val returnToHostList: () -> Unit = {
         if (!navController.popBackStack()) {
-            navController.navigateAbsolute(MenuRoute())
+            navController.returnToMenu()
         }
     }
 
@@ -194,12 +209,16 @@ fun AppNavigation(
                 onOpenResetPassword = { navController.navigate(ResetPasswordRoute) }
             )
         }
-        composable<MenuRoute> {
-            val route = it.toRoute<MenuRoute>()
+        composable<MenuRoute> { entry ->
+            val route = entry.toRoute<MenuRoute>()
+            val selectedTabName by entry.savedStateHandle
+                .getStateFlow(MENU_SELECTED_TAB_KEY, route.tab)
+                .collectAsState()
             MenuScreen(
-                initialTab = MenuTab.entries.firstOrNull { tab -> tab.name == route.tab } ?: MenuTab.Hosts,
+                selectedTab = MenuTab.entries.firstOrNull { tab -> tab.name == selectedTabName } ?: MenuTab.Hosts,
+                onSelectTab = { tab -> entry.savedStateHandle[MENU_SELECTED_TAB_KEY] = tab.name },
                 onOpenMcPlay = { args ->
-                    openMcPlay(args) { navController.navigateAbsolute(MenuRoute()) }
+                    openMcPlay(args) { navController.returnToMenu() }
                 },
                 onOpenTaskList = { runId ->
                     onOpenTask(runId)
@@ -266,7 +285,7 @@ fun AppNavigation(
         composable<WardrobeRoute> {
             WardrobeScreen(
                 blessingSkin = blessingSkin,
-                onBack = { navController.navigateAbsolute(MenuRoute()) },
+                onBack = { navController.returnToMenu() },
                 onOpenSkinPreview = { textureId ->
                     navController.navigate(SkinPreviewRoute(textureId))
                 }
@@ -302,7 +321,7 @@ fun AppNavigation(
             HostInfoScreen(
                 target = HostTarget(kind, route.hostId),
                 onBack = {
-                    navController.navigateAbsolute(MenuRoute())
+                    navController.returnToMenu()
                 },
                 onOpenModpackInfo = { modpackId ->
                     navController.navigate(
@@ -314,7 +333,7 @@ fun AppNavigation(
                     )
                 },
                 onOpenPlay = { args ->
-                    openMcPlay(args) { navController.navigateAbsolute(MenuRoute()) }
+                    openMcPlay(args) { navController.returnToMenu() }
                 },
                 onOpenMods = {
                     navController.navigate(HostModsRoute(route.hostId, route.fromAllHosts, route.kind))
@@ -452,7 +471,7 @@ fun AppNavigation(
                     if (callback != null) {
                         callback()
                     } else {
-                        navController.navigateAbsolute(MenuRoute())
+                        navController.returnToMenu()
                     }
                 }
             )
@@ -473,7 +492,7 @@ fun AppNavigation(
                 modpackName = route.modpackName,
                 onBack = {
                     if (!navController.popBackStack()) {
-                        navController.navigateAbsolute(MenuRoute(MenuTab.Modpacks.name))
+                        navController.returnToMenu(MenuTab.Modpacks)
                     }
                 },
             )
@@ -486,7 +505,7 @@ fun AppNavigation(
                 versionName = route.versionName,
                 onBack = {
                     if (!navController.popBackStack()) {
-                        navController.navigateAbsolute(MenuRoute(MenuTab.Modpacks.name))
+                        navController.returnToMenu(MenuTab.Modpacks)
                     }
                 }
             )
@@ -507,11 +526,11 @@ fun AppNavigation(
             LocalModpackInstallScreen(
                 onBack = {
                     if (!navController.popBackStack()) {
-                        navController.navigateAbsolute(MenuRoute(MenuTab.Modpacks.name))
+                        navController.returnToMenu(MenuTab.Modpacks)
                     }
                 },
                 onStarted = { runId ->
-                    navController.navigateAbsolute(MenuRoute(MenuTab.Modpacks.name))
+                    navController.returnToMenu(MenuTab.Modpacks)
                     onOpenTask(runId)
                 },
             )
@@ -538,7 +557,7 @@ fun AppNavigation(
             val contentType = ModpackContentType.valueOf(route.type)
             val onBack = {
                 if (!navController.popBackStack()) {
-                    navController.navigateAbsolute(MenuRoute(MenuTab.Modpacks.name))
+                    navController.returnToMenu(MenuTab.Modpacks)
                 }
             }
             when (contentType) {
@@ -608,15 +627,15 @@ fun AppNavigation(
                 modCatalog = modCatalog,
                 onBack = {
                     if (!navController.popBackStack()) {
-                        navController.navigateAbsolute(MenuRoute(MenuTab.Modpacks.name))
+                        navController.returnToMenu(MenuTab.Modpacks)
                     }
                 },
                 onOpenTaskList = onOpenTask,
                 onTargetUnavailable = {
                     if (route.localCatalogTarget() != null) {
-                        navController.navigateAbsolute(MenuRoute(MenuTab.Modpacks.name))
+                        navController.returnToMenu(MenuTab.Modpacks)
                     } else if (!navController.popBackStack()) {
-                        navController.navigateAbsolute(MenuRoute(MenuTab.Modpacks.name))
+                        navController.returnToMenu(MenuTab.Modpacks)
                     }
                 }
             )
@@ -684,7 +703,7 @@ fun AppNavigation(
             val route = it.toRoute<ModCatalogRoute>()
             if (isDisabledCatalogLocalTargetKind(route.targetLocalKind)) {
                 LaunchedEffect(route) {
-                    navController.navigateAbsolute(MenuRoute(MenuTab.Modpacks.name))
+                    navController.returnToMenu(MenuTab.Modpacks)
                 }
             } else {
                 ModCatalogScreen(
@@ -717,7 +736,7 @@ fun AppNavigation(
                 onOpenTaskList = onOpenTask,
                 onTargetUnavailable = {
                     if (route.hasDisabledCatalogLocalTargetKind()) {
-                        navController.navigateAbsolute(MenuRoute(MenuTab.Modpacks.name))
+                        navController.returnToMenu(MenuTab.Modpacks)
                     } else if (route.localCatalogTarget() != null) {
                         navController.returnFromModCatalogInfo(route, clearLocalTarget = true)
                     } else if (!navController.popBackStack()) {

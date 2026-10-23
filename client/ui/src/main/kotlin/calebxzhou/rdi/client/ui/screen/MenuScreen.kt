@@ -115,7 +115,8 @@ private const val HOST_LOAD_MORE_THRESHOLD = MENU_TILE_ROWS * 2
  */
 @Composable
 fun MenuScreen(
-    initialTab: MenuTab,
+    selectedTab: MenuTab,
+    onSelectTab: (MenuTab) -> Unit,
     onOpenMcPlay: (McPlayArgs) -> Unit,
     onOpenTaskList: (String) -> Unit,
     onOpenHostInfo: (HostTarget) -> Unit,
@@ -141,7 +142,6 @@ fun MenuScreen(
     }
     val gridHoverSource = remember { MutableInteractionSource() }
     val gridHovered by gridHoverSource.collectIsHoveredAsState()
-    var selectedTab by remember { mutableStateOf(initialTab) }
     val taskEntries by ClientTaskManager.entries.collectAsState()
     val modMigrationInProgress = isClientModMigrationInProgress(taskEntries)
     val hostState by hostListViewModel.uiState.collectAsStateWithLifecycle()
@@ -316,7 +316,7 @@ fun MenuScreen(
                 hazeState = LocalAppBackgroundHazeState.current,
                 items = MenuNavItems,
                 selectedIndex = selectedTab.ordinal,
-                onSelect = { selectedTab = MenuTab.entries[it] },
+                onSelect = { onSelectTab(MenuTab.entries[it]) },
             )
             OnlinePlayerHeadsRow(onlinePlayerIds)
         }
