@@ -204,6 +204,7 @@ internal class RendererState(
                         continue
                     }
                     val now = System.nanoTime()
+                    if (previousFrameTime == null) nextFrame = now
                     if (nextFrame > now) {
                         LockSupport.parkNanos(nextFrame - now)
                         continue
@@ -228,7 +229,7 @@ internal class RendererState(
                         running.set(false)
                         break
                     }
-                    nextFrame = now + 1_000_000_000L / TARGET_FPS
+                    nextFrame = nextBackgroundFrameDeadline(nextFrame, System.nanoTime())
                 }
             } finally {
                 pipeline.close()
@@ -246,6 +247,10 @@ internal class RendererState(
         }
     }
 }
+
+/** Keep wake-up jitter out of subsequent deadlines; a slow frame discards the missed schedule. */
+internal fun nextBackgroundFrameDeadline(scheduledNanos: Long, finishedNanos: Long): Long =
+    maxOf(scheduledNanos + 1_000_000_000L / TARGET_FPS, finishedNanos)
 
 /**
  * Owns every GL object of one renderer context and runs the fixed per-frame pass order.

@@ -102,7 +102,7 @@ data class SunBillboardBasis(
 )
 
 const val WATER_LEVEL = 2.35f
-const val TARGET_FPS = 20
+const val TARGET_FPS = 60
 const val RENDER_WIDTH = 1280
 const val RENDER_HEIGHT = 720
 

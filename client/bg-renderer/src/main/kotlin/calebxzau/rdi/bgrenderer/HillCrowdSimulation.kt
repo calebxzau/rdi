@@ -25,7 +25,17 @@ internal class HillCrowdRoute {
     val nodes: List<HillPathNode> = buildList {
         // Back edge -> right edge -> front edge -> left edge, then cross the back again to exit.
         // The two visits to the shared back edge are interleaved by the queue's headway below.
-        val waypoints = listOf(-24 to 12, -7 to 0, -3 to -1, 3 to -1, 3 to 3, -3 to 3, -3 to -1, 3 to -1, 8 to 3, 24 to 12)
+        // The top terrace narrows at the front/back corners. Follow its inset outline instead
+        // of a rectangle whose right edge and corners sit one block below the summit.
+        val approach = listOf(-24 to 12, -7 to 0)
+        val summitLap = listOf(
+            -2 to -1, 1 to -1,
+            1 to 0, 2 to 0, 2 to 2, 1 to 2,
+            1 to 3, -2 to 3,
+            -2 to 2, -3 to 2, -3 to 0, -2 to 0,
+            -2 to -1,
+        )
+        val waypoints = approach + summitLap + listOf(summitLap[1], 8 to 3, 24 to 12)
         fun append(x: Int, z: Int) {
             check(SUMMIT_BOULDERS.none { it.x == x && it.z == z }) { "Hill route crosses a summit boulder" }
             add(HillPathNode(x, z, terrainCellHeight(x + 0.5, z + 0.5, 1).toFloat()))
@@ -50,10 +60,10 @@ internal class HillCrowdRoute {
                 }
                 append(x, z)
             }
-            when (leg) {
-                1 -> summitStartIndex = lastIndex
-                5 -> summitLapEndIndex = lastIndex
-                6 -> descentStartIndex = lastIndex
+            when (leg + 1) {
+                approach.size -> summitStartIndex = lastIndex
+                approach.size + summitLap.lastIndex -> summitLapEndIndex = lastIndex
+                approach.size + summitLap.size -> descentStartIndex = lastIndex
             }
         }
     }

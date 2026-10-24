@@ -9,6 +9,7 @@ plugins {
 
 apply(from = "../gradle/target-platform.gradle.kts")
 val lwjglNatives: String by extra
+val rdiTargetPlatform: String by extra
 
 //project.version = libs.versions.app.get()
 
@@ -39,6 +40,8 @@ dependencies {
 
     testImplementation(kotlin("test"))
     testRuntimeOnly(libs.logback.classic)
+    // The preview exercises the production Skia bitmap pool as well as OpenGL rendering.
+    testRuntimeOnly("org.jetbrains.compose.desktop:desktop-jvm-$rdiTargetPlatform:${libs.versions.compose.plugin.get()}")
 }
 
 tasks.withType<Test>().configureEach {

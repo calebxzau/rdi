@@ -1,7 +1,9 @@
 package calebxzau.rdi.bgrenderer
 
+import androidx.compose.ui.graphics.painter.Painter
 import calebxzau.rdi.playermodel.core.PlayerSkinTexture
 import calebxzau.rdi.render.GlfwRuntime
+import kotlinx.coroutines.flow.MutableStateFlow
 import org.lwjgl.BufferUtils
 import org.lwjgl.glfw.GLFW.glfwMakeContextCurrent
 import org.lwjgl.opengl.GL
@@ -11,6 +13,7 @@ import org.lwjgl.system.MemoryUtil.NULL
 import java.awt.image.BufferedImage
 import java.io.File
 import java.nio.ByteBuffer
+import java.util.concurrent.locks.LockSupport
 import javax.imageio.ImageIO
 
 /**
@@ -51,9 +54,10 @@ fun main(args: Array<String>) {
             pipeline.render(0.0, appearance, pixels, crowd)
             if (scene == BackgroundSceneKind.GoldenValley) reportShadowContrast(pipeline.shadowMapTexture, pixels)
             var simulatedTime = 0.0
+            val frameSeconds = 1.0 / TARGET_FPS
             times.sorted().forEach { time ->
                 while (simulatedTime < time) {
-                    simulatedTime = minOf(time, simulatedTime + 0.05)
+                    simulatedTime = minOf(time, simulatedTime + frameSeconds)
                     pipeline.render(simulatedTime, appearance, pixels, crowd)
                 }
                 pipeline.render(time, appearance, pixels, crowd)
@@ -61,16 +65,62 @@ fun main(args: Array<String>) {
                 ImageIO.write(toImage(pixels), "png", file)
                 println("Wrote ${file.absolutePath}")
             }
-            repeat(30) { frame -> pipeline.render(simulatedTime + (frame + 1) * 0.05, appearance, pixels, crowd) }
-            val samples = (0 until 60).map { frame ->
-                val started = System.nanoTime()
-                pipeline.render(simulatedTime + 1.5 + (frame + 1) * 0.05, appearance, pixels, crowd)
-                System.nanoTime() - started
+            // Exercise the production bitmap copy, bounded pool and StateFlow publication too.
+            // Taking a draw lease simulates frame consumption; Compose drawing/upload is excluded.
+            createBackgroundFramePool().use { pool ->
+                val published = MutableStateFlow<Painter?>(null)
+                fun publishFrame() {
+                    checkNotNull(pool.write()).use { write ->
+                        write.payload.copyFrom(pixels, RENDER_WIDTH, RENDER_HEIGHT)
+                        published.value = write.publish()
+                    }
+                    checkNotNull(pool.drawLease()).close()
+                }
+                repeat(30) {
+                    simulatedTime += frameSeconds
+                    pipeline.render(simulatedTime, appearance, pixels, crowd)
+                    publishFrame()
+                }
+                val starts = LongArray(180)
+                val renderSamples = LongArray(starts.size)
+                val publishSamples = LongArray(starts.size)
+                val totalSamples = LongArray(starts.size)
+                val frameNanos = 1_000_000_000L / TARGET_FPS
+                var nextFrame = System.nanoTime()
+                val benchmarkStart = nextFrame
+                for (frame in starts.indices) {
+                    var now = System.nanoTime()
+                    while (now < nextFrame) {
+                        LockSupport.parkNanos(nextFrame - now)
+                        now = System.nanoTime()
+                    }
+                    starts[frame] = now
+                    pipeline.render(simulatedTime + (now - benchmarkStart) / 1_000_000_000.0, appearance, pixels, crowd)
+                    val rendered = System.nanoTime()
+                    publishFrame()
+                    val finished = System.nanoTime()
+                    renderSamples[frame] = rendered - now
+                    publishSamples[frame] = finished - rendered
+                    totalSamples[frame] = finished - now
+                    nextFrame = nextBackgroundFrameDeadline(nextFrame, finished)
+                }
+                fun report(label: String, samples: LongArray) {
+                    println(
+                        "$label over ${samples.size} frames: avg=${"%.2f".format(samples.average() / 1_000_000.0)}ms " +
+                            "max=${"%.2f".format(samples.max() / 1_000_000.0)}ms"
+                    )
+                }
+                report("Render + readback", renderSamples)
+                report("Copy + publication + simulated consumption", publishSamples)
+                report("Total producer work", totalSamples)
+                val producedFps = (starts.size - 1) * 1_000_000_000.0 / (starts.last() - starts.first())
+                println(
+                    "Producer cadence=${"%.2f".format(producedFps)}FPS target=${TARGET_FPS}FPS " +
+                        "overBudget=${totalSamples.count { it > frameNanos }}/${totalSamples.size} " +
+                        "(excludes Compose drawing/upload; fallback threshold 45ms)"
+                )
+                published.value = null
             }
-            println(
-                "Frame time over ${samples.size} frames: avg=${"%.2f".format(samples.average() / 1_000_000.0)}ms " +
-                    "max=${"%.2f".format(samples.max() / 1_000_000.0)}ms (fallback threshold 45ms)"
-            )
 
         }
     } finally {

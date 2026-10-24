@@ -6,6 +6,7 @@ import calebxzhou.rdi.client.Const
 import calebxzhou.rdi.client.auth.LocalCredentials
 import calebxzhou.rdi.client.auth.updateLastPlayHost
 import calebxzhou.rdi.client.net.server
+import calebxzhou.rdi.client.net.lgr
 import calebxzhou.rdi.client.service.StartPlayResult
 import calebxzhou.rdi.client.service.startHostPlay
 import calebxzhou.rdi.client.ui.McPlayArgs
@@ -86,6 +87,8 @@ class HostListViewModel(
     private var retryLoadAfterCurrentErrorId: Long? = null
     /** 加载途中打开了“显示其他房间”，当前这轮结束后再补一轮。 */
     private var loadOtherHostsAfterCurrentJob = false
+    private var menuHasResumed = false
+    private var availableRefreshRequested = false
 
     init {
         refresh()
@@ -101,6 +104,7 @@ class HostListViewModel(
         activeErrorId = null
         retryLoadAfterCurrentErrorId = null
         loadOtherHostsAfterCurrentJob = false
+        availableRefreshRequested = false
         _uiState.value = HostListUiState(initialLoading = true, showOtherHosts = showOtherHosts)
 
         if (useMockData) {
@@ -119,6 +123,17 @@ class HostListViewModel(
         }
     }
 
+    /** 首次展示复用初始化请求；返回菜单时刷新可玩列表，保留分页、过滤和现有卡片。 */
+    fun onMenuResumed() {
+        if (!menuHasResumed) {
+            menuHasResumed = true
+            return
+        }
+        if (useMockData) return
+        availableRefreshRequested = true
+        loadMore()
+    }
+
     fun toggleOtherHosts() {
         showOtherHosts = !showOtherHosts
         _uiState.update { it.copy(showOtherHosts = showOtherHosts) }
@@ -130,19 +145,24 @@ class HostListViewModel(
         if (useMockData || loadJob?.isActive == true || _uiState.value.retryLoadOnError) return
         val currentGeneration = generation
         val currentSourceState = sourceState
-        if (allSourcesEnded(currentSourceState)) return
+        if (!availableRefreshRequested && allSourcesEnded(currentSourceState)) return
+        val refreshAvailable = availableRefreshRequested
+        availableRefreshRequested = false
+        if (refreshAvailable) currentSourceState.legacyAvailableEnded = false
         loadJob = viewModelScope.launch {
-            loadMoreInternal(currentGeneration, currentSourceState)
+            loadMoreInternal(currentGeneration, currentSourceState, loadUnavailable = !refreshAvailable)
         }
     }
 
     private suspend fun loadMoreInternal(
         currentGeneration: Long,
         currentSourceState: HostListSourceState,
+        loadUnavailable: Boolean = true,
     ) {
         if (!isCurrent(currentGeneration, currentSourceState)) return
         _uiState.update { it.copy(loadingMore = true) }
         val loaded = mutableListOf<UnifiedHostBrief>()
+        var reloadedAvailable = false
         var retryAfterFinish = false
         try {
             if (!currentSourceState.legacyAvailableEnded) {
@@ -150,12 +170,13 @@ class HostListViewModel(
                 if (!isCurrent(currentGeneration, currentSourceState)) return
                 if (result.isSuccess) {
                     loaded += result.getOrThrow().map(UnifiedHostBrief::fromLegacy)
+                    reloadedAvailable = true
                     currentSourceState.legacyAvailableEnded = true
                 } else {
                     showSourceError("加载我的房间失败", result.exceptionOrNull() ?: IllegalStateException("未知错误"))
                 }
             }
-            if (showOtherHosts && !currentSourceState.legacyUnavailableEnded) {
+            if (loadUnavailable && showOtherHosts && !currentSourceState.legacyUnavailableEnded) {
                 val result = resultOf {
                     gateway.loadLegacyUnavailable(currentSourceState.legacyUnavailablePage).getOrThrow()
                 }
@@ -173,7 +194,15 @@ class HostListViewModel(
                 }
             }
             if (isCurrent(currentGeneration, currentSourceState)) {
-                _uiState.update { it.copy(hosts = mergeUnifiedHosts(it.hosts, loaded)) }
+                _uiState.update {
+                    // 新快照替换旧可玩列表；保留其他房间的分页缓存，同ID采用最新数据。
+                    val hosts = if (reloadedAvailable) {
+                        mergeUnifiedHosts(loaded, it.hosts.filterNot { host -> host.playable })
+                    } else {
+                        mergeUnifiedHosts(it.hosts, loaded)
+                    }
+                    it.copy(hosts = hosts)
+                }
             }
         } catch (cancel: CancellationException) {
             throw cancel
@@ -196,7 +225,11 @@ class HostListViewModel(
                 }
                 loadJob = null
             }
-            if (retryAfterFinish && isCurrent(currentGeneration, currentSourceState)) loadMore()
+            if (isCurrent(currentGeneration, currentSourceState)) {
+                // 刷新优先，但不能丢掉加载途中点击“显示其他房间”的后续分页请求。
+                if (availableRefreshRequested && retryAfterFinish) loadOtherHostsAfterCurrentJob = true
+                if (availableRefreshRequested || retryAfterFinish) loadMore()
+            }
         }
     }
 
@@ -259,6 +292,7 @@ class HostListViewModel(
     }
 
     private fun showSourceError(prefix: String, cause: Throwable) {
+        lgr.warn(cause) { prefix }
         activeErrorId = ++nextErrorId
         _uiState.update {
             it.copy(

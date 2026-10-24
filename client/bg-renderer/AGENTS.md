@@ -27,6 +27,9 @@ Grassland is disabled by default; explicitly pass `BackgroundSceneKind.Grassland
 
 - `HillCrowdSimulation.kt` follows authored cell-center steps up the left slope, around the
   summit (back -> right -> front -> left), then across the back again and down the right slope.
+  The summit loop follows the inset outline of the highest terrace, including its narrower
+  front/back corners; every loop step and the second back-edge crossing stay at `HILL_TOP_Y`.
+  The route test samples both feet throughout these segments to prevent stepping onto a lower tier.
   Slope progress is 2.4 blocks/s (1.5x the original); summit progress stays at 1.6 blocks/s.
   Both loop endpoints are outside
   the entire camera orbit. Heights use the same `terrainCellHeight` sampling as the rendered
@@ -68,7 +71,7 @@ Grassland is disabled by default; explicitly pass `BackgroundSceneKind.Grassland
   These are skin representatives, not online-player presence or named account identities.
 - Grassland skips water/reflection and volumetric fog passes, and bypasses atmospheric haze
   and world-edge color blending. Valley retains the documented pass order below.
-  Both retain the shared HDR/post-processing, 720p/20FPS publication, and fallback policy.
+  Both retain the shared HDR/post-processing, 720p/60FPS target publication, and fallback policy.
 - Inactive time does not advance animation; shutdown requests never join on the UI thread.
   Initialization checks shutdown between stages and cleanup stays on the render thread.
 - `:bg-renderer:renderPreview` defaults to grassland and reads optional PNGs from
@@ -105,7 +108,7 @@ Main files:
 - `StaticShadow.kt`: the orthographic static shadow frame and the AABB corner-AO helper (used by the houses). `StaticSurface.kt`: exposed-face rectangle subtraction between boxes (used by the houses).
 - `src/test/.../BackgroundPreview.kt`: dev-only GPU preview (see Validation).
 
-`BackgroundRenderer.openSession()` returns a `BackgroundRenderSession` exposing `frame`, `failure`, `lowPerformance`, `setActive(Boolean)`, `setPlayerAppearance`, and `close()`. The renderer uses a hidden OpenGL 4.5 core context on the daemon thread `rdi-background-renderer`, renders a fixed `1280x720` frame at `20FPS`, synchronously reads BGRA pixels, and publishes a lightweight `BackgroundFramePainter` token. `AppBackgroundImage` draws the token directly; it must not wrap each frame in `BitmapPainter`.
+`BackgroundRenderer.openSession()` returns a `BackgroundRenderSession` exposing `frame`, `failure`, `lowPerformance`, `setActive(Boolean)`, `setPlayerAppearance`, and `close()`. The renderer uses a hidden OpenGL 4.5 core context on the daemon thread `rdi-background-renderer`, renders a fixed `1280x720` frame targeting `60FPS`, synchronously reads BGRA pixels, and publishes a lightweight `BackgroundFramePainter` token. `AppBackgroundImage` draws the token directly; it must not wrap each frame in `BitmapPainter`.
 
 ### Terrain
 
@@ -183,6 +186,10 @@ Do not move route, window, Compose theme, or fallback-resource policy into `:bg-
 
 ## Low-Performance Policy
 
+The render loop targets 60FPS using continuous deadlines, so wake-up jitter does not accumulate.
+After a slow frame it discards the missed schedule; resuming resets the deadline and inactive time
+does not advance animation. Animation speeds remain based on elapsed time.
+
 `FramePerformanceMonitor` measures the complete frame path (render, resolve, readback, conversion, publication): warm-up `30` frames, sample window `60` frames, fallback when the average exceeds `45ms`. Keep it resistant to isolated spikes, with pure-logic tests for fast frames, isolated spikes, and sustained slow frames.
 
 ## Shared GLFW Lifecycle
@@ -194,6 +201,23 @@ Do not move route, window, Compose theme, or fallback-resource policy into `:bg-
 Bundled vanilla textures were extracted from `client/mc/1.21.1-neoforge/build/moddev/artifacts/neoforge-21.1.250-client-extra-aka-minecraft-resources.jar`: `grass_block_top`, `grass_block_side`, `dirt`, `stone`, `snow`, `sand`, `gravel`, `oak_planks`, `oak_log`, `oak_log_top` (currently unused), `birch_log`, `spruce_log`, `oak_leaves`, `birch_leaves`, `spruce_leaves`, `short_grass`, `spruce_planks`, `cobblestone`, `glowstone`, first-frame `lantern`, `environment/sun`, and `environment/clouds`. The user accepted responsibility for redistributing them. Leaves and short grass are grayscale and tinted with Minecraft's plains/birch/spruce foliage colors. The removed cactus textures were archived under `DEL/bg-renderer-golden-valley-phase1-20261014/`. `grass_block_top` is grayscale and tinted by the material color; `grass_block_side` already carries its green fringe.
 
 ## Validation
+
+60FPS revision verified 2026-10-24: Windows `:bg-renderer:test` passed 108 tests with no failures
+or skips, and UI `:compileKotlin` passed (`build/60fps-final-20261024.log`). The standalone
+Radeon 780M valley preview with 50 identities measured 59.96FPS across 180 paced frames:
+render/readback averaged 8.38ms, bitmap copy/publication/simulated consumption 0.79ms,
+total producer work 9.17ms average / 16.48ms maximum, with no frames over the 16.67ms budget
+(`build/60fps-paced-preview-20261024.log`). A run alongside the tests measured 59.54FPS with
+one over-budget frame. These measurements exclude Compose drawing/upload and screen presentation.
+The preview now uses the production three-slot Skia pool and needs the platform Compose Desktop
+native runtime on its test runtime classpath.
+
+Top-terrace route revision verified 2026-10-24: Windows focused `HillCrowdSimulationTest`
+passed all 8 tests, including continuous top-tier foot support, terrain clearance and 50-player
+spacing. The Radeon 780M valley preview with 50 identities averaged 6.32ms/frame (max 8.45ms)
+over 60 frames. Captures at 0.5, 3.5, 8.5 and 16.5 seconds are under `build/bg-preview/valley`;
+log: `build/hill-top-tier-preview-20261024.log`. This is standalone pipeline timing, excluding
+the launcher's Compose presentation and frame publication costs.
 
 Hill crowd lap/speed revision verified 2026-10-22: Windows `:bg-renderer:test` (105 tests, including 7 hill
 simulation tests; no failures or skips) and UI `:compileKotlin` passed. The GPU valley preview
@@ -209,7 +233,7 @@ Run Gradle on Windows from `client/ui` (IntelliJ MCP `execute_terminal_command` 
 .\gradlew.bat :render-core:test :bg-renderer:test :player-model:test :compileKotlin
 ```
 
-`:bg-renderer:renderPreview` is a dev-only GPU check (needs a desktop GPU, not part of `test`): it renders the real pipeline into `client/bg-renderer/build/bg-preview/frame-*.png`, writes `shadow-depth.png`, and prints scene build/initialize times, vertex counts, average/max frame time over 60 frames, and a shadow-contrast probe (CPU-classified shadowed vs lit grass tops). `-PpreviewTimes=0,15,45` selects the written frames' elapsed seconds.
+`:bg-renderer:renderPreview` is a dev-only GPU check (needs a desktop GPU, not part of `test`): it renders the real pipeline into `client/bg-renderer/build/bg-preview/frame-*.png`, writes `shadow-depth.png`, and prints scene build/initialize times, vertex counts, render/readback and copy/publication timings plus producer cadence over 180 paced frames (excluding Compose drawing/upload), and a shadow-contrast probe (CPU-classified shadowed vs lit grass tops). `-PpreviewTimes=0,15,45` selects the written frames' elapsed seconds.
 
 Last verified 2026-10-14 on an AMD Radeon 780M (integrated): all `:render-core`, `:bg-renderer` (85 tests), `:player-model` tests and `client/ui :compileKotlin` passed. The preview built the scene in ~0.4-0.9s, initialized GL (uploads, shadow bake, fog noise) in ~0.5-1s, and rendered frames in ~5.5-7ms average (fallback threshold 45ms) with ~663k scene vertices (2026-10-14 reference pass A/B: ~5.5-5.8ms with ~668k; after C: ~5.2-5.7ms with ~585k and 87 tests; after D: ~5.3-6.4ms with ~592k and 88 tests; wide view (summit 84, FOV 84): ~6.0ms with ~677k and 89 tests; bigger range: ~7.3ms (max ~12ms) with ~714k). Without the vegetation-first draw order the forest cost ~11ms. The shadow probe showed shadowed grass tops darker than lit ones and the overlay matched the dark strips below terrace steps. The user ran the phase-1 scene in the launcher and confirmed it works; long-running native memory is still unverified.
 

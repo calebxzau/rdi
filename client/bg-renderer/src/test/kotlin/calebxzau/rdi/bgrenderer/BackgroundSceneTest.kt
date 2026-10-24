@@ -374,7 +374,26 @@ class BackgroundSceneTest {
         assertEquals(RENDER_WIDTH, 1280)
         assertEquals(RENDER_HEIGHT, 720)
         assertEquals(RENDER_WIDTH * 9, RENDER_HEIGHT * 16)
-        assertEquals(TARGET_FPS, 20)
+        assertEquals(TARGET_FPS, 60)
+    }
+
+    @Test
+    fun frameDeadlinesDoNotAccumulateLateWakeups() {
+        var deadline = 0L
+        repeat(60) {
+            val wokeUp = deadline + 1_000_000L
+            deadline = nextBackgroundFrameDeadline(deadline, wokeUp + 9_000_000L)
+        }
+        // 60 intervals stay within rounding error of one second despite 1ms wake-up jitter.
+        assertTrue(abs(deadline - 1_000_000_000L) < 60L)
+    }
+
+    @Test
+    fun slowFrameDiscardsMissedDeadlinesInsteadOfQueuingCatchupFrames() {
+        val finished = 100_000_000L
+        val next = nextBackgroundFrameDeadline(0L, finished)
+        assertEquals(finished, next)
+        assertEquals(finished + 1_000_000_000L / TARGET_FPS, nextBackgroundFrameDeadline(next, finished + 9_000_000L))
     }
 
     @Test

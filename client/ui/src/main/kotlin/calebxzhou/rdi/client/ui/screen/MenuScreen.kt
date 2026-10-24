@@ -43,6 +43,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.repeatOnLifecycle
@@ -147,6 +148,9 @@ fun MenuScreen(
     val hostState by hostListViewModel.uiState.collectAsStateWithLifecycle()
     val onlinePlayerIds by onlinePlayersViewModel.onlinePlayerIds.collectAsStateWithLifecycle()
     val lifecycleOwner = LocalLifecycleOwner.current
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
+        hostListViewModel.onMenuResumed()
+    }
     // 只在主菜单可见时轮询在线玩家
     LaunchedEffect(lifecycleOwner, onlinePlayersViewModel) {
         lifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
@@ -174,8 +178,7 @@ fun MenuScreen(
 
     // 可玩的房间在前，暂不可玩的默认隐藏，显示时排在后面并变暗
     val shownHosts = remember(hostState.hosts, hostState.showOtherHosts, loggedAccount.isDav) {
-        val (playable, nonPlayable) = groupUnifiedHosts(applyDavPlayableOverride(hostState.hosts, loggedAccount.isDav))
-        if (hostState.showOtherHosts) playable + nonPlayable else playable
+        selectShownHosts(hostState.hosts, hostState.showOtherHosts, loggedAccount.isDav)
     }
     rememberPlayerInfoPrefetch(shownHosts.flatMap { listOfNotNull(it.ownerId) + it.onlinePlayerIds })
     LaunchedEffect(hostGrid, shownHosts.size) {

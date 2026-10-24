@@ -48,6 +48,25 @@ class HillCrowdSimulationTest {
     }
 
     @Test
+    fun summitLapAndExitCrossingStayOnTopTerraceIncludingBothFeet() {
+        val runner = HillRunner("summit", 0)
+        for (index in route.summitStartIndex..route.descentStartIndex) {
+            val node = route.nodes[index]
+            assertEquals(HILL_TOP_Y.toFloat(), node.height, "Summit node $index: $node")
+        }
+        // Check the whole move, including the inset corners, rather than only waypoint heights.
+        for (sample in route.summitStartIndex * 100..route.descentStartIndex * 100) {
+            route.pose(sample / 100.0, runner)
+            assertEquals(HILL_TOP_Y.toFloat(), runner.shadowY, "Shadow at $sample")
+            for (dx in listOf(-0.4f, 0.4f)) for (dz in listOf(-0.4f, 0.4f)) {
+                val x = floor((runner.x + dx).toDouble()) + 0.5
+                val z = floor((runner.z + dz).toDouble()) + 0.5
+                assertEquals(HILL_TOP_Y, terrainCellHeight(x, z, 1), "Foot at $sample: ($x, $z)")
+            }
+        }
+    }
+
+    @Test
     fun bothFeetClearRenderedTerrainThroughoutEveryStep() {
         val runner = HillRunner("skin", 0)
         repeat((route.length * 100).toInt()) { index ->
