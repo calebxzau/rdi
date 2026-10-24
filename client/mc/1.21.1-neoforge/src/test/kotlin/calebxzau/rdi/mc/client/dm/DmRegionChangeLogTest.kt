@@ -13,6 +13,7 @@ class DmRegionChangeLogTest {
             DmRegionChangeLog.activate(root, 1024)
             DmRegionChangeLog.recordWrite("region/r.0.0.mca", 1, 2, 1, byteArrayOf(2))
             assertTrue(!DmRegionChangeLog.recordScan(DmRegionChange(DmRegionChunkKey("region/r.0.0.mca", 1), 1, byteArrayOf(1), 1)))
+            DmRegionChangeLog.releaseReconcile()
             assertEquals(2, DmRegionChangeLog.drain().single().bytes!!.single().toInt())
         } finally {
             DmRegionChangeLog.discard()

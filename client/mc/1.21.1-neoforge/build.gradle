@@ -229,6 +229,7 @@ tasks.register('generateModMetadata', ProcessResources) {
 }
 
 sourceSets.named('main') {
+    kotlin.srcDir '../../../mc/common/registry-compat/src/21/kotlin'
     kotlin.srcDir '../../../mc/common/2021/src/client/kotlin'
     kotlin.srcDir '../../../mc/chunkcache/src/main/kotlin'
     kotlin.srcDir '../../../mc/chunkcache/src/21/kotlin'
@@ -253,6 +254,7 @@ sourceSets.named('main') {
 }
 
 sourceSets.named('test') {
+    kotlin.srcDir '../../../mc/common/registry-compat/src/21Test/kotlin'
     kotlin.srcDir '../../../mc/chunkcache/src/test/kotlin'
     kotlin.srcDir '../../../mc/chunkcache/src/21Test/kotlin'
     kotlin.srcDir '../../../mc/chunkcache/src/clientTest/kotlin'

@@ -103,6 +103,7 @@ neoForge {
 }
 
 sourceSets.named('main') {
+    kotlin.srcDir '../../../mc/common/registry-compat/src/21/kotlin'
     kotlin.srcDir '../../../mc/chunkcache/src/main/kotlin'
     kotlin.srcDir '../../../mc/chunkcache/src/21/kotlin'
     java.srcDir '../../../mc/chunkcache/src/server/java'
@@ -124,6 +125,7 @@ sourceSets.named('main') {
 }
 
 sourceSets.named('test') {
+    kotlin.srcDir '../../../mc/common/registry-compat/src/21Test/kotlin'
     kotlin.srcDir '../../../mc/chunkcache/src/test/kotlin'
     kotlin.srcDir '../../../mc/chunkcache/src/21Test/kotlin'
     kotlin.srcDir '../../../mc/chunkcache/src/serverTest/kotlin'
