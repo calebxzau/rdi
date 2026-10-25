@@ -3,7 +3,6 @@ package calebxzhou.rdi.master.service.modpack
 import calebxzau.rdi.common.model.Content
 import calebxzau.rdi.common.model.ContentSide
 import calebxzau.rdi.common.model.validateAndMergeClientExtras
-import calebxzhou.rdi.common.DEBUG
 import calebxzhou.rdi.common.VALID_NAME_REGEX
 import calebxzhou.rdi.common.archive.PackArchiveFormat
 import calebxzhou.rdi.common.archive.detectArchiveFormat
@@ -19,6 +18,7 @@ import calebxzhou.rdi.master.exception.ParamError
 import calebxzhou.rdi.master.net.*
 import calebxzhou.rdi.master.service.*
 import calebxzhou.rdi.master.service.modpack.ModpackServiceKernel.dbcl
+import calebxzhou.rdi.master.service.modpack.ModpackVersionService.requireUploadAccount
 import com.mongodb.ErrorCategory
 import com.mongodb.MongoWriteException
 import com.mongodb.client.model.Filters.*
@@ -105,11 +105,11 @@ object ModpackUploadService {
         info: String?,
         categories: List<Modpack.Category>,
     ): ValidatedCreateMetadata {
+        requireUploadAccount(player)
         requireModpackUploadVersion(mcVer)
         requireModpackUploadLoader(mcVer, modLoader)
         val normalizedVerName = ModpackQueryService.run { verName.validateVerName() }.getOrThrow()
         val normalizedCategories = Modpack.normalizeCategories(categories)
-        if (!player.hasMsid && !DEBUG) throw RequestError("必须有微软账号才能传包")
         if (dbcl.countDocuments(eq(Modpack::authorId.name, player._id)) >= MAX_MODPACK_PER_USER && !player.isDav) {
             throw RequestError("一个人最多传${MAX_MODPACK_PER_USER}个包")
         }
@@ -148,6 +148,7 @@ object ModpackUploadService {
     }
 
     suspend fun ModpackUploadPreflightDto.preflight(player: RAccount) {
+        requireUploadAccount(player)
         if (modpackId == null) {
             validateCreateMetadata(
                 player = player,
@@ -234,6 +235,7 @@ object ModpackUploadService {
         mods: MutableList<Mod>,
         clientExtras: MutableList<Content> = arrayListOf(),
     ) {
+        requireUploadAccount(player)
         val normalizedVerName = ModpackQueryService.run { verName.validateVerName() }.getOrThrow()
         requireModpackUploadVersion(modpack.mcVer)
         requireModpackUploadLoader(modpack.mcVer, modpack.modloader)

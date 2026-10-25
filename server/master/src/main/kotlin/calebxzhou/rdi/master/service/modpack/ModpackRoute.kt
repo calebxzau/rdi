@@ -16,6 +16,7 @@ import calebxzhou.rdi.master.service.modpack.ModpackVersionService.changeOptions
 import calebxzhou.rdi.master.service.modpack.ModpackUploadService.createVersion
 import calebxzhou.rdi.master.service.modpack.ModpackUploadService.createWithVersion
 import calebxzhou.rdi.master.service.modpack.ModpackUploadService.preflight
+import calebxzhou.rdi.master.service.modpack.ModpackVersionService.requireUploadAccount
 import calebxzhou.rdi.master.service.modpack.ModpackUploadService.validateVersionUpload
 import calebxzhou.rdi.master.service.modpack.ModpackVersionService.deleteModpack
 import calebxzhou.rdi.master.service.modpack.ModpackVersionService.deleteVersion
@@ -70,6 +71,7 @@ fun Route.modpackRoutes() {
         }
         route("/upload-sessions") {
             post {
+                requireUploadAccount(call.player())
                 response(
                     data = parallelUploadService.create(
                         call.uid,
@@ -86,6 +88,7 @@ fun Route.modpackRoutes() {
                     ok()
                 }
                 put("/parts/{index}") {
+                    requireUploadAccount(call.player())
                     val partSha1 = call.request.headers[PART_SHA1_HEADER]
                         ?: throw ParamError("缺少分片SHA-1")
                     val contentLength = call.request.headers[HttpHeaders.ContentLength]?.toLongOrNull()
@@ -100,13 +103,15 @@ fun Route.modpackRoutes() {
                     ok()
                 }
                 post("/complete") {
+                    requireUploadAccount(call.player())
                     response(data = parallelUploadService.complete(call.uid, uploadSessionId()).getOrThrow())
                 }
             }
         }
         post("/from-upload") {
-            val dto = call.receive<ModpackCreateFromUploadDto>()
             val player = call.player()
+            requireUploadAccount(player)
+            val dto = call.receive<ModpackCreateFromUploadDto>()
             parallelUploadService.withReadyUpload(player._id, dto.uploadId) { uploadFile ->
                 dto.modpack.createWithVersion(player, uploadFile)
             }.getOrThrow()

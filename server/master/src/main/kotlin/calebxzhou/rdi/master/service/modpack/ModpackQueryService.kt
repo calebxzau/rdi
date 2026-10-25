@@ -47,6 +47,7 @@ object ModpackQueryService {
     suspend fun listByAuthor(uid: ObjectId): List<Modpack> = dbcl.find(eq("authorId", uid)).toList()
 
     suspend fun listUploadable(player: RAccount): List<Modpack> {
+        if (!ModpackVersionService.canUploadModpacks(player)) return emptyList()
         if (player.isDav) return dbcl.find().toList()
         return dbcl.find(
             or(

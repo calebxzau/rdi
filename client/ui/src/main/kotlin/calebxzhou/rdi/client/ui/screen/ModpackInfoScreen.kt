@@ -17,6 +17,7 @@ import calebxzhou.rdi.client.ui.comp.ModpackCategoryChips
 import calebxzhou.rdi.client.ui.comp.ModpackCategorySelector
 import calebxzhou.rdi.client.ui.comp.ModpackDownloadMethodDialog
 import calebxzhou.rdi.common.model.Modpack
+import calebxzhou.rdi.common.DEBUG
 import calebxzhou.rdi.common.model.isDav
 import calebxzhou.rdi.common.util.toFriendlyDateTime
 import org.bson.types.ObjectId
@@ -336,7 +337,7 @@ private fun ModpackDownloadVersions(
                     onRequestDownload = onRequestDownload,
                 )
             }
-            if (pack.canUploadVersion) {
+            if (pack.canUploadVersion && (loggedAccount.hasMsid || DEBUG)) {
                 CircleIconButton(
                     "\uDB85\uDC03",
                     "上传新版本",

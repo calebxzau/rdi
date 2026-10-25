@@ -1,6 +1,7 @@
 package calebxzhou.rdi.master.service.modpack
 
 import calebxzhou.rdi.common.model.*
+import calebxzhou.rdi.common.DEBUG
 import calebxzhou.rdi.common.exception.RequestError
 import calebxzhou.rdi.common.service.ModpackModProcessor
 import calebxzhou.rdi.common.service.ModService
@@ -34,6 +35,15 @@ import java.io.File
 object ModpackVersionService {
     private const val MAX_ALLOWED_UPLOADERS = 100
     private val dbcl get() = ModpackServiceKernel.dbcl
+
+    internal fun canUploadModpacks(player: RAccount): Boolean = DEBUG || player.hasMsid
+
+    internal fun requireUploadAccount(player: RAccount) {
+        if (!canUploadModpacks(player)) {
+            throw RequestError("请先绑定微软账号，再上传整合包或新版本")
+        }
+    }
+
     fun ModpackContext.requireAuthor(): ModpackContext {
         if (modpack.authorId != player._id && !player.isDav) throw RequestError("不是你的整合包")
         return this
@@ -53,6 +63,7 @@ object ModpackVersionService {
     }
 
     fun ModpackContext.canUploadVersion(): Boolean {
+        if (!canUploadModpacks(player)) return false
         val allowedUploaderIds = modpack.allowUploaderIds
         return player.isDav ||
             modpack.authorId == player._id ||
@@ -61,6 +72,7 @@ object ModpackVersionService {
     }
 
     fun ModpackContext.requireCanUploadVersion(): ModpackContext {
+        requireUploadAccount(player)
         if (!canUploadVersion()) {
             throw RequestError("没有上传新版本的权限")
         }
