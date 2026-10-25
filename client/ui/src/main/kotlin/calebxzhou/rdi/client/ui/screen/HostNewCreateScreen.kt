@@ -437,6 +437,7 @@ fun HostNewCreateScreen(
                                             RRow {
 
                                                 Text("拉朋友玩", fontWeight = FontWeight.Bold)
+                                                Text("请至少添加一个房间成员")
                                                 CircleIconButton(
                                                     icon = "\uDB80\uDD2C",
                                                     label = "添加",
