@@ -793,7 +793,7 @@ internal fun LocalModpackManager.Dialogs() {
 private val INSTALL_TIME_FORMAT: DateTimeFormatter =
     DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm").withZone(ZoneId.systemDefault())
 
-/** Modpack tile ([glass] picks how its rim is drawn): left click opens the action menu at the cursor, right click plays singleplayer, middle click opens its plaza page. */
+/** Modpack tile ([glass] picks how its rim is drawn): left click opens its plaza page, right click opens the action menu at the cursor, middle click plays singleplayer. */
 @Composable
 private fun InstalledCard(
     pack: ModpackLocalDir,
@@ -822,9 +822,9 @@ private fun InstalledCard(
                 append("安装于${INSTALL_TIME_FORMAT.format(Instant.ofEpochMilli(pack.createTime))}")
             },
             actions = listOfNotNull(
-                CardHintAction(HintMouseButton.Left, "菜单"),
-                CardHintAction(HintMouseButton.Right, "单机玩"),
-                CardHintAction(HintMouseButton.Middle, "发布页").takeIf { pack.vo != null },
+                CardHintAction(HintMouseButton.Left, "发布页").takeIf { pack.vo != null },
+                CardHintAction(HintMouseButton.Right, "菜单"),
+                CardHintAction(HintMouseButton.Middle, "单机玩"),
             ),
         )
     }
@@ -891,9 +891,9 @@ private fun InstalledCard(
             hint = hint,
             statusDotColor = TILE_ACTIVE_DOT_COLOR.takeIf { isRunning },
             showHint = !expanded,
-            onPrimaryClick = { expanded = true },
-            onSecondaryClick = onOpenPlay,
-            onTertiaryClick = onOpenModpackInfo,
+            onPrimaryClick = onOpenModpackInfo,
+            onSecondaryClick = { expanded = true },
+            onTertiaryClick = onOpenPlay,
         ) {
             val iconModifier = Modifier.fillMaxSize().clip(TileIconShape)
             val iconUrl = pack.iconUrl?.takeIf(String::isNotBlank)
