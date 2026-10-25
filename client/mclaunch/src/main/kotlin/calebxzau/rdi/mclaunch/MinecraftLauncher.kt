@@ -266,7 +266,9 @@ class MinecraftLauncher(
                 cacheRoot = directories.toolsDir.resolve("kotlin-runtime"),
             ).getOrElse { error ->
                 lgr.error(error) { "Minecraft Kotlin运行库不可用" }
-                throw RequestError("Kotlin运行库冲突，无法启动游戏", error)
+                val errorType = error.javaClass.simpleName.ifBlank { error.javaClass.name }
+                val detail = error.message?.takeIf(String::isNotBlank)?.let { "$errorType: $it" } ?: errorType
+                throw RequestError("Kotlin运行库准备失败：${detail}", error)
             }
         } else {
             emptyList()
