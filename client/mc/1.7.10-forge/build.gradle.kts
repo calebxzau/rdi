@@ -9,7 +9,6 @@ import kotlin.io.encoding.Base64
 
 plugins {
     kotlin("jvm")
-    kotlin("plugin.serialization")
     id("com.gtnewhorizons.gtnhconvention")
 }
 evaluationDependsOn(":c-mc-common")
@@ -33,11 +32,6 @@ kotlin {
     compilerOptions {
         jvmTarget = JvmTarget.JVM_21
     }
-    sourceSets.all {
-        languageSettings {
-            optIn("kotlinx.serialization.ExperimentalSerializationApi")
-        }
-    }
 }
 java {
     sourceCompatibility = JavaVersion.VERSION_21
@@ -51,8 +45,6 @@ kotlin.sourceSets.named("main") {
     kotlin.srcDir(file("../../../mc/common/codec/src/netty40/kotlin"))
     kotlin.srcDir(file("../../../mc/common/codec/src/1710/kotlin"))
     kotlin.srcDir(file("../../../mc/rcmd/src/main/kotlin"))
-    kotlin.srcDir(file("../../../mc/rmcp/common/src/main/kotlin"))
-    kotlin.srcDir(file("../../../mc/rmcp/client/src/main/kotlin"))
     kotlin.srcDir(file("../../../ktutils/std/src/main/kotlin"))
 }
 
@@ -73,13 +65,6 @@ dependencies {
     testImplementation(kotlin("test-junit5"))
     testRuntimeOnly("org.junit.jupiter:junit-jupiter-engine:6.1.1")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher:6.1.1")
-    add("shaded", "io.fusionauth:java-http:1.4.0")
-    implementation( "org.jetbrains.kotlinx:kotlinx-serialization-json:1.11.0")
-    add("shaded", "io.heapy.kotaml:kotaml:0.108.0") {
-        exclude(group = "org.jetbrains.kotlin")
-        exclude(group = "org.jetbrains.kotlinx", module = "kotlinx-serialization-core")
-        exclude(group = "org.jetbrains.kotlinx", module = "kotlinx-serialization-json")
-    }
 }
 
 tasks.withType<Jar>().configureEach {

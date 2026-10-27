@@ -8,7 +8,6 @@ import calebxzhou.rdi.mc.rcmd.RcmdSource
 import calebxzhou.rdi.mc.rcmd.chat.PlayerChatRangeState
 import calebxzhou.rdi.mc.rcmd.chat.RChatMessage
 import calebxzhou.rdi.mc.rcmd.tpa.TpaService
-import calebxzhou.rdi.mc.server.mcp.McpServerNetwork1710
 import calebxzhou.rdi.mc.server.network.RServerNetwork
 import calebxzhou.rdi.mc.server.rcmd.PlayerNbtChatRangeStore
 import calebxzhou.rdi.mc.server.rcmd.RcmdServerCommands1710
@@ -48,7 +47,6 @@ class RDI {
 
     init {
         RServerNetwork.register()
-        McpServerNetwork1710.register()
         FMLCommonHandler.instance().bus().register(this)
         MinecraftForge.EVENT_BUS.register(this)
     }

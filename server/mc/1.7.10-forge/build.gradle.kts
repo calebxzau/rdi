@@ -8,7 +8,6 @@ import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 plugins {
     kotlin("jvm")
-    kotlin("plugin.serialization")
     id("com.gtnewhorizons.gtnhconvention")
 }
 evaluationDependsOn(":s-mc-common")
@@ -33,11 +32,6 @@ kotlin {
     compilerOptions {
         jvmTarget = JvmTarget.JVM_21
     }
-    sourceSets.all {
-        languageSettings {
-            optIn("kotlinx.serialization.ExperimentalSerializationApi")
-        }
-    }
 }
 
 kotlin.sourceSets.named("main") {
@@ -45,7 +39,6 @@ kotlin.sourceSets.named("main") {
     kotlin.srcDir(file("../../../mc/common/codec/src/netty40/kotlin"))
     kotlin.srcDir(file("../../../mc/common/codec/src/1710/kotlin"))
     kotlin.srcDir(file("../../../mc/rcmd/src/main/kotlin"))
-    kotlin.srcDir(file("../../../mc/rmcp/common/src/main/kotlin"))
     kotlin.srcDir(file("../../../ktutils/std/src/main/kotlin"))
 }
 
@@ -57,7 +50,6 @@ configurations.named("implementation") {
 dependencies {
     add("shaded", "com.github.luben:zstd-jni:1.5.7-11:linux_amd64")
     runtimeOnly("com.github.luben:zstd-jni:1.5.7-11:win_amd64")
-    add("shaded", "org.jetbrains.kotlinx:kotlinx-serialization-json:1.11.0")
 }
 
 tasks.withType<Jar>().configureEach {
