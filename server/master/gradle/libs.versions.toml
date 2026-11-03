@@ -2,7 +2,7 @@
 gson = "2.14.0"
 annotations = "26.1.0"
 kotlin = "2.4.21"
-ktor = "3.5.2"
+ktor = "3.6.1"
 shadow = "9.6.1"
 logback = "1.6.5"
 netty-tcnative = "2.0.84.Final"

@@ -193,6 +193,16 @@ tasks.register<Test>("gameNodeTest") {
     useJUnitPlatform()
 }
 
+tasks.register<Test>("hostRouteAuthTest") {
+    group = "verification"
+    description = "Checks which room routes work without a login."
+    dependsOn(tasks.named("testClasses"))
+    testClassesDirs = sourceSets["test"].output.classesDirs
+    classpath = sourceSets["test"].runtimeClasspath
+    include("**/calebxzhou/rdi/master/service/host/HostRouteAuthTest.class")
+    useJUnitPlatform()
+}
+
 tasks.register<Test>("hostRollbackTest") {
     group = "verification"
     description = "Runs focused host rollback (回档) tests."
