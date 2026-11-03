@@ -12,7 +12,8 @@ import org.apache.logging.log4j.LogManager
 
 /**
  * Default-on zlib tails for negotiated remote clients. Disable with -Drdi.zlibtail.enabled=false; pick the
- * mods with -Drdi.zlibtail.namespaces (comma separated, "*" for every mod).
+ * mods with -Drdi.zlibtail.namespaces (comma separated, "*" for every mod). Shared by the server mod and the
+ * client mod's integrated server.
  */
 object RServerZlibTail {
     private val logger = LogManager.getLogger("rdi.network-extensions")

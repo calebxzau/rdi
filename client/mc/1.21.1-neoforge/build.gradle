@@ -136,6 +136,7 @@ neoForge {
     validateAccessTransformers = true
     def playArg = "http://127.0.0.1:65231\n127.0.0.1:6370\n测试测试12123大世界\n6370\n68b314bb-adaf-52dd-ab96-b5ed00000000\ndavickk"
     def playArg2 = "http://127.0.0.1:65231\n127.0.0.1:6370\n测试测试12123大世界\n6370\n68b314bb-adaf-52dd-ab96-e5ed00000000\ndev2"
+    def playArg3 = "http://127.0.0.1:65231\n127.0.0.1:6370\n测试测试12123大世界\n6370\n68b314bb-adaf-52dd-ab96-e6ed00000000\ndev3"
     runs {
         client {
             client()
@@ -172,6 +173,25 @@ neoForge {
             systemProperty 'rdi.debug', 'true'
             systemProperty 'rdi.dm.server', 'http://127.0.0.1:15566'
             systemProperty 'rdi.play', Base64.encoder.encodeToString(playArg2.getBytes(Charset.forName("UTF-8")))
+            systemProperty 'rdi.earlyDisplay.ffmpeg', layout.buildDirectory.file('early-display/ffmpeg/ffmpeg.exe').get().asFile.absolutePath
+            // The early-display directory holds every FFmpeg DLL, including the JavaCPP JNI libraries.
+            systemProperty 'org.bytedeco.javacpp.pathsFirst', 'true'
+            systemProperty 'org.bytedeco.javacpp.findLibraries', 'false'
+            systemProperty 'org.bytedeco.javacpp.platform.preloadpath', layout.buildDirectory.dir('early-display/ffmpeg').get().asFile.absolutePath
+            systemProperty 'rdi.earlyDisplay.video', file('startup.mp4').absolutePath
+        }
+        client3 {
+            client()
+            gameDirectory = project.file('run3')
+            programArgument '--width'
+            programArgument '2560'
+            programArgument '--height'
+            programArgument '1440'
+            systemProperty 'neoforge.enabledGameTestNamespaces', mod_id
+            systemProperty 'mixin.hotSwap', 'true'
+            systemProperty 'rdi.debug', 'true'
+            systemProperty 'rdi.dm.server', 'http://127.0.0.1:15566'
+            systemProperty 'rdi.play', Base64.encoder.encodeToString(playArg3.getBytes(Charset.forName("UTF-8")))
             systemProperty 'rdi.earlyDisplay.ffmpeg', layout.buildDirectory.file('early-display/ffmpeg/ffmpeg.exe').get().asFile.absolutePath
             // The early-display directory holds every FFmpeg DLL, including the JavaCPP JNI libraries.
             systemProperty 'org.bytedeco.javacpp.pathsFirst', 'true'
@@ -235,6 +255,9 @@ sourceSets.named('main') {
     kotlin.srcDir '../../../mc/chunkcache/src/21/kotlin'
     java.srcDir '../../../mc/chunkcache/src/client/java'
     kotlin.srcDir '../../../mc/chunkcache/src/client/kotlin'
+    java.srcDir '../../../mc/chunkcache/src/server/java'
+    kotlin.srcDir '../../../mc/chunkcache/src/server/kotlin'
+    kotlin.srcDir '../../../mc/chunkcache/src/21Server/kotlin'
     kotlin.srcDir '../../../mc/syncchunk/src/main/kotlin'
     kotlin.srcDir '../../../mc/syncchunk/src/2021/kotlin'
     java.srcDir '../../../mc/syncchunk/src/2021Client/java'
@@ -243,6 +266,8 @@ sourceSets.named('main') {
     kotlin.srcDir '../../../mc/common/codec/src/main/kotlin'
     kotlin.srcDir '../../../mc/common/codec/src/netty41/kotlin'
     kotlin.srcDir '../../../mc/common/codec/src/21/kotlin'
+    java.srcDir '../../../mc/common/codec/src/21Server/java'
+    kotlin.srcDir '../../../mc/common/codec/src/21Server/kotlin'
     java.srcDir '../../../mc/common/codec/src/server/java'
     kotlin.srcDir '../../../mc/common/2021/src/main/kotlin'
     kotlin.srcDir '../../../mc/rcmd/src/main/kotlin'
@@ -272,7 +297,7 @@ tasks.named('processResources') {
     dependsOn tasks.named('generateModMetadata')
 }
 //java cv configs
-[configurations.clientLegacyClasspath, configurations.client2LegacyClasspath].each {
+[configurations.clientLegacyClasspath, configurations.client2LegacyClasspath, configurations.client3LegacyClasspath].each {
     it.attributes.attribute(
             ArtifactTypeDefinition.ARTIFACT_TYPE_ATTRIBUTE,
             ArtifactTypeDefinition.JAR_TYPE
@@ -293,6 +318,7 @@ extraJavaModuleInfo {
 
     activate(configurations.clientLegacyClasspath)
     activate(configurations.client2LegacyClasspath)
+    activate(configurations.client3LegacyClasspath)
 }
 dependencies {
     earlyDisplayNative("org.bytedeco:ffmpeg:8.0.1-1.5.13:windows-x86_64-gpl") {
@@ -365,7 +391,7 @@ dependencies {
     ['architectury-api:13.0.8+neoforge',
      'create:6.0.10+mc1.21.1',
      'sodium:mc1.21.1-0.6.13-neoforge',
-     //  'dynamic-fps:T238FZpQ',
+     'dynamic-fps:T238FZpQ',
     ].each { dep ->
         implementation "maven.modrinth:$dep"
     }
@@ -415,12 +441,10 @@ def extractEarlyDisplayFfmpeg = tasks.register('extractEarlyDisplayFfmpeg', Sync
     into layout.buildDirectory.dir('early-display/ffmpeg')
 }
 
-def earlyDisplayConfigFile = file('run/config/fml.toml')
-def earlyDisplayModsDir = file('run/mods')
 def earlyDisplayProviderJarFile = project(':early-display').tasks.named('jar').get().archiveFile.get().asFile
 
-def configureEarlyDisplayProvider = {
-    def configFile = earlyDisplayConfigFile
+def configureEarlyDisplayProvider = { File runDir ->
+    def configFile = new File(runDir, 'config/fml.toml')
     if (!configFile.isFile()) return
 
     def config = configFile.getText('UTF-8')
@@ -432,7 +456,7 @@ def configureEarlyDisplayProvider = {
     if (currentProvider != null && currentProvider != 'fmlearlywindow' && currentProvider != 'rdiearlywindow') return
 
     def providerJar = earlyDisplayProviderJarFile
-    def modsDir = earlyDisplayModsDir
+    def modsDir = new File(runDir, 'mods')
     def targetJar = new File(modsDir, 'rdi-early-display.jar')
     def linked = false
     try {
@@ -458,10 +482,13 @@ def configureEarlyDisplayProvider = {
     configFile.setText(config, 'UTF-8')
 }
 
-tasks.matching { it.name == 'runClient' || it.name == 'runClient2' }.configureEach {
-    dependsOn project(':early-display').tasks.named('jar')
-    dependsOn extractEarlyDisplayFfmpeg
-    doFirst configureEarlyDisplayProvider
+[runClient: 'run', runClient2: 'run2', runClient3: 'run3'].each { taskName, runDirName ->
+    def runDir = file(runDirName)
+    tasks.matching { it.name == taskName }.configureEach {
+        dependsOn project(':early-display').tasks.named('jar')
+        dependsOn extractEarlyDisplayFfmpeg
+        doFirst { configureEarlyDisplayProvider(runDir) }
+    }
 }
 
 idea {
@@ -470,6 +497,7 @@ idea {
         downloadJavadoc = true
         excludeDirs += file('run')
         excludeDirs += file('run2')
+        excludeDirs += file('run3')
     }
 }
 evaluationDependsOn(':c-mc-common')

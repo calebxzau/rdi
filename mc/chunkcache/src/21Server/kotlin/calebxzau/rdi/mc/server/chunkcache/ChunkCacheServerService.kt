@@ -11,7 +11,6 @@ import calebxzau.rdi.mc.chunkcache.network.ChunkCacheResultPayload
 import calebxzau.rdi.mc.chunkcache.network.ChunkCacheRetirePayload
 import calebxzau.rdi.mc.chunkcache.network.ChunkCacheReusePayload
 import calebxzau.rdi.mc.chunkcache.network.ChunkCacheWarmupPayload
-import calebxzau.rdi.mc.server.mixin.APlayerChunkSender
 import it.unimi.dsi.fastutil.longs.LongSet
 import net.minecraft.network.protocol.Packet
 import net.minecraft.network.protocol.common.ClientboundCustomPayloadPacket
@@ -37,6 +36,8 @@ import java.util.UUID
  * Chunks leave through `PlayerChunkSender` batches; warm-up chooses from its pending set, and a failed reuse is
  * repaired by queueing the chunk there again. The version-independent steps live in [ChunkCacheServerSession]
  * and [ChunkCacheReuseSender].
+ *
+ * Shared by the server mod and the client mod's integrated server (DM, LAN); the host's own memory connection is skipped.
  */
 object ChunkCacheServerService {
     private val logger = LoggerFactory.getLogger("rdi")
@@ -254,7 +255,7 @@ object ChunkCacheServerService {
         session.metrics.advanceReplacementTick(tick)
         val now = System.currentTimeMillis()
         if (session.warmup?.active(now) == false) {
-            val pending = (player.connection.chunkSender as APlayerChunkSender).`rdi$pendingChunks`().size
+            val pending = (player.connection.chunkSender as ChunkCachePendingChunks).`rdi$pendingChunks`().size
             session.finishWarmup(logger, player.scoreboardName, pending, now, budget.averageReuseNanos)
         }
         val view = player.chunkTrackingView
@@ -303,7 +304,7 @@ object ChunkCacheServerService {
 
     private fun ensureContext(player: ServerPlayer): Session? {
         val listener = player.connection
-        if (!supportsProtocol(listener)) return null
+        if (listener.connection.isMemoryConnection || !supportsProtocol(listener)) return null
         val dimension = player.level().dimension().location()
         val existing = sessions[player.uuid]
         if (existing != null && existing.dimension == dimension) return existing

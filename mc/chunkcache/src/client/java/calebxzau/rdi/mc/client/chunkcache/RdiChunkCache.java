@@ -78,9 +78,14 @@ public final class RdiChunkCache {
 
     /** All multiplayer connections share one cache namespace, independent of the join UI. */
     public static void beginConnection() {
+        beginConnection(null);
+    }
+
+    /** {@code roomId}, when given, names this connection's own cache, e.g. a DM room joined from inside the game. */
+    public static void beginConnection(String roomId) {
         endConnection();
         // The launcher passes rdi.host.id only for room joins; other multiplayer joins share one cache.
-        String hostId = HOST_ID != null ? HOST_ID : SHARED_HOST_ID;
+        String hostId = roomId != null ? roomId : HOST_ID != null ? HOST_ID : SHARED_HOST_ID;
         Session session = new Session(hostId);
         current = session;
         Path root = Path.of("rdi").resolve("hosts").resolve(hostId).resolve("world");
@@ -91,6 +96,12 @@ public final class RdiChunkCache {
         LIFECYCLE.open(() -> session.closed || session.failed.get(),
                 () -> { writer.start(); return writer; },
                 ignored -> { }, failure -> fail(session, failure));
+    }
+
+    /** The directory name under rdi/hosts of the connection being made or played; null between connections. */
+    public static String currentHostId() {
+        Session session = current;
+        return session == null ? null : session.hostId;
     }
 
     /** Returns a listener-bound packet context; old listeners never consult a newer session. */

@@ -18,7 +18,9 @@ import io.netty.util.AttributeKey
 import net.minecraft.network.protocol.Packet
 import net.minecraft.network.ConnectionProtocol
 import net.minecraft.network.PacketEncoder
+import net.minecraft.network.protocol.common.ClientboundCustomPayloadPacket
 import net.minecraft.network.protocol.common.CommonPacketTypes
+import net.minecraft.network.protocol.common.ServerboundCustomPayloadPacket
 import net.minecraft.network.protocol.game.GamePacketTypes
 import org.apache.logging.log4j.LogManager
 import java.util.ArrayDeque
@@ -32,12 +34,23 @@ import java.util.IdentityHashMap
  * `output buffer -> packet` by identity, and the handler after the encoder takes that entry back. A
  * failed encode never reaches the handler, and its scope is dropped, so it cannot tag a later buffer.
  * All state is confined to the connection's event loop.
+ *
+ * Shared by the server mod and the client mod's integrated server (DM, LAN), which collects no metrics.
  */
 object PacketRecordPipeline {
     private const val SCOPE = "rdi_record_scope"
     private const val RECORD = "rdi_encoded_record"
     private val STATE = AttributeKey.valueOf<State>("rdi.packet-record")
     private val logger = LogManager.getLogger("rdi.network-extensions")
+
+    /** Records a packet that leaves without the RDI encoder and returns the promise to write it with. */
+    internal fun interface UncompressedObserver {
+        fun observe(identity: ZstdPacketIdentity, bytes: Int, promise: ChannelPromise): ChannelPromise
+    }
+
+    /** Set by the server mod's packet metrics; null where no metrics are collected. */
+    @Volatile
+    internal var uncompressedObserver: UncompressedObserver? = null
 
     private class State(
         val phase: (ChannelHandlerContext) -> PacketCapturePhase?,
@@ -151,11 +164,7 @@ object PacketRecordPipeline {
                 }
             }
             if (!ZstdCompressionPipeline.hasOutboundEncoder(ctx.channel())) {
-                val writePromise = if (PacketMetrics.batchMetricsEnabled) {
-                    PacketMetrics.recordUncompressed(packetIdentity(packet), msg.readableBytes(), promise)
-                } else {
-                    promise
-                }
+                val writePromise = uncompressedObserver?.observe(packetIdentity(packet), msg.readableBytes(), promise) ?: promise
                 ctx.write(msg, writePromise)
                 return
             }
@@ -164,4 +173,14 @@ object PacketRecordPipeline {
             ctx.write(ZstdSendingRecord(msg, policy, packetIdentity(packet), PersistentPacketKinds21.kindOf(packet)), promise)
         }
     }
+}
+
+/** The packet type and, for a custom payload, its channel. */
+internal fun packetIdentity(packet: Packet<*>): ZstdPacketIdentity {
+    val channel = when (packet) {
+        is ClientboundCustomPayloadPacket -> packet.payload().type().id()
+        is ServerboundCustomPayloadPacket -> packet.payload().type().id()
+        else -> null
+    }
+    return ZstdPacketIdentity(packet.type().id().toString(), channel?.namespace, channel?.path)
 }

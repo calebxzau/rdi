@@ -1,0 +1,22 @@
+package calebxzau.rdi.mc.client.mixin;
+
+import calebxzhou.rdi.mc.server.network.PacketRecordPipeline;
+import io.netty.channel.ChannelPipeline;
+import net.minecraft.network.BandwidthDebugMonitor;
+import net.minecraft.network.Connection;
+import net.minecraft.network.protocol.PacketFlow;
+import org.spongepowered.asm.mixin.Mixin;
+import org.spongepowered.asm.mixin.injection.At;
+import org.spongepowered.asm.mixin.injection.Inject;
+import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
+
+// The integrated server's (DM, LAN) guest connections tag outbound packets for the RDI encoder, as in the server mod.
+@Mixin(Connection.class)
+abstract class mPacketRecordConnection {
+    @Inject(method = "configureSerialization", at = @At("RETURN"))
+    private static void rdi$installPacketRecords(ChannelPipeline pipeline, PacketFlow flow, boolean memoryOnly,
+                                                 BandwidthDebugMonitor monitor, CallbackInfo ci) {
+        if (memoryOnly || flow != PacketFlow.SERVERBOUND) return;
+        PacketRecordPipeline.install(pipeline);
+    }
+}

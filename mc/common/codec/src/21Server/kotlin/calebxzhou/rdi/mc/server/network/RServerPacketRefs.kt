@@ -10,7 +10,10 @@ import io.netty.util.AttributeKey
 import net.minecraft.server.level.ServerPlayer
 import org.apache.logging.log4j.LogManager
 
-/** Default-on references for negotiated remote clients. Disable with -Drdi.pktref.enabled=false. */
+/**
+ * Default-on references for negotiated remote clients. Disable with -Drdi.pktref.enabled=false.
+ * Shared by the server mod and the client mod's integrated server.
+ */
 object RServerPacketRefs {
     private val logger = LogManager.getLogger("rdi.network-extensions")
     private val settingsKey = AttributeKey.valueOf<PacketRefSettings21>("rdi.pktref.settings21")

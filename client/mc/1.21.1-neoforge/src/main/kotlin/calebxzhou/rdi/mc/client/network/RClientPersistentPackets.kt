@@ -1,5 +1,6 @@
 package calebxzhou.rdi.mc.client.network
 
+import calebxzau.rdi.mc.client.chunkcache.RdiChunkCache
 import calebxzau.rdi.mc.zstdcodec.PersistentPacketClientSession
 import calebxzau.rdi.mc.zstdcodec.PersistentPacketHash
 import calebxzau.rdi.mc.zstdcodec.PersistentPacketKind
@@ -9,6 +10,7 @@ import calebxzau.rdi.mc.zstdcodec.PersistentPacketStore
 import calebxzau.rdi.mc.zstdcodec.ZstdCompressionPipeline
 import calebxzau.rdi.mc.zstdcodec.v21.PersistentPacketPayloads21
 import calebxzhou.rdi.mc.common.RDI
+import calebxzhou.rdi.mc.server.network.RServerPersistentPackets
 import net.minecraft.network.Connection
 import net.minecraft.network.protocol.common.ServerboundCustomPayloadPacket
 import net.neoforged.neoforge.network.event.RegisterPayloadHandlersEvent
@@ -39,7 +41,8 @@ object RClientPersistentPackets {
         event.registrar(PersistentPacketPayloads21.VERSION)
             .optional()
             .configurationToClient(PersistentPacketPayloads21.Query.TYPE, PersistentPacketPayloads21.Query.STREAM_CODEC, ::onQuery)
-            .configurationToServer(PersistentPacketPayloads21.Answer.TYPE, PersistentPacketPayloads21.Answer.STREAM_CODEC) { _, _ -> }
+            // Guests of this game's integrated server (DM, LAN) answer the host's query.
+            .configurationToServer(PersistentPacketPayloads21.Answer.TYPE, PersistentPacketPayloads21.Answer.STREAM_CODEC, RServerPersistentPackets::onAnswer)
     }
 
     /** Runs on the client thread. */
@@ -55,8 +58,9 @@ object RClientPersistentPackets {
             answer(connection, PersistentPacketOffer(PersistentPacketQuery.VERSION, emptyList()))
             return
         }
+        val root = root()
         executor.execute {
-            val offer = runCatching { prepare(connection) }.getOrElse { error ->
+            val offer = runCatching { prepare(connection, root) }.getOrElse { error ->
                 logger.error("Failed to prepare persistent packets; keeping plain join packets", error)
                 PersistentPacketOffer(PersistentPacketQuery.VERSION, emptyList())
             }
@@ -65,8 +69,8 @@ object RClientPersistentPackets {
     }
 
     /** Loads and verifies the newest tables of this host, then attaches the session that restores them. */
-    private fun prepare(connection: Connection): PersistentPacketOffer {
-        val store = PersistentPacketStore(root(), KEEP_PER_KIND)
+    private fun prepare(connection: Connection, root: Path): PersistentPacketOffer {
+        val store = PersistentPacketStore(root, KEEP_PER_KIND)
         val entries = ArrayList<PersistentPacketOffer.Entry>()
         val loaded = LinkedHashMap<PersistentPacketHash, Pair<Int, ByteArray>>()
         for (kind in kinds) {
@@ -101,6 +105,9 @@ object RClientPersistentPackets {
         connection.send(ServerboundCustomPayloadPacket(PersistentPacketPayloads21.Answer(offer.encode())))
     }
 
-    /** The launcher passes rdi.host.id for room joins; other multiplayer joins share one directory. */
-    private fun root(): Path = Path.of("rdi", "hosts", RDI.HOST_ID ?: "shared", "pcache")
+    /**
+     * Next to this connection's chunk cache: a DM room keeps its own directory, launcher room joins use
+     * rdi.host.id, and other multiplayer joins share one. During configuration there is no current server yet.
+     */
+    private fun root(): Path = Path.of("rdi", "hosts", RdiChunkCache.currentHostId() ?: RDI.HOST_ID ?: "shared", "pcache")
 }

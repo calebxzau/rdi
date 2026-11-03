@@ -29,6 +29,8 @@ import java.util.function.Consumer
  *
  * On by default; `-Drdi.pcache.enabled=false` stops asking new connections, which then receive plain
  * packets. A client without the `rdi:pcache` channel is never asked and keeps plain packets as well.
+ *
+ * Shared by the server mod and the client mod's integrated server (DM, LAN).
  */
 object RServerPersistentPackets {
     private val logger = LogManager.getLogger("rdi")
@@ -53,6 +55,7 @@ object RServerPersistentPackets {
     internal fun shouldAsk(enabled: Boolean, memoryConnection: Boolean, clientHasChannel: Boolean): Boolean =
         enabled && !memoryConnection && clientHasChannel
 
+    /** Server mod only: the client mod registers these payloads itself and answers with [onAnswer]. */
     fun register(event: RegisterPayloadHandlersEvent) {
         event.registrar(PersistentPacketPayloads21.VERSION)
             .optional()
@@ -95,7 +98,7 @@ object RServerPersistentPackets {
     }
 
     /** Runs on the server thread. */
-    private fun onAnswer(payload: PersistentPacketPayloads21.Answer, context: IPayloadContext) {
+    fun onAnswer(payload: PersistentPacketPayloads21.Answer, context: IPayloadContext) {
         val listener = context.listener() as? ServerConfigurationPacketListener ?: return
         val name = name(listener)
         val task = listener.connection.channel().attr(pendingKey).getAndSet(null)

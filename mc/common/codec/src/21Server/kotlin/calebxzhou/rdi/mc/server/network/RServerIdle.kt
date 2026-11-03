@@ -1,7 +1,5 @@
 package calebxzhou.rdi.mc.server.network
 
-import calebxzau.rdi.mc.server.mixin.AClientboundMoveEntityPacket
-import calebxzau.rdi.mc.server.mixin.AClientboundRotateHeadPacket
 import calebxzau.rdi.mc.zstdcodec.v21.IdlePayload21
 import it.unimi.dsi.fastutil.ints.IntOpenHashSet
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet
@@ -48,7 +46,8 @@ import java.util.concurrent.ConcurrentHashMap
  * Everything else, including chunks, spawns, removals, the player's own state and mod payloads, keeps
  * flowing. Only sends on the server thread without a completion listener are held back.
  *
- * On by default; `-Drdi.idle.enabled=false` ignores the reports.
+ * On by default; `-Drdi.idle.enabled=false` ignores the reports. Shared by the server mod and the client mod's
+ * integrated server, whose own player never reports.
  */
 @EventBusSubscriber(modid = "rdi")
 object RServerIdle {
@@ -81,6 +80,7 @@ object RServerIdle {
     internal fun isEnabled(property: (String) -> String?): Boolean =
         property("rdi.idle.enabled")?.trim()?.toBoolean() ?: true
 
+    /** Server mod only: the client mod registers this payload itself and passes reports to [onReport]. */
     fun register(event: RegisterPayloadHandlersEvent) {
         event.registrar(IdlePayload21.VERSION)
             .optional()
@@ -90,7 +90,7 @@ object RServerIdle {
     }
 
     /** Runs on the server thread. */
-    private fun onReport(player: ServerPlayer, away: Boolean) {
+    fun onReport(player: ServerPlayer, away: Boolean) {
         if (!isEnabled(System::getProperty)) return
         if (away) {
             if (awayPlayers.putIfAbsent(player.uuid, AwayState(player.level().dimension())) == null) {
@@ -136,8 +136,8 @@ object RServerIdle {
         }
         if (state.recorded >= MAXIMUM_RECORDED) return false
         val recorded = when (packet) {
-            is ClientboundMoveEntityPacket -> recordEntity(player, level, state, (packet as AClientboundMoveEntityPacket).entityId)
-            is ClientboundRotateHeadPacket -> recordEntity(player, level, state, (packet as AClientboundRotateHeadPacket).entityId)
+            is ClientboundMoveEntityPacket -> recordEntity(player, level, state, (packet as IdleEntityPacket).`rdi$entityId`())
+            is ClientboundRotateHeadPacket -> recordEntity(player, level, state, (packet as IdleEntityPacket).`rdi$entityId`())
             is ClientboundSetEntityMotionPacket -> recordEntity(player, level, state, packet.id)
             is ClientboundTeleportEntityPacket -> recordEntity(player, level, state, packet.id)
             is ClientboundBlockUpdatePacket -> state.blocks.add(packet.pos.asLong()).let { true }

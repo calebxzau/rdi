@@ -12,7 +12,7 @@ import org.apache.logging.log4j.LogManager
 
 /**
  * Selective batching of vanilla attribute updates and, unless `-Drdi.batch.entity=false`, entity tracking
- * updates; on unless `-Drdi.batch.enabled=false`.
+ * updates; on unless `-Drdi.batch.enabled=false`. Shared by the server mod and the client mod's integrated server.
  */
 object RServerBatching {
     private val logger = LogManager.getLogger("rdi.network-extensions")

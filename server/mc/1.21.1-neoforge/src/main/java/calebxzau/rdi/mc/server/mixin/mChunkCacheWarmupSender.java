@@ -1,5 +1,6 @@
 package calebxzau.rdi.mc.server.mixin;
 
+import calebxzau.rdi.mc.server.chunkcache.ChunkCachePendingChunks;
 import calebxzau.rdi.mc.server.chunkcache.ChunkCacheServerService;
 import it.unimi.dsi.fastutil.longs.LongSet;
 import net.minecraft.server.level.ChunkMap;
@@ -24,10 +25,15 @@ import java.util.List;
  * the player) and leaves the rest pending, as vanilla does with chunks that are not ready.
  */
 @Mixin(PlayerChunkSender.class)
-public abstract class mChunkCacheWarmupSender {
+public abstract class mChunkCacheWarmupSender implements ChunkCachePendingChunks {
     @Shadow @Final private LongSet pendingChunks;
     @Shadow @Final private boolean memoryConnection;
     @Shadow private float batchQuota;
+
+    @Override
+    public LongSet rdi$pendingChunks() {
+        return pendingChunks;
+    }
 
     /** The sender belongs to one connection; this is the player of the current {@code sendNextChunks} call. */
     @Unique

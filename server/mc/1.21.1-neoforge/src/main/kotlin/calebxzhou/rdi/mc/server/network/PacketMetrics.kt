@@ -28,11 +28,6 @@ internal fun packetMetricKey(packet: Packet<*>, direction: PacketDirection): Pac
     )
 }
 
-internal fun packetIdentity(packet: Packet<*>): ZstdPacketIdentity {
-    val key = packetMetricKey(packet, PacketDirection.S2C)
-    return ZstdPacketIdentity(key.packetType, key.namespace, key.path)
-}
-
 /**
  * Minecraft 1.21 adapter for the shared recorders.
  *
@@ -43,6 +38,13 @@ object PacketMetrics {
     @Volatile
     var batchMetricsEnabled: Boolean = false
         private set
+
+    init {
+        // Batch metrics are off until this object starts them, so registering on first use misses nothing.
+        PacketRecordPipeline.uncompressedObserver = PacketRecordPipeline.UncompressedObserver { identity, bytes, promise ->
+            if (batchMetricsEnabled) recordUncompressed(identity, bytes, promise) else promise
+        }
+    }
 
     @JvmStatic
     fun start(databasePath: Path) {

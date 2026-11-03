@@ -1,8 +1,10 @@
 package calebxzhou.rdi.mc.client.network
 
 import calebxzau.rdi.mc.zstdcodec.v21.IdlePayload21
+import calebxzhou.rdi.mc.server.network.RServerIdle
 import net.minecraft.client.Minecraft
 import net.minecraft.client.gui.screens.PauseScreen
+import net.minecraft.server.level.ServerPlayer
 import net.neoforged.api.distmarker.Dist
 import net.neoforged.bus.api.SubscribeEvent
 import net.neoforged.fml.common.EventBusSubscriber
@@ -26,7 +28,10 @@ object RClientIdle {
     fun register(event: RegisterPayloadHandlersEvent) {
         event.registrar(IdlePayload21.VERSION)
             .optional()
-            .playToServer(IdlePayload21.TYPE, IdlePayload21.STREAM_CODEC) { _, _ -> }
+            // Guests of this game's integrated server (DM, LAN) report to the host.
+            .playToServer(IdlePayload21.TYPE, IdlePayload21.STREAM_CODEC) { payload, context ->
+                (context.player() as? ServerPlayer)?.let { RServerIdle.onReport(it, payload.away) }
+            }
     }
 
     @JvmStatic

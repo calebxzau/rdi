@@ -12,6 +12,7 @@
     "mEuphoriaPatcherWarning",
     "mGame",
     "mGuiRestockGuard",
+    "mIntegratedServerOffline",
     "mHttpTexture",
     "mJpgImage",
     "mKubeJsWindowIcon",
@@ -36,8 +37,10 @@
     "mAllowChineseArgument",
     "mAllowChineseName",
     "mClientIntentionPacket",
+    "mFullBrightLightPacket",
     "mPlayerInfoUpdatePacket",
     "mServerboundHelloPacket",
+    "mServerLoginPacketListener",
     "mZstdCompression"
   ]
 }
