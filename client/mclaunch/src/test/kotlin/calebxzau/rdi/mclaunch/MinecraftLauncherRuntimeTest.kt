@@ -128,6 +128,19 @@ class MinecraftLauncherRuntimeTest {
     }
 
     @Test
+    fun `launch logs hide the account token and keep every other argument`() {
+        val masked = maskLaunchSecrets(listOf("java", "--username", "Steve", "--accessToken", "secret-jwt", "--width", "1280"))
+
+        assertEquals(listOf("java", "--username", "Steve", "--accessToken", "***", "--width", "1280"), masked)
+    }
+
+    @Test
+    fun `launch log masking leaves a trailing token flag and tokenless arguments alone`() {
+        assertEquals(listOf("--accessToken"), maskLaunchSecrets(listOf("--accessToken")))
+        assertEquals(listOf("--username", "Steve"), maskLaunchSecrets(listOf("--username", "Steve")))
+    }
+
+    @Test
     fun `JDK release majors are parsed for modern and legacy version strings`() {
         fun major(version: String?): Int? {
             val jdk = Files.createTempDirectory(root.toPath(), "jdk").toFile()

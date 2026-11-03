@@ -47,6 +47,12 @@ internal fun earlyDisplayJvmArgs(
     }
 
 /** Reads JAVA_VERSION from the `release` file next to `bin/` of [javaExecutable]; null when it is missing or unreadable. */
+/** Players share launcher logs in chat groups, so the account token must never reach them. */
+internal fun maskLaunchSecrets(arguments: List<String>): List<String> =
+    arguments.mapIndexed { index, argument ->
+        if (index > 0 && arguments[index - 1] == "--accessToken") "***" else argument
+    }
+
 internal fun readJdkReleaseMajor(javaExecutable: File): Int? {
     val release = javaExecutable.absoluteFile.parentFile?.parentFile?.resolve("release")
         ?.takeIf(File::isFile) ?: return null
@@ -389,8 +395,8 @@ class MinecraftLauncher(
             addAll(gameArgs)
         }
         lgr.info { "JVM Args: ${processedJvmArgs.joinToString(" ")}" }
-        lgr.info { "Game Args: ${gameArgs.joinToString(" ")}" }
-        lgr.info { "Launch Command: ${command.joinToString(" ")}" }
+        lgr.info { "Game Args: ${maskLaunchSecrets(gameArgs).joinToString(" ")}" }
+        lgr.info { "Launch Command: ${maskLaunchSecrets(command).joinToString(" ")}" }
         val process = environment.processStarter.start(command, request.versionDir).getOrThrow()
         readProcessOutput(process, onLine, "mc-log-reader")
         process
