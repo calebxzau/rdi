@@ -1,6 +1,11 @@
 //! The proxy Minecraft connects to on this machine. Each game connection becomes
 //! a resumable session, so the node underneath can change while the game stays connected.
 
+#![deny(unsafe_code)]
+
+#[allow(unsafe_code)]
+mod ffi;
+
 use rdi_session_resume::{
     BoxStream,
     client::{ClientConfig, Dialer, EventSink, NodeTable, run_client_session},

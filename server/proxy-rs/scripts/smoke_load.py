@@ -945,7 +945,9 @@ def run(args: argparse.Namespace) -> dict[str, object]:
         dead = connect_proxy(proxy)
         try:
             dead.sendall(handshake(763, b"localhost\x00FML3\x00", 27107, 2))
-            check(read_until_eof(dead, 4.0) == b"", "backend connection failure did not close client")
+            # A bound port that is not listening refuses at once on Linux, but may not answer on
+            # macOS, where the client closes only after the proxy's 5-second connect limit.
+            check(read_until_eof(dead, 7.0) == b"", "backend connection failure did not close client")
         finally:
             dead.close()
         phases.append("backend_connect_failure")
