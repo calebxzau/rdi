@@ -54,12 +54,8 @@ object GameNodeService {
             gameAddr = node.gameAddr,
             // While the switch is off, responses stay exactly as they were and reveal no extra nodes.
             candidates = if (sessionResume) {
-                GameNodeCandidatePolicy.select(
-                    nodes = CONF.gameNode.nodes,
-                    selected = node,
-                    peakHour = isPeekHour(),
-                    outsideMainland = region.isOutsideMainland,
-                ).map { GameNodeEntry(it.displayName(region), it.gameAddr) }
+                GameNodeCandidatePolicy.select(CONF.gameNode.nodes, node)
+                    .map { GameNodeEntry(it.displayName(region), it.gameAddr) }
             } else {
                 emptyList()
             },
@@ -125,27 +121,13 @@ object GameNodeService {
 
 }
 
-/** Nodes a launcher may move a running game to, most preferred first. */
+/**
+ * Nodes a launcher may move a running game to, most preferred first: the selected node and the main
+ * node, so a player on the main node only ever reconnects to it. Other nodes as fallback come later.
+ */
 object GameNodeCandidatePolicy {
-    fun select(
-        nodes: List<GameNodeRuleConfig>,
-        selected: GameNodeRuleConfig,
-        peakHour: Boolean,
-        outsideMainland: Boolean,
-    ): List<GameNodeRuleConfig> {
-        val ordered = buildList {
-            add(selected)
-            addAll(nodes.filter { it.gameBackup })
-            addAll(nodes.filter { it.id == FALLBACK_GAME_NODE_ID })
-            addAll(nodes)
-        }
-        return ordered
-            .filter { node ->
-                node === selected || node.id == FALLBACK_GAME_NODE_ID ||
-                    (peakHour || !node.peekHourOnly) && (outsideMainland || !node.matchOutsideChina)
-            }
-            .distinctBy { it.gameAddr }
-    }
+    fun select(nodes: List<GameNodeRuleConfig>, selected: GameNodeRuleConfig): List<GameNodeRuleConfig> =
+        (listOf(selected) + nodes.filter { it.id == FALLBACK_GAME_NODE_ID }).distinctBy { it.gameAddr }
 }
 
 object ProxyAccessPolicy {
