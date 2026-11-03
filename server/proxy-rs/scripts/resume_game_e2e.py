@@ -16,6 +16,7 @@ import argparse
 import http.client
 import http.server
 import json
+import os
 import random
 import re
 import shlex
@@ -434,6 +435,77 @@ def run_manual(stack: Stack, game: GameControl, results: Results, load: str, set
     time.sleep(settle)
 
 
+def announce(game: GameControl, player: str, text: str) -> None:
+    """Tells the person playing what is about to happen; a missed message changes nothing.
+
+    A system message, because /say needs a chat session that offline accounts do not have.
+    """
+    message = json.dumps({"text": f"[节点测试] {text}", "color": "yellow"}, ensure_ascii=False)
+    try:
+        game.command(f"/tellraw {player} {message}", wait_ms=0, limit=5.0)
+    except (OSError, ValueError, http.client.HTTPException) as error:
+        print(f"announce failed: {error}", flush=True)
+
+
+def hold(stack: Stack, game: GameControl, results: Results, args: argparse.Namespace) -> int:
+    """Keeps breaking nodes while a person plays, until the stop file appears or time runs out."""
+    log_start = line_count(args.server_log)
+    labels = {"kill": "节点进程退出", "freeze": "节点完全静默"}
+    deadline = time.monotonic() + args.hold_seconds
+    next_fault = time.monotonic() + args.hold_fault_every
+    index = 0
+    stopped_by = "time"
+    print(f"holding; create {args.hold_stop_file} to stop", flush=True)
+    announce(game, args.player, f"开始测试，每{args.hold_fault_every:.0f}秒断开一次当前节点")
+    while time.monotonic() < deadline:
+        if os.path.exists(args.hold_stop_file):
+            stopped_by = "stop file"
+            break
+        if stack.wait_event(rf"session={stack.game_session} Ended", 0, 0.0):
+            stopped_by = "session ended"
+            print("session ended", flush=True)
+            break
+        if time.monotonic() < next_fault:
+            time.sleep(0.5)
+            continue
+        fault = "kill" if index % 2 == 0 else "freeze"
+        index += 1
+        current = stack.current_node()
+        if current is None:
+            results.trials.append({"kind": fault, "ok": False, "elapsed_ms": 0, "error": "no session"})
+            print(f"hold/{fault}: ok=False no session", flush=True)
+            break
+        announce(game, args.player, f"3秒后断开当前节点：{labels[fault]}")
+        time.sleep(3)
+        start = stack.event_count()
+        stack.fault(current, fault)
+        line = stack.wait_event(rf"session={stack.game_session} Attached .*reason: Failover", start, FAILOVER_TIMEOUT)
+        stack.fault(current, "heal")
+        if line is None:
+            results.trials.append({"kind": fault, "ok": False, "elapsed_ms": 0, "error": "no failover"})
+            print(f"hold/{fault}: ok=False no failover", flush=True)
+        else:
+            elapsed = int(re.search(r"elapsed_ms: (\d+)", line).group(1))
+            results.trials.append({"kind": fault, "ok": True, "elapsed_ms": elapsed})
+            print(f"hold/{fault}: {elapsed}ms ok=True", flush=True)
+            announce(game, args.player, f"已切换节点，恢复用时{elapsed}ms")
+        next_fault = time.monotonic() + args.hold_fault_every
+
+    results.kicked = kick_lines(args.server_log, log_start)
+    report = {
+        "stopped_by": stopped_by,
+        "kill": results.summary("kill"),
+        "freeze": results.summary("freeze"),
+        "failures": [trial for trial in results.trials if not trial["ok"]],
+        "kicked": results.kicked[:20],
+        "events": stack.event_count(),
+    }
+    with open(args.report, "w", encoding="utf-8") as handle:
+        json.dump({"report": report, "trials": results.trials, "events": stack.events}, handle, ensure_ascii=False, indent=1)
+    print(json.dumps(report, ensure_ascii=False, indent=1), flush=True)
+    return 0 if not report["failures"] and not report["kicked"] else 1
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--proxy", required=True)
@@ -449,6 +521,9 @@ def main() -> int:
     parser.add_argument("--settle", type=float, default=2.0)
     parser.add_argument("--join-timeout", type=float, default=900.0)
     parser.add_argument("--report", required=True)
+    parser.add_argument("--hold-fault-every", type=float, default=0.0, help="seconds between faults while a person plays")
+    parser.add_argument("--hold-seconds", type=float, default=1800.0)
+    parser.add_argument("--hold-stop-file", default="resume_hold.stop")
     args = parser.parse_args()
 
     results = Results()
@@ -458,6 +533,8 @@ def main() -> int:
         game = GameControl(args.port_file)
         wait_for_player(stack, game, args.join_timeout)
         print("player is in the world", flush=True)
+        if args.hold_fault_every > 0:
+            return hold(stack, game, results, args)
         log_start = line_count(args.server_log)
         game.command(f"/gamemode creative {args.player}")
         print("sample teleport reply:", game.command(f"/tp {args.player} 300 200 300", wait_ms=1000)[:300], flush=True)
