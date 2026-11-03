@@ -63,6 +63,18 @@ def exported_symbols(path, family):
     }
 
 
+def mach_o_problems(path, name):
+    """What dyld would refuse, or fail to resolve, when a library is loaded directly by its path."""
+    problems = []
+    used = re.findall(r"^\s+(\S+) \(compatibility", run("llvm-objdump", "--macho", "--dylibs-used", path), re.MULTILINE)
+    for library in sorted({library for library in used if used.count(library) > 1}):
+        problems.append(f"{name} links {library} more than once, which dyld refuses")
+    headers = run("llvm-objdump", "--macho", "--all-headers", path)
+    if any(library.startswith("@rpath/") and library != f"@rpath/{name}" for library in used) and "@loader_path/." not in headers:
+        problems.append(f"{name} has no @loader_path/. rpath, so it cannot find the libraries next to it")
+    return problems
+
+
 def is_ffmpeg_symbol(symbol):
     return re.match(r"_?(av|avcodec|avformat|avio|swr|sws|avutil|swresample|swscale)_", symbol) is not None
 
@@ -79,6 +91,10 @@ def main():
         native_dir = os.path.join(directory, *prefix.split("/"))
         files = sorted(os.listdir(native_dir))
         print("Libraries:", ", ".join(f"{name} {os.path.getsize(os.path.join(native_dir, name)) // 1024}KiB" for name in files))
+
+        if family == "macosx":
+            for name in files:
+                failures.extend(mach_o_problems(os.path.join(native_dir, name), name))
 
         for name in files:
             for needed in needed_libraries(os.path.join(native_dir, name), family):

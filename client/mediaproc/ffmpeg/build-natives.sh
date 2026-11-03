@@ -91,8 +91,15 @@ for tool in cc c++; do
     cat > "$TOOLS/$tool" <<EOF
 #!/usr/bin/env bash
 args=()
+declare -A seen_libraries
 for arg in "\$@"; do
     case "\$arg" in
+        # FFmpeg names some of its own libraries twice. zig's linker records both on macOS, and dyld
+        # refuses to load a library with a duplicate dependency.
+        -lav*|-lsw*)
+            [ -z "\${seen_libraries[\$arg]:-}" ] && args+=("\$arg")
+            seen_libraries[\$arg]=1
+            ;;
         -Wl,--pic-executable,-e,mainCRTStartup|-Wl,--image-base,*) ;;
         -Wl,-dynamic,-search_paths_first|-Wl,-single_module|-Wl,-read_only_relocs,suppress) ;;
         # zig wants a full version, the form the JNI glue was linked against: 60.0.0, not 60.
@@ -190,9 +197,13 @@ FFMPEG_CONFIG=(
     --enable-parser=av1,opus,vorbis,flac
     --enable-protocol=file
     --enable-bsf=av1_metadata,av1_frame_merge,av1_frame_split
-    --extra-ldflags=-s
 )
-[ "$PLATFORM" != macos-arm64 ] || FFMPEG_CONFIG+=(--install-name-dir=@rpath)
+if [ "$PLATFORM" = macos-arm64 ]; then
+    # The game loads these directly, so each must find the others next to it without help from the glue.
+    FFMPEG_CONFIG+=(--install-name-dir=@rpath "--extra-ldflags=-s -Wl,-rpath,@loader_path/.")
+else
+    FFMPEG_CONFIG+=(--extra-ldflags=-s)
+fi
 mkdir -p "$SOURCES/ffmpeg-build"
 (
     cd "$SOURCES/ffmpeg-build"
