@@ -22,7 +22,8 @@ class MediaProcRuntimeClasspathTest {
 
         val resolved = MediaProcRuntimeClasspath.findNativeJar(
             classpath = classpathWrapper.absolutePath,
-            codeSources = emptyList()
+            codeSources = emptyList(),
+            platform = FfmpegNativePlatform("windows-x86_64-gpl"),
         )
 
         assertEquals(nativeJar.canonicalFile, resolved?.canonicalFile)

@@ -1,6 +1,6 @@
 # mediaproc瘦身计划（待实施）
 
-状态：阶段1的代码已在本地提交（`8ab4fef5`，2026-11-03），Windows通过，还没推送，Linux和macOS的CI未跑。三个平台都通过后再确认阶段2的改动清单。
+状态：阶段1实施中（2026-11-03），工作流为`mediaproc-tests.yml`。三个平台都通过后再确认阶段2的改动清单。
 
 ## 决定
 
@@ -50,6 +50,7 @@
 | `FfmpegAvifNative`、`MediaProcRuntimeClasspath` | 删除对JavaCV的引用 |
 | `FfmpegPcmDecoderTest`、`OggTranscoderTest` | 测试样本不再用JavaCV生成 |
 | `FfmpegNativePreloader` | 测试确认后，从`FFMPEG_CLASSES`移除`avfilter`和`avdevice` |
+| `.github/workflows/mediaproc-tests.yml` | 去掉安装`libpulse0`等系统库的步骤。`avdevice`依赖这些库，缺了整个FFmpeg都加载不了；不装也能通过，才说明这个依赖真的没了 |
 | `client/mediaproc`、`client/ui`、`1.20.1-forge`、`1.21.1-neoforge`、`1.20.1-fabric`的构建配置 | 移除JavaCV依赖和`extraJavaModuleInfo`里的改写 |
 | `MediaProcGameClasspathTest` | 更新预期，修掉过期断言 |
 

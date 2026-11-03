@@ -15,6 +15,8 @@ import kotlin.test.assertEquals
 import kotlin.test.assertNotEquals
 
 class MediaProcNativeRuntimeTest {
+    private val windows = FfmpegNativePlatform("windows-x86_64-gpl")
+
     @Test
     fun concurrentColdPreparationSharesNativeBundle(@TempDir tempDir: Path) {
         val nativeJar = tempDir.resolve("ffmpeg-test-windows-x86_64-gpl.jar").toFile()
@@ -33,7 +35,7 @@ class MediaProcNativeRuntimeTest {
             val preparations = List(4) {
                 workers.submit<java.io.File> {
                     start.await(10, TimeUnit.SECONDS)
-                    MediaProcNativeRuntime.prepare(nativeJar, tempDir.resolve("runtime").toFile()).getOrThrow()
+                    MediaProcNativeRuntime.prepare(nativeJar, tempDir.resolve("runtime").toFile(), windows).getOrThrow()
                 }
             }
             val bundles = preparations.map { it.get(20, TimeUnit.SECONDS) }
@@ -66,12 +68,12 @@ class MediaProcNativeRuntimeTest {
         val originalSize = nativeJar.length()
         val originalTime = Files.getLastModifiedTime(nativeJar.toPath())
         val root = tempDir.resolve("runtime").toFile()
-        val first = MediaProcNativeRuntime.prepare(nativeJar, root).getOrThrow()
+        val first = MediaProcNativeRuntime.prepare(nativeJar, root, windows).getOrThrow()
 
         writeJar(byteArrayOf(3, 2, 1))
         Files.setLastModifiedTime(nativeJar.toPath(), originalTime)
         assertEquals(originalSize, nativeJar.length())
-        val second = MediaProcNativeRuntime.prepare(nativeJar, root).getOrThrow()
+        val second = MediaProcNativeRuntime.prepare(nativeJar, root, windows).getOrThrow()
 
         assertNotEquals(first, second)
         assertContentEquals(byteArrayOf(1, 2, 3), first.resolve("jniavutil.dll").readBytes())
@@ -87,8 +89,8 @@ class MediaProcNativeRuntimeTest {
             jar.closeEntry()
         }
 
-        val first = MediaProcNativeRuntime.prepare(nativeJar, tempDir.resolve("runtime").toFile()).getOrThrow()
-        val second = MediaProcNativeRuntime.prepare(nativeJar, tempDir.resolve("runtime").toFile()).getOrThrow()
+        val first = MediaProcNativeRuntime.prepare(nativeJar, tempDir.resolve("runtime").toFile(), windows).getOrThrow()
+        val second = MediaProcNativeRuntime.prepare(nativeJar, tempDir.resolve("runtime").toFile(), windows).getOrThrow()
 
         assertEquals(first, second)
         assertContentEquals(byteArrayOf(1, 2, 3), first.resolve("jniavutil.dll").readBytes())
