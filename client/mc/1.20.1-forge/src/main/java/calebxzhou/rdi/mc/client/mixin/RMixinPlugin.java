@@ -9,6 +9,8 @@ import java.util.List;
 import java.util.Set;
 
 public final class RMixinPlugin implements IMixinConfigPlugin {
+    private static final String DEV_WINDOW_MIXIN =
+            "calebxzhou.rdi.mc.client.mixin.mDevWindow";
     private static final String TCR_CORE_FANCY_MENU_LOGO_MIXIN =
             "calebxzhou.rdi.mc.client.mixin.mTcrCoreFancyMenuLogo";
     private static final String TCR_CORE_CLIENT_MOD_EVENTS_TARGET =
@@ -45,6 +47,9 @@ public final class RMixinPlugin implements IMixinConfigPlugin {
 
     @Override
     public boolean shouldApplyMixin(String targetClassName, String mixinClassName) {
+        if (DEV_WINDOW_MIXIN.equals(mixinClassName)) {
+            return System.getProperty("rdi.dev.window") != null;
+        }
         if (TCR_CORE_FANCY_MENU_LOGO_MIXIN.equals(mixinClassName)) {
             return classExists(TCR_CORE_CLIENT_MOD_EVENTS_TARGET);
         }

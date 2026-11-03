@@ -1,6 +1,5 @@
 package calebxzau.rdi.mclaunch
 
-import calebxzau.rdi.mediaproc.FfmpegNativePlatform
 import calebxzhou.rdi.common.util.humanFileSize
 import calebxzhou.rdi.common.util.sha1
 import calebxzhou.rdi.common.exception.RequestError
@@ -35,17 +34,6 @@ private val utf8LoggingJvmArgs = listOf(
     "-Dsun.stderr.encoding=UTF-8",
 )
 
-internal fun earlyDisplayJvmArgs(
-    mcVersion: McVersion,
-    nativeLibraryDir: File,
-    ffmpegPlatform: FfmpegNativePlatform = FfmpegNativePlatform.current,
-): List<String> =
-    if (mcVersion == McVersion.V201 || mcVersion == McVersion.V211) {
-        listOf("-Drdi.earlyDisplay.ffmpeg=${nativeLibraryDir.resolve(ffmpegPlatform.ffmpegExecutable).absolutePath}")
-    } else {
-        emptyList()
-    }
-
 /** Reads JAVA_VERSION from the `release` file next to `bin/` of [javaExecutable]; null when it is missing or unreadable. */
 /** Players share launcher logs in chat groups, so the account token must never reach them. */
 internal fun maskLaunchSecrets(arguments: List<String>): List<String> =
@@ -72,7 +60,7 @@ internal const val RDI_ROOT_LOG_LEVEL_PROPERTY = "rdi.logging.rootLevel"
  * FML 4.x always reloads its bundled log4j2.xml in production, ignoring `log4j2.configurationFile`.
  * That config ACCEPTs LOADING/CORE/FORGEMOD markers globally and uses root level `all`, so every per-mod
  * `LOGGER.trace(LOADING, ...)` builds a log event that the appenders then discard.
- * The marker filters read these properties; rdi-early-display lowers the root level once FML has reloaded it.
+ * The marker filters read these properties; the RDI mod lowers the root level once FML has reloaded it.
  * Arguments the user already set in [extraJvmArgs] win.
  */
 internal fun neoForgeLoggingJvmArgs(mcVersion: McVersion, loader: ModLoader, extraJvmArgs: List<String>): List<String> {
@@ -370,7 +358,6 @@ class MinecraftLauncher(
             // FfmpegNativePreloader loads FFmpeg from preloadpath; JavaCPP's class-path probing scans every mod for seconds.
             processedJvmArgs += "-Dorg.bytedeco.javacpp.findLibraries=false"
             processedJvmArgs += "-Dorg.bytedeco.javacpp.platform.preloadpath=${it.nativeLibraryDir.absolutePath}"
-            processedJvmArgs += earlyDisplayJvmArgs(request.mcVersion, it.nativeLibraryDir)
         }
 
         launchManifests.gtnhExtensionRoot?.let {

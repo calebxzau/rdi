@@ -1,4 +1,4 @@
-package calebxzhou.rdi.earlydisplay.neoforge;
+package calebxzau.rdi.mc.client.loading;
 
 import org.apache.logging.log4j.Level;
 import org.apache.logging.log4j.LogManager;
@@ -11,23 +11,23 @@ import org.slf4j.LoggerFactory;
  * {@code LOGGER.trace(LOADING, ...)} then builds a log event that the appenders discard. The launcher passes
  * {@value #PROPERTY} so we can lower the root level after FML's reload and before mods are constructed.
  */
-final class RootLogLevelFix {
+public final class RootLogLevelFix {
     static final String PROPERTY = "rdi.logging.rootLevel";
 
     private RootLogLevelFix() {
     }
 
-    static void applyFromSystemProperty() {
+    public static void applyFromSystemProperty() {
         String levelName = System.getProperty(PROPERTY);
         if (levelName == null || levelName.isBlank()) {
             return;
         }
         try {
             if (apply(levelName, (LoggerContext) LogManager.getContext(false))) {
-                LoggerFactory.getLogger("EARLYDISPLAY").info("Lowered log4j root level from ALL to {}", levelName);
+                LoggerFactory.getLogger("rdi-log-level").info("Lowered log4j root level from ALL to {}", levelName);
             }
         } catch (Throwable e) {
-            LoggerFactory.getLogger("EARLYDISPLAY").warn("Failed to lower log4j root level to {}", levelName, e);
+            LoggerFactory.getLogger("rdi-log-level").warn("Failed to lower log4j root level to {}", levelName, e);
         }
     }
 

@@ -1,6 +1,5 @@
 package calebxzau.rdi.mclaunch
 
-import calebxzau.rdi.mediaproc.FfmpegNativePlatform
 import calebxzhou.rdi.common.util.deleteRecursivelyNoSymlink
 import calebxzau.rdi.mclaunch.model.MojangDownloadArtifact
 import calebxzau.rdi.mclaunch.model.MojangLibrary
@@ -215,27 +214,6 @@ class MinecraftLauncherTest {
             assertTrue(command.contains("-Xmx8192M"))
         } finally {
             root.deleteRecursivelyNoSymlink()
-        }
-    }
-
-    @Test
-    fun addsEarlyDisplayFfmpegPathForSupportedMinecraftVersions() {
-        val nativeDir = Files.createTempDirectory("early-display-native").toFile()
-        try {
-            val windows = FfmpegNativePlatform("windows-x86_64-gpl")
-            val expected = listOf("-Drdi.earlyDisplay.ffmpeg=${nativeDir.resolve("ffmpeg.exe").absolutePath}")
-            assertEquals(expected, earlyDisplayJvmArgs(McVersion.V201, nativeDir, windows))
-            assertEquals(expected, earlyDisplayJvmArgs(McVersion.V211, nativeDir, windows))
-
-            listOf("linux-x86_64-gpl", "macosx-arm64-gpl").forEach { classifier ->
-                assertEquals(
-                    listOf("-Drdi.earlyDisplay.ffmpeg=${nativeDir.resolve("ffmpeg").absolutePath}"),
-                    earlyDisplayJvmArgs(McVersion.V201, nativeDir, FfmpegNativePlatform(classifier)),
-                    classifier
-                )
-            }
-        } finally {
-            nativeDir.deleteRecursivelyNoSymlink()
         }
     }
 

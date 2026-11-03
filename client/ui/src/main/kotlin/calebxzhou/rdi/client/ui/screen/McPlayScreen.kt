@@ -143,26 +143,9 @@ fun McPlayScreen(
                 session.appendLog("[RDI] 游戏安装已就绪")
                 if (session.stopRequested) return@launchSessionTask
 
-                if (args.withRdiCore) {
-                    EarlyDisplayMount.mount(
-                        mcVersion = args.mcVer,
-                        modLoader = args.modLoader,
-                        versionDir = mcInstall.versionListDir.resolve(args.versionId),
-                    ).fold(
-                        onSuccess = {
-                            EarlyDisplayMount.configureProvider(
-                                mcVersion = args.mcVer,
-                                modLoader = args.modLoader,
-                                versionDir = mcInstall.versionListDir.resolve(args.versionId),
-                            ).onFailure { error ->
-                                session.appendLog("[RDI] Early Display Provider配置失败，将使用游戏默认窗口: ${error.message ?: error.javaClass.simpleName}")
-                            }
-                            Unit
-                        },
-                        onFailure = { error ->
-                            session.appendLog("[RDI] Early Display未挂载，将使用游戏默认窗口: ${error.message ?: error.javaClass.simpleName}")
-                        },
-                    )
+                EarlyDisplayCleanup.clean(mcInstall.versionListDir.resolve(args.versionId)).onFailure { error ->
+                    lgr.warn(error) { "旧版加载界面清理失败：${args.versionId}" }
+                    session.appendLog("[RDI] 旧版加载界面清理失败: ${error.message ?: error.javaClass.simpleName}")
                 }
 
                 val windowJvmArgs = if (!args.withRdiCore) emptyList() else gameWindowService.prepareJvmArgs(

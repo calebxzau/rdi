@@ -274,9 +274,6 @@ tasks.matching { it.name == "hotRun" || it.name == "hotDev" }.configureEach {
     }
 }
 
-evaluationDependsOn(":early-display")
-val earlyDisplayJar = project(":early-display").tasks.named<Jar>("jar")
-
 val runtimeArtifactNames = providers.provider<Map<File, String>> {
     configurations.getByName("runtimeClasspath").incoming.artifacts.resolvedArtifacts.get()
         .groupBy { it.file.name }
@@ -363,14 +360,13 @@ fun uiInstallLibDir(platform: String) = layout.buildDirectory.dir("install/ui/$p
 tasks.register<Sync>("desktopInstallLibs") {
     duplicatesStrategy = DuplicatesStrategy.FAIL
     notCompatibleWithConfigurationCache("resolves runtime artifact metadata while staging libraries")
-    dependsOn("jar", earlyDisplayJar)
+    dependsOn("jar")
     from(configurations.runtimeClasspath) {
         eachFile {
             name = runtimeArtifactNames.get()[file] ?: name
         }
     }
     from(tasks.named<Jar>("jar"))
-    from(earlyDisplayJar)
     into(uiInstallLibDir(rdiTargetPlatform))
 }
 

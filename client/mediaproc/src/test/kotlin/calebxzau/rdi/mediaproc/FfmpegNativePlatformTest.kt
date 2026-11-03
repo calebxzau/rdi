@@ -22,9 +22,6 @@ class FfmpegNativePlatformTest {
         assertEquals("jniavutil.dll", windows.avutilJniLibrary)
         assertEquals("libjniavutil.so", linux.avutilJniLibrary)
         assertEquals("libjniavutil.dylib", mac.avutilJniLibrary)
-        assertEquals("ffmpeg.exe", windows.ffmpegExecutable)
-        assertEquals("ffmpeg", linux.ffmpegExecutable)
-        assertEquals("ffmpeg", mac.ffmpegExecutable)
     }
 
     @Test

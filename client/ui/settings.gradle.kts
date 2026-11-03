@@ -43,7 +43,6 @@ include(
     ":player-model-core",
     ":render-core",
     ":bg-renderer",
-    ":early-display",
     ":local-mc-proxy",
     ":mc-proxy"
 )
@@ -78,6 +77,5 @@ project(":player-model").projectDir = file("../player-model")
 project(":player-model-core").projectDir = file("../player-model-core")
 project(":render-core").projectDir = file("../render-core")
 project(":bg-renderer").projectDir = file("../bg-renderer")
-project(":early-display").projectDir = file("../early-display")
 project(":local-mc-proxy").projectDir = file("../local-mc-proxy")
 project(":mc-proxy").projectDir = file("../../mc/proxy")

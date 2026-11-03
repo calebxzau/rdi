@@ -33,6 +33,7 @@
     "mLoadingErrorScreen",
     "mNativeImage",
     "mWindow",
+    "mDevWindow",
     "mEuphoriaPatcherWarning",
     "mTcrCoreFancyMenuLogo",
     "mFarmingTalesServerLinks",

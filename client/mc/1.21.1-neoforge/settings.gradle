@@ -28,8 +28,6 @@ include(":rmcp-client")
 project(":rmcp-client").projectDir = file("../../../mc/rmcp/client")
 include(":mediaproc")
 project(":mediaproc").projectDir = file("../../mediaproc")
-include(":early-display")
-project(":early-display").projectDir = file("../../early-display")
 /*include(":ktutils-std")
 project(":ktutils-std").projectDir = file("../../../ktutils/std")*/
 include(":rcmd")

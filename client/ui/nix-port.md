@@ -59,8 +59,6 @@
 | sqlite-jdbc | `ui/database`、`ui/mod-catalog`的`build.gradle.kts` | 把`Windows/x86_64/sqlitejdbc.dll`直接打进`rdi-database.jar`和`rdi-mod-catalog.jar`，导致这两个jar内容随平台变化 |
 | FFmpeg（bytedeco） | `mediaproc/build.gradle.kts:35,50,53` | `windows-x86_64-gpl` |
 | FFmpeg运行时 | `MediaProcNativeRuntime.kt:12,34`、`MediaProcRuntimeClasspath.kt:12` | 前缀`windows-x86_64-gpl/`，校验`jniavutil.dll` |
-| ffmpeg可执行文件 | `MinecraftLauncher.kt:39` | `ffmpeg.exe` |
-| 早期画面视频 | `RdiVideoTexture.java:39` | 非Windows直接跳过（可接受） |
 | 显示器模式 | `service/DisplayModes.kt` | 通过`GlfwRuntime`初始化GLFW读取 |
 | JDK路径校验 | `WindowsUtils.kt:199-233` | 只认`java.exe/javaw.exe`，目录模式只找`bin/java.exe` |
 | 目录选择器 | `AwtFileDialogs.kt:160`、`WindowsFolderPicker.kt` | Windows用COM；其他平台走AWT `FileDialog`（Linux上不能选目录） |
@@ -252,8 +250,6 @@ client-libs/ui/
   - 完整性检查从`jniavutil.dll`改为按平台的文件名（`jniavutil.dll`、`libjniavutil.so`、`libjniavutil.dylib`）；
   - 解压后对非`.dll`/`.so`/`.dylib`的可执行文件（`ffmpeg`）执行`setExecutable(true)`。
 - `MediaProcRuntimeClasspath.nativeJarPattern`：改为匹配当前平台的classifier。
-- `MinecraftLauncher.earlyDisplayJvmArgs`：可执行文件名在Windows上是`ffmpeg.exe`，其他平台是`ffmpeg`。
-- `RdiVideoTexture.start()`的Windows限制先保留（mac/Linux早期画面没有视频，只有静态画面），作为第11节的后续项。
 
 ### 7.2`client/ui`
 
@@ -416,7 +412,6 @@ Arch: sudo pacman -S jdk25-openjdk
 | `UpdateServicePlatformTest.kt` | `server/master` | 5.3所列 |
 | `MediaProcNativeRuntimeTest.kt`（扩展） | `mediaproc` | 用伪造的jar覆盖三个平台的前缀、完整性检查文件名、`ffmpeg`可执行位 |
 | `MediaProcRuntimeClasspathTest.kt`（扩展） | `mediaproc` | 各平台的classifier匹配 |
-| `MinecraftLauncherTest.kt`（扩展） | `mclaunch` | `ffmpeg`/`ffmpeg.exe`按平台选择 |
 | `JdkPathValidationTest.kt` | `client/ui` | 用临时目录伪造`bin/java`、`bin/javac`、mac的`Contents/Home`结构；`java -version`的执行通过注入函数替换 |
 | `DisplayModesTest.kt` | `client/ui` | 格式化函数（与AWT调用分离后可测） |
 | `WindowTransparencyTest`（扩展现有） | `client/ui` | Linux默认不透明，JVM属性优先 |
