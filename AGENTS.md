@@ -12,19 +12,6 @@ For example:
 
 you can use intellij MCP to check code errors if available
 
----
-## Git access
-
-Only read-only Git operations are allowed.
-
-* Inspecting status, diffs, logs, commits, and tracked files is allowed.
-* Do not use Git to modify the working tree, index, history, refs, configuration,
-  or remotes. This restriction does not prohibit authorized source-file edits.
-* Do not stage, commit, amend, stash, restore, checkout, switch, reset, clean,
-  merge, rebase, cherry-pick, fetch, pull, push, or create/delete branches or tags.
-* Judge commands by their actual effects and arguments. Report any required Git
-  write operation to the user instead of executing it.
-
 ## 1. Agent Workflow
 
 ### Before Changing Code

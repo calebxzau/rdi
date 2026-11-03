@@ -8,6 +8,15 @@
         "-Command",
         "Set-Location client/ui; ./gradlew.bat --no-daemon --quiet --console=plain :hotMcpServer"
       ]
+    },
+    "rustrover": {
+      
+  "type": "sse",
+  "url": "http://127.0.0.1:64522/sse",
+  "headers": {
+    "IJ_MCP_SERVER_PROJECT_PATH": "C:/Users/calebxzhou/Documents/coding/rdi5/server/dm-gateway"
+  }
+
     }
   }
 }
