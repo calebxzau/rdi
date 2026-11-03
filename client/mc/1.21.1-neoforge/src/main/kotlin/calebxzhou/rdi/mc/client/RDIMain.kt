@@ -86,6 +86,10 @@ class RDIMain {
         @SubscribeEvent
         @JvmStatic
         fun onClientSetup(event: FMLClientSetupEvent) {
+            // Running from startup lets the AI help on menus too; the shutdown hook stops it on exit.
+            StandardMcpServer.start(McpGameImpl, null)
+                .onSuccess { port -> LoggerFactory.getLogger(RDIMain::class.java).info("AI MCP URL: {}", StandardMcpServer.url(port)) }
+                .onFailure { error -> LoggerFactory.getLogger(RDIMain::class.java).error("Failed to start the AI MCP server", error) }
             // Loading FFmpeg the first time takes a while; keep it off the render thread and the first sound.
             Thread.ofPlatform().daemon().name("rdi-mediaproc-warmup").start {
                 MediaProcWarmup.warmUp().onFailure { error ->
@@ -133,9 +137,7 @@ class RDIMain {
         @JvmStatic
         fun onClientJoinServer(event: ClientPlayerNetworkEvent.LoggingIn) {
             ItemPreviewExporter.onWorldEntered()
-            StandardMcpServer.start(McpGameImpl, null)
-                .onSuccess { port -> sendMcpUrlMessage(event.player, port) }
-                .onFailure { it.printStackTrace() }
+            StandardMcpServer.port?.let { port -> sendMcpUrlMessage(event.player, port) }
 
             Minecraft.getInstance().gui.apply {
                 setTimes(10, 200, 20)
@@ -145,7 +147,7 @@ class RDIMain {
         }
 
         private fun sendMcpUrlMessage(player: LocalPlayer, port: Int) {
-            val url = "http://127.0.0.1:$port/mcp"
+            val url = StandardMcpServer.url(port)
             player.displayClientMessage(
                 Component.literal("点此复制AI MCP URL").withStyle(ChatFormatting.UNDERLINE)
                     .withStyle { style ->
@@ -159,7 +161,6 @@ class RDIMain {
         @JvmStatic
         fun onClientLeaveServer(event: ClientPlayerNetworkEvent.LoggingOut) {
             ItemPreviewExporter.onWorldLeft()
-            StandardMcpServer.stop()
         }
     }
 }

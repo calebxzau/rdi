@@ -5,6 +5,8 @@ import calebxzau.mc.common2021.makeItemTagKey
 import calebxzau.mc.common2021.parseResId
 import calebxzau.mc.common2021.resId
 import calebxzau.mc.common2021.tagItemIds
+import calebxzau.mc.common2021.mcp.McpCommandControl
+import calebxzau.mc.common2021.mcp.McpScreenControl
 import calebxzhou.rdi.mc.client.mcp.McpGameInterface
 import calebxzhou.rdi.mc.common2.mcp.McpBadRequestError
 import calebxzhou.rdi.mc.common2.mcp.McpBadSlotError
@@ -212,4 +214,20 @@ object McpGameImpl : McpGameInterface {
     private fun RecipeIngredient.collectTagIds(tagIds: MutableSet<String>) {
         tags.forEach { tagIds += it.tagId }
     }
+
+    private val screenControl = McpScreenControl(McpScreenPlatform20)
+
+    override fun screenRead(): Result<ScreenSnapshot> = screenControl.read()
+
+    override fun screenClick(req: ScreenClickQ): Result<ScreenSnapshot> = screenControl.click(req)
+
+    override fun screenClickAt(req: ScreenClickAtQ): Result<ScreenSnapshot> = screenControl.clickAt(req)
+
+    override fun screenType(req: ScreenTypeQ): Result<ScreenSnapshot> = screenControl.type(req)
+
+    override fun screenKey(req: ScreenKeyQ): Result<ScreenSnapshot> = screenControl.key(req)
+
+    override fun screenScroll(req: ScreenScrollQ): Result<ScreenSnapshot> = screenControl.scroll(req)
+
+    override fun runCommand(req: CommandQ): Result<CommandResult> = McpCommandControl.run(req)
 }

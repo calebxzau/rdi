@@ -10,6 +10,7 @@ import io.fusionauth.http.server.HTTPResponse
 import io.fusionauth.http.server.HTTPServer
 import io.fusionauth.http.server.HTTPServerConfiguration
 import java.io.File
+import java.net.InetAddress
 import java.util.UUID
 
 object StandardMcpServer {
@@ -22,6 +23,12 @@ object StandardMcpServer {
     private var activePort: Int? = null
     private var sessionId: String = UUID.randomUUID().toString()
     private var shutdownHookRegistered = false
+
+    /** The listening port, or null when the server is not running. */
+    val port: Int?
+        @Synchronized get() = activePort
+
+    fun url(port: Int): String = "http://127.0.0.1:${port}${MCP_PATH}"
 
     @Synchronized
     fun start(game: McpGameInterface): Result<Unit> {
@@ -67,7 +74,8 @@ object StandardMcpServer {
                     .withHandler(HTTPHandler { request: HTTPRequest, response: HTTPResponse ->
                         handleHttp(request, response)
                     })
-                    .withListener(HTTPListenerConfiguration(port))
+                    // Loopback only: the tools act as the player, so other machines must not reach them.
+                    .withListener(HTTPListenerConfiguration(InetAddress.getByName("127.0.0.1"), port))
             )
             .start()
     }

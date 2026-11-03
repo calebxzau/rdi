@@ -50,6 +50,10 @@ class RDIMain {
         calebxzau.rdi.mc.client.syncchunk.SyncChunkForgeClient.register()
         calebxzau.rdi.mc.client.syncchunk.SyncChunkIntegratedForge.register()
         McpNetwork.register()
+        // Running from startup lets the AI help on menus too; the shutdown hook stops it on exit.
+        StandardMcpServer.start(McpGameImpl, null)
+            .onSuccess { port -> LogManager.getLogger("rdi").info("AI MCP URL: {}", StandardMcpServer.url(port)) }
+            .onFailure { error -> LogManager.getLogger("rdi").error("Failed to start the AI MCP server", error) }
         LogManager.getLogger("rdi").info("❄❄❄❄❄❄❄❄RDI客户端核心模块已加载❄❄❄❄❄❄❄❄")
     }
 
@@ -79,9 +83,7 @@ class RDIMain {
                 "${RDI.HOST_NAME}\n${RDI.GAME_IP}",
             )
             RdiChunkCacheClient.sendManifestAndReady() */
-            StandardMcpServer.start(McpGameImpl, null)
-                .onSuccess { port -> sendMcpUrlMessage(event.player, port) }
-                .onFailure { it.printStackTrace() }
+            StandardMcpServer.port?.let { port -> sendMcpUrlMessage(event.player, port) }
         }
 
         @SubscribeEvent
@@ -99,13 +101,12 @@ class RDIMain {
             RClientBatching.onLeave(event.connection)
             RClientPacketRefs.onLeave(event.connection)
             RClientZstdStream.onLeave(event.connection)
-            StandardMcpServer.stop()
             /* RdiChunkCacheClientHandler.clearDeferredPackets()
             RdiChunkCacheClient.close() */
         }
 
         private fun sendMcpUrlMessage(player: LocalPlayer, port: Int) {
-            val url = "http://127.0.0.1:$port/mcp"
+            val url = StandardMcpServer.url(port)
             player.displayClientMessage(
                 Component.literal("点此复制AI MCP URL").withStyle(ChatFormatting.UNDERLINE)
                     .withStyle { style ->
