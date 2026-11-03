@@ -45,6 +45,8 @@ dependencies {
     api(libs.bundles.ktor.json.client)
     api(libs.bundles.mongodb)
     api(libs.minecraft.auth)
+    implementation(libs.jna)
+    runtimeOnly(project(":local-proxy-natives"))
     implementation(libs.ktor.client.okhttp)
     implementation(libs.ktor.client.auth)
     implementation(libs.kotlin.logging.jvm)
@@ -109,6 +111,10 @@ registerFocusedTest(
     "calebxzau/rdi/client/service/ModpackUploadRuntimeGuardTest.kt",
     "calebxzau/rdi/client/service/LocalModpackInstallerTest.kt",
     "calebxzau/rdi/client/account/GameAccountServiceTest.kt",
+)
+registerFocusedTest(
+    "localProxyTest",
+    "calebxzau/rdi/client/proxy/*Test.kt",
 )
 registerFocusedTest(
     "baseWorldTest",

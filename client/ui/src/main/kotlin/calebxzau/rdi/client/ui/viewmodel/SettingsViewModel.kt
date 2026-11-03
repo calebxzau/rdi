@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import calebxzhou.rdi.client.AppConfig
 import calebxzhou.rdi.client.net.server
+import calebxzhou.rdi.client.service.LocalMcProxyService
 import calebxzhou.rdi.client.service.NodeRefreshCoordinator
 import calebxzhou.rdi.client.service.ModpackLocalDir
 import calebxzhou.rdi.client.service.ModpackService
@@ -50,6 +51,12 @@ data class NodeSwitchRequest(
     val forceMain: Boolean = false,
 )
 
+data class NodeSwitchResult(
+    val nodeName: String,
+    /** A running game moved to the new node without leaving the world. */
+    val movedRunningGame: Boolean = false,
+)
+
 data class SettingsUiState(
     val loading: Boolean = true,
     val draft: SettingsDraft = SettingsDraft(),
@@ -76,7 +83,7 @@ interface SettingsGateway {
 
     suspend fun saveSettings(draft: SettingsDraft): Result<Unit>
 
-    suspend fun switchNode(request: NodeSwitchRequest): Result<String>
+    suspend fun switchNode(request: NodeSwitchRequest): Result<NodeSwitchResult>
 
     suspend fun loadDownloadQuota(): Result<DownloadQuota.Vo>
 
@@ -111,10 +118,13 @@ class RdiSettingsGateway : SettingsGateway {
         ).getOrThrow()
     }
 
-    override suspend fun switchNode(request: NodeSwitchRequest): Result<String> = resultOf {
-        NodeRefreshCoordinator.refreshCurrent(request.gameBackup, request.forceMain)
-            .getOrThrow()
-            .nodeName
+    override suspend fun switchNode(request: NodeSwitchRequest): Result<NodeSwitchResult> = resultOf {
+        val entry = NodeRefreshCoordinator.refreshCurrent(request.gameBackup, request.forceMain).getOrThrow()
+        val moved = LocalMcProxyService.applyRoute().getOrElse { cause ->
+            lgr.warn(cause) { "无法让运行中的游戏切换节点，下次进入房间时生效" }
+            false
+        }
+        NodeSwitchResult(entry.nodeName, moved)
     }
 
     override suspend fun loadDownloadQuota(): Result<DownloadQuota.Vo> = resultOf {
@@ -186,10 +196,15 @@ class SettingsViewModel(
         _uiState.update { it.copy(switchingNode = true) }
         viewModelScope.launch {
             try {
-                val nodeName = withContext(Dispatchers.IO) {
+                val result = withContext(Dispatchers.IO) {
                     gateway.switchNode(NodeSwitchRequest(gameBackup, forceMain)).getOrThrow()
                 }
-                eventChannel.send(SettingsEvent.ShowSnackbar("已临时切换到${nodeName}"))
+                val message = if (result.movedRunningGame) {
+                    "已切换到${result.nodeName}，不用退出地图"
+                } else {
+                    "已临时切换到${result.nodeName}"
+                }
+                eventChannel.send(SettingsEvent.ShowSnackbar(message))
             } catch (cancel: CancellationException) {
                 throw cancel
             } catch (cause: Throwable) {

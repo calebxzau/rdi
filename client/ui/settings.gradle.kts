@@ -18,6 +18,7 @@ include(
     ":code-editor-ui",
     ":database",
     ":sqlite-natives",
+    ":local-proxy-natives",
     ":client-store",
     ":client-core",
     ":misc",
@@ -52,6 +53,7 @@ project(":code-editor").projectDir = file("code-editor")
 project(":code-editor-ui").projectDir = file("code-editor-ui")
 project(":database").projectDir = file("database")
 project(":sqlite-natives").projectDir = file("sqlite-natives")
+project(":local-proxy-natives").projectDir = file("local-proxy-natives")
 project(":client-store").projectDir = file("client-store")
 project(":client-core").projectDir = file("client-core")
 project(":misc").projectDir = file("../../common/misc")

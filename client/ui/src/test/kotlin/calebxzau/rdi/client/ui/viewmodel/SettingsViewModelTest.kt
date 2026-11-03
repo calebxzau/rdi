@@ -76,7 +76,7 @@ class SettingsViewModelTest {
 
     @Test
     fun `node switching ignores duplicates and emits the result`() = runBlocking {
-        val switchGate = CompletableDeferred<Result<String>>()
+        val switchGate = CompletableDeferred<Result<NodeSwitchResult>>()
         val gateway = FakeSettingsGateway(switchGate = switchGate)
         val viewModel = SettingsViewModel(gateway)
         awaitInitialized(viewModel)
@@ -88,9 +88,20 @@ class SettingsViewModelTest {
 
         assertEquals(1, gateway.nodeSwitches.size)
         assertEquals(NodeSwitchRequest(gameBackup = true, forceMain = false), gateway.nodeSwitches.single())
-        switchGate.complete(Result.success("备用节点A"))
+        switchGate.complete(Result.success(NodeSwitchResult("备用节点A")))
         assertEquals(SettingsEvent.ShowSnackbar("已临时切换到备用节点A"), viewModel.events.first())
         assertFalse(viewModel.uiState.value.switchingNode)
+    }
+
+    @Test
+    fun `node switching tells players a running game stays in the world`() = runBlocking {
+        val switchGate = CompletableDeferred(Result.success(NodeSwitchResult("备用节点A", movedRunningGame = true)))
+        val viewModel = SettingsViewModel(FakeSettingsGateway(switchGate = switchGate))
+        awaitInitialized(viewModel)
+
+        viewModel.switchNode(gameBackup = true)
+
+        assertEquals(SettingsEvent.ShowSnackbar("已切换到备用节点A，不用退出地图"), viewModel.events.first())
     }
 
     @Test
@@ -256,7 +267,7 @@ class SettingsViewModelTest {
             totalMemoryMb = 16384,
         ),
         private val saveResult: Result<Unit> = Result.success(Unit),
-        private val switchGate: CompletableDeferred<Result<String>>? = null,
+        private val switchGate: CompletableDeferred<Result<NodeSwitchResult>>? = null,
         private val quotaResults: ArrayDeque<Result<DownloadQuota.Vo>> = ArrayDeque(
             listOf(Result.success(quota(remainingBytes = 800)))
         ),
@@ -281,10 +292,10 @@ class SettingsViewModelTest {
             return saveResult
         }
 
-        override suspend fun switchNode(request: NodeSwitchRequest): Result<String> {
+        override suspend fun switchNode(request: NodeSwitchRequest): Result<NodeSwitchResult> {
             nodeSwitches += request
             nodeSwitchCount.value = nodeSwitches.size
-            return switchGate?.await() ?: Result.success("测试节点")
+            return switchGate?.await() ?: Result.success(NodeSwitchResult("测试节点"))
         }
 
         suspend fun awaitNodeSwitchCount(expected: Int) {

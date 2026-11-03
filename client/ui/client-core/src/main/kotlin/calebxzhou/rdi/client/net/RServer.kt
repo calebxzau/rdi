@@ -5,6 +5,7 @@ import calebxzhou.rdi.client.auth.AccountSessionStore
 import calebxzhou.rdi.common.DEBUG
 import calebxzhou.rdi.common.exception.RequestError
 import calebxzhou.rdi.common.json
+import calebxzhou.rdi.common.model.GameNodeEntry
 import calebxzhou.rdi.common.model.RAccount
 import calebxzhou.rdi.common.model.Response
 import calebxzhou.rdi.common.model.ServerEntry
@@ -21,6 +22,7 @@ import io.ktor.http.*
 import io.ktor.sse.ServerSentEvent
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.builtins.MapSerializer
 import kotlinx.serialization.builtins.serializer
@@ -30,7 +32,8 @@ import java.net.URI
 import java.nio.file.Path
 import java.nio.file.Paths
 
-private const val DEFAULT_GAME_NODE_ADDR = "rdi.calebxzhou.cn:65230"
+internal const val DEFAULT_GAME_NODE_ADDR = "rdi.calebxzhou.cn:65230"
+private const val DEFAULT_GAME_NODE_NAME = "默认节点"
 private const val DEFAULT_PRIMARY_HOST = "rdi.calebxzhou.cn"
 
 /**
@@ -50,6 +53,8 @@ data class ServerRouteState(
     val entryHost: String = DEFAULT_PRIMARY_HOST,
     val nodeName: String? = null,
     val gameAddr: String = DEFAULT_GAME_NODE_ADDR,
+    val candidates: List<GameNodeEntry> = emptyList(),
+    val sessionResume: Boolean = false,
 )
 
 val server
@@ -110,13 +115,30 @@ class RServer(
             get() = routeState.value.gameAddr.ifBlank { DEFAULT_GAME_NODE_ADDR }
 
         fun updateServerEntry(entry: ServerEntry) {
-            lgr.info { "update server entry: $entry" }
+            lgr.info { "update server entry: ${entry.copy(candidates = emptyList())}, ${entry.candidates.size} candidates" }
             routeState.value = routeState.value.copy(
                 useBackupNode = entry.useBackupNode,
                 entryHost = entry.api?.trim().orEmpty().ifBlank { DEFAULT_PRIMARY_HOST },
                 nodeName = entry.nodeName.ifBlank { null },
-                gameAddr = entry.gameAddr.trim().ifBlank { DEFAULT_GAME_NODE_ADDR }
+                gameAddr = entry.gameAddr.trim().ifBlank { DEFAULT_GAME_NODE_ADDR },
+                candidates = entry.candidates,
+                sessionResume = entry.sessionResume,
             )
+        }
+
+        /** Records the node a running game actually moved to, so settings show the real one. */
+        fun markActiveNode(addr: String) {
+            routeState.update { state ->
+                if (state.gameAddr == addr) {
+                    state
+                } else {
+                    state.copy(
+                        gameAddr = addr,
+                        nodeName = state.candidates.firstOrNull { it.gameAddr == addr }?.name
+                            ?: DEFAULT_GAME_NODE_NAME,
+                    )
+                }
+            }
         }
     }
 

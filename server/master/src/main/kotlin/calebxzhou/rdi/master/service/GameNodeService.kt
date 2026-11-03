@@ -1,5 +1,6 @@
 package calebxzhou.rdi.master.service
 
+import calebxzhou.rdi.common.model.GameNodeEntry
 import calebxzhou.rdi.common.model.ServerEntry
 import calebxzhou.rdi.master.CONF
 import calebxzhou.rdi.master.GameNodeRuleConfig
@@ -45,13 +46,32 @@ object GameNodeService {
         val node = selectNode(region, gameBackup, forceMain)
         val backupApi = CONF.server.bgpUrl.trim()
         val useBackupNode = backupApi.isNotBlank() && !region.isCT && isPeekHour()
+        val sessionResume = CONF.gameNode.sessionResume
         return ServerEntry(
             api = backupApi.takeIf { useBackupNode },
             useBackupNode = useBackupNode,
-            nodeName = node.name + "-" + region.province.substring(0..1) + region.carrierName,
-            gameAddr = node.gameAddr
+            nodeName = node.displayName(region),
+            gameAddr = node.gameAddr,
+            // While the switch is off, responses stay exactly as they were and reveal no extra nodes.
+            candidates = if (sessionResume) {
+                GameNodeCandidatePolicy.select(
+                    nodes = CONF.gameNode.nodes,
+                    selected = node,
+                    peakHour = isPeekHour(),
+                    outsideMainland = region.isOutsideMainland,
+                ).map { GameNodeEntry(it.displayName(region), it.gameAddr) }
+            } else {
+                emptyList()
+            },
+            sessionResume = sessionResume,
         )
     }
+
+    private fun GameNodeRuleConfig.displayName(region: Ip2RegionResult): String =
+        name + "-" + region.province.substring(0..1) + region.carrierName
+
+    private val Ip2RegionResult.isOutsideMainland: Boolean
+        get() = !isChina || province in listOf("香港", "澳门", "台湾")
 
     private fun isPeekHour(): Boolean {
         val now = LocalTime.now(BEIJING_ZONE_ID)
@@ -84,7 +104,7 @@ object GameNodeService {
         }
         // `matchOutsideChina`是兜底的国际节点规则：
         // 只要IP不在中国，或者命中了港澳台，就直接匹配。
-        if (matchOutsideChina && (!region.isChina || region.province in listOf("香港", "澳门", "台湾"))) {
+        if (matchOutsideChina && region.isOutsideMainland) {
             return true
         }
         // 运营商名称可能同时出现“电信/中国电信”这两种写法，
@@ -103,6 +123,29 @@ object GameNodeService {
         return carriers.isNotEmpty() || provinces.isNotEmpty()
     }
 
+}
+
+/** Nodes a launcher may move a running game to, most preferred first. */
+object GameNodeCandidatePolicy {
+    fun select(
+        nodes: List<GameNodeRuleConfig>,
+        selected: GameNodeRuleConfig,
+        peakHour: Boolean,
+        outsideMainland: Boolean,
+    ): List<GameNodeRuleConfig> {
+        val ordered = buildList {
+            add(selected)
+            addAll(nodes.filter { it.gameBackup })
+            addAll(nodes.filter { it.id == FALLBACK_GAME_NODE_ID })
+            addAll(nodes)
+        }
+        return ordered
+            .filter { node ->
+                node === selected || node.id == FALLBACK_GAME_NODE_ID ||
+                    (peakHour || !node.peekHourOnly) && (outsideMainland || !node.matchOutsideChina)
+            }
+            .distinctBy { it.gameAddr }
+    }
 }
 
 object ProxyAccessPolicy {

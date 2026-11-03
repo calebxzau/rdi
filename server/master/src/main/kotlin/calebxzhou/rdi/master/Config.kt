@@ -116,7 +116,9 @@ data class GameNodeRuleConfig(
 
 @Serializable
 data class GameNodeConfig(
-    val nodes: List<GameNodeRuleConfig> = emptyList()
+    val nodes: List<GameNodeRuleConfig> = emptyList(),
+    /** Lets launchers keep players in the world when their node changes. */
+    val sessionResume: Boolean = false,
 )
 
 @Serializable

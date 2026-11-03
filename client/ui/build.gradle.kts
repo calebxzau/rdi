@@ -346,15 +346,15 @@ val uiReleasePlatforms = listOf("windows-x64", "linux-x64", "macos-arm64")
 val uiPlatformNativeMarkers = mapOf(
     "windows-x64" to listOf(
         "skiko-awt-runtime-windows-x64-", "-natives-windows.jar", "-windows-x86_64-gpl.jar", "-win_amd64.jar",
-        "rdi-sqlite-natives-windows-x64.jar",
+        "rdi-sqlite-natives-windows-x64.jar", "rdi-local-proxy-natives-windows-x64.jar",
     ),
     "linux-x64" to listOf(
         "skiko-awt-runtime-linux-x64-", "-natives-linux.jar", "-linux-x86_64-gpl.jar", "-linux_amd64.jar",
-        "rdi-sqlite-natives-linux-x64.jar",
+        "rdi-sqlite-natives-linux-x64.jar", "rdi-local-proxy-natives-linux-x64.jar",
     ),
     "macos-arm64" to listOf(
         "skiko-awt-runtime-macos-arm64-", "-natives-macos-arm64.jar", "-macosx-arm64-gpl.jar", "-darwin_aarch64.jar",
-        "rdi-sqlite-natives-macos-arm64.jar",
+        "rdi-sqlite-natives-macos-arm64.jar", "rdi-local-proxy-natives-macos-arm64.jar",
     ),
 )
 
@@ -519,6 +519,21 @@ fun validateUiPlatformNatives(platform: String, fileNames: Set<String>) {
         .flatMap { marker -> fileNames.filter { it.contains(marker) } }
         .distinct()
     if (foreign.isNotEmpty()) throw GradleException("${platform}混入了其他平台的原生库: ${foreign.joinToString()}")
+}
+
+// Checks what each platform would ship without touching the generated release of this version.
+tasks.register("checkUiPlatformNatives") {
+    dependsOn("desktopInstallLibs", nestedDesktopInstallLibs)
+    notCompatibleWithConfigurationCache("reads staged libraries of nested builds")
+    group = "verification"
+    description = "Stages the UI libraries of every platform and validates their native jars."
+    doLast {
+        uiReleasePlatforms.forEach { platform ->
+            val names = uiInstallLibDir(platform).get().asFile.list().orEmpty().toSet()
+            validateUiPlatformNatives(platform, names)
+            logger.lifecycle("${platform}原生库校验通过，共${names.size}个文件")
+        }
+    }
 }
 
 val packageUiRelease = tasks.register("packageUiRelease") {
