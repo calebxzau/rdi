@@ -2,20 +2,23 @@
 //! arriving through any node end up here, and the application stream outlives them.
 
 use crate::{
-    engine::{self, BoxStream, Control, Event, Shared, Tuning},
+    engine::{self, BoxStream, Control, EndReason, Event, Shared, Tuning},
     protocol::{CLIENT_HELLO_LEN, ClientHello, HelloStatus, ServerHello, Token, VERSION},
 };
 use std::{
     collections::HashMap,
     io,
     net::SocketAddr,
-    sync::{Arc, Mutex},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicU64, Ordering},
+    },
     time::Duration,
 };
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt, DuplexStream, duplex},
     sync::mpsc,
-    time::timeout,
+    time::{Instant, timeout},
 };
 
 const HELLO_TIMEOUT: Duration = Duration::from_secs(5);
@@ -25,12 +28,40 @@ const CONTROL_QUEUE: usize = 8;
 const MAX_HELLOS_PER_CONNECTION: usize = 4;
 
 type SessionHandler = dyn Fn(DuplexStream, SocketAddr) + Send + Sync;
+type EventHandler = dyn Fn(AnchorEvent) + Send + Sync;
+
+/// What happened to a session. Sessions go by a short number that is only unique
+/// within this process, so these are safe to log: the token is never included.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AnchorEvent {
+    /// A session accepted its first connection.
+    Started { session: u64, peer: SocketAddr },
+    /// A later connection took the session over, so the player changed path.
+    Resumed {
+        session: u64,
+        peer: SocketAddr,
+        /// Time since the last byte from the player, which is about the length of the outage.
+        silent_ms: u64,
+        /// Bytes already sent once that go out again on the new path.
+        replay_bytes: u64,
+    },
+    /// A connection asked to resume a session this process does not hold.
+    UnknownSession { peer: SocketAddr },
+    Ended {
+        session: u64,
+        reason: EndReason,
+        resumes: u32,
+        lasted_ms: u64,
+    },
+}
 
 pub struct Anchor {
     sessions: Mutex<HashMap<Token, mpsc::Sender<Control>>>,
     max_sessions: usize,
     tuning: Tuning,
     on_session: Box<SessionHandler>,
+    on_event: Box<EventHandler>,
+    next_session: AtomicU64,
 }
 
 impl Anchor {
@@ -41,11 +72,23 @@ impl Anchor {
         tuning: Tuning,
         on_session: impl Fn(DuplexStream, SocketAddr) + Send + Sync + 'static,
     ) -> Arc<Self> {
+        Self::with_events(max_sessions, tuning, on_session, |_event| {})
+    }
+
+    /// Like `new`, and also reports each session's lifecycle to `on_event`, which must not block.
+    pub fn with_events(
+        max_sessions: usize,
+        tuning: Tuning,
+        on_session: impl Fn(DuplexStream, SocketAddr) + Send + Sync + 'static,
+        on_event: impl Fn(AnchorEvent) + Send + Sync + 'static,
+    ) -> Arc<Self> {
         Arc::new(Self {
             sessions: Mutex::new(HashMap::new()),
             max_sessions,
             tuning,
             on_session: Box::new(on_session),
+            on_event: Box::new(on_event),
+            next_session: AtomicU64::new(1),
         })
     }
 
@@ -68,16 +111,21 @@ impl Anchor {
                 return reply(&mut stream, HelloStatus::UnsupportedVersion).await;
             }
             if hello.probe {
-                write_status(&mut stream, self.probe_status(&hello)).await?;
+                let status = self.probe_status(&hello);
+                if status == HelloStatus::UnknownSession {
+                    (self.on_event)(AnchorEvent::UnknownSession { peer });
+                }
+                write_status(&mut stream, status).await?;
                 continue;
             }
             let attach = Control::AttachAnchor {
                 stream,
                 generation: hello.generation,
                 peer_recv: hello.recv_offset,
+                peer,
             };
             let outcome = if hello.resume {
-                self.resume(&hello.token, attach).await
+                self.resume(&hello.token, attach, peer).await
             } else {
                 self.create(hello.token, attach, peer).await
             };
@@ -103,7 +151,12 @@ impl Anchor {
         }
     }
 
-    async fn resume(&self, token: &Token, attach: Control) -> Result<(), (BoxStream, HelloStatus)> {
+    async fn resume(
+        &self,
+        token: &Token,
+        attach: Control,
+        peer: SocketAddr,
+    ) -> Result<(), (BoxStream, HelloStatus)> {
         let sender = self
             .sessions
             .lock()
@@ -111,6 +164,7 @@ impl Anchor {
             .get(token)
             .cloned();
         let Some(sender) = sender else {
+            (self.on_event)(AnchorEvent::UnknownSession { peer });
             return Err((stream_of(attach), HelloStatus::UnknownSession));
         };
         sender
@@ -139,16 +193,58 @@ impl Anchor {
         let (session_end, app_end) = duplex(APP_PIPE_CAPACITY);
         let registry = Arc::clone(self);
         let tuning = self.tuning;
+        let session = self.next_session.fetch_add(1, Ordering::Relaxed);
         tokio::spawn(async move {
-            // The anchor waits passively, so it has no use for path events.
-            let (events, _ignored) = mpsc::unbounded_channel::<Event>();
+            let (events, mut engine_events) = mpsc::unbounded_channel::<Event>();
             let shared = Arc::new(Shared::default());
-            engine::run(session_end, control, events, shared, tuning).await;
+            let started = Instant::now();
+            let mut attached = false;
+            let mut resumes = 0;
+            // The anchor waits passively, so only accepted connections matter here, not lost paths.
+            let mut report = |event: Event| {
+                let Event::AnchorAttached {
+                    peer,
+                    silent_ms,
+                    replay_bytes,
+                } = event
+                else {
+                    return;
+                };
+                if attached {
+                    resumes += 1;
+                    (registry.on_event)(AnchorEvent::Resumed {
+                        session,
+                        peer,
+                        silent_ms,
+                        replay_bytes,
+                    });
+                } else {
+                    attached = true;
+                    (registry.on_event)(AnchorEvent::Started { session, peer });
+                }
+            };
+            let run = engine::run(session_end, control, events, shared, tuning);
+            tokio::pin!(run);
+            let reason = loop {
+                tokio::select! {
+                    reason = &mut run => break reason,
+                    Some(event) = engine_events.recv() => report(event),
+                }
+            };
+            while let Ok(event) = engine_events.try_recv() {
+                report(event);
+            }
             registry
                 .sessions
                 .lock()
                 .expect("session map poisoned")
                 .remove(&token);
+            (registry.on_event)(AnchorEvent::Ended {
+                session,
+                reason,
+                resumes,
+                lasted_ms: started.elapsed().as_millis() as u64,
+            });
         });
         (self.on_session)(app_end, peer);
         control_sender

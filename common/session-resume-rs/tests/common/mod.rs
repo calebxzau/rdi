@@ -4,7 +4,7 @@
 
 use rdi_session_resume::{
     BoxStream, Tuning,
-    anchor::Anchor,
+    anchor::{Anchor, AnchorEvent},
     client::{ClientConfig, Dialer, EventSink, NodeTable, SessionEvent, spawn_client_session},
 };
 use std::{
@@ -44,6 +44,8 @@ impl Faults {
 pub struct Network {
     nodes: Mutex<HashMap<String, watch::Sender<Faults>>>,
     anchor: Mutex<Arc<Anchor>>,
+    /// Nodes that reach a different anchor from the rest.
+    node_anchors: Mutex<HashMap<String, Arc<Anchor>>>,
 }
 
 impl Network {
@@ -55,11 +57,19 @@ impl Network {
         Arc::new(Self {
             nodes: Mutex::new(nodes),
             anchor: Mutex::new(anchor),
+            node_anchors: Mutex::new(HashMap::new()),
         })
     }
 
     pub fn replace_anchor(&self, anchor: Arc<Anchor>) {
         *self.anchor.lock().unwrap() = anchor;
+    }
+
+    pub fn route_node_to(&self, node: &str, anchor: Arc<Anchor>) {
+        self.node_anchors
+            .lock()
+            .unwrap()
+            .insert(node.to_string(), anchor);
     }
 
     fn update(&self, node: &str, change: impl FnOnce(&mut Faults)) {
@@ -109,7 +119,13 @@ impl Network {
         }
         let (client_end, link_client) = duplex(LINK_BUFFER);
         let (link_anchor, anchor_end) = duplex(LINK_BUFFER);
-        let anchor = Arc::clone(&self.anchor.lock().unwrap());
+        let anchor = self
+            .node_anchors
+            .lock()
+            .unwrap()
+            .get(node)
+            .cloned()
+            .unwrap_or_else(|| Arc::clone(&self.anchor.lock().unwrap()));
         tokio::spawn(async move {
             let peer: SocketAddr = "127.0.0.1:1".parse().unwrap();
             let _ = anchor.handle_path(Box::new(anchor_end), peer).await;
@@ -213,22 +229,37 @@ pub fn connect_with(network: &Arc<Network>, nodes: &[&str], config: ClientConfig
     ClientHandle { app, table, log }
 }
 
+fn serve_echo(mut app: DuplexStream) {
+    tokio::spawn(async move {
+        let mut buffer = vec![0u8; 16 * 1024];
+        loop {
+            let count = match app.read(&mut buffer).await {
+                Ok(0) | Err(_) => return,
+                Ok(count) => count,
+            };
+            if app.write_all(&buffer[..count]).await.is_err() {
+                return;
+            }
+        }
+    });
+}
+
 /// An anchor whose sessions simply echo what they receive.
 pub fn echo_anchor() -> Arc<Anchor> {
-    Anchor::new(64, Tuning::anchor(), |mut app, _peer| {
-        tokio::spawn(async move {
-            let mut buffer = vec![0u8; 16 * 1024];
-            loop {
-                let count = match app.read(&mut buffer).await {
-                    Ok(0) | Err(_) => return,
-                    Ok(count) => count,
-                };
-                if app.write_all(&buffer[..count]).await.is_err() {
-                    return;
-                }
-            }
-        });
-    })
+    Anchor::new(64, Tuning::anchor(), |app, _peer| serve_echo(app))
+}
+
+/// An echo anchor that records what it reports.
+pub fn observed_anchor() -> (Arc<Anchor>, Arc<Mutex<Vec<AnchorEvent>>>) {
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let recorder = Arc::clone(&events);
+    let anchor = Anchor::with_events(
+        64,
+        Tuning::anchor(),
+        |app, _peer| serve_echo(app),
+        move |event| recorder.lock().unwrap().push(event),
+    );
+    (anchor, events)
 }
 
 /// An anchor that hands the application end of each session to the test.

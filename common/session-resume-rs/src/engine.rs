@@ -8,6 +8,7 @@ use crate::{
 use std::{
     future::pending,
     io,
+    net::SocketAddr,
     sync::{
         Arc,
         atomic::{AtomicU64, Ordering},
@@ -101,6 +102,7 @@ pub(crate) enum Control {
         stream: BoxStream,
         generation: u32,
         peer_recv: u64,
+        peer: SocketAddr,
     },
     AttachClient {
         stream: BoxStream,
@@ -117,6 +119,12 @@ pub(crate) enum Event {
         path_serial: u64,
         hard: bool,
         reason: &'static str,
+    },
+    /// The anchor accepted a connection for this session.
+    AnchorAttached {
+        peer: SocketAddr,
+        silent_ms: u64,
+        replay_bytes: u64,
     },
     Ended(EndReason),
 }
@@ -433,7 +441,7 @@ where
         tokio::select! {
             biased;
             message = control.recv() => match message {
-                Some(Control::AttachAnchor { stream, generation, peer_recv }) => {
+                Some(Control::AttachAnchor { stream, generation, peer_recv, peer }) => {
                     if generation <= state.generation {
                         reject(stream, HelloStatus::StaleGeneration);
                         continue;
@@ -446,7 +454,13 @@ where
                         }
                     };
                     state.generation = generation;
-                    state.begin_path(state.recv_total, Instant::now());
+                    let now = Instant::now();
+                    let _ = events.send(Event::AnchorAttached {
+                        peer,
+                        silent_ms: (now - state.last_recv).as_millis() as u64,
+                        replay_bytes: state.send.high_water() - send_from,
+                    });
+                    state.begin_path(state.recv_total, now);
                     let hello = ServerHello {
                         version: VERSION,
                         status: HelloStatus::Ok,

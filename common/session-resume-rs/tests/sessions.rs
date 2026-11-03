@@ -5,7 +5,7 @@ mod common;
 use common::*;
 use rdi_session_resume::{
     EndReason, Tuning,
-    anchor::Anchor,
+    anchor::{Anchor, AnchorEvent},
     client::{AttachReason, SessionEvent},
     protocol::{
         CLIENT_HELLO_LEN, ClientHello, Frame, HelloStatus, SERVER_HELLO_LEN, ServerHello, VERSION,
@@ -332,6 +332,68 @@ async fn anchor_restart_ends_the_game_connection() {
 }
 
 #[tokio::test(start_paused = true)]
+async fn anchor_restart_waits_for_a_silent_node_then_ends_the_game_connection() {
+    let network = Network::new(&["a", "b", "c"], echo_anchor());
+    let mut client = connect(&network, &["a", "b", "c"]);
+    round_trip(&mut client.app, b"before").await;
+
+    network.replace_anchor(echo_anchor());
+    network.freeze("b");
+    let killed_at = Instant::now();
+    network.kill("a");
+
+    let mut rest = Vec::new();
+    timeout(Duration::from_secs(10), client.app.read_to_end(&mut rest))
+        .await
+        .expect("game connection stayed open")
+        .unwrap();
+    // The answer from c is not final until b has had its full attempt.
+    assert!(killed_at.elapsed() >= Duration::from_secs(2));
+    wait_until(|| {
+        client.log.all().contains(&SessionEvent::Ended {
+            reason: EndReason::Gone,
+        })
+    })
+    .await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn node_on_another_anchor_does_not_end_the_session() {
+    let network = Network::new(&["a", "b"], echo_anchor());
+    network.route_node_to("b", echo_anchor());
+    let mut client = connect(&network, &["a", "b"]);
+    round_trip(&mut client.app, b"before").await;
+
+    // b answers at once; the failed node a is tried half a second later and works again.
+    network.kill("a");
+    network.heal("a");
+    round_trip(&mut client.app, b"after").await;
+
+    assert_eq!(client.log.attached_nodes(), ["a", "a"]);
+}
+
+#[tokio::test(start_paused = true)]
+async fn manual_switch_to_another_anchor_keeps_the_session() {
+    let network = Network::new(&["a", "b"], echo_anchor());
+    network.route_node_to("b", echo_anchor());
+    let mut client = connect(&network, &["a", "b"]);
+    round_trip(&mut client.app, b"before").await;
+
+    client.table.switch_to("b".to_string());
+    wait_until(|| {
+        client
+            .log
+            .all()
+            .iter()
+            .any(|event| matches!(event, SessionEvent::SwitchFailed { .. }))
+    })
+    .await;
+    round_trip(&mut client.app, b"after").await;
+
+    assert_eq!(client.log.attached_nodes(), ["a"]);
+}
+
+#[tokio::test(start_paused = true)]
 async fn both_ends_give_up_when_no_path_returns() {
     let (anchor, mut sessions) = manual_anchor();
     let network = Network::new(&["a"], Arc::clone(&anchor));
@@ -543,6 +605,88 @@ async fn replay_claiming_unsent_bytes_is_refused() {
         HelloStatus::InvalidOffset
     );
     wait_until(|| anchor.session_count() == 0).await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn anchor_reports_a_session_from_start_to_end() {
+    let (anchor, events) = observed_anchor();
+    let network = Network::new(&["a", "b"], anchor);
+    let mut client = connect(&network, &["a", "b"]);
+    round_trip(&mut client.app, b"before").await;
+
+    network.freeze("a");
+    round_trip(&mut client.app, b"after").await;
+    drop(client.app);
+    wait_until(|| {
+        events
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|event| matches!(event, AnchorEvent::Ended { .. }))
+    })
+    .await;
+
+    let peer: SocketAddr = "127.0.0.1:1".parse().unwrap();
+    let recorded = events.lock().unwrap().clone();
+    let [
+        AnchorEvent::Started { session: 1, peer: started_peer },
+        AnchorEvent::Resumed {
+            session: 1,
+            peer: resumed_peer,
+            silent_ms,
+            ..
+        },
+        AnchorEvent::Ended {
+            session: 1,
+            reason: EndReason::Closed,
+            resumes: 1,
+            ..
+        },
+    ] = recorded[..]
+    else {
+        panic!("unexpected events: {recorded:?}");
+    };
+    assert_eq!((started_peer, resumed_peer), (peer, peer));
+    // The outage lasted until the client noticed it, so about three seconds.
+    assert!((1_000..=8_000).contains(&silent_ms), "{silent_ms}");
+}
+
+#[tokio::test(start_paused = true)]
+async fn anchor_does_not_report_a_rejected_connection_as_a_resume() {
+    let (anchor, events) = observed_anchor();
+    let token = [5u8; 16];
+
+    let mut current = open_path(&anchor);
+    write_hello(&mut current, token, false, false, 5).await;
+    assert_eq!(read_hello(&mut current).await.status, HelloStatus::Ok);
+    let mut stale = open_path(&anchor);
+    write_hello(&mut stale, token, true, false, 5).await;
+    assert_eq!(
+        read_hello(&mut stale).await.status,
+        HelloStatus::StaleGeneration
+    );
+    let mut unknown = open_path(&anchor);
+    write_hello(&mut unknown, [6u8; 16], true, false, 1).await;
+    assert_eq!(
+        read_hello(&mut unknown).await.status,
+        HelloStatus::UnknownSession
+    );
+    let mut probe = open_path(&anchor);
+    write_hello(&mut probe, [6u8; 16], true, true, 0).await;
+    assert_eq!(
+        read_hello(&mut probe).await.status,
+        HelloStatus::UnknownSession
+    );
+
+    let peer: SocketAddr = "127.0.0.1:1".parse().unwrap();
+    assert_eq!(
+        events.lock().unwrap().as_slice(),
+        [
+            AnchorEvent::Started { session: 1, peer },
+            AnchorEvent::UnknownSession { peer },
+            AnchorEvent::UnknownSession { peer },
+        ]
+    );
 }
 
 #[tokio::test(start_paused = true)]

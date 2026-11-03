@@ -83,3 +83,15 @@ Linux从`/proc/<pid>/status`测量代理进程RSS和`VmHWM`，100MB按100,000,00
 ## 不退图换节点
 
 连接开头是魔数`RDSR`时，本进程作为锚点处理：会话和MC服务端的连接保留在这里，玩家换节点后从断点继续。其他连接走原有逻辑，不需要新增配置或端口。协议见[docs/session-resume-plan.md](../../docs/session-resume-plan.md)，依赖同仓库的`common/session-resume-rs`，所以构建时需要完整仓库。锚点会话上限沿用`--max-connections`。
+
+玩家的节点切换可以从`info`日志查看，日志不含令牌：
+
+| 日志 | 含义 |
+|---|---|
+| `resume session started` | 新的游戏连接，`session`是本进程内的短编号，重启后从1开始 |
+| `resume session moved to a new path` | 换了线路。`silent_ms`是距离上次收到玩家数据的时间，约等于断线时长；`replay_bytes`是重发的字节数 |
+| `resume request for an unknown session` | 请求恢复的会话不在本进程内，常见于锚点重启，或节点连到了另一个进程 |
+| `resume session ended` | `reason`为`Closed`是正常结束；`Expired`是玩家20秒内没有接回；`resumes`是这条连接换线路的次数 |
+| `resume session broke the protocol` | 偏移量不合法，会话已关闭 |
+
+经过frp的连接，`peer`显示frp客户端的地址，不是玩家地址。

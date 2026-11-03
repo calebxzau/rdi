@@ -169,6 +169,9 @@ struct Supervisor {
     established: bool,
     /// A create request may have reached the anchor, so try resuming next.
     assume_created: bool,
+    /// A node in the current round does not know this session. Another node may
+    /// still reach the anchor that does, so this only counts once the round is over.
+    round_gone: bool,
     current: Option<String>,
     /// How many paths have been handed to the engine.
     path_serial: u64,
@@ -189,10 +192,11 @@ impl Supervisor {
     /// Starts a round of probes; only the first to answer is attached, because
     /// several attaches at once would keep taking the session from each other.
     fn start_round(
-        &self,
+        &mut self,
         round: &mut JoinSet<(String, Result<BoxStream, ProbeError>)>,
         nodes: &[String],
     ) {
+        self.round_gone = false;
         let mut ordered: Vec<(String, Duration)> = Vec::with_capacity(nodes.len());
         if self.established {
             // The current node goes last and slightly later: it is the one that just failed.
@@ -370,6 +374,7 @@ pub async fn run_client_session<A>(
         generation: 0,
         established: false,
         assume_created: false,
+        round_gone: false,
         current: None,
         path_serial: 0,
         lost_at: None,
@@ -416,6 +421,7 @@ pub async fn run_client_session<A>(
                         supervisor.start_round(&mut round, &current_nodes);
                     }
                 }
+                Some(Event::AnchorAttached { .. }) => {}
                 Some(Event::Ended(reason)) => {
                     supervisor.emit(SessionEvent::Ended { reason });
                     return;
@@ -442,9 +448,10 @@ pub async fn run_client_session<A>(
                         }
                     }
                     Err(ProbeError::Gone) if supervisor.established => {
-                        round.abort_all();
-                        round = JoinSet::new();
-                        let _ = supervisor.control.send(Control::Terminate).await;
+                        supervisor.round_gone = true;
+                        if round.is_empty() {
+                            let _ = supervisor.control.send(Control::Terminate).await;
+                        }
                     }
                     Err(ProbeError::Gone) => {
                         supervisor.assume_created = false;
@@ -460,7 +467,11 @@ pub async fn run_client_session<A>(
                     }
                     Err(ProbeError::Failed(_)) => {
                         if round.is_empty() {
-                            retry_at = Some(Instant::now() + config.retry_interval);
+                            if supervisor.round_gone {
+                                let _ = supervisor.control.send(Control::Terminate).await;
+                            } else {
+                                retry_at = Some(Instant::now() + config.retry_interval);
+                            }
                         }
                     }
                 }
@@ -519,9 +530,11 @@ pub async fn run_client_session<A>(
                             }),
                         }
                     }
-                    Err(ProbeError::Gone) => {
-                        let _ = supervisor.control.send(Control::Terminate).await;
-                    }
+                    // The current path still works, and failing over decides if the session is lost.
+                    Err(ProbeError::Gone) => supervisor.emit(SessionEvent::SwitchFailed {
+                        node,
+                        error: "node does not hold this session".to_string(),
+                    }),
                     Err(ProbeError::TokenInUse) => supervisor.emit(SessionEvent::SwitchFailed {
                         node,
                         error: "unexpected session state".to_string(),

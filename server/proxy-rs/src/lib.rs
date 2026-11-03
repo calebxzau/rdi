@@ -3,8 +3,8 @@
 use anyhow::{Context, Result, anyhow, bail};
 use base64::Engine;
 use rdi_session_resume::{
-    Tuning,
-    anchor::Anchor,
+    EndReason, Tuning,
+    anchor::{Anchor, AnchorEvent},
     protocol::{MAGIC, Prefix, classify_prefix},
 };
 use serde::{Deserialize, Serialize};
@@ -781,6 +781,42 @@ async fn handle_connection(
     serve_minecraft(client, peer, config, routes, active, favicon, remaining).await
 }
 
+/// Production switches are otherwise only visible in players' own launcher logs.
+fn log_anchor_event(event: AnchorEvent) {
+    match event {
+        AnchorEvent::Started { session, peer } => {
+            info!(session, %peer, "resume session started");
+        }
+        AnchorEvent::Resumed {
+            session,
+            peer,
+            silent_ms,
+            replay_bytes,
+        } => {
+            info!(session, %peer, silent_ms, replay_bytes, "resume session moved to a new path");
+        }
+        AnchorEvent::UnknownSession { peer } => {
+            info!(%peer, "resume request for an unknown session");
+        }
+        AnchorEvent::Ended {
+            session,
+            reason: EndReason::Violation(detail),
+            resumes,
+            lasted_ms,
+        } => {
+            warn!(session, detail, resumes, lasted_ms, "resume session broke the protocol");
+        }
+        AnchorEvent::Ended {
+            session,
+            reason,
+            resumes,
+            lasted_ms,
+        } => {
+            info!(session, ?reason, resumes, lasted_ms, "resume session ended");
+        }
+    }
+}
+
 /// The anchor's sessions run the same game logic as direct connections.
 fn build_anchor(
     config: Arc<Config>,
@@ -789,7 +825,7 @@ fn build_anchor(
     favicon: Option<Arc<String>>,
 ) -> Arc<Anchor> {
     let max_sessions = config.max_connections;
-    Anchor::new(max_sessions, Tuning::anchor(), move |app, peer| {
+    let on_session = move |app, peer| {
         let config = Arc::clone(&config);
         let routes = routes.clone();
         let active = Arc::clone(&active);
@@ -808,7 +844,8 @@ fn build_anchor(
                 warn!(%peer, ?error, "session closed with error");
             }
         });
-    })
+    };
+    Anchor::with_events(max_sessions, Tuning::anchor(), on_session, log_anchor_event)
 }
 
 async fn serve_minecraft<S>(
