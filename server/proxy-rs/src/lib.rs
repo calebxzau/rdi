@@ -2,6 +2,11 @@
 
 use anyhow::{Context, Result, anyhow, bail};
 use base64::Engine;
+use rdi_session_resume::{
+    Tuning,
+    anchor::Anchor,
+    protocol::{MAGIC, Prefix, classify_prefix},
+};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
@@ -29,6 +34,7 @@ const PHASE_TIMEOUT: Duration = Duration::from_secs(10);
 const ROUTE_TIMEOUT: Duration = Duration::from_secs(3);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 const COPY_BUFFER_SIZE: usize = 8192;
+const PREFIX_RETRY_INTERVAL: Duration = Duration::from_millis(5);
 
 #[derive(Clone, Debug)]
 pub struct Config {
@@ -627,7 +633,7 @@ async fn write_frame<S: AsyncWrite + Unpin>(
     Ok(())
 }
 
-async fn send_disconnect(stream: &mut TcpStream, reason: &str) -> Result<()> {
+async fn send_disconnect<S: AsyncWrite + Unpin>(stream: &mut S, reason: &str) -> Result<()> {
     let json = serde_json::to_vec(&serde_json::json!({"text": reason}))?;
     let mut body = encode_varint(0);
     body.extend(encode_varint(json.len() as i32));
@@ -635,9 +641,13 @@ async fn send_disconnect(stream: &mut TcpStream, reason: &str) -> Result<()> {
     write_frame(stream, &body, PHASE_TIMEOUT).await
 }
 
-async fn relay(client: TcpStream, backend: TcpStream) -> Result<()> {
-    let (mut client_read, mut client_write) = client.into_split();
-    let (mut backend_read, mut backend_write) = backend.into_split();
+async fn relay<C, B>(client: C, backend: B) -> Result<()>
+where
+    C: AsyncRead + AsyncWrite + Unpin,
+    B: AsyncRead + AsyncWrite + Unpin,
+{
+    let (mut client_read, mut client_write) = tokio::io::split(client);
+    let (mut backend_read, mut backend_write) = tokio::io::split(backend);
     let mut c2b = [0u8; COPY_BUFFER_SIZE];
     let mut b2c = [0u8; COPY_BUFFER_SIZE];
     tokio::select! {
@@ -663,20 +673,87 @@ async fn copy_direction<R: AsyncRead + Unpin, W: AsyncWrite + Unpin>(
     }
 }
 
+/// Tells resumable sessions from plain game connections without consuming any bytes.
+async fn detect_prefix(stream: &TcpStream) -> Result<Prefix> {
+    let mut bytes = [0u8; MAGIC.len()];
+    loop {
+        let count = stream.peek(&mut bytes).await.context("peek failed")?;
+        if count == 0 {
+            return Ok(Prefix::Legacy);
+        }
+        match classify_prefix(&bytes[..count]) {
+            Prefix::NeedMore => tokio::time::sleep(PREFIX_RETRY_INTERVAL).await,
+            decided => return Ok(decided),
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
 async fn handle_connection(
-    mut client: TcpStream,
+    client: TcpStream,
     peer: SocketAddr,
     config: Arc<Config>,
     routes: RouteClient,
     active: Arc<ActiveConnections>,
     _permit: OwnedSemaphorePermit,
     favicon: Option<Arc<String>>,
+    anchor: Arc<Anchor>,
 ) -> Result<()> {
     configure_socket(&client)?;
+    let started = Instant::now();
+    let prefix = timeout(HANDSHAKE_TIMEOUT, detect_prefix(&client))
+        .await
+        .context("handshake timed out")??;
+    if prefix == Prefix::Resume {
+        // The session keeps the connection; the permit only covers this short exchange.
+        return anchor
+            .handle_path(Box::new(client), peer)
+            .await
+            .context("resume handshake failed");
+    }
+    let remaining = HANDSHAKE_TIMEOUT.saturating_sub(started.elapsed());
+    serve_minecraft(client, peer, config, routes, active, favicon, remaining).await
+}
+
+/// The anchor's sessions run the same game logic as direct connections.
+fn build_anchor(
+    config: Arc<Config>,
+    routes: RouteClient,
+    active: Arc<ActiveConnections>,
+    favicon: Option<Arc<String>>,
+) -> Arc<Anchor> {
+    let max_sessions = config.max_connections;
+    Anchor::new(max_sessions, Tuning::anchor(), move |app, peer| {
+        let config = Arc::clone(&config);
+        let routes = routes.clone();
+        let active = Arc::clone(&active);
+        let favicon = favicon.clone();
+        tokio::spawn(async move {
+            let served =
+                serve_minecraft(app, peer, config, routes, active, favicon, HANDSHAKE_TIMEOUT);
+            if let Err(error) = served.await {
+                warn!(%peer, ?error, "session closed with error");
+            }
+        });
+    })
+}
+
+async fn serve_minecraft<S>(
+    mut client: S,
+    peer: SocketAddr,
+    config: Arc<Config>,
+    routes: RouteClient,
+    active: Arc<ActiveConnections>,
+    favicon: Option<Arc<String>>,
+    handshake_limit: Duration,
+) -> Result<()>
+where
+    S: AsyncRead + AsyncWrite + Unpin,
+{
     let _guard = active.enter(peer);
     let frame = timeout(
-        HANDSHAKE_TIMEOUT,
-        read_frame(&mut client, HANDSHAKE_LIMIT, HANDSHAKE_TIMEOUT),
+        handshake_limit,
+        read_frame(&mut client, HANDSHAKE_LIMIT, handshake_limit),
     )
     .await
     .context("handshake timed out")??;
@@ -768,6 +845,12 @@ pub async fn run(config: Config) -> Result<()> {
     let semaphore = Arc::new(Semaphore::new(config.max_connections));
     let active = Arc::new(ActiveConnections::default());
     let config = Arc::new(config);
+    let anchor = build_anchor(
+        Arc::clone(&config),
+        routes.clone(),
+        Arc::clone(&active),
+        favicon.clone(),
+    );
     let mut tasks = JoinSet::new();
     let shutdown = shutdown_signal();
     tokio::pin!(shutdown);
@@ -782,8 +865,8 @@ pub async fn run(config: Config) -> Result<()> {
                     Err(error) => { warn!(?error, "accept failed"); accept_error = Some(error); break; }
                 };
                 let Ok(permit) = Arc::clone(&semaphore).try_acquire_owned() else { drop(client); continue; };
-                let config = Arc::clone(&config); let routes = routes.clone(); let active = Arc::clone(&active); let favicon = favicon.clone();
-                tasks.spawn(async move { if let Err(error) = handle_connection(client, peer, config, routes, active, permit, favicon).await { warn!(%peer, ?error, "connection closed with error"); } });
+                let config = Arc::clone(&config); let routes = routes.clone(); let active = Arc::clone(&active); let favicon = favicon.clone(); let anchor = Arc::clone(&anchor);
+                tasks.spawn(async move { if let Err(error) = handle_connection(client, peer, config, routes, active, permit, favicon, anchor).await { warn!(%peer, ?error, "connection closed with error"); } });
             }
             Some(joined) = tasks.join_next(), if !tasks.is_empty() => { if let Err(error) = joined { warn!(?error, "connection task ended"); } }
             _ = &mut shutdown => { info!("shutdown requested"); break; }
@@ -1060,9 +1143,10 @@ mod tests {
             ..Config::default()
         });
         let routes = RouteClient::new(config.master.clone()).unwrap();
+        let anchor = build_anchor(config.clone(), routes.clone(), active.clone(), None);
         let server = tokio::spawn(async move {
             let (stream, peer) = listener.accept().await.unwrap();
-            handle_connection(stream, peer, config, routes, active, permit, None).await
+            handle_connection(stream, peer, config, routes, active, permit, None, anchor).await
         });
         let mut client = TcpStream::connect(address).await.unwrap();
         let mut handshake = encode_varint(0);
@@ -1160,5 +1244,247 @@ mod tests {
         }
         assert!(tasks.is_empty());
         assert_eq!(drained, TASKS);
+    }
+
+    mod resume {
+        use super::*;
+        use rdi_session_resume::{
+            BoxStream,
+            client::{ClientConfig, Dialer, EventSink, NodeTable, SessionEvent, spawn_client_session},
+        };
+        use tokio::{io::DuplexStream, sync::watch};
+
+        struct Proxy {
+            address: SocketAddr,
+            active: Arc<ActiveConnections>,
+        }
+
+        async fn start_proxy(master: String) -> Proxy {
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let address = listener.local_addr().unwrap();
+            let active = Arc::new(ActiveConnections::default());
+            let semaphore = Arc::new(Semaphore::new(16));
+            let config = Arc::new(Config {
+                listen: address,
+                master: master.clone(),
+                ..Config::default()
+            });
+            let routes = RouteClient::new(master).unwrap();
+            let anchor = build_anchor(config.clone(), routes.clone(), active.clone(), None);
+            let accept_active = active.clone();
+            tokio::spawn(async move {
+                loop {
+                    let (stream, peer) = listener.accept().await.unwrap();
+                    let permit = semaphore.clone().try_acquire_owned().unwrap();
+                    let (config, routes) = (config.clone(), routes.clone());
+                    let (active, anchor) = (accept_active.clone(), anchor.clone());
+                    tokio::spawn(async move {
+                        let _ = handle_connection(
+                            stream, peer, config, routes, active, permit, None, anchor,
+                        )
+                        .await;
+                    });
+                }
+            });
+            Proxy { address, active }
+        }
+
+        /// A node: forwards TCP to the proxy until `kill` breaks its connections.
+        async fn start_node(upstream: SocketAddr) -> (String, watch::Sender<u64>) {
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let address = listener.local_addr().unwrap().to_string();
+            let (kill, kills) = watch::channel(0u64);
+            tokio::spawn(async move {
+                loop {
+                    let (inbound, _) = listener.accept().await.unwrap();
+                    let mut kills = kills.clone();
+                    let generation = *kills.borrow_and_update();
+                    tokio::spawn(async move {
+                        let outbound = TcpStream::connect(upstream).await.unwrap();
+                        tokio::select! {
+                            _ = relay(inbound, outbound) => {}
+                            _ = kills.wait_for(|value| *value != generation) => {}
+                        }
+                    });
+                }
+            });
+            (address, kill)
+        }
+
+        fn tcp_dialer() -> Dialer {
+            Arc::new(|address: String| {
+                Box::pin(async move {
+                    let stream = TcpStream::connect(address).await?;
+                    stream.set_nodelay(true)?;
+                    Ok(Box::new(stream) as BoxStream)
+                })
+            })
+        }
+
+        fn start_session(nodes: Vec<String>) -> (DuplexStream, Arc<Mutex<Vec<SessionEvent>>>) {
+            let (app, session_end) = duplex(16 * 1024);
+            let table = NodeTable::new(nodes);
+            let log = Arc::new(Mutex::new(Vec::new()));
+            let sink_log = log.clone();
+            let sink: EventSink = Arc::new(move |_id, event| sink_log.lock().unwrap().push(event));
+            let subscription = table.subscribe();
+            spawn_client_session(
+                session_end,
+                1,
+                subscription,
+                tcp_dialer(),
+                ClientConfig::default(),
+                sink,
+            );
+            (app, log)
+        }
+
+        fn login_handshake(port: u16) -> Vec<u8> {
+            let mut body = encode_varint(0);
+            body.extend(encode_varint(767));
+            body.extend(encode_varint(0));
+            body.extend(port.to_be_bytes());
+            body.extend(encode_varint(2));
+            encode_frame(&body)
+        }
+
+        fn route_to(port: u16) -> Vec<u8> {
+            route_json(Some(&format!(
+                r#"{{"status":"PLAYABLE","backendHost":"127.0.0.1","backendPort":{port}}}"#
+            )))
+            .into_bytes()
+        }
+
+        #[tokio::test]
+        async fn resume_sessions_reach_the_game_and_survive_a_node_failure() {
+            let backend = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let backend_port = backend.local_addr().unwrap().port();
+            let master = mock_http(route_to(backend_port), 200, false).await;
+            let proxy = start_proxy(master).await;
+            let (node_a, kill_a) = start_node(proxy.address).await;
+            let (node_b, _kill_b) = start_node(proxy.address).await;
+            let (mut game, log) = start_session(vec![node_a, node_b]);
+
+            let handshake = login_handshake(40000);
+            game.write_all(&handshake).await.unwrap();
+            game.write_all(b"before").await.unwrap();
+            let (mut server, _) = backend.accept().await.unwrap();
+            let mut received = vec![0u8; handshake.len() + 6];
+            server.read_exact(&mut received).await.unwrap();
+            assert_eq!(&received[..handshake.len()], &handshake[..]);
+            assert_eq!(&received[handshake.len()..], b"before");
+
+            kill_a.send_modify(|value| *value += 1);
+            game.write_all(b"after").await.unwrap();
+            let mut after = [0u8; 5];
+            timeout(Duration::from_secs(5), server.read_exact(&mut after))
+                .await
+                .expect("game bytes did not resume")
+                .unwrap();
+            assert_eq!(&after, b"after");
+            server.write_all(b"reply").await.unwrap();
+            let mut reply = [0u8; 5];
+            timeout(Duration::from_secs(5), game.read_exact(&mut reply))
+                .await
+                .expect("reply did not arrive")
+                .unwrap();
+            assert_eq!(&reply, b"reply");
+
+            // The game server never saw a second connection.
+            assert!(
+                timeout(Duration::from_millis(200), backend.accept())
+                    .await
+                    .is_err()
+            );
+            let attaches = log
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|event| matches!(event, SessionEvent::Attached { .. }))
+                .count();
+            assert_eq!(attaches, 2);
+            assert_eq!(proxy.active.peers().len(), 1);
+        }
+
+        #[tokio::test]
+        async fn resume_sessions_receive_room_status_messages() {
+            let master = mock_http(
+                route_json(Some(
+                    r#"{"status":"STOPPED","backendHost":"127.0.0.1","backendPort":25565}"#,
+                ))
+                .into_bytes(),
+                200,
+                false,
+            )
+            .await;
+            let proxy = start_proxy(master).await;
+            let (mut game, _log) = start_session(vec![proxy.address.to_string()]);
+            game.write_all(&login_handshake(40000)).await.unwrap();
+            let mut response = Vec::new();
+            timeout(Duration::from_secs(5), game.read_to_end(&mut response))
+                .await
+                .expect("room message timed out")
+                .unwrap();
+            let text = String::from_utf8_lossy(&response);
+            assert!(text.contains(HostStatus::STOPPED.reason()), "{text}");
+        }
+
+        #[tokio::test]
+        async fn resume_sessions_answer_server_list_queries() {
+            let proxy = start_proxy("http://127.0.0.1:1".into()).await;
+            let (mut game, _log) = start_session(vec![proxy.address.to_string()]);
+            let mut handshake = encode_varint(0);
+            handshake.extend(encode_varint(767));
+            handshake.extend(encode_varint(0));
+            handshake.extend(25565u16.to_be_bytes());
+            handshake.extend(encode_varint(1));
+            game.write_all(&encode_frame(&handshake)).await.unwrap();
+            game.write_all(&encode_frame(&encode_varint(0))).await.unwrap();
+            let response = read_frame(&mut game, STATUS_LIMIT, Duration::from_secs(5))
+                .await
+                .unwrap();
+            assert_eq!(packet_id(&response).unwrap().0, 0);
+        }
+
+        #[tokio::test]
+        async fn prefix_detection_waits_for_fragments_and_leaves_bytes_unread() {
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let address = listener.local_addr().unwrap();
+            let mut client = TcpStream::connect(address).await.unwrap();
+            let (mut server, _) = listener.accept().await.unwrap();
+            client.set_nodelay(true).unwrap();
+
+            client.write_all(b"RD").await.unwrap();
+            let detection = {
+                let waiting = timeout(Duration::from_millis(50), detect_prefix(&server)).await;
+                assert!(waiting.is_err(), "decided before the magic was complete");
+                client.write_all(b"SR").await.unwrap();
+                timeout(Duration::from_secs(1), detect_prefix(&server)).await
+            };
+            assert_eq!(detection.unwrap().unwrap(), Prefix::Resume);
+            let mut magic = [0u8; 4];
+            server.read_exact(&mut magic).await.unwrap();
+            assert_eq!(&magic, b"RDSR");
+        }
+
+        #[tokio::test]
+        async fn prefix_detection_passes_game_connections_through() {
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let address = listener.local_addr().unwrap();
+            let mut client = TcpStream::connect(address).await.unwrap();
+            let (server, _) = listener.accept().await.unwrap();
+            client.write_all(&login_handshake(25565)).await.unwrap();
+            assert_eq!(detect_prefix(&server).await.unwrap(), Prefix::Legacy);
+        }
+
+        #[tokio::test]
+        async fn prefix_detection_treats_a_closed_connection_as_legacy() {
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let address = listener.local_addr().unwrap();
+            let client = TcpStream::connect(address).await.unwrap();
+            let (server, _) = listener.accept().await.unwrap();
+            drop(client);
+            assert_eq!(detect_prefix(&server).await.unwrap(), Prefix::Legacy);
+        }
     }
 }

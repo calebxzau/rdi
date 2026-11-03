@@ -1,0 +1,18 @@
+[package]
+name = "rdi-session-resume"
+version = "0.1.0"
+edition = "2024"
+description = "Resumable byte-stream sessions between the RDI local proxy and the anchor proxy"
+
+[dependencies]
+getrandom = "0.3"
+tokio = { version = "1", default-features = false, features = ["rt", "net", "io-util", "time", "sync", "macros"] }
+
+[dev-dependencies]
+tokio = { version = "1", default-features = false, features = ["rt-multi-thread", "net", "io-util", "io-std", "time", "sync", "macros", "test-util"] }
+
+[profile.release]
+opt-level = "s"
+lto = "thin"
+codegen-units = 1
+strip = "symbols"

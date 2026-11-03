@@ -79,3 +79,7 @@ python3 scripts/smoke_load.py --binary target/release/rdi-proxy-rs --connections
 Linux从`/proc/<pid>/status`测量代理进程RSS和`VmHWM`，100MB按100,000,000字节计算。其他平台若无法测量内存，会明确报告不可用。RSS不包含所有内核TCP缓冲或容器整体用量；若100MB是容器限制，还应在目标机器测量容器内存。
 
 这里的20条合成TCP连接不等同于20名真实Minecraft玩家。最终仍需验证实际整合包的登录、多人传送、区块加载和长时间运行。
+
+## 不退图换节点
+
+连接开头是魔数`RDSR`时，本进程作为锚点处理：会话和MC服务端的连接保留在这里，玩家换节点后从断点继续。其他连接走原有逻辑，不需要新增配置或端口。协议见[docs/session-resume-plan.md](../../docs/session-resume-plan.md)，依赖同仓库的`common/session-resume-rs`，所以构建时需要完整仓库。锚点会话上限沿用`--max-connections`。

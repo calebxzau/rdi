@@ -1,0 +1,107 @@
+# Verifies the local proxy on Apple Silicon: the library built by the release flow
+# must load on a real Mac, and the session protocol must pass natively.
+# The repository is public, so nothing here may use real accounts or print node addresses.
+name: macos-local-proxy
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - common/session-resume-rs/**
+      - client/local-proxy-rs/**
+      - server/proxy-rs/**
+      - .github/workflows/macos-local-proxy.yml
+
+permissions:
+  contents: read
+
+jobs:
+  cross-build:
+    # The release machine is Windows, so the library under test is built the same way.
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.14.1
+      - name: Install the cross-build tools
+        run: |
+          rustup target add aarch64-apple-darwin
+          cargo install cargo-zigbuild --locked
+      - name: Build the macOS library
+        working-directory: client/local-proxy-rs
+        run: cargo zigbuild --release --locked --lib --target aarch64-apple-darwin
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-arm64-library
+          path: client/local-proxy-rs/target/aarch64-apple-darwin/release/librdi_local_proxy.dylib
+          retention-days: 7
+          if-no-files-found: error
+
+  macos:
+    needs: cross-build
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - name: Show the machine
+        run: |
+          uname -a
+          sw_vers
+          sysctl -n machdep.cpu.brand_string
+          rustc --version
+      - name: Test the session protocol
+        working-directory: common/session-resume-rs
+        run: |
+          cargo test --locked
+          cargo test --locked --release -- --ignored
+      - name: Test the local proxy
+        working-directory: client/local-proxy-rs
+        run: cargo test --locked
+      - name: Test the anchor
+        working-directory: server/proxy-rs
+        run: cargo test --locked
+      - uses: actions/download-artifact@v4
+        with:
+          name: macos-arm64-library
+          path: cross-built
+      - name: Load the cross-built library
+        run: |
+          file cross-built/librdi_local_proxy.dylib
+          lipo -archs cross-built/librdi_local_proxy.dylib
+          codesign -dv cross-built/librdi_local_proxy.dylib
+          python3 -c "import ctypes; ctypes.CDLL('cross-built/librdi_local_proxy.dylib'); print('library loaded')"
+      - name: Build the load test programs
+        run: |
+          (cd server/proxy-rs && cargo build --locked --release)
+          (cd client/local-proxy-rs && cargo build --locked --release)
+          (cd common/session-resume-rs && cargo build --locked --release --example fault_relay)
+      - name: Run sessions through breaking nodes
+        working-directory: server/proxy-rs
+        run: >
+          python3 scripts/smoke_load.py
+          --binary target/release/rdi-proxy-rs
+          --connections 20 --seconds 12 --resume-seconds 120 --max-rss-mb 100
+          --favicon ../proxy/favicon.png
+          --local-proxy ../../client/local-proxy-rs/target/release/rdi-local-proxy-cli
+          --fault-relay ../../common/session-resume-rs/target/release/examples/fault_relay
+      - name: Probe for a graphical session
+        # Only answers whether screenshot-based checks are possible here.
+        continue-on-error: true
+        run: |
+          mkdir -p probe
+          system_profiler SPDisplaysDataType | tee probe/displays.txt
+          screencapture -x probe/screen.png
+          ls -la probe
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: graphics-probe
+          path: probe/
+          retention-days: 7
+          if-no-files-found: warn

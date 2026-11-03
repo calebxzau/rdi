@@ -1,0 +1,24 @@
+[package]
+name = "rdi-local-proxy"
+version = "0.1.0"
+edition = "2024"
+description = "Local game proxy that keeps Minecraft connected while the network path changes"
+
+[lib]
+name = "rdi_local_proxy"
+crate-type = ["cdylib", "rlib"]
+
+[[bin]]
+name = "rdi-local-proxy-cli"
+path = "src/bin/rdi-local-proxy-cli.rs"
+
+[dependencies]
+rdi-session-resume = { path = "../../common/session-resume-rs" }
+tokio = { version = "1", default-features = false, features = ["rt-multi-thread", "net", "io-util", "io-std", "time", "sync", "macros"] }
+
+[profile.release]
+opt-level = "s"
+lto = "thin"
+codegen-units = 1
+strip = "symbols"
+panic = "unwind"

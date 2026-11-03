@@ -7,6 +7,7 @@ edition = "2024"
 anyhow = "1"
 base64 = "0.22"
 md5 = "0.7"
+rdi-session-resume = { path = "../../common/session-resume-rs" }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

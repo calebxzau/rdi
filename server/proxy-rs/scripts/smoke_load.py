@@ -14,6 +14,7 @@ import http.server
 import json
 import os
 import queue
+import re
 import signal
 import socket
 import subprocess
@@ -555,7 +556,7 @@ def connect_proxy(proxy: ProxyProcess, receive_buffer: Optional[int] = None) -> 
             sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, receive_buffer)
         sock.settimeout(CONNECT_TIMEOUT)
         sock.connect(("127.0.0.1", proxy.port))
-        sock.settimeout(READ_TIMEOUT)
+        sock.settimeout(getattr(proxy, "read_timeout", READ_TIMEOUT))
         return sock
     except BaseException:
         sock.close()
@@ -794,6 +795,96 @@ def run_admission(proxy: ProxyProcess, cap: int) -> None:
                 pass
 
 
+class ResumeEndpoint:
+    """The local proxy and two breakable nodes in front of the proxy under test.
+
+    It is used in place of the proxy by run_load, whose exact-bytes checks then
+    cover game connections that keep moving between nodes.
+    """
+
+    def __init__(self, local_proxy: str, fault_relay: str, upstream: tuple[str, int]) -> None:
+        self.relays = [self._start([fault_relay, "--listen", "127.0.0.1:0", "--upstream", f"{upstream[0]}:{upstream[1]}"]) for _ in range(2)]
+        self.nodes = [self._ready_address(relay) for relay in self.relays]
+        self.local = self._start([local_proxy, "--listen", "127.0.0.1:0", "--nodes", ",".join(self.nodes)])
+        self.port = int(self._ready_address(self.local).rsplit(":", 1)[1])
+        # Reads may have to wait out a failover.
+        self.read_timeout = 20.0
+        self.lines: list[str] = []
+        self.stop_faults = threading.Event()
+        self.faults_applied = 0
+        self.reader = threading.Thread(target=self._collect, daemon=True)
+        self.reader.start()
+        self.fault_thread = threading.Thread(target=self._apply_faults, daemon=True)
+
+    @staticmethod
+    def _start(command: list[str]) -> subprocess.Popen:
+        return subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, bufsize=1)
+
+    @staticmethod
+    def _ready_address(process: subprocess.Popen) -> str:
+        line = process.stdout.readline().strip()
+        check("ready" in line, f"helper did not start: {line!r}")
+        return line.split()[-1]
+
+    def _collect(self) -> None:
+        for line in self.local.stdout:
+            self.lines.append(line.strip())
+
+    def _command(self, relay: int, command: str) -> None:
+        self.relays[relay].stdin.write(command + "\n")
+        self.relays[relay].stdin.flush()
+
+    def _apply_faults(self) -> None:
+        # Alternate nodes so one stays healthy, and let sessions settle in between.
+        # The load's slow-reader check needs its first seconds free of faults.
+        if self.stop_faults.wait(4.0):
+            return
+        relay = 0
+        kinds = ["kill", "freeze"]
+        while not self.stop_faults.is_set():
+            self._command(relay, kinds[self.faults_applied % 2])
+            self.faults_applied += 1
+            if self.stop_faults.wait(5.0):
+                break
+            self._command(relay, "heal")
+            relay = 1 - relay
+
+    def start_faults(self) -> None:
+        self.fault_thread.start()
+
+    def report(self) -> dict[str, object]:
+        self.stop_faults.set()
+        self.fault_thread.join(10.0)
+        elapsed = sorted(
+            int(match.group(1))
+            for match in (re.search(r"reason: Failover, elapsed_ms: (\d+)", line) for line in self.lines)
+            if match
+        )
+        bad_ends = [line for line in self.lines if re.search(r"Ended.*(Expired|Gone|Violation)", line)]
+        check(not bad_ends, f"sessions ended abnormally: {bad_ends[:5]}")
+        check(elapsed, "no session ever failed over")
+        return {
+            "faults_applied": self.faults_applied,
+            "failovers": len(elapsed),
+            "failover_p50_ms": elapsed[len(elapsed) // 2],
+            "failover_p95_ms": elapsed[min(len(elapsed) - 1, len(elapsed) * 95 // 100)],
+            "failover_max_ms": elapsed[-1],
+        }
+
+    def close(self) -> None:
+        self.stop_faults.set()
+        for process in [self.local, *self.relays]:
+            try:
+                process.stdin.close()
+            except OSError:
+                pass
+            process.terminate()
+            try:
+                process.wait(5.0)
+            except subprocess.TimeoutExpired:
+                process.kill()
+
+
 def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Synthetic local smoke/load test for proxy-rs")
     parser.add_argument("--binary", required=True, help="path to the proxy-rs executable")
@@ -801,6 +892,9 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     parser.add_argument("--seconds", type=float, default=10.0)
     parser.add_argument("--max-rss-mb", type=float, default=100.0, help="decimal MB RSS/HWM budget")
     parser.add_argument("--favicon", default=None, help="favicon path passed to proxy")
+    parser.add_argument("--local-proxy", default=None, help="rdi-local-proxy-cli path; enables the resume phase")
+    parser.add_argument("--fault-relay", default=None, help="fault_relay example path; needed with --local-proxy")
+    parser.add_argument("--resume-seconds", type=float, default=60.0, help="length of the resume phase")
     return parser.parse_args(argv)
 
 
@@ -860,6 +954,19 @@ def run(args: argparse.Namespace) -> dict[str, object]:
         load_report = run_load(proxy, backend, args.connections, args.seconds)
         phases.append("bidirectional_load_and_slow_reader")
         backend.assert_ok()
+        resume_report: Optional[dict[str, object]] = None
+        if args.local_proxy:
+            check(bool(args.fault_relay), "--fault-relay is required with --local-proxy")
+            endpoint = ResumeEndpoint(args.local_proxy, args.fault_relay, ("127.0.0.1", proxy.port))
+            try:
+                backend.release_initial.clear()
+                endpoint.start_faults()
+                resume_load = run_load(endpoint, backend, args.connections, args.resume_seconds)
+                resume_report = {"load": resume_load, **endpoint.report()}
+            finally:
+                endpoint.close()
+            phases.append("resume_load_with_node_faults")
+            backend.assert_ok()
         check(not backend.state.expected_handshakes, "backend did not receive all expected handshakes")
         memory = proxy.memory
         check(memory is not None, "proxy memory sampler was not initialized")
@@ -887,6 +994,7 @@ def run(args: argparse.Namespace) -> dict[str, object]:
             "admission_cap": cap,
             "phases": phases,
             "load": load_report,
+            "resume": resume_report,
             "memory": report_memory,
         }
     except BaseException as error:
