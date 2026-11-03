@@ -55,6 +55,28 @@ def start_master(backend_port: int) -> http.server.ThreadingHTTPServer:
     return server
 
 
+LAUNCHER_EVENT = re.compile(r"\[LocalMcProxy\] (Attached|PathLost|SwitchFailed|Ended)\((.*)\)\s*$")
+
+
+def launcher_event(line: str) -> Optional[str]:
+    """Rewrites an event from the launcher's log in the form rdi-local-proxy-cli prints."""
+    match = LAUNCHER_EVENT.search(line)
+    if match is None:
+        return None
+    kind, body = match.groups()
+    fields = dict(part.split("=", 1) for part in body.split(", ") if "=" in part)
+    session = fields.get("session")
+    if kind == "Attached":
+        detail = f'node: "{fields["node"]}", reason: {fields["reason"]}, elapsed_ms: {fields["elapsedMs"]}'
+    elif kind == "PathLost":
+        detail = f'reason: "{fields["reason"]}"'
+    elif kind == "SwitchFailed":
+        detail = f'node: "{fields["node"]}", error: "{fields.get("error", "")}"'
+    else:
+        detail = f'reason: {fields["reason"]} {fields.get("detail", "")}'.rstrip()
+    return f"0 session={session} {kind} {{ {detail} }}"
+
+
 def spawn(command: list[str]) -> subprocess.Popen:
     return subprocess.Popen(
         command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, bufsize=1
@@ -63,12 +85,12 @@ def spawn(command: list[str]) -> subprocess.Popen:
 
 class Stack:
     def __init__(self, args: argparse.Namespace) -> None:
-        self.master = start_master(args.backend_port)
+        self.master = None if args.master_url else start_master(args.backend_port)
         self.proxy = spawn(
             [
                 args.proxy,
                 "--listen", f"127.0.0.1:{PROXY_PORT}",
-                "--master", f"http://127.0.0.1:{MASTER_PORT}",
+                "--master", args.master_url or f"http://127.0.0.1:{MASTER_PORT}",
                 "--favicon", "none.png",
             ]
         )
@@ -84,15 +106,22 @@ class Stack:
             self.node_bytes[node] = (0, 0)
             threading.Thread(target=self._read_relay, args=(node, relay), daemon=True).start()
             self.relays[node] = relay
-        self.local = spawn([*shlex.split(args.local_proxy), "--listen", args.listen, "--nodes", ",".join(self.nodes)])
-        line = self.local.stdout.readline()
-        if "ready" not in line:
-            raise RuntimeError(f"local proxy did not start: {line!r}")
-        self.bound = line.split()[-1]
         self.events: list[str] = []
         self.events_lock = threading.Condition()
         self.game_session: Optional[str] = None
-        threading.Thread(target=self._collect, daemon=True).start()
+        self.closing = False
+        if args.launcher_log:
+            # The launcher runs the proxy itself and reports through its log.
+            self.local = None
+            self.bound = "the launcher"
+            threading.Thread(target=self._tail_launcher_log, args=(args.launcher_log,), daemon=True).start()
+        else:
+            self.local = spawn([*shlex.split(args.local_proxy), "--listen", args.listen, "--nodes", ",".join(self.nodes)])
+            line = self.local.stdout.readline()
+            if "ready" not in line:
+                raise RuntimeError(f"local proxy did not start: {line!r}")
+            self.bound = line.split()[-1]
+            threading.Thread(target=self._collect, daemon=True).start()
 
     @staticmethod
     def _drain(process: subprocess.Popen) -> None:
@@ -118,6 +147,20 @@ class Stack:
             with self.events_lock:
                 self.events.append(line.strip())
                 self.events_lock.notify_all()
+
+    def _tail_launcher_log(self, path: str) -> None:
+        with open(path, encoding="utf-8", errors="replace") as handle:
+            handle.seek(0, os.SEEK_END)
+            while not self.closing:
+                line = handle.readline()
+                if not line:
+                    time.sleep(0.1)
+                    continue
+                event = launcher_event(line)
+                if event:
+                    with self.events_lock:
+                        self.events.append(event)
+                        self.events_lock.notify_all()
 
     def fault(self, node: str, command: str) -> None:
         relay = self.relays[node]
@@ -167,12 +210,16 @@ class Stack:
         return list(live.values())[-1] if live else None
 
     def close(self) -> None:
+        self.closing = True
         for process in [self.local, *self.relays.values()]:
+            if process is None:
+                continue
             try:
                 process.stdin.close()
             except OSError:
                 pass
-        self.master.shutdown()
+        if self.master is not None:
+            self.master.shutdown()
         self.proxy.terminate()
 
 
@@ -509,10 +556,12 @@ def hold(stack: Stack, game: GameControl, results: Results, args: argparse.Names
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--proxy", required=True)
-    parser.add_argument("--local-proxy", required=True, help="command that runs the proxy; use / in Windows paths")
+    parser.add_argument("--local-proxy", help="command that runs the proxy; use / in Windows paths")
+    parser.add_argument("--launcher-log", help="the launcher runs the proxy; read its events from this log instead")
+    parser.add_argument("--master-url", help="use this master's room routes instead of a stub")
     parser.add_argument("--fault-relay", required=True)
-    parser.add_argument("--listen", required=True, help="address the game client connects to")
-    parser.add_argument("--backend-port", type=int, required=True)
+    parser.add_argument("--listen", default="", help="address the game client connects to")
+    parser.add_argument("--backend-port", type=int, default=0)
     parser.add_argument("--player", required=True)
     parser.add_argument("--port-file", required=True, help="the client's standard_mcp_port.txt")
     parser.add_argument("--server-log", required=True)
@@ -525,6 +574,8 @@ def main() -> int:
     parser.add_argument("--hold-seconds", type=float, default=1800.0)
     parser.add_argument("--hold-stop-file", default="resume_hold.stop")
     args = parser.parse_args()
+    if not args.launcher_log and not args.local_proxy:
+        parser.error("give --local-proxy or --launcher-log")
 
     results = Results()
     stack = Stack(args)
@@ -582,7 +633,7 @@ def main() -> int:
             "events": stack.event_count(),
             "traffic": traffic,
             "proxy_stats": process_stats(stack.proxy.pid),
-            "local_proxy_stats": process_stats(stack.local.pid),
+            "local_proxy_stats": process_stats(stack.local.pid) if stack.local else "in the launcher",
         }
         with open(args.report, "w", encoding="utf-8") as handle:
             json.dump({"report": report, "trials": results.trials, "events": stack.events}, handle, ensure_ascii=False, indent=1)

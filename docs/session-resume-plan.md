@@ -1,6 +1,6 @@
 # 不退图换节点实现计划
 
-状态：第1阶段已完成并达到通过标准（2026-11-02）。第2阶段代码、打包和CI已完成（2026-11-03），还差5.6里的启动器退出验证和真实启动器本机联调。验证结果见`docs/session-resume-validation.md`。
+状态：第1阶段已完成并达到通过标准（2026-11-02）。第2阶段代码、打包、CI和真实启动器联调已完成（2026-11-03），第3阶段上线待确认。验证结果和尚未验证的项目见`docs/session-resume-validation.md`。
 
 ## 1. 目标与边界
 
@@ -210,7 +210,7 @@ runServer ← 锚点proxy-rs ← fault_relay A、fault_relay B ← rdi-local-pro
 
 Linux不能用musl：它的`cdylib`不适合加载进glibc的JVM。要构建`x86_64-unknown-linux-gnu`，glibc要求不超过现有的2.35。
 
-## 5. 第2阶段：DLL接入启动器（代码已完成，待本机联调）
+## 5. 第2阶段：DLL接入启动器（已完成）
 
 已确认的决定（2026-11-03）：
 

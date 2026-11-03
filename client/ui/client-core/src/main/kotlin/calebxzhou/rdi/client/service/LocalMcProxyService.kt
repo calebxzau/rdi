@@ -17,6 +17,7 @@ import calebxzhou.rdi.client.proxy.LocalMcProxy
 import calebxzhou.rdi.client.proxy.LocalMcProxyConfig
 import calebxzhou.rdi.client.proxy.ProxyEndpoint
 import calebxzhou.rdi.common.DEBUG
+import java.io.File
 
 private val lgr by Loggers
 
@@ -35,6 +36,9 @@ object LocalMcProxyService {
     )
 
     private val debugDefaultNode get() = "${RServer.DEBUG_HOST ?: "localhost"}:$DEBUG_NODE_PORT"
+
+    private val debugEventLog: File? =
+        System.getProperty("rdi.localProxy.eventLog")?.takeIf { DEBUG && it.isNotBlank() }?.let(::File)
 
     private val kotlinBackend = object : GameProxyBackend {
         private val proxy = LocalMcProxy(
@@ -106,6 +110,11 @@ object LocalMcProxyService {
     }
 
     private fun onEvent(event: LocalProxyEvent) {
+        // Local fault tests read this file; addresses stay out of the log players see.
+        debugEventLog?.let { file ->
+            runCatching { file.appendText("[LocalMcProxy] $event\n") }
+                .onFailure { lgr.warn(it) { "写入本地连接事件文件失败" } }
+        }
         when (event) {
             is LocalProxyEvent.Attached -> {
                 lastAttachedNode = event.node
