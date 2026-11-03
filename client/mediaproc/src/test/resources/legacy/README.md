@@ -37,7 +37,8 @@ blue  = (x + y) * 255 / 126
 | `dual-tone.ogg` | 48kHz双声道0.5秒，440Hz、660Hz。先用libopus（256kbps）写成Ogg，再经`OggTranscoder.transcodeOgg`转码，和玩家上传的文件相同 |
 | `mono-tone.ogg` | 48kHz单声道0.25秒，440Hz，libopus 96kbps |
 | `surround-tone.ogg` | 48kHz六声道0.25秒，依次440、660、880、110、550、770Hz，libopus 256kbps |
-| `vorbis-tone.ogg` | 44.1kHz双声道0.25秒，440Hz、660Hz，libvorbis 128kbps |
+| `vorbis-tone.ogg` | 44.1kHz双声道0.25秒，440Hz、660Hz，FFmpeg自带的Vorbis编码器（`ffmpeg -c:a vorbis -strict -2 -q:a 5`），2026-11-04生成，转码参考结果用提交`52de3d54`的JavaCV代码生成 |
+| `flac-tone.ogg` | 44.1kHz双声道0.25秒，440Hz、660Hz。当时想生成Vorbis，但bytedeco没有libvorbis，JavaCV退回了Ogg默认的FLAC，所以它实际是Ogg FLAC，正好用来测这种输入 |
 | `silence-11s.ogg` | 24kHz双声道11秒静音，libopus 64kbps，用来测时长上限 |
 | `<名字>.pcm` | 对应Ogg用`FfmpegPcmDecoder`解码的结果 |
 | `<名字>.transcoded.pcm` | 对应Ogg经`OggTranscoder.transcodeOgg`转码后，再用`FfmpegPcmDecoder`解码的结果。`mono-vorbis`的输入是`audio/mono-vorbis-44100.ogg.b64` |

@@ -60,7 +60,14 @@ class LegacyMediaSampleTest {
 
     @Test
     fun transcodesStereoVorbisLikeTheReference() {
-        assertTranscodeMatchesReference("vorbis-tone", resource("vorbis-tone.ogg"))
+        val input = resource("vorbis-tone.ogg")
+        assertEquals(OggAudioCodec.VORBIS, input.inputStream().buffered().use { OggCodecDetector.detect(it).getOrThrow() })
+        assertTranscodeMatchesReference("vorbis-tone", input)
+    }
+
+    @Test
+    fun transcodesFlacInOggLikeTheReference() {
+        assertTranscodeMatchesReference("flac-tone", resource("flac-tone.ogg"))
     }
 
     @Test
