@@ -32,7 +32,7 @@ import java.net.URI
 import java.nio.file.Path
 import java.nio.file.Paths
 
-internal const val DEFAULT_GAME_NODE_ADDR = "rdi.calebxzhou.cn:65230"
+internal const val DEFAULT_GAME_NODE_ADDR = "rdi.calebxzhou.cn:65233"
 private const val DEFAULT_GAME_NODE_NAME = "默认节点"
 private const val DEFAULT_PRIMARY_HOST = "rdi.calebxzhou.cn"
 
