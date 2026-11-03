@@ -3,7 +3,6 @@ package calebxzau.rdi.mediaproc
 import kotlinx.coroutines.runBlocking
 import org.bytedeco.javacv.FFmpegFrameGrabber
 import org.bytedeco.javacv.FFmpegFrameRecorder
-import org.junit.jupiter.api.Assumptions.assumeTrue
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.ShortBuffer
@@ -17,14 +16,12 @@ import kotlin.test.assertTrue
 
 class OggTranscoderTest {
     @Test
-    fun ensureReadyLoadsWindowsX64NativeOpusCodec() {
-        assumeWindowsX64()
+    fun ensureReadyLoadsNativeOpusCodec() {
         assertTrue(OggTranscoder.ensureReady().isSuccess)
     }
 
     @Test
     fun transcodeProducesStereoOpusAtTargetSampleRate() {
-        assumeWindowsX64()
         val input = javaClass.getResourceAsStream("/assets/empty.ogg")!!.use { it.readBytes() }
         val tempDir = Files.createTempDirectory("mediaproc-test-")
         try {
@@ -55,7 +52,6 @@ class OggTranscoderTest {
 
     @Test
     fun transcodesMonoOggToStereoWithNativeOpus() {
-        assumeWindowsX64()
         val tempDir = Files.createTempDirectory("mediaproc-test-")
         try {
             val inputFile = Files.createTempFile(tempDir, "mono-", ".ogg").toFile()
@@ -96,7 +92,6 @@ class OggTranscoderTest {
 
     @Test
     fun transcodesMonoVorbis44100HzToStereoOpus() {
-        assumeWindowsX64()
         val tempDir = Files.createTempDirectory("mediaproc-test-")
         try {
             val input = javaClass.getResourceAsStream("/audio/mono-vorbis-44100.ogg.b64")!!
@@ -127,7 +122,6 @@ class OggTranscoderTest {
 
     @Test
     fun replacesAudioLongerThanTenSeconds() {
-        assumeWindowsX64()
         val tempDir = Files.createTempDirectory("mediaproc-test-")
         try {
             val input = createOgg(
@@ -150,7 +144,6 @@ class OggTranscoderTest {
 
     @Test
     fun invalidInputReturnsFailureAndCleansTemporaryFiles() {
-        assumeWindowsX64()
         val tempDir = Files.createTempDirectory("mediaproc-test-")
         try {
             val result = runBlocking {
@@ -209,12 +202,5 @@ class OggTranscoderTest {
             index + magic.size <= bytes.size &&
                 bytes.copyOfRange(index, index + magic.size).contentEquals(magic)
         }
-    }
-
-    private fun assumeWindowsX64() {
-        val osName = System.getProperty("os.name").orEmpty()
-        val osArch = System.getProperty("os.arch").orEmpty().lowercase()
-        assumeTrue(osName.contains("windows", ignoreCase = true))
-        assumeTrue(osArch == "amd64" || osArch == "x86_64")
     }
 }

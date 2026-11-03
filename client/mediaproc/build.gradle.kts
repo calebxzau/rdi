@@ -46,14 +46,22 @@ tasks.withType<Test>().configureEach {
     useJUnitPlatform()
 }
 
+val nativePreloadTestClass = "calebxzau.rdi.mediaproc.FfmpegNativePreloaderTest"
+
+tasks.named<Test>("test") {
+    filter { excludeTestsMatching(nativePreloadTestClass) }
+}
+
 val testFfmpegNativeDir = layout.buildDirectory.dir("test-ffmpeg-natives")
 val extractTestFfmpegNatives = tasks.register<Sync>("extractTestFfmpegNatives") {
+    val classifier = ffmpegClassifier
     from({
         configurations.testRuntimeClasspath.get()
-            .filter { it.name.endsWith("-windows-x86_64-gpl.jar") }
+            .filter { it.name.endsWith("-$classifier.jar") }
             .map { zipTree(it) }
     })
-    include("org/bytedeco/ffmpeg/windows-x86_64-gpl/*.dll")
+    // Windows and macOS put the version before the extension; Linux puts it after: libavutil.so.60.
+    include(listOf("*.dll", "*.so*", "*.dylib").map { "org/bytedeco/ffmpeg/$classifier/$it" })
     eachFile { path = name }
     includeEmptyDirs = false
     into(testFfmpegNativeDir)
@@ -65,8 +73,7 @@ tasks.register<Test>("nativePreloadTest") {
     testClassesDirs = sourceSets.test.get().output.classesDirs
     classpath = sourceSets.test.get().runtimeClasspath
     dependsOn(extractTestFfmpegNatives)
-    filter { includeTestsMatching("calebxzau.rdi.mediaproc.FfmpegNativePreloaderTest") }
-    systemProperty("rdi.test.nativePreload", "true")
+    filter { includeTestsMatching(nativePreloadTestClass) }
     systemProperty("org.bytedeco.javacpp.pathsFirst", "true")
     systemProperty("org.bytedeco.javacpp.findLibraries", "false")
     systemProperty("org.bytedeco.javacpp.platform.preloadpath", testFfmpegNativeDir.get().asFile.absolutePath)

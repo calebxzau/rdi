@@ -1,7 +1,6 @@
 package calebxzau.rdi.mediaproc
 
 import org.bytedeco.javacv.FFmpegFrameRecorder
-import org.junit.jupiter.api.Assumptions.assumeTrue
 import java.io.ByteArrayOutputStream
 import java.io.BufferedInputStream
 import java.io.FilterInputStream
@@ -25,7 +24,6 @@ class FfmpegPcmDecoderTest {
 
     @Test
     fun detectsAndDecodesOpusOgg() {
-        assumeWindowsX64()
         val opusOgg = createOpusOgg()
 
         val codec = BufferedInputStream(opusOgg.inputStream()).use {
@@ -45,7 +43,6 @@ class FfmpegPcmDecoderTest {
 
     @Test
     fun chunkedReadMatchesReadAll() {
-        assumeWindowsX64()
         val opusOgg = createOpusOgg()
         val allAtOnce = FfmpegPcmDecoder.open(opusOgg.inputStream()).getOrThrow().use {
             it.readAll().getOrThrow().toByteArray()
@@ -65,7 +62,6 @@ class FfmpegPcmDecoderTest {
 
     @Test
     fun completeDecodeHonorsPcmByteLimit() {
-        assumeWindowsX64()
         val opusOgg = createOpusOgg()
         FfmpegPcmDecoder.open(opusOgg.inputStream()).getOrThrow().use { stream ->
             assertTrue(stream.readAll(1024).isFailure)
@@ -74,13 +70,11 @@ class FfmpegPcmDecoderTest {
 
     @Test
     fun invalidInputReturnsFailure() {
-        assumeWindowsX64()
         assertTrue(FfmpegPcmDecoder.open(byteArrayOf(1, 2, 3).inputStream()).isFailure)
     }
 
     @Test
     fun closesInputWhenInitializationFails() {
-        assumeWindowsX64()
         val input = CloseTrackingInputStream(byteArrayOf(1, 2, 3).inputStream())
 
         assertTrue(FfmpegPcmDecoder.open(input).isFailure)
@@ -89,7 +83,6 @@ class FfmpegPcmDecoderTest {
 
     @Test
     fun closesInputWhenStreamCloses() {
-        assumeWindowsX64()
         val opusOgg = createOpusOgg()
         val input = CloseTrackingInputStream(opusOgg.inputStream())
         val stream = FfmpegPcmDecoder.open(input).getOrThrow()
@@ -122,12 +115,6 @@ class FfmpegPcmDecoderTest {
     private fun java.nio.ByteBuffer.toByteArray(): ByteArray =
         ByteArray(remaining()).also(::get)
 
-    private fun assumeWindowsX64() {
-        val osName = System.getProperty("os.name").orEmpty()
-        val osArch = System.getProperty("os.arch").orEmpty().lowercase()
-        assumeTrue(osName.contains("windows", ignoreCase = true))
-        assumeTrue(osArch == "amd64" || osArch == "x86_64")
-    }
 
     private class CloseTrackingInputStream(input: InputStream) : FilterInputStream(input) {
         var closeCount = 0

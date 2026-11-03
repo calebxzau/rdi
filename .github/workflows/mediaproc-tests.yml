@@ -1,0 +1,82 @@
+# Runs the media decoding and encoding tests against each platform's FFmpeg natives.
+# The repository is public, so nothing here may use real accounts or print node addresses.
+name: mediaproc-tests
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - client/mediaproc/**
+      - client/gradle/target-platform.gradle.kts
+      - client/ui/gradle/libs.versions.toml
+      - .github/workflows/mediaproc-tests.yml
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            platform: windows-x64
+            gradle: .\gradlew.bat
+          # gradlew is not executable in git.
+          - os: ubuntu-24.04
+            platform: linux-x64
+            gradle: bash ./gradlew
+          - os: macos-15
+            platform: macos-arm64
+            gradle: bash ./gradlew
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          cache-read-only: false
+      - name: Run the tests
+        working-directory: client/ui
+        shell: pwsh
+        # Quoted because PowerShell splits an unquoted argument at the dot in the property name.
+        run: ${{ matrix.gradle }} :mediaproc:test :mediaproc:nativePreloadTest --continue "-Prdi.targetPlatform=${{ matrix.platform }}"
+      - name: Check that every test really ran
+        if: ${{ !cancelled() }}
+        shell: pwsh
+        run: |
+          $failed = $false
+          foreach ($task in 'test', 'nativePreloadTest') {
+            $files = @(Get-ChildItem "client/mediaproc/build/test-results/$task" -Filter 'TEST-*.xml' -ErrorAction SilentlyContinue)
+            $tests = 0
+            $skipped = 0
+            foreach ($file in $files) {
+              $suite = ([xml](Get-Content -Raw $file.FullName)).testsuite
+              $tests += [int]$suite.tests
+              $skipped += [int]$suite.skipped
+              $output = $suite.SelectSingleNode('system-out').InnerText
+              $output -split "`n" | Where-Object { $_ -like 'legacy sample *' } | ForEach-Object { Write-Output $_.Trim() }
+            }
+            Write-Output "${task}: $tests tests, $skipped skipped"
+            if ($tests -eq 0 -or $skipped -gt 0) {
+              Write-Output "::error::${task} must run at least one test and skip none"
+              $failed = $true
+            }
+          }
+          if ($failed) { exit 1 }
+      - uses: actions/upload-artifact@v4
+        if: ${{ failure() }}
+        with:
+          name: mediaproc-test-reports-${{ matrix.platform }}
+          path: |
+            client/mediaproc/build/reports/tests
+            client/mediaproc/build/test-results
+          retention-days: 7
+          if-no-files-found: ignore

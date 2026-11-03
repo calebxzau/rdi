@@ -1,6 +1,5 @@
 package calebxzau.rdi.mediaproc
 
-import org.junit.jupiter.api.Assumptions.assumeTrue
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -61,7 +60,6 @@ class FfmpegAvifDecoderTest {
 
     @Test
     fun decodesBundledBackgroundToRgba() {
-        assumeWindowsX64()
         val input = javaClass.getResourceAsStream("/assets/bg.avif")!!.use { it.readBytes() }
 
         val decoded = FfmpegAvifDecoder.decode(input).getOrThrow()
@@ -74,13 +72,11 @@ class FfmpegAvifDecoderTest {
 
     @Test
     fun rejectsInvalidAvif() {
-        assumeWindowsX64()
         assertTrue(FfmpegAvifDecoder.decode(ftyp("avif")).isFailure)
     }
 
     @Test
     fun encodesOpaquePngAndDecodesOpaqueRgba() {
-        assumeWindowsX64()
         val input = png(
             width = 2,
             height = 2,
@@ -101,7 +97,6 @@ class FfmpegAvifDecoderTest {
 
     @Test
     fun preservesGradientAlphaInSecondAvifStream(): Unit {
-        assumeWindowsX64()
         val input = png(
             width = 3,
             height = 1,
@@ -121,7 +116,6 @@ class FfmpegAvifDecoderTest {
 
     @Test
     fun lowQualityPreservesGradientAlphaInSecondAvifStream(): Unit {
-        assumeWindowsX64()
         val input = png(
             width = 3,
             height = 1,
@@ -143,14 +137,12 @@ class FfmpegAvifDecoderTest {
 
     @Test
     fun encodeRejectsInvalidPng() {
-        assumeWindowsX64()
         val result = runBlocking { AvifCodec.encodePng(byteArrayOf(1, 2, 3)) }
         assertTrue(result.isFailure)
     }
 
     @Test
     fun rejectsTruncatedEncodedAvif(): Unit {
-        assumeWindowsX64()
         val input = png(2, 2, intArrayOf(-1, -1, -1, -1))
         val encoded = runBlocking { AvifCodec.encodePng(input).getOrThrow() }
 
@@ -159,7 +151,6 @@ class FfmpegAvifDecoderTest {
 
     @Test
     fun decodesRepeatedAndConcurrentInputs(): Unit {
-        assumeWindowsX64()
         val inputs = (1..4).map { width ->
             AvifCodec.encodePng(png(width, 2, IntArray(width * 2) { 0x80FF0000.toInt() })).getOrThrow()
         }
@@ -221,12 +212,6 @@ class FfmpegAvifDecoderTest {
         }
     }
 
-    private fun assumeWindowsX64() {
-        val osName = System.getProperty("os.name").orEmpty()
-        val osArch = System.getProperty("os.arch").orEmpty().lowercase()
-        assumeTrue(osName.contains("windows", ignoreCase = true))
-        assumeTrue(osArch == "amd64" || osArch == "x86_64")
-    }
 
     private companion object {
         const val SEEK_SET = 0
