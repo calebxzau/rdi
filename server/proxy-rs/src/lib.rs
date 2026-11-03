@@ -637,12 +637,32 @@ async fn write_frame<S: AsyncWrite + Unpin>(
     Ok(())
 }
 
-async fn send_disconnect<S: AsyncWrite + Unpin>(stream: &mut S, reason: &str) -> Result<()> {
+async fn send_disconnect<S: AsyncRead + AsyncWrite + Unpin>(
+    stream: &mut S,
+    reason: &str,
+) -> Result<()> {
     let json = serde_json::to_vec(&serde_json::json!({"text": reason}))?;
     let mut body = encode_varint(0);
     body.extend(encode_varint(json.len() as i32));
     body.extend(json);
-    write_frame(stream, &body, PHASE_TIMEOUT).await
+    write_frame(stream, &body, PHASE_TIMEOUT).await?;
+    // The player's login packet has usually arrived unread by now.
+    let (mut read, mut write) = tokio::io::split(stream);
+    close_player(&mut read, &mut write, PLAYER_CLOSE_LIMIT).await;
+    Ok(())
+}
+
+/// Ends the stream to a player, then waits for them to close: closing with their data unread would
+/// reset the connection, and any relay on the way may discard the disconnect reason because of it.
+async fn close_player<R, W>(read: &mut R, write: &mut W, limit: Duration)
+where
+    R: AsyncRead + Unpin,
+    W: AsyncWrite + Unpin,
+{
+    let _ = timeout(limit, write.shutdown()).await;
+    let mut buffer = [0u8; COPY_BUFFER_SIZE];
+    let discard = async { while matches!(read.read(&mut buffer).await, Ok(count) if count > 0) {} };
+    let _ = timeout(limit, discard).await;
 }
 
 async fn relay<C, B>(client: C, backend: B) -> Result<()>
@@ -690,13 +710,7 @@ where
             },
         }
     };
-    let _ = timeout(player_close_limit, client_write.shutdown()).await;
-    // Closing with unread player data would reset the connection, and a reset can discard the reason.
-    let _ = timeout(
-        player_close_limit,
-        discard_until_closed(&mut client_read, &mut c2b),
-    )
-    .await;
+    close_player(&mut client_read, &mut client_write, player_close_limit).await;
     server_ended
 }
 
@@ -723,13 +737,6 @@ async fn copy_direction<R: AsyncRead + Unpin, W: AsyncWrite + Unpin>(
             return CopyEnd::Target(anyhow!(error).context("relay write failed"));
         }
     }
-}
-
-async fn discard_until_closed<R: AsyncRead + Unpin>(
-    reader: &mut R,
-    buffer: &mut [u8; COPY_BUFFER_SIZE],
-) {
-    while matches!(reader.read(buffer).await, Ok(count) if count > 0) {}
 }
 
 /// Tells resumable sessions from plain game connections without consuming any bytes.
@@ -1369,6 +1376,43 @@ mod tests {
         let (_player, client) = tokio::io::duplex(1024);
         let result = timeout(TEST_LIMIT, relay_within(client, server, SHORT, SHORT)).await;
         assert!(result.unwrap().is_ok());
+    }
+
+    #[tokio::test]
+    async fn own_reason_closes_cleanly_with_login_packet_unread() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let semaphore = Arc::new(Semaphore::new(1));
+        let permit = semaphore.clone().try_acquire_owned().unwrap();
+        let config = Arc::new(Config {
+            listen: address,
+            master: "http://127.0.0.1:1".into(),
+            ..Config::default()
+        });
+        let routes = RouteClient::new(config.master.clone()).unwrap();
+        let active = Arc::new(ActiveConnections::default());
+        let anchor = build_anchor(config.clone(), routes.clone(), active.clone(), None);
+        let server = tokio::spawn(async move {
+            let (stream, peer) = listener.accept().await.unwrap();
+            handle_connection(stream, peer, config, routes, active, permit, None, anchor).await
+        });
+        let mut client = TcpStream::connect(address).await.unwrap();
+        let mut handshake = encode_varint(0);
+        handshake.extend(encode_varint(767));
+        handshake.extend(encode_varint(0));
+        handshake.extend(40000u16.to_be_bytes());
+        handshake.extend(encode_varint(2));
+        let mut opening = encode_frame(&handshake);
+        opening.extend(encode_frame(&[0, 1, b'x']));
+        client.write_all(&opening).await.unwrap();
+        let mut received = Vec::new();
+        timeout(TEST_LIMIT, client.read_to_end(&mut received))
+            .await
+            .unwrap()
+            .expect("the connection must end without a reset");
+        assert!(String::from_utf8_lossy(&received).contains("房间服务暂时不可用"));
+        drop(client);
+        assert!(timeout(TEST_LIMIT, server).await.unwrap().unwrap().is_ok());
     }
 
     #[tokio::test]
