@@ -35,6 +35,10 @@ const ROUTE_TIMEOUT: Duration = Duration::from_secs(3);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 const COPY_BUFFER_SIZE: usize = 8192;
 const PREFIX_RETRY_INTERVAL: Duration = Duration::from_millis(5);
+/// How long a closed server's last bytes may take to reach a slow player.
+const SERVER_FINISH_LIMIT: Duration = Duration::from_secs(5);
+/// How long a player may take to close after the server's data has ended.
+const PLAYER_CLOSE_LIMIT: Duration = Duration::from_secs(2);
 
 #[derive(Clone, Debug)]
 pub struct Config {
@@ -646,31 +650,86 @@ where
     C: AsyncRead + AsyncWrite + Unpin,
     B: AsyncRead + AsyncWrite + Unpin,
 {
+    relay_within(client, backend, SERVER_FINISH_LIMIT, PLAYER_CLOSE_LIMIT).await
+}
+
+/// A server sends its disconnect reason and closes at once, usually while the player is still
+/// sending. The reason must reach the player whichever direction notices the close first.
+async fn relay_within<C, B>(
+    client: C,
+    backend: B,
+    server_finish_limit: Duration,
+    player_close_limit: Duration,
+) -> Result<()>
+where
+    C: AsyncRead + AsyncWrite + Unpin,
+    B: AsyncRead + AsyncWrite + Unpin,
+{
     let (mut client_read, mut client_write) = tokio::io::split(client);
     let (mut backend_read, mut backend_write) = tokio::io::split(backend);
     let mut c2b = [0u8; COPY_BUFFER_SIZE];
     let mut b2c = [0u8; COPY_BUFFER_SIZE];
-    tokio::select! {
-        result = copy_direction(&mut client_read, &mut backend_write, &mut c2b) => result,
-        result = copy_direction(&mut backend_read, &mut client_write, &mut b2c) => result,
-    }
+    let server_ended = {
+        let to_server = copy_direction(&mut client_read, &mut backend_write, &mut c2b);
+        let to_player = copy_direction(&mut backend_read, &mut client_write, &mut b2c);
+        tokio::pin!(to_server, to_player);
+        tokio::select! {
+            end = &mut to_server => match end {
+                // The player left, so nobody is waiting for the rest.
+                CopyEnd::Source(result) => return result,
+                CopyEnd::Target(error) => {
+                    if let Ok(CopyEnd::Target(_)) = timeout(server_finish_limit, &mut to_player).await {
+                        return Err(error);
+                    }
+                    Err(error)
+                }
+            },
+            end = &mut to_player => match end {
+                CopyEnd::Source(result) => result,
+                CopyEnd::Target(error) => return Err(error),
+            },
+        }
+    };
+    let _ = timeout(player_close_limit, client_write.shutdown()).await;
+    // Closing with unread player data would reset the connection, and a reset can discard the reason.
+    let _ = timeout(
+        player_close_limit,
+        discard_until_closed(&mut client_read, &mut c2b),
+    )
+    .await;
+    server_ended
+}
+
+/// Which side ended a copy, which tells a player leaving from the server closing.
+enum CopyEnd {
+    Source(Result<()>),
+    Target(anyhow::Error),
 }
 
 async fn copy_direction<R: AsyncRead + Unpin, W: AsyncWrite + Unpin>(
     reader: &mut R,
     writer: &mut W,
     buffer: &mut [u8; COPY_BUFFER_SIZE],
-) -> Result<()> {
+) -> CopyEnd {
     loop {
-        let count = reader.read(buffer).await.context("relay read failed")?;
-        if count == 0 {
-            return Ok(());
+        let count = match reader.read(buffer).await {
+            Ok(0) => return CopyEnd::Source(Ok(())),
+            Ok(count) => count,
+            Err(error) => {
+                return CopyEnd::Source(Err(anyhow!(error).context("relay read failed")));
+            }
+        };
+        if let Err(error) = writer.write_all(&buffer[..count]).await {
+            return CopyEnd::Target(anyhow!(error).context("relay write failed"));
         }
-        writer
-            .write_all(&buffer[..count])
-            .await
-            .context("relay write failed")?;
     }
+}
+
+async fn discard_until_closed<R: AsyncRead + Unpin>(
+    reader: &mut R,
+    buffer: &mut [u8; COPY_BUFFER_SIZE],
+) {
+    while matches!(reader.read(buffer).await, Ok(count) if count > 0) {}
 }
 
 /// Tells resumable sessions from plain game connections without consuming any bytes.
@@ -729,8 +788,15 @@ fn build_anchor(
         let active = Arc::clone(&active);
         let favicon = favicon.clone();
         tokio::spawn(async move {
-            let served =
-                serve_minecraft(app, peer, config, routes, active, favicon, HANDSHAKE_TIMEOUT);
+            let served = serve_minecraft(
+                app,
+                peer,
+                config,
+                routes,
+                active,
+                favicon,
+                HANDSHAKE_TIMEOUT,
+            );
             if let Err(error) = served.await {
                 warn!(%peer, ?error, "session closed with error");
             }
@@ -1211,6 +1277,109 @@ mod tests {
         assert_eq!(backend_server.await.unwrap(), data);
     }
 
+    /// A fake server: `feeder` sends what it says, and dropping `gate` makes writes to it fail.
+    fn fake_server() -> (
+        impl AsyncRead + AsyncWrite + Unpin,
+        tokio::io::DuplexStream,
+        tokio::io::DuplexStream,
+    ) {
+        let (reader, feeder) = tokio::io::duplex(1024);
+        let (writer, gate) = tokio::io::duplex(1024);
+        (tokio::io::join(reader, writer), feeder, gate)
+    }
+
+    const LONG: Duration = Duration::from_secs(60);
+    const SHORT: Duration = Duration::from_millis(50);
+    const TEST_LIMIT: Duration = Duration::from_secs(5);
+
+    #[tokio::test]
+    async fn reason_reaches_player_when_writing_to_server_fails_first() {
+        let (server, mut feeder, gate) = fake_server();
+        drop(gate);
+        let (mut player, client) = tokio::io::duplex(1024);
+        let relay_task = tokio::spawn(relay_within(client, server, LONG, LONG));
+        player.write_all(b"keepalive").await.unwrap();
+        tokio::time::sleep(SHORT).await;
+        assert!(!relay_task.is_finished());
+        feeder.write_all(b"missing mod").await.unwrap();
+        drop(feeder);
+        let mut received = Vec::new();
+        timeout(TEST_LIMIT, player.read_to_end(&mut received))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(received, b"missing mod");
+        drop(player);
+        let result = timeout(TEST_LIMIT, relay_task).await.unwrap().unwrap();
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn silent_server_cannot_hold_a_failed_connection() {
+        let (server, _feeder, gate) = fake_server();
+        drop(gate);
+        let (mut player, client) = tokio::io::duplex(1024);
+        let relay_task = tokio::spawn(relay_within(client, server, SHORT, SHORT));
+        player.write_all(b"keepalive").await.unwrap();
+        let mut received = Vec::new();
+        timeout(TEST_LIMIT, player.read_to_end(&mut received))
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(received.is_empty());
+        assert!(
+            timeout(TEST_LIMIT, relay_task)
+                .await
+                .unwrap()
+                .unwrap()
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn player_can_still_send_after_server_data_ended() {
+        let (server, mut feeder, _gate) = fake_server();
+        let (mut player, client) = tokio::io::duplex(1024);
+        let relay_task = tokio::spawn(relay_within(client, server, LONG, LONG));
+        feeder.write_all(b"version mismatch").await.unwrap();
+        drop(feeder);
+        let mut received = Vec::new();
+        timeout(TEST_LIMIT, player.read_to_end(&mut received))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(received, b"version mismatch");
+        player.write_all(b"late packet").await.unwrap();
+        tokio::time::sleep(SHORT).await;
+        assert!(!relay_task.is_finished());
+        drop(player);
+        assert!(
+            timeout(TEST_LIMIT, relay_task)
+                .await
+                .unwrap()
+                .unwrap()
+                .is_ok()
+        );
+    }
+
+    #[tokio::test]
+    async fn player_that_never_closes_is_released() {
+        let (server, feeder, _gate) = fake_server();
+        drop(feeder);
+        let (_player, client) = tokio::io::duplex(1024);
+        let result = timeout(TEST_LIMIT, relay_within(client, server, SHORT, SHORT)).await;
+        assert!(result.unwrap().is_ok());
+    }
+
+    #[tokio::test]
+    async fn player_leaving_ends_the_relay_at_once() {
+        let (server, _feeder, _gate) = fake_server();
+        let (player, client) = tokio::io::duplex(1024);
+        drop(player);
+        let result = timeout(TEST_LIMIT, relay_within(client, server, LONG, LONG)).await;
+        assert!(result.unwrap().is_ok());
+    }
+
     #[tokio::test]
     async fn active_guard_and_permit_cleanup_on_cancellation() {
         let active = Arc::new(ActiveConnections::default());
@@ -1250,7 +1419,9 @@ mod tests {
         use super::*;
         use rdi_session_resume::{
             BoxStream,
-            client::{ClientConfig, Dialer, EventSink, NodeTable, SessionEvent, spawn_client_session},
+            client::{
+                ClientConfig, Dialer, EventSink, NodeTable, SessionEvent, spawn_client_session,
+            },
         };
         use tokio::{io::DuplexStream, sync::watch};
 
@@ -1439,7 +1610,9 @@ mod tests {
             handshake.extend(25565u16.to_be_bytes());
             handshake.extend(encode_varint(1));
             game.write_all(&encode_frame(&handshake)).await.unwrap();
-            game.write_all(&encode_frame(&encode_varint(0))).await.unwrap();
+            game.write_all(&encode_frame(&encode_varint(0)))
+                .await
+                .unwrap();
             let response = read_frame(&mut game, STATUS_LIMIT, Duration::from_secs(5))
                 .await
                 .unwrap();
