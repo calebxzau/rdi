@@ -245,7 +245,7 @@ data class ServerEntry(
 
 在`server/master/.../service/GameNodeService.kt`：
 
-- `GameNodeConfig`增加`sessionResume: Boolean = false`，作为总开关，默认关闭。
+- `GameNodeConfig`增加`sessionResume: Boolean`，作为总开关。第2阶段默认关闭，第3阶段改为默认开启（见第6节）。
 - 候选逻辑写成纯函数，放进新的`GameNodeCandidatePolicy`，和现有`ProxyAccessPolicy`同样风格，时段和地区都作为参数传入，方便测试。
 
 候选规则：
@@ -382,7 +382,11 @@ Gradle按项目规则运行：先试IntelliJ MCP，不可用再用`pwsh.exe`和�
 
 ## 6. 第3阶段：上线（第2阶段通过后另行确认）
 
-下个会话从这里开始。第3阶段的每一步都会动到线上，开工前先确认。
+第3阶段的每一步都会动到线上，开工前先确认。
+
+2026-11-03决定：`gameNode.sessionResume`改为默认开启，所以线上`config.toml`不用加这一项，部署新master后立即生效；要关闭时写`[gameNode]`和`sessionResume = false`，放在第一个`[[gameNode.nodes]]`之前，再重启master。下面的“总开关保持关闭”和“先在测试账号验证”不再适用。master、proxy-rs和启动器由用户手动发布，这个版本发布前没有做真实公网和frp测试。
+
+发布顺序不能颠倒：先升级proxy-rs，再部署master，最后发布启动器。启动器开启恢复后，如果连到旧版proxy-rs，握手得不到回应，玩家进不了房间。
 
 ### 6.1 开工前要决定和准备
 

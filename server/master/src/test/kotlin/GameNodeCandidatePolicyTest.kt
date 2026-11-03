@@ -1,7 +1,7 @@
 import calebxzhou.rdi.common.model.GameNodeEntry
 import calebxzhou.rdi.common.model.ServerEntry
 import calebxzhou.rdi.common.serdesJson
-import calebxzhou.rdi.master.GameNodeConfig
+import calebxzhou.rdi.master.AppConfig
 import calebxzhou.rdi.master.GameNodeRuleConfig
 import calebxzhou.rdi.master.service.GameNodeCandidatePolicy
 import kotlinx.serialization.Serializable
@@ -10,6 +10,8 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
+
+private const val NODE_TOML = "[[gameNode.nodes]]\nid = 0\nname = \"主节点\"\ngameAddr = \"203.0.113.2:65230\"\n"
 
 class GameNodeCandidatePolicyTest {
     private val main = node(0, "主节点")
@@ -80,9 +82,17 @@ class GameNodeCandidatePolicyTest {
     }
 
     @Test
-    fun `resume switch is off when old config omits it`() {
-        val config = Toml.decodeFromString(GameNodeConfig.serializer(), "nodes = []")
-        assertFalse(config.sessionResume)
+    fun `resume is on when config omits the switch`() {
+        val config = Toml.decodeFromString(AppConfig.serializer(), NODE_TOML)
+        assertEquals(1, config.gameNode.nodes.size)
+        assertTrue(config.gameNode.sessionResume)
+    }
+
+    @Test
+    fun `config can turn resume off`() {
+        val config = Toml.decodeFromString(AppConfig.serializer(), "[gameNode]\nsessionResume = false\n\n$NODE_TOML")
+        assertEquals(1, config.gameNode.nodes.size)
+        assertFalse(config.gameNode.sessionResume)
     }
 
     @Test
