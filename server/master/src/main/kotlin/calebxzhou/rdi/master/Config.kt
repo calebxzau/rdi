@@ -43,6 +43,13 @@ data class JwtConfig(
     val expiresInSeconds: Long = 7 * 24 * 3600, // default 7 days
 )
 
+/** Ed25519 key that signs DM tickets; `privateKey` is base64 PKCS#8 DER. */
+@Serializable
+data class DmTicketConfig(
+    val keyId: String = "1",
+    val privateKey: String = "",
+)
+
 @Serializable
 data class DockerConfig(
     val host: String = "localhost",
@@ -131,6 +138,7 @@ data class AppConfig(
     val apiKey: ApiKeyConfig = ApiKeyConfig(),
     val download: DownloadConfig = DownloadConfig(),
     val jwt: JwtConfig = JwtConfig(),
+    val dmTicket: DmTicketConfig = DmTicketConfig(),
     val storage: StorageConfig = StorageConfig(),
     val email: EmailConfig = EmailConfig(),
     val gameNode: GameNodeConfig = GameNodeConfig(),

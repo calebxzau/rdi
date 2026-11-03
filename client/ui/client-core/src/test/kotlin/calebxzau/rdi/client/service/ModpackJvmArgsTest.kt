@@ -21,4 +21,9 @@ class ModpackJvmArgsTest {
 
         assertTrue(result.isFailure)
     }
+
+    @Test
+    fun `the DM server cannot be set through custom params`() {
+        assertTrue(parseModpackJvmParams("-Drdi.dm.server=http://example.com:15566").isFailure)
+    }
 }

@@ -40,14 +40,14 @@ class DmHostCreationScreen : Screen(Component.literal("创建DM房间")) {
         progress = stateProgress
         canCancel = stateCanCancel
         hostId = stateHostId
-        renderBackground(guiGraphics, mouseX, mouseY, partialTick)
+        // Screen.render draws the blurred background first; text drawn before it would be blurred too.
+        super.render(guiGraphics, mouseX, mouseY, partialTick)
         guiGraphics.drawCenteredString(font, title, width / 2, height / 2 - 55, 0xFFFFFF)
         guiGraphics.drawCenteredString(font, message, width / 2, height / 2 - 30, 0xFFFFFF)
         val barWidth = 220
         guiGraphics.fill(width / 2 - barWidth / 2, height / 2 - 5, width / 2 + barWidth / 2, height / 2 + 3, 0xFF444444.toInt())
         guiGraphics.fill(width / 2 - barWidth / 2, height / 2 - 5, width / 2 - barWidth / 2 + (barWidth * progress.coerceIn(0f, 1f)).toInt(), height / 2 + 3, 0xFF55AA55.toInt())
         hostId?.let { guiGraphics.drawCenteredString(font, it.toString(), width / 2, height / 2 + 10, 0xFFFFFF) }
-        super.render(guiGraphics, mouseX, mouseY, partialTick)
     }
 
     companion object {

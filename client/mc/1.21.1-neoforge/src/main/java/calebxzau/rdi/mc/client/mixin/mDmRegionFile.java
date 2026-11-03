@@ -22,6 +22,11 @@ public abstract class mDmRegionFile {
         if (!DmRegionChangeLog.isActive()) return;
         Path path = ((AccessorRegionFile) this).rdi$getPath();
         if (!DmRegionChangeLog.isUnderActiveWorld(path)) return;
+        Path root = DmRegionChangeLog.activeWorldRoot();
+        if (root == null) return;
+        String region = root.relativize(path.toAbsolutePath().normalize()).toString().replace('\\', '/');
+        int index = (chunkPos.getRegionLocalZ() << 5) | chunkPos.getRegionLocalX();
+        if (!DmRegionChangeLog.wants(region, index)) return;
         ByteBuffer duplicate = buffer.duplicate();
         byte[] bytes = new byte[duplicate.remaining()];
         duplicate.get(bytes);

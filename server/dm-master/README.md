@@ -15,6 +15,10 @@ cargo run -- --http-listen 0.0.0.0:15566 \
   --tunnel-port 25566
 ```
 
+Logs go to the console and to `logs/dm-master.<date>.log` in the working
+directory: one file per UTC day, 14 kept. `DM_LOG_DIR` changes the directory and
+`RUST_LOG` the level (default `info`).
+
 The default host limit is 256 unique chunks across all dimensions. There is no
 per-player limit. The limit must be greater than zero.
 
@@ -27,6 +31,12 @@ are the successful binary exception and use `application/zip`.
 Public routes are `GET /info`, `POST /hosts`, `GET /hosts/{hostId}`, and
 `GET /hosts/{hostId}/world-init`. Host creation accepts multipart `name` and
 `worldInit`, validates the ZIP, and writes an empty `sync-chunks.json` roster.
+
+`GET /hosts` lists the rooms the ticket's player created, newest first, as `id`,
+`name` and `state`. `DELETE /hosts/{hostId}` is creator-only and is refused while
+the room is online, leaving, in a takeover election, or of unknown state. A deleted
+room moves to `data/deleted-hosts/<hostId>`, stops counting toward the room limit,
+and is kept until someone removes it by hand.
 
 The active DM session uses `X-DM-Session: UUID` for roster and snapshot reads.
 `PUT` and `DELETE /hosts/{hostId}/sync-chunks` accept:
@@ -95,6 +105,14 @@ data/hosts/<hostId>/world-checkpoint/
 The former `world-snapshot` routes are retired and return the application
 unknown-route response. Existing v5 data is left untouched; the first checkpoint
 for an existing room performs a full baseline reconciliation.
+
+Authentication: player routes need `Authorization: Bearer <api ticket>` from the
+RDI master's `POST /player/dm-ticket`. dm-master holds only the Ed25519 public key
+(`DM_TICKET_PUBLIC_KEYS`, base64 of the raw 32 bytes, comma separated during a key
+change). Routes that check `X-DM-Session` need no ticket: only a host that passed
+registration knows its session. `/gateway/*` needs `Authorization: Bearer
+$DM_GATEWAY_TOKEN`. dm-master and dm-gateway refuse to start without these. One
+player may create `--max-hosts-per-player` rooms (default 5).
 
 Gateway routes are `POST /gateway/heartbeat`, `PUT` and `DELETE
 /gateway/hosts/{hostId}`, and `PUT /gateway/sessions`. Presence is in memory;

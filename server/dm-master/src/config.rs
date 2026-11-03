@@ -1,3 +1,4 @@
+use crate::tickets::TicketKeys;
 use anyhow::{Context, Result, bail};
 use std::{env, net::SocketAddr, path::PathBuf};
 
@@ -79,6 +80,10 @@ pub struct Config {
     pub world_checkpoint: WorldCheckpointLimits,
     pub public_host: Option<String>,
     pub tunnel_port: u16,
+    pub ticket_keys: TicketKeys,
+    /// The shared secret dm-gateway presents on `/gateway/*`.
+    pub gateway_token: Option<String>,
+    pub max_hosts_per_player: usize,
 }
 
 impl Default for Config {
@@ -92,6 +97,9 @@ impl Default for Config {
             world_checkpoint: WorldCheckpointLimits::default(),
             public_host: None,
             tunnel_port: 25566,
+            ticket_keys: TicketKeys::default(),
+            gateway_token: None,
+            max_hosts_per_player: 5,
         }
     }
 }
@@ -165,14 +173,39 @@ impl Config {
                         .parse()
                         .context("invalid tunnel port")?
                 }
+                "--ticket-public-key" => config
+                    .ticket_keys
+                    .add_base64(&args.next().context("--ticket-public-key requires a key")?)?,
+                "--max-hosts-per-player" => {
+                    config.max_hosts_per_player = args
+                        .next()
+                        .context("--max-hosts-per-player requires a number")?
+                        .parse()
+                        .context("invalid room limit")?;
+                }
                 other => bail!("unknown option '{other}' (use --help for usage)"),
             }
+        }
+        // Secrets stay out of the process list; several public keys are allowed during a key change.
+        if let Ok(keys) = env::var("DM_TICKET_PUBLIC_KEYS") {
+            for key in keys.split(',').filter(|key| !key.trim().is_empty()) {
+                config.ticket_keys.add_base64(key)?;
+            }
+        }
+        config.gateway_token = env::var("DM_GATEWAY_TOKEN")
+            .ok()
+            .filter(|token| !token.is_empty());
+        if config.ticket_keys.is_empty() {
+            bail!("no ticket public key: set DM_TICKET_PUBLIC_KEYS or --ticket-public-key");
+        }
+        if config.gateway_token.is_none() {
+            bail!("no gateway credential: set DM_GATEWAY_TOKEN");
         }
         Ok(Some(config))
     }
     pub fn usage() {
         println!(
-            "dm-master\n\nOptions:\n  --http-listen ADDR                HTTP listen address (default 0.0.0.0:15566)\n  --data-dir PATH                   persistent data directory (default ./data)\n  --max-upload-mib N                max world-init/checkpoint upload (default 256)\n  --sync-chunk-max-total N          max SyncChunk entries per host (default 256)\n  --max-world-mib N                 max playable checkpoint world (default 8192)\n  --max-journal-mib N               max unapplied checkpoint journal (default 1024)\n  --public-host HOST                public gateway host returned by /info\n  --tunnel-port PORT                gateway tunnel port (default 25566)"
+            "dm-master\n\nOptions:\n  --http-listen ADDR                HTTP listen address (default 0.0.0.0:15566)\n  --data-dir PATH                   persistent data directory (default ./data)\n  --max-upload-mib N                max world-init/checkpoint upload (default 256)\n  --sync-chunk-max-total N          max SyncChunk entries per host (default 256)\n  --max-world-mib N                 max playable checkpoint world (default 8192)\n  --max-journal-mib N               max unapplied checkpoint journal (default 1024)\n  --public-host HOST                public gateway host returned by /info\n  --tunnel-port PORT                gateway tunnel port (default 25566)\n  --ticket-public-key KEY           base64 Ed25519 key that verifies player tickets (repeatable; also DM_TICKET_PUBLIC_KEYS, comma separated)\n  --max-hosts-per-player N          rooms one player may create (default 5)\n\nRequired environment:\n  DM_GATEWAY_TOKEN                  shared secret dm-gateway presents on /gateway/*"
         );
     }
 }

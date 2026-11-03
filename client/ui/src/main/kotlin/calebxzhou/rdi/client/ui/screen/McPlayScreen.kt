@@ -16,9 +16,12 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import calebxzau.rdi.client.RDIClient
 import calebxzau.rdi.client.lgr
+import calebxzau.rdi.client.service.dmGameJvmArgs
 import calebxzau.rdi.client.ui.*
 import calebxzau.rdi.mcinstall.McLaunchPreparationRequest
 import calebxzau.rdi.mclaunch.MinecraftLaunchOverrides
+import calebxzhou.rdi.client.net.RServer
+import calebxzhou.rdi.client.net.loggedAccount
 import calebxzhou.rdi.client.service.*
 import calebxzhou.rdi.client.ui.McGameSession
 import calebxzhou.rdi.client.ui.McPlayArgs
@@ -28,6 +31,7 @@ import calebxzhou.rdi.common.model.FORGEGUARD_AGENT_FILE_NAME
 import calebxzhou.rdi.common.model.Modpack
 import calebxzhou.rdi.common.model.Task2Progress
 import calebxzhou.rdi.common.model.compactText
+import calebxzhou.rdi.common.model.isDav
 import calebxzhou.rdi.common.util.encodeBase64
 import java.nio.file.Paths
 import kotlinx.coroutines.CancellationException
@@ -193,6 +197,7 @@ fun McPlayScreen(
                         val proxiedPlayArg = args.playArg.withGameAddr(localGameAddr)
                         add("-Drdi.play=${proxiedPlayArg.encodeBase64}")
                         args.hostId?.let { add("-Drdi.host.id=${it}") }
+                        addAll(dmGameJvmArgs(loggedAccount.isDav, RServer.now.ip))
                     }
 
                 }

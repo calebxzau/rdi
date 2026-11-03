@@ -59,8 +59,7 @@ object DmRegionScanner {
             val payload = ByteArray(length - 1)
             file.readFully(payload)
             val raw = if (version and 0x80 != 0) {
-                val coords = coordinates(path)
-                val external = path.resolveSibling("c.${coords.first}.${coords.second}.mcc")
+                val external = path.resolveSibling(externalChunkName(path, index))
                 val externalBytes = Files.readAllBytes(external)
                 val externalLength = externalBytes.size + 1
                 ByteBuffer.allocate(externalLength + 4).order(ByteOrder.BIG_ENDIAN).putInt(externalLength).put((version and 0x7f).toByte()).put(externalBytes).array()
@@ -100,21 +99,30 @@ object DmRegionScanner {
 
     private fun readTable(path: Path): DmRegionTable {
         RandomAccessFile(path.toFile(), "r").use { file ->
-            require(file.length() >= HEADER_BYTES) { "region头部不完整" }
-            val slots = ArrayList<DmRegionSlot>(1024)
-            for (index in 0 until 1024) {
-                val offset = run { file.seek(index * 4L); file.readInt() }
-                val timestamp = run { file.seek(4096L + index * 4L); file.readInt() }
-                slots += DmRegionSlot(timestamp, offset and 0xff)
-            }
-            return DmRegionTable(slots)
+            return DmRegionTable(List(1024) { index -> readSlot(file, index) })
         }
     }
 
+    /**
+     * Like vanilla `RegionFile`, a header shorter than [HEADER_BYTES] reads as zeros: vanilla
+     * leaves empty region files at 0 bytes until a chunk is first written to them.
+     */
     private fun readSlot(file: RandomAccessFile, index: Int): DmRegionSlot {
-        file.seek(index * 4L); val offset = file.readInt()
-        file.seek(4096L + index * 4L); val timestamp = file.readInt()
+        val offset = readHeaderInt(file, index * 4L)
+        val timestamp = readHeaderInt(file, SECTOR_BYTES + index * 4L)
         return DmRegionSlot(timestamp, offset and 0xff)
+    }
+
+    private fun readHeaderInt(file: RandomAccessFile, position: Long): Int {
+        if (position + 4 > file.length()) return 0
+        file.seek(position)
+        return file.readInt()
+    }
+
+    /** Vanilla names an oversized chunk's external file after the chunk, not the region. */
+    internal fun externalChunkName(region: Path, index: Int): String {
+        val (regionX, regionZ) = coordinates(region)
+        return "c.${regionX * 32 + (index and 31)}.${regionZ * 32 + (index ushr 5)}.mcc"
     }
 
     private fun coordinates(path: Path): Pair<Int, Int> {

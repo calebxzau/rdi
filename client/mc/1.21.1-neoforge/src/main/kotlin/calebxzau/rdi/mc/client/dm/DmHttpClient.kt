@@ -23,8 +23,41 @@ import calebxzau.rdi.mc.client.syncchunk.DmSyncChunkSnapshot
 import calebxzau.rdi.mc.syncchunk.SyncChunkKey
 import calebxzau.rdi.mc.client.syncchunk.SyncChunkRequestError
 
-data class DmHostInfo(val id: UUID, val name: String, val state: String? = null, val gamePort: Int? = null)
-data class DmGatewayInfo(val publicHost: String?, val tunnelPort: Int, val worldCheckpointApiVersion: Int? = null)
+data class DmHostInfo(
+    val id: UUID,
+    val name: String,
+    val state: String? = null,
+    val gamePort: Int? = null,
+    val checkpointCycleId: UUID? = null,
+    /** "Electing" or "Claimed" while a takeover is in progress. */
+    val takeover: String? = null,
+    /** Overall hash of the room's static registries; null until the room records its mods. */
+    val modFingerprint: String? = null,
+)
+data class DmCheckpointDownload(val sequence: Long, val cycleId: UUID?)
+data class DmCandidateMetrics(
+    val startupMs: Long?,
+    val maxMemoryBytes: Long,
+    val cpuCores: Int,
+    val rttMs: Int?,
+    val downloadBps: Long?,
+    val uploadBps: Long?,
+    val registryFingerprint: String? = null,
+)
+sealed interface DmTakeoverClaim {
+    data class Granted(val claimId: UUID, val leaseMs: Long) : DmTakeoverClaim
+    data class Pending(val retryAfterMs: Long) : DmTakeoverClaim
+    data class Claimed(val retryAfterMs: Long) : DmTakeoverClaim
+    data object HostOnline : DmTakeoverClaim
+    /** This player's mods differ from the room's. */
+    data object Incompatible : DmTakeoverClaim
+}
+data class DmGatewayInfo(
+    val publicHost: String?,
+    val tunnelPort: Int,
+    val worldCheckpointApiVersion: Int? = null,
+    val serverTimeSeconds: Long? = null,
+)
 data class DmWorldCheckpointLimits(
     val maxUploadBytes: Long,
     val maxWorldBytes: Long,
@@ -42,6 +75,8 @@ data class DmWorldCheckpointStatus(
     val appliedSequence: Long,
     val baselineComplete: Boolean,
     val limits: DmWorldCheckpointLimits,
+    val lastUploadSha1: String? = null,
+    val lastUploadZipBytes: Long? = null,
 )
 data class DmWorldCheckpointFile(val path: String, val bytes: Long, val sha1: String)
 data class DmWorldCheckpointFiles(val files: List<DmWorldCheckpointFile>, val directories: Set<String>)
@@ -163,26 +198,47 @@ internal fun validateWorldSnapshotPublishedSession(
     }
 }
 
-class DmHttpClient(private val config: DmConfig) {
+class DmHttpClient(private val config: DmConfig, private val tickets: DmTicketSource = DmTickets) {
     private val client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10)).build()
 
-    fun info(): Result<DmGatewayInfo> = getJson("info").mapCatching { json ->
-        DmGatewayInfo(json.stringOrNull("publicHost"), json.get("tunnelPort").asInt, json.get("worldCheckpointApiVersion")?.takeUnless { it.isJsonNull }?.asInt)
+    fun info(): Result<DmGatewayInfo> = getJson(request("info")).mapCatching { json ->
+        DmGatewayInfo(
+            json.stringOrNull("publicHost"),
+            json.get("tunnelPort").asInt,
+            json.get("worldCheckpointApiVersion")?.takeUnless { it.isJsonNull }?.asInt,
+            json.get("serverTimeSeconds")?.takeUnless { it.isJsonNull }?.asLong,
+        )
     }
 
-    fun getHost(id: UUID): Result<DmHostInfo> = getJson("hosts/$id").mapCatching(::hostInfo)
+    fun getHost(id: UUID): Result<DmHostInfo> = runCatching { playerRequest("hosts/$id") }.mapCatching { getJson(it).getOrThrow() }.mapCatching(::hostInfo)
 
-    fun createHost(name: String, archive: Path, onProgress: (Long, Long) -> Unit = { _, _ -> }): Result<DmHostInfo> = runCatching {
+    /** The room's full mod fingerprint, or null for a room that has not recorded one. */
+    fun getHostMods(id: UUID): Result<DmRoomMods?> = runCatching { playerRequest("hosts/$id/mods") }.mapCatching { getJson(it).getOrThrow() }.mapCatching { data ->
+        data.getAsJsonObject("fingerprint")?.let { fingerprint ->
+            DmRoomMods(DmModFingerprint.fromJson(fingerprint), data.stringOrNull("updatedBy")?.let(UUID::fromString))
+        }
+    }
+
+    fun createHost(
+        name: String,
+        archive: Path,
+        fingerprint: DmModFingerprint? = null,
+        onProgress: (Long, Long) -> Unit = { _, _ -> },
+    ): Result<DmHostInfo> = runCatching {
         require(name.isNotBlank()) { "房间名称不能为空" }
         require('\r' !in name && '\n' !in name) { "房间名称不能包含换行" }
         require(Files.isRegularFile(archive)) { "初始化资料不存在" }
         val boundary = "rdi-${UUID.randomUUID()}"
         val size = Files.size(archive)
-        val prefix = "--$boundary\r\nContent-Disposition: form-data; name=\"name\"\r\n\r\n$name\r\n".toByteArray(Charsets.UTF_8)
+        fun field(field: String, value: String) = "--$boundary\r\nContent-Disposition: form-data; name=\"${field}\"\r\n\r\n$value\r\n"
+        val prefix = buildString {
+            append(field("name", name))
+            fingerprint?.let { append(field("modFingerprint", it.toJson().toString())) }
+        }.toByteArray(Charsets.UTF_8)
         val filePrefix = "--$boundary\r\nContent-Disposition: form-data; name=\"worldInit\"; filename=\"world-init.zip\"\r\nContent-Type: application/zip\r\n\r\n".toByteArray(Charsets.UTF_8)
         val suffix = "\r\n--$boundary--\r\n".toByteArray(Charsets.UTF_8)
         val uploaded = java.util.concurrent.atomic.AtomicLong()
-        val request = request("hosts")
+        val request = playerRequest("hosts")
             .header("Content-Type", "multipart/form-data; boundary=$boundary")
             .POST(HttpRequest.BodyPublishers.ofInputStream {
                 SequenceInputStream(
@@ -205,7 +261,7 @@ class DmHttpClient(private val config: DmConfig) {
 
     fun downloadWorldInit(id: UUID, destination: Path): Result<Unit> = runCatching {
         val response = client.send(
-            request("hosts/$id/world-init").GET().build(),
+            playerRequest("hosts/$id/world-init").GET().build(),
             HttpResponse.BodyHandlers.ofInputStream(),
         )
         val contentType = response.headers().firstValue("Content-Type").orElse("")
@@ -235,6 +291,8 @@ class DmHttpClient(private val config: DmConfig) {
             data.get("appliedSequence").asLong,
             data.get("baselineComplete").asBoolean,
             limits,
+            upload?.get("uploadSha1")?.asString,
+            upload?.get("uploadZipBytes")?.asLong,
         )
     }
 
@@ -289,7 +347,113 @@ class DmHttpClient(private val config: DmConfig) {
         )
     }
 
-    fun downloadWorldCheckpoint(id: UUID, destination: Path): Result<Unit> = downloadZip("hosts/$id/world-checkpoint/download", destination)
+    fun downloadWorldCheckpoint(id: UUID, destination: Path): Result<DmCheckpointDownload> =
+        downloadZip("hosts/$id/world-checkpoint/download", destination).mapCatching { headers ->
+            DmCheckpointDownload(
+                headers.firstValue("X-DM-Checkpoint-Sequence").orElseThrow { IllegalStateException("世界checkpoint响应缺少序号") }.toLong(),
+                headers.firstValue("X-DM-Checkpoint-Cycle").map(UUID::fromString).orElse(null),
+            )
+        }
+
+    fun reportCandidate(hostId: UUID, candidateId: UUID, metrics: DmCandidateMetrics): Result<Unit> = runCatching {
+        val body = JsonObject().apply {
+            metrics.startupMs?.let { addProperty("startupMs", it) }
+            addProperty("maxMemoryBytes", metrics.maxMemoryBytes)
+            addProperty("cpuCores", metrics.cpuCores)
+            metrics.rttMs?.let { addProperty("rttMs", it) }
+            metrics.downloadBps?.let { addProperty("downloadBps", it) }
+            metrics.uploadBps?.let { addProperty("uploadBps", it) }
+            metrics.registryFingerprint?.let { addProperty("registryFingerprint", it) }
+        }
+        sendCheckpointJson(playerRequest("hosts/$hostId/candidates/$candidateId").timeout(Duration.ofSeconds(30))
+            .header("Content-Type", "application/json")
+            .PUT(HttpRequest.BodyPublishers.ofString(body.toString())))
+    }
+
+    /** Errors other than "the host is still online" arrive as [SyncChunkRequestError] with the master's reason. */
+    fun claimTakeover(hostId: UUID, candidateId: UUID): Result<DmTakeoverClaim> = runCatching {
+        val body = JsonObject().apply { addProperty("candidateId", candidateId.toString()) }
+        val data = try {
+            sendCheckpointJson(playerRequest("hosts/$hostId/takeover").timeout(Duration.ofSeconds(30))
+                .header("Content-Type", "application/json")
+                .POST(HttpRequest.BodyPublishers.ofString(body.toString())))
+        } catch (error: SyncChunkRequestError) {
+            if (error.reason == "HostOnline") return@runCatching DmTakeoverClaim.HostOnline
+            throw error
+        }
+        when (val outcome = data.get("outcome")?.asString) {
+            "Granted" -> DmTakeoverClaim.Granted(UUID.fromString(data.get("claimId").asString), data.get("leaseMs").asLong)
+            "Pending" -> DmTakeoverClaim.Pending(data.get("retryAfterMs").asLong)
+            "Claimed" -> DmTakeoverClaim.Claimed(data.get("retryAfterMs").asLong)
+            "Incompatible" -> DmTakeoverClaim.Incompatible
+            else -> error("未知接管结果：$outcome")
+        }
+    }
+
+    fun renewTakeover(hostId: UUID, claimId: UUID): Result<Unit> = runCatching {
+        sendCheckpointJson(playerRequest("hosts/$hostId/takeover/$claimId").timeout(Duration.ofSeconds(10))
+            .PUT(HttpRequest.BodyPublishers.noBody()))
+    }
+
+    fun releaseTakeover(hostId: UUID, claimId: UUID): Result<Unit> = runCatching {
+        sendCheckpointJson(playerRequest("hosts/$hostId/takeover/$claimId").timeout(Duration.ofSeconds(30)).DELETE())
+    }
+
+    /** Tells the master this host is shutting down, so its guests wait for the final checkpoint. */
+    fun announceLeaving(hostId: UUID, sessionId: UUID): Result<Unit> = runCatching {
+        val response = client.send(
+            request("hosts/$hostId/leaving").header("X-DM-Session", sessionId.toString())
+                .timeout(Duration.ofSeconds(3)).POST(HttpRequest.BodyPublishers.noBody()).build(),
+            HttpResponse.BodyHandlers.ofString(Charsets.UTF_8),
+        )
+        parseResponse(response.body(), response.statusCode())
+    }
+
+    /** Best of three round trips to the master, which runs next to the gateway. */
+    fun measureRttMillis(): Result<Int> = runCatching {
+        (1..3).minOf {
+            val started = System.nanoTime()
+            getJson(request("info")).getOrThrow()
+            ((System.nanoTime() - started) / 1_000_000L).toInt()
+        }
+    }
+
+    fun measureDownloadBps(): Result<Long> = runCatching {
+        val started = System.nanoTime()
+        val response = client.send(
+            playerRequest("speedtest/download").timeout(Duration.ofSeconds(60)).GET().build(),
+            HttpResponse.BodyHandlers.ofInputStream(),
+        )
+        checkAuthenticated(response.statusCode())
+        require(response.statusCode() == 200) { "测速下载返回HTTP${response.statusCode()}" }
+        val bytes = response.body().use { input -> input.transferTo(java.io.OutputStream.nullOutputStream()) }
+        bytesPerSecond(bytes, System.nanoTime() - started)
+    }
+
+    fun measureUploadBps(bytes: Int = SPEED_TEST_UPLOAD_BYTES): Result<Long> = runCatching {
+        val payload = ByteArray(bytes).also { java.util.Random().nextBytes(it) }
+        val started = System.nanoTime()
+        val response = client.send(
+            playerRequest("speedtest/upload").timeout(Duration.ofSeconds(60))
+                .header("Content-Type", "application/octet-stream")
+                .POST(HttpRequest.BodyPublishers.ofByteArray(payload)).build(),
+            HttpResponse.BodyHandlers.ofString(Charsets.UTF_8),
+        )
+        val elapsed = System.nanoTime() - started
+        val received = parseResponse(response.body(), response.statusCode()).get("bytes").asLong
+        require(received == bytes.toLong()) { "测速上传字节数不一致" }
+        bytesPerSecond(received, elapsed)
+    }
+
+    private fun bytesPerSecond(bytes: Long, elapsedNanos: Long): Long {
+        require(bytes > 0) { "测速没有传输数据" }
+        return maxOf(1L, bytes * 1_000_000_000L / maxOf(1L, elapsedNanos))
+    }
+
+    private fun sendCheckpointJson(builder: HttpRequest.Builder): JsonObject {
+        val response = client.send(builder.build(), HttpResponse.BodyHandlers.ofString(Charsets.UTF_8))
+        return parseCheckpointResponse(response.body(), response.statusCode())
+    }
 
     fun getSyncChunks(hostId: UUID, sessionId: UUID): Result<DmSyncChunkSnapshot> =
         syncChunksRequest("hosts/$hostId/sync-chunks", sessionId, "GET", null) { json ->
@@ -470,8 +634,8 @@ class DmHttpClient(private val config: DmConfig) {
         }
     }
 
-    private fun getJson(path: String): Result<JsonObject> = runCatching {
-        val response = client.send(request(path).GET().build(), HttpResponse.BodyHandlers.ofString(Charsets.UTF_8))
+    private fun getJson(request: HttpRequest.Builder): Result<JsonObject> = runCatching {
+        val response = client.send(request.GET().build(), HttpResponse.BodyHandlers.ofString(Charsets.UTF_8))
         parseResponse(response.body(), response.statusCode())
     }
 
@@ -598,6 +762,17 @@ class DmHttpClient(private val config: DmConfig) {
         config.baseUri.resolve(path.trimStart('/')),
     ).timeout(Duration.ofMinutes(10))
 
+    /** For routes any logged-in player may use; session routes prove themselves with their session id instead. */
+    private fun playerRequest(path: String): HttpRequest.Builder =
+        request(path).header("Authorization", "Bearer ${tickets.apiTicket().getOrThrow()}")
+
+    private fun checkAuthenticated(status: Int) {
+        if (status == 401) {
+            tickets.invalidateApiTicket()
+            throw IllegalStateException("账号验证失败，请稍后再试")
+        }
+    }
+
     private fun checkpointJson(path: String, sessionId: UUID): JsonObject {
         val response = client.send(
             request(path).header("X-DM-Session", sessionId.toString()).timeout(Duration.ofSeconds(30)).GET().build(),
@@ -607,6 +782,7 @@ class DmHttpClient(private val config: DmConfig) {
     }
 
     private fun parseCheckpointResponse(body: String, status: Int): JsonObject {
+        checkAuthenticated(status)
         val json = JsonParser.parseString(body).asJsonObject
         if (status != 200 || json.get("code")?.asInt != 0) {
             val data = json.get("data")?.takeIf { it.isJsonObject }?.asJsonObject
@@ -626,8 +802,8 @@ class DmHttpClient(private val config: DmConfig) {
         json.get("maxPathDepth").asInt,
     )
 
-    private fun downloadZip(path: String, destination: Path): Result<Unit> = runCatching {
-        val response = client.send(request(path).GET().build(), HttpResponse.BodyHandlers.ofInputStream())
+    private fun downloadZip(path: String, destination: Path): Result<java.net.http.HttpHeaders> = runCatching {
+        val response = client.send(playerRequest(path).GET().build(), HttpResponse.BodyHandlers.ofInputStream())
         val contentType = response.headers().firstValue("Content-Type").orElse("")
         if (!contentType.lowercase().startsWith("application/zip")) {
             val body = response.body().use { it.readBytes().toString(Charsets.UTF_8) }
@@ -636,9 +812,11 @@ class DmHttpClient(private val config: DmConfig) {
         }
         destination.parent?.let(Files::createDirectories)
         response.body().use { input -> Files.newOutputStream(destination).use { output -> input.copyTo(output) } }
+        response.headers()
     }
 
     private fun parseResponse(body: String, status: Int): JsonObject {
+        checkAuthenticated(status)
         require(status == 200) { "DM服务器返回HTTP$status" }
         val json = JsonParser.parseString(body).asJsonObject
         require(json.get("code")?.asInt == 0) { json.get("msg")?.asString ?: "DM服务器请求失败" }
@@ -936,7 +1114,15 @@ class DmHttpClient(private val config: DmConfig) {
 
     private fun hostInfo(json: JsonObject): DmHostInfo {
         val id = UUID.fromString(json.get("id").asString)
-        return DmHostInfo(id, json.get("name").asString, json.stringOrNull("state"), json.intOrNull("gamePort"))
+        return DmHostInfo(
+            id,
+            json.get("name").asString,
+            json.stringOrNull("state"),
+            json.intOrNull("gamePort"),
+            json.stringOrNull("checkpointCycleId")?.let(UUID::fromString),
+            json.stringOrNull("takeover"),
+            json.stringOrNull("modFingerprint"),
+        )
     }
 
     private class ProgressInputStream(
@@ -986,6 +1172,7 @@ class DmHttpClient(private val config: DmConfig) {
     }
 
     private companion object {
+        const val SPEED_TEST_UPLOAD_BYTES = 2 * 1024 * 1024
         val SIGNED_INTEGER_PATTERN = Regex("-?(0|[1-9][0-9]*)")
         val SHA1_PATTERN = Regex("[0-9a-f]{40}")
         val LONG_MIN = BigInteger.valueOf(Long.MIN_VALUE)

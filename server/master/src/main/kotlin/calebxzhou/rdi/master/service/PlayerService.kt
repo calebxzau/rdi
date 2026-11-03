@@ -2,6 +2,8 @@ package calebxzhou.rdi.master.service
 
 import calebxzhou.rdi.common.model.HwSpec
 import calebxzau.rdi.common.logging.Loggers
+import calebxzau.rdi.server.service.dmticket.DmTicketAudience
+import calebxzau.rdi.server.service.dmticket.DmTicketIssuer
 import calebxzhou.rdi.common.util.getDateTimeNow
 import calebxzhou.rdi.common.util.isValidHttpUrl
 import calebxzhou.rdi.common.exception.RequestError
@@ -14,6 +16,7 @@ import calebxzhou.rdi.common.service.MojangApi
 import calebxzhou.rdi.common.service.MojangApi.dashless
 import calebxzhou.rdi.common.util.ok
 import calebxzhou.rdi.common.util.validatePlayerName
+import calebxzhou.rdi.master.CONF
 import calebxzhou.rdi.master.CRASH_REPORT_DIR
 import calebxzhou.rdi.master.DB
 import calebxzhou.rdi.master.exception.AuthError
@@ -147,6 +150,14 @@ fun Route.playerRoutes() {
             post("/msid-match") {
                 response(data = PlayerService.lookups.msidMatch(call.receive<List<String>>().map { it.toUuidParam() }))
             }
+            post("/dm-ticket") {
+                val audience = DmTicketAudience.fromWireName(param("aud")) ?: throw ParamError("票据用途不正确")
+                val account = call.player()
+                val ticket = PlayerService.dmTicketIssuer.getOrThrow()
+                    .issue(audience, account.uuid, account.name, paramNull("room")?.toUuidParam())
+                    .getOrElse { throw ParamError(it.message ?: "票据参数不正确") }
+                response(data = ticket)
+            }
         }
     }
 }
@@ -179,6 +190,13 @@ object PlayerService {
 
     /** Account lookups for save imports (`/player/by-qq`, `/player/msid-match`). */
     val lookups = calebxzau.rdi.server.service.player.PlayerLookupService(::getByQQ, ::getByMsids)
+
+    /** Fails on use, not at startup, so a master without DM keeps working. */
+    val dmTicketIssuer: Result<DmTicketIssuer> by lazy {
+        DmTicketIssuer.loadPrivateKey(CONF.dmTicket.privateKey)
+            .map { DmTicketIssuer(CONF.dmTicket.keyId, it) }
+            .onFailure { lgr.error(it) { "DM票据私钥不可用" } }
+    }
 
     suspend fun get(usr: String): RAccount? {
         if (ObjectId.isValid(usr)) {

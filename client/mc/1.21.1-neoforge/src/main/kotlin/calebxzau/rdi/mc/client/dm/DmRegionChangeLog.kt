@@ -1,5 +1,6 @@
 package calebxzau.rdi.mc.client.dm
 
+import calebxzau.rdi.mc.syncchunk.SyncChunkKey
 import java.nio.file.Path
 
 data class DmRegionChunkKey(val region: String, val index: Int)
@@ -21,6 +22,8 @@ object DmRegionChangeLog {
     @Volatile private var worldRoot: Path? = null
     @Volatile private var held = false
     @Volatile private var reconcileRequired = false
+    /** Chunks whose writes are recorded; the checkpoint reads any other kept chunk from disk. */
+    @Volatile private var keep: Set<SyncChunkKey> = emptySet()
     private var bytes = 0L
     private var byteBudget = DEFAULT_BYTE_BUDGET
 
@@ -33,8 +36,14 @@ object DmRegionChangeLog {
             changes.clear()
             bytes = 0L
             byteBudget = budget.coerceAtLeast(1L)
+            keep = emptySet()
         }
     }
+
+    @JvmStatic fun setKeep(chunks: Set<SyncChunkKey>) { keep = chunks }
+
+    /** True when a write to slot [index] of [region] should be recorded. */
+    @JvmStatic fun wants(region: String, index: Int): Boolean = DmCheckpointKeepSet.keeps(keep, region, index)
 
     @JvmStatic fun isActive(): Boolean = worldRoot != null
     @JvmStatic fun activeWorldRoot(): Path? = worldRoot
@@ -45,11 +54,11 @@ object DmRegionChangeLog {
 
     @JvmStatic
     fun recordWrite(region: String, index: Int, timestamp: Int, sectors: Int, bytes: ByteArray) =
-        put(DmRegionChange(DmRegionChunkKey(region, index), timestamp, bytes.copyOf(), sectors), overwrite = true)
+        wants(region, index) && put(DmRegionChange(DmRegionChunkKey(region, index), timestamp, bytes.copyOf(), sectors), overwrite = true)
 
     @JvmStatic
     fun recordClear(region: String, index: Int, timestamp: Int) =
-        put(DmRegionChange(DmRegionChunkKey(region, index), timestamp, null, 0), overwrite = true)
+        wants(region, index) && put(DmRegionChange(DmRegionChunkKey(region, index), timestamp, null, 0), overwrite = true)
 
     fun recordScan(change: DmRegionChange): Boolean = put(change, overwrite = false)
 
@@ -107,6 +116,7 @@ object DmRegionChangeLog {
             reconcileRequired = false
             changes.clear()
             bytes = 0L
+            keep = emptySet()
         }
     }
 

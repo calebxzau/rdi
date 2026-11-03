@@ -9,6 +9,8 @@ pub struct ServeConfig {
     pub game_bind: IpAddr,
     pub game_ports: (u16, u16),
     pub master_url: String,
+    /// The shared secret presented to dm-master on `/gateway/*`.
+    pub master_token: String,
 }
 
 pub fn parse_args() -> Result<Option<ServeConfig>> {
@@ -72,11 +74,17 @@ fn parse_serve(args: &mut impl Iterator<Item = String>) -> Result<Option<ServeCo
             other => bail!("unknown serve option '{other}' (use --help for usage)"),
         }
     }
+    // Kept out of the arguments so it never shows in the process list.
+    let master_token = env::var("DM_GATEWAY_TOKEN")
+        .ok()
+        .filter(|token| !token.is_empty())
+        .context("no master credential: set DM_GATEWAY_TOKEN")?;
     Ok(Some(ServeConfig {
         tunnel_listen,
         game_bind,
         game_ports,
         master_url,
+        master_token,
     }))
 }
 
@@ -94,6 +102,6 @@ fn parse_port_range(value: &str) -> Result<(u16, u16)> {
 
 pub fn print_usage() {
     println!(
-        "dm-gateway\n\nUsage:\n  dm-gateway [--master URL] [--tunnel-listen ADDR] [--game-bind IP] [--game-ports FIRST-LAST]\n  dm-gateway serve [--master URL] [--tunnel-listen ADDR] [--game-bind IP] [--game-ports FIRST-LAST]\n\nDefaults: --master http://127.0.0.1:8080 --tunnel-listen 0.0.0.0:25566 --game-bind 0.0.0.0 --game-ports 26000-26999\n\nHost integration is provided by the Minecraft client."
+        "dm-gateway\n\nUsage:\n  dm-gateway [--master URL] [--tunnel-listen ADDR] [--game-bind IP] [--game-ports FIRST-LAST]\n  dm-gateway serve [--master URL] [--tunnel-listen ADDR] [--game-bind IP] [--game-ports FIRST-LAST]\n\nDefaults: --master http://127.0.0.1:8080 --tunnel-listen 0.0.0.0:25566 --game-bind 0.0.0.0 --game-ports 26000-26999\n\nRequired environment:\n  DM_GATEWAY_TOKEN  shared secret presented to dm-master\n\nHost integration is provided by the Minecraft client."
     );
 }

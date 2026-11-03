@@ -173,6 +173,16 @@ tasks.register<Test>("hostWorldImportTest") {
     useJUnitPlatform()
 }
 
+tasks.register<Test>("dmTicketTest") {
+    group = "verification"
+    description = "Runs focused DM ticket signing tests."
+    dependsOn(tasks.named("testClasses"))
+    testClassesDirs = sourceSets["test"].output.classesDirs
+    classpath = sourceSets["test"].runtimeClasspath
+    include("**/calebxzau/rdi/server/service/dmticket/*Test.class")
+    useJUnitPlatform()
+}
+
 tasks.register<Test>("gameNodeTest") {
     group = "verification"
     description = "Runs focused game node candidate tests."

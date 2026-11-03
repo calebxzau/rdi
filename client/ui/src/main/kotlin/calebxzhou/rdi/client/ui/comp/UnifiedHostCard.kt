@@ -70,7 +70,7 @@ fun UnifiedHostCard(
 private val ONLINE_HEAD_SIZE = 18.dp
 private val OWNER_HEAD_SIZE = ONLINE_HEAD_SIZE * 1.5f
 
-private val HOST_STARTING_COLOR = Color(0xFFFFC107)
+internal val HOST_STARTING_COLOR = Color(0xFFFFC107)
 
 /** Green when players can join right now, yellow while the room is still booting; no dot otherwise. */
 private fun HostStatus.statusDotColor(): Color? = when (this) {

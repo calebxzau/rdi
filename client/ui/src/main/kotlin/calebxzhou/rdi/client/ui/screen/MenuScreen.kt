@@ -50,6 +50,7 @@ import androidx.lifecycle.repeatOnLifecycle
 import calebxzau.rdi.client.RDIClient
 import calebxzau.rdi.client.ui.AlertErr
 import calebxzau.rdi.client.ui.CircleIconButton
+import calebxzau.rdi.client.ui.ConfirmDialog
 import calebxzau.rdi.client.ui.EdgeAutoScrollBox
 import calebxzau.rdi.client.ui.GlassIconButton
 import calebxzau.rdi.client.ui.GlassNavBar
@@ -58,8 +59,10 @@ import calebxzau.rdi.client.ui.GlassTileGrid
 import calebxzau.rdi.client.ui.GlassTileGridState
 import calebxzau.rdi.client.ui.LocalAppBackgroundHazeState
 import calebxzau.rdi.client.ui.baseRoundCornerShape
+import calebxzau.rdi.client.ui.copyToClipboard
 import calebxzau.rdi.client.ui.loadImageBitmap
 import calebxzau.rdi.client.ui.rememberGlassTileGridState
+import calebxzau.rdi.client.ui.viewmodel.DmRoomListViewModel
 import calebxzau.rdi.client.ui.viewmodel.HostListEvent
 import calebxzau.rdi.client.ui.viewmodel.HostListViewModel
 import calebxzau.rdi.client.ui.viewmodel.OnlinePlayersViewModel
@@ -73,6 +76,7 @@ import calebxzhou.rdi.client.service.content.isClientModMigrationInProgress
 import calebxzhou.rdi.client.service.rememberPlayerInfoPrefetch
 import calebxzhou.rdi.client.ui.McPlayArgs
 import calebxzhou.rdi.client.ui.comp.CardHintHost
+import calebxzhou.rdi.client.ui.comp.DmHostCard
 import calebxzhou.rdi.client.ui.comp.ModpackDownloadMethodDialog
 import calebxzhou.rdi.client.ui.comp.PlayerModel
 import calebxzhou.rdi.client.ui.comp.TILE_GRID_SPACING
@@ -80,9 +84,11 @@ import calebxzhou.rdi.client.ui.comp.TileGlass
 import calebxzhou.rdi.client.ui.comp.TileGridGlassStyle
 import calebxzhou.rdi.client.ui.comp.UnifiedHostCard
 import calebxzhou.rdi.client.ui.comp.iconTileSize
+import calebxzhou.rdi.common.model.DmHostBrief
 import calebxzhou.rdi.common.model.isDav
 import calebxzhou.rdi.common.DEBUG
 import calebxzau.rdi.client.ui.comp.DebugQuestPreviewDialog
+import kotlinx.coroutines.delay
 import org.koin.compose.viewmodel.koinViewModel
 import java.nio.file.Path
 
@@ -110,6 +116,21 @@ private val TabFadeSpec = tween<Float>(durationMillis = 350, easing = FastOutSlo
 /** 滚到离末尾不足这么多张瓷砖时加载更多房间。 */
 private const val HOST_LOAD_MORE_THRESHOLD = MENU_TILE_ROWS * 2
 
+private const val DM_MESSAGE_MILLIS = 3_000L
+
+/** 一张房间瓷砖：普通房间，或只有测试账号能看到的rdi7测试房间。 */
+private sealed interface MenuHostTile {
+    val key: String
+
+    data class Room(val host: UnifiedHostBrief) : MenuHostTile {
+        override val key get() = "${host.target.kind}:${host.target.id}"
+    }
+
+    data class Dm(val room: DmHostBrief) : MenuHostTile {
+        override val key get() = "Dm:${room.id}"
+    }
+}
+
 /**
  * 主菜单：顶部导航在“多人房间”和“整合包”之间切换，中间是3行横向滚动的玻璃瓷砖网格，
  * 两侧箭头翻页；底部是创建房间与整合广场入口。
@@ -130,6 +151,7 @@ fun MenuScreen(
     onOpenDebugQuestPreview: (Path) -> Unit,
     hostListViewModel: HostListViewModel = koinViewModel(),
     onlinePlayersViewModel: OnlinePlayersViewModel = koinViewModel(),
+    dmRoomListViewModel: DmRoomListViewModel = koinViewModel(),
 ) {
     var showOldMainWarning by remember { mutableStateOf(RDIClient.OLD_MAIN) }
     var showCreateRoomGuide by remember { mutableStateOf(false) }
@@ -146,10 +168,19 @@ fun MenuScreen(
     val taskEntries by ClientTaskManager.entries.collectAsState()
     val modMigrationInProgress = isClientModMigrationInProgress(taskEntries)
     val hostState by hostListViewModel.uiState.collectAsStateWithLifecycle()
+    val dmState by dmRoomListViewModel.uiState.collectAsStateWithLifecycle()
+    var pendingDeleteRoom by remember { mutableStateOf<DmHostBrief?>(null) }
     val onlinePlayerIds by onlinePlayersViewModel.onlinePlayerIds.collectAsStateWithLifecycle()
     val lifecycleOwner = LocalLifecycleOwner.current
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
         hostListViewModel.onMenuResumed()
+        dmRoomListViewModel.onMenuResumed()
+    }
+    LaunchedEffect(dmState.message) {
+        if (dmState.message != null) {
+            delay(DM_MESSAGE_MILLIS)
+            dmRoomListViewModel.clearMessage()
+        }
     }
     // 只在主菜单可见时轮询在线玩家
     LaunchedEffect(lifecycleOwner, onlinePlayersViewModel) {
@@ -180,10 +211,13 @@ fun MenuScreen(
     val shownHosts = remember(hostState.hosts, hostState.showOtherHosts, loggedAccount.isDav) {
         selectShownHosts(hostState.hosts, hostState.showOtherHosts, loggedAccount.isDav)
     }
+    val hostTiles = remember(dmState.rooms, shownHosts) {
+        dmState.rooms.map(MenuHostTile::Dm) + shownHosts.map(MenuHostTile::Room)
+    }
     rememberPlayerInfoPrefetch(shownHosts.flatMap { listOfNotNull(it.ownerId) + it.onlinePlayerIds })
-    LaunchedEffect(hostGrid, shownHosts.size) {
+    LaunchedEffect(hostGrid, hostTiles.size) {
         snapshotFlow { hostGrid.lazyGridState.layoutInfo.visibleItemsInfo.lastOrNull()?.index }.collect { index ->
-            if (index != null && index >= shownHosts.size - HOST_LOAD_MORE_THRESHOLD) hostListViewModel.loadMore()
+            if (index != null && index >= hostTiles.size - HOST_LOAD_MORE_THRESHOLD) hostListViewModel.loadMore()
         }
     }
 
@@ -266,20 +300,38 @@ fun MenuScreen(
                             if (tab == MenuTab.Hosts) {
                                 when {
                                     hostState.initialLoading -> CircularProgressIndicator()
-                                    shownHosts.isEmpty() && !hostState.showOtherHosts -> MenuEmptyText("暂无可游玩的房间，可点击显示其他房间")
-                                    shownHosts.isEmpty() -> MenuEmptyText("暂无可展示的房间，等待朋友邀请")
-                                    else -> MenuTileGrid(items = shownHosts, grid = hostGrid, key = { "${it.target.kind}:${it.target.id}" }) { index, host ->
-                                        UnifiedHostCard(
-                                            host = host,
-                                            onPlay = hostListViewModel::startHost,
-                                            onOpenDetail = onOpenHostInfo,
-                                            playEnabled = hostState.launchingHost == null,
-                                            playLoading = hostState.launchingHost == host.target,
-                                            glass = TileGlass.Shared(hostGrid, index),
-                                        )
+                                    hostTiles.isEmpty() && !hostState.showOtherHosts -> MenuEmptyText("暂无可游玩的房间，可点击显示其他房间")
+                                    hostTiles.isEmpty() -> MenuEmptyText("暂无可展示的房间，等待朋友邀请")
+                                    else -> MenuTileGrid(items = hostTiles, grid = hostGrid, key = { it.key }) { index, tile ->
+                                        when (tile) {
+                                            is MenuHostTile.Room -> UnifiedHostCard(
+                                                host = tile.host,
+                                                onPlay = hostListViewModel::startHost,
+                                                onOpenDetail = onOpenHostInfo,
+                                                playEnabled = hostState.launchingHost == null,
+                                                playLoading = hostState.launchingHost == tile.host.target,
+                                                glass = TileGlass.Shared(hostGrid, index),
+                                            )
+                                            is MenuHostTile.Dm -> DmHostCard(
+                                                room = tile.room,
+                                                onCopyId = { room ->
+                                                    runCatching { copyToClipboard(room.id) }.fold(
+                                                        onSuccess = {
+                                                            dmRoomListViewModel.showMessage("已复制房间ID，进入游戏后在多人游戏页面点“加入DM房间”")
+                                                        },
+                                                        onFailure = { error ->
+                                                            lgr.warn(error) { "复制房间ID失败" }
+                                                            dmRoomListViewModel.showError("复制房间ID失败：${error.message ?: "未知错误"}")
+                                                        },
+                                                    )
+                                                },
+                                                onDelete = { room -> pendingDeleteRoom = room },
+                                                glass = TileGlass.Shared(hostGrid, index),
+                                            )
+                                        }
                                     }
                                 }
-                                if (hostState.loadingMore) {
+                                if (hostState.loadingMore || dmState.loading) {
                                     CircularProgressIndicator(Modifier.align(Alignment.CenterEnd).padding(end = 16.dp).size(24.dp))
                                 }
                             } else {
@@ -334,6 +386,9 @@ fun MenuScreen(
             modpacks.packActionMessage?.let { message ->
                 Text(message, color = Color.White, style = MaterialTheme.typography.bodyMedium)
             }
+            dmState.message?.takeIf { selectedTab == MenuTab.Hosts }?.let { message ->
+                Text(message, color = Color.White, style = MaterialTheme.typography.bodyMedium)
+            }
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 if (selectedTab == MenuTab.Modpacks) {
                     GlassIconButton(icon = "\uDB86\uDDD5", label = "整合广场", onClick = onOpenModpackPlaza)
@@ -351,7 +406,13 @@ fun MenuScreen(
                         label = if (hostState.showOtherHosts) "隐藏其他房间" else "显示其他房间",
                         onClick = hostListViewModel::toggleOtherHosts,
                     )
-
+                    if (loggedAccount.isDav) {
+                        GlassIconButton(
+                            icon = if (dmState.shown) "" else "",
+                            label = "rdi7测试房间",
+                            onClick = dmRoomListViewModel::toggle,
+                        )
+                    }
                 }
             }
         }
@@ -395,6 +456,19 @@ fun MenuScreen(
     }
 
     hostState.errorMessage?.let { AlertErr(it, hostListViewModel::clearError) }
+    dmState.errorMessage?.let { AlertErr(it, dmRoomListViewModel::clearError) }
+
+    pendingDeleteRoom?.let { room ->
+        ConfirmDialog(
+            title = "删除房间",
+            message = "确定删除房间“${room.name}”吗？房间里的存档会一起删除，游戏内无法恢复。",
+            onConfirm = {
+                pendingDeleteRoom = null
+                dmRoomListViewModel.delete(room.id)
+            },
+            onDismiss = { pendingDeleteRoom = null },
+        )
+    }
 
     installConfirmTask?.let { install ->
         ModpackDownloadMethodDialog(

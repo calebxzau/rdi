@@ -33,6 +33,8 @@ const PONG_TIMEOUT: Duration = Duration::from_secs(45);
 pub enum GatewayEvent {
     Register {
         host: Uuid,
+        claim: Option<Uuid>,
+        ticket: String,
         stream: TcpStream,
     },
     Attach {
@@ -138,7 +140,14 @@ pub async fn run(config: crate::config::ServeConfig) -> Result<()> {
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
     let handshake_slots = Arc::new(Semaphore::new(EVENT_CAPACITY));
     let mut tasks = JoinSet::new();
+    let mut master_auth = reqwest::header::HeaderValue::from_str(&format!("Bearer {}", config.master_token))
+        .context("DM_GATEWAY_TOKEN is not a valid header value")?;
+    master_auth.set_sensitive(true);
     let http = Client::builder()
+        .default_headers(reqwest::header::HeaderMap::from_iter([(
+            reqwest::header::AUTHORIZATION,
+            master_auth,
+        )]))
         .timeout(Duration::from_secs(5))
         .build()
         .context("build master HTTP client")?;
@@ -229,9 +238,14 @@ async fn tunnel_handshake(
 ) {
     let handshake = timeout(IO_TIMEOUT, protocol::read_tunnel_handshake(&mut stream)).await;
     match handshake {
-        Ok(Ok(TunnelHandshake::Register { host })) => {
+        Ok(Ok(TunnelHandshake::Register { host, claim, ticket })) => {
             if tx
-                .try_send(GatewayEvent::Register { host, stream })
+                .try_send(GatewayEvent::Register {
+                    host,
+                    claim,
+                    ticket,
+                    stream,
+                })
                 .is_err()
             {
                 tracing::warn!(%peer, %host, "dropping registration because gateway queue is full");
@@ -270,17 +284,37 @@ async fn handle_event(
     shutdown_rx: &watch::Receiver<bool>,
 ) {
     match event {
-        GatewayEvent::Register { host, stream } => {
+        GatewayEvent::Register {
+            host,
+            claim,
+            ticket,
+            stream,
+        } => {
             if rooms.get(&host).and_then(|r| r.active_session).is_some() {
                 tracing::info!(%host, "rejected registration for an active room");
                 send_status(tasks, stream, protocol::BUSY);
                 return;
             }
-            match host_exists(http, &config.master_url, host).await {
-                Ok(true) => {}
-                Ok(false) => {
+            match authorize_registration(http, &config.master_url, host, claim, &ticket).await {
+                Ok(Registration::Allowed) => {}
+                Ok(Registration::HostNotFound) => {
                     tracing::info!(%host, "rejected registration for unknown host");
                     send_status(tasks, stream, protocol::HOST_NOT_FOUND);
+                    return;
+                }
+                Ok(Registration::ClaimRefused) => {
+                    tracing::info!(%host, ?claim, "rejected registration without a valid takeover claim");
+                    send_status(tasks, stream, protocol::CLAIM_REFUSED);
+                    return;
+                }
+                Ok(Registration::TicketRefused) => {
+                    tracing::info!(%host, "rejected registration with an invalid ticket");
+                    send_status(tasks, stream, protocol::TICKET_REFUSED);
+                    return;
+                }
+                Ok(Registration::NotOwner) => {
+                    tracing::info!(%host, "rejected registration from a player who is not the room's host");
+                    send_status(tasks, stream, protocol::NOT_OWNER);
                     return;
                 }
                 Err(error) => {
@@ -562,7 +596,8 @@ async fn session_actor(
                     } else if relays.len() >= MAX_CONNECTIONS {
                         tracing::warn!(%host, %session, connection, "dropping attach because relay capacity is full");
                     } else {
-                        relays.spawn(async move { relay::relay(guest, stream).await });
+                        let label = relay::RelayLabel { host, session, connection };
+                        relays.spawn(async move { relay::relay(guest, stream, label).await });
                     }
                 }
                 Some(SessionCommand::Control(message)) => match message {
@@ -616,24 +651,60 @@ async fn session_actor(
     tracing::debug!(%host, %session, %reason, "session actor stopped");
 }
 
-async fn host_exists(client: &Client, master_url: &str, host: Uuid) -> Result<bool> {
-    let url = format!("{master_url}/hosts/{host}");
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Registration {
+    Allowed,
+    HostNotFound,
+    ClaimRefused,
+    TicketRefused,
+    NotOwner,
+}
+
+#[derive(Deserialize)]
+struct RegistrationData {
+    allowed: bool,
+    #[serde(default)]
+    refusal: Option<String>,
+}
+
+async fn authorize_registration(
+    client: &Client,
+    master_url: &str,
+    host: Uuid,
+    claim: Option<Uuid>,
+    ticket: &str,
+) -> Result<Registration> {
     let response = client
-        .get(url)
+        .post(format!("{master_url}/gateway/hosts/{host}/registration"))
+        .json(&serde_json::json!({ "claimId": claim, "ticket": ticket }))
         .send()
         .await
-        .context("query host from master")?
+        .context("ask master to authorize registration")?
         .error_for_status()
         .context("master returned an HTTP error")?;
-    let body: ApiResponse<serde_json::Value> = response
+    let body: ApiResponse<RegistrationData> = response
         .json()
         .await
-        .context("decode master host response")?;
-    if body.code == 0 {
-        Ok(body.data.is_some())
-    } else {
-        tracing::debug!(host = %host, message = %body.msg, "master rejected host lookup");
-        Ok(false)
+        .context("decode master registration response")?;
+    if body.code != 0 {
+        tracing::debug!(%host, message = %body.msg, "master rejected registration lookup");
+    }
+    registration_outcome(body)
+}
+
+fn registration_outcome(body: ApiResponse<RegistrationData>) -> Result<Registration> {
+    if body.code != 0 {
+        return Ok(Registration::HostNotFound);
+    }
+    match body.data {
+        Some(data) if data.allowed => Ok(Registration::Allowed),
+        Some(data) => Ok(match data.refusal.as_deref() {
+            Some("ticket") => Registration::TicketRefused,
+            Some("notOwner") => Registration::NotOwner,
+            _ => Registration::ClaimRefused,
+        }),
+        // Fail closed: an answer without a decision must not start a session.
+        None => Err(anyhow!("master registration response has no data")),
     }
 }
 
@@ -818,5 +889,55 @@ async fn write_outbound<W: tokio::io::AsyncWrite + Unpin>(
             protocol::write_connection_opcode(writer, protocol::OPEN, connection).await
         }
         OutboundControl::Ping => protocol::write_control_opcode(writer, protocol::PING).await,
+    }
+}
+
+#[cfg(test)]
+mod registration_tests {
+    use super::*;
+
+    fn response(code: i8, data: Option<bool>) -> ApiResponse<RegistrationData> {
+        ApiResponse {
+            code,
+            msg: String::new(),
+            data: data.map(|allowed| RegistrationData { allowed, refusal: None }),
+        }
+    }
+
+    #[test]
+    fn master_answers_decide_the_registration() {
+        assert_eq!(
+            registration_outcome(response(0, Some(true))).unwrap(),
+            Registration::Allowed
+        );
+        assert_eq!(
+            registration_outcome(response(0, Some(false))).unwrap(),
+            Registration::ClaimRefused
+        );
+        assert_eq!(
+            registration_outcome(response(-1, None)).unwrap(),
+            Registration::HostNotFound
+        );
+    }
+
+    #[test]
+    fn the_reason_for_a_refusal_is_passed_on() {
+        let refused = |refusal: &str| ApiResponse {
+            code: 0,
+            msg: String::new(),
+            data: Some(RegistrationData {
+                allowed: false,
+                refusal: Some(refusal.to_owned()),
+            }),
+        };
+        assert_eq!(registration_outcome(refused("ticket")).unwrap(), Registration::TicketRefused);
+        assert_eq!(registration_outcome(refused("notOwner")).unwrap(), Registration::NotOwner);
+        assert_eq!(registration_outcome(refused("claim")).unwrap(), Registration::ClaimRefused);
+        assert_eq!(registration_outcome(refused("newer")).unwrap(), Registration::ClaimRefused);
+    }
+
+    #[test]
+    fn an_answer_without_a_decision_does_not_start_a_session() {
+        assert!(registration_outcome(response(0, None)).is_err());
     }
 }

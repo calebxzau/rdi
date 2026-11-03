@@ -21,12 +21,12 @@ cargo build --release
 服务器：
 
 ```sh
-./dm-gateway --master http://127.0.0.1:8080 --tunnel-listen 0.0.0.0:25566 --game-bind 0.0.0.0 --game-ports 26000-26999
+DM_GATEWAY_TOKEN=<和dm-master相同的密钥> ./dm-gateway --master http://127.0.0.1:8080 --tunnel-listen 0.0.0.0:25566 --game-bind 0.0.0.0 --game-ports 26000-26999
 ```
 
 这些参数均可省略，以上是默认值。无参数启动会使用默认配置，也保留`dm-gateway serve ...`写法。服务器网络需允许访问隧道端口和游戏端口范围。
 
-房主使用Minecraft1.21.1客户端Mod进入自己的单人世界。客户端通过`-Drdi.dm.server`配置的dm-master上传初始化资料并取得UUIDv7房间ID，然后连接本网关。网关通过`--master`检查房间存在；控制隧道注册时只发送hostId的16字节UUID。
+房主使用Minecraft1.21.1客户端Mod进入自己的单人世界。客户端通过`-Drdi.dm.server`配置的dm-master上传初始化资料并取得UUIDv7房间ID，然后连接本网关。网关通过`--master`确认房间存在和接管资格，访问`/gateway/*`时带上`DM_GATEWAY_TOKEN`。控制隧道注册时发送hostId的16字节UUID，接管房间时还会发送claimId，最后是2字节长度加玩家的`tunnel`票据。
 
 注册成功后，聊天栏显示可点击复制的游戏入口，例如`example.com:26000`。访客通过多人游戏界面的DM入口输入永久房间ID加入。房主继续在自己的世界里游玩，通过`/dm status`查看连接状态；退出世界会停止托管。
 
@@ -38,10 +38,13 @@ cargo build --release
 $env:RUST_LOG = "debug"
 ```
 
+日志同时输出到控制台和运行目录下的`logs/dm-gateway.<日期>.log`，按UTC日期每天一个文件，保留14个。可以用`DM_LOG_DIR`改目录。
+
 ## 房间和连接
 
 - 网关从配置的端口范围按顺序尝试实际绑定，成功后才登记活动host。
 - 同一host已有活动房主时，新注册返回占用状态；未知host或master不可用时注册失败。
+- 注册前通过master的`POST /gateway/hosts/{id}/registration`确认接管资格：master已选出新房主时，只有带着匹配claimId的注册才能成功；资格失效或其他人注册时返回CLAIM_REFUSED。没有选出新房主且未带claimId的注册（例如房主重新打开世界）照常放行。
 - 房主离线后，网关关闭该host的游戏监听器、等待连接和转发任务，并释放游戏端口。
 - 房主重连时获得新的UUIDv7会话编号和可能不同的游戏端口。
 - 永久房间和初始化资料由dm-master保存，网关只保存内存中的活动会话。
@@ -68,6 +71,7 @@ TCP连接建立及初始隧道握手的超时为5秒，访客等待配对的超�
 | --- | --- |
 | `1`，房主控制连接 | hostId的16字节UUID |
 | `2`，数据连接 | 会话UUID的16字节，连接编号`u64` |
+| `3`，接管后的房主控制连接 | hostId的16字节UUID，接管资格claimId的16字节UUID |
 
 多字节整数使用大端字节序。控制消息使用1字节操作码：
 
@@ -78,6 +82,7 @@ TCP连接建立及初始隧道握手的超时为5秒，访客等待配对的超�
 | `3` | NO_PORT | 无 |
 | `8` | HOST_NOT_FOUND | 无 |
 | `9` | MASTER_UNAVAILABLE | 无 |
+| `10` | CLAIM_REFUSED | 无 |
 | `4` | OPEN | 连接编号`u64` |
 | `5` | FAILED | 连接编号`u64` |
 | `6` | PING | 无 |

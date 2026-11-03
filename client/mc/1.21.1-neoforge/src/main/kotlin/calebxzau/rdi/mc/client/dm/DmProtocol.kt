@@ -10,6 +10,7 @@ object DmProtocol {
     private val PREFACE = byteArrayOf('D'.code.toByte(), 'M'.code.toByte(), 'G'.code.toByte(), '1'.code.toByte())
     const val ROLE_CONTROL: Int = 1
     const val ROLE_ATTACH: Int = 2
+    const val ROLE_CONTROL_CLAIM: Int = 3
     const val READY: Int = 1
     const val BUSY: Int = 2
     const val NO_PORT: Int = 3
@@ -19,13 +20,25 @@ object DmProtocol {
     const val PONG: Int = 7
     const val HOST_NOT_FOUND: Int = 8
     const val MASTER_UNAVAILABLE: Int = 9
+    const val CLAIM_REFUSED: Int = 10
+    const val TICKET_REFUSED: Int = 11
+    const val NOT_OWNER: Int = 12
 
-    fun writeRegister(output: OutputStream, hostId: UUID) {
+    /** [ticket] proves who is registering; [claimId] is the takeover claim this player was elected with, if any. */
+    fun writeRegister(output: OutputStream, hostId: UUID, ticket: String, claimId: UUID? = null) {
         val data = DataOutputStream(output)
         data.write(PREFACE)
-        data.writeByte(ROLE_CONTROL)
+        data.writeByte(if (claimId == null) ROLE_CONTROL else ROLE_CONTROL_CLAIM)
         data.writeLong(hostId.mostSignificantBits)
         data.writeLong(hostId.leastSignificantBits)
+        if (claimId != null) {
+            data.writeLong(claimId.mostSignificantBits)
+            data.writeLong(claimId.leastSignificantBits)
+        }
+        val ticketBytes = ticket.toByteArray(Charsets.US_ASCII)
+        require(ticketBytes.size in 1..0xFFFF) { "DM票据长度无效" }
+        data.writeShort(ticketBytes.size)
+        data.write(ticketBytes)
         data.flush()
     }
 
@@ -42,6 +55,9 @@ object DmProtocol {
             NO_PORT -> RegistrationReply.NoPort
             HOST_NOT_FOUND -> RegistrationReply.HostNotFound
             MASTER_UNAVAILABLE -> RegistrationReply.MasterUnavailable
+            CLAIM_REFUSED -> RegistrationReply.ClaimRefused
+            TICKET_REFUSED -> RegistrationReply.TicketRefused
+            NOT_OWNER -> RegistrationReply.NotOwner
             else -> error("未知DM网关注册响应")
         }
     }
@@ -83,6 +99,9 @@ object DmProtocol {
         data object NoPort : RegistrationReply
         data object HostNotFound : RegistrationReply
         data object MasterUnavailable : RegistrationReply
+        data object ClaimRefused : RegistrationReply
+        data object TicketRefused : RegistrationReply
+        data object NotOwner : RegistrationReply
     }
 
     sealed interface ControlMessage {

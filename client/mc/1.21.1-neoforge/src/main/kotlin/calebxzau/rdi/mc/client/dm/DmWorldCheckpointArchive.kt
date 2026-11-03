@@ -3,6 +3,7 @@
 package calebxzau.rdi.mc.client.dm
 
 import com.google.gson.GsonBuilder
+import com.google.gson.JsonObject
 import java.nio.file.Files
 import java.nio.file.Path
 import java.security.MessageDigest
@@ -29,6 +30,9 @@ data class DmCheckpointMetadata(
     val directories: List<String>,
     val chunks: List<DmCheckpointChunk>,
     val clears: List<DmCheckpointClear>,
+    /** The hosting player's mods; dm-master records them as the room's. */
+    val modFingerprint: JsonObject? = null,
+    val hostPlayerId: UUID? = null,
 )
 
 object DmWorldCheckpointArchive {
@@ -44,6 +48,8 @@ object DmWorldCheckpointArchive {
         val directories: List<String>,
         val regionChanges: List<DmRegionChange>,
         val capturedAt: String = Instant.now().toString(),
+        val modFingerprint: DmModFingerprint? = null,
+        val hostPlayerId: UUID? = null,
     )
 
     data class Output(val path: Path, val sha1: String, val bytes: Long, val metadata: DmCheckpointMetadata)
@@ -74,6 +80,8 @@ object DmWorldCheckpointArchive {
             directories = request.directories.sorted(),
             chunks = chunks,
             clears = clears,
+            modFingerprint = request.modFingerprint?.toJson(),
+            hostPlayerId = request.hostPlayerId,
         )
         ZipOutputStream(Files.newOutputStream(output)).use { zip ->
             val metadataBytes = GsonBuilder().create().toJson(metadata).toByteArray(Charsets.UTF_8)

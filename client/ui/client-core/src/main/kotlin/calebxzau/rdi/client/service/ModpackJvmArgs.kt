@@ -4,6 +4,7 @@ private val reservedJvmArguments = listOf(
     "-Xmx",
     "-agentlib:jdwp",
     "-Drdi.play=",
+    "-Drdi.dm.server=",
 )
 
 fun parseModpackJvmParams(raw: String): Result<List<String>> = runCatching {

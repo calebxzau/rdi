@@ -26,6 +26,7 @@ object DmHostCreationService {
         val config: DmConfig,
         val name: String,
         val screen: DmHostCreationScreen,
+        val mods: DmModFingerprint,
     ) {
         val cancelled = AtomicBoolean(false)
         @Volatile var processing = true
@@ -54,7 +55,12 @@ object DmHostCreationService {
         if (association != null) return Result.failure(IllegalStateException("此世界已经关联DM房间：${association.hostId}"))
         val trimmed = name.trim()
         if (trimmed.isEmpty()) return Result.failure(IllegalArgumentException("房间名称不能为空"))
-        val next = Job(minecraft, server, root, config, trimmed, DmHostCreationScreen())
+        val mods = runCatching { DmModFingerprints.local(server) }
+            .getOrElse { error ->
+                logger.error("Failed to read the mod fingerprint for a new DM host", error)
+                return Result.failure(IllegalStateException("无法读取当前的Mod列表", error))
+            }
+        val next = Job(minecraft, server, root, config, trimmed, DmHostCreationScreen(), mods)
         if (job != null) return Result.failure(IllegalStateException("DM房间创建正在进行"))
         job = next
         DmHostCreationScreen.update("正在准备", 0f, true, null)
@@ -133,7 +139,7 @@ object DmHostCreationService {
             current.uploadStarted = true
             showProgress("正在上传DM房间资料", 0f, true)
             var lastProgress = 0L
-            val host = DmHttpClient(current.config).createHost(current.name, archive) { sent, total ->
+            val host = DmHttpClient(current.config).createHost(current.name, archive, current.mods) { sent, total ->
                 if (current.cancelled.get()) throw CancellationException("已取消上传")
                 if (sent == total || sent - lastProgress >= 256 * 1024) {
                     lastProgress = sent

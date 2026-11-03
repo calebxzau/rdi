@@ -13,11 +13,14 @@ sha1 = "0.10"
 tokio = { version = "1", features = ["full"] }
 tokio-util = { version = "0.7", features = ["io"] }
 tracing = "0.1"
+tracing-appender = "0.2"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 uuid = { version = "1", features = ["v7", "serde"] }
 zip = { version = "2", default-features = false, features = ["deflate"] }
 hex = "0.4"
 fastnbt = "2.6.3"
+ed25519-dalek = "2"
+base64 = "0.22"
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = ["Win32_Storage_FileSystem"] }

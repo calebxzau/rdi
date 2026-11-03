@@ -17,11 +17,16 @@ import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicReference
 
+private const val MAX_TICKET_REFUSALS = 3
+
 class DmHostTunnel(
     private val endpoint: DmEndpoint,
     private val hostId: UUID,
     private val targetPort: Int,
     private val listener: Listener,
+    /** The takeover claim to register with. The master drops it once hosting starts, so reconnects go without it. */
+    private var claimId: UUID? = null,
+    private val tickets: DmTicketSource = DmTickets,
 ) {
     interface Listener {
         fun onReady(session: UUID, gamePort: Int)
@@ -33,9 +38,15 @@ class DmHostTunnel(
         HostNotFound("DM房间不存在"),
         Busy("DM房间正在使用"),
         NoPort("DM网关没有可用游戏端口"),
+        ClaimRefused("接管资格已失效，或其他玩家正在接管这个房间"),
+        TicketRefused("账号验证失败，请重启RDI启动器后再试"),
+        LoginExpired("登录已过期，请重启RDI启动器后再试"),
+        NotOwner("房间已由其他玩家接管，请通过「加入DM房间」进入"),
     }
 
     private class TerminalException(val failure: TerminalFailure) : IOException(failure.message)
+
+    private var ticketRefusals = 0
 
     private val logger = LoggerFactory.getLogger(DmHostTunnel::class.java)
     private val closed = AtomicBoolean(false)
@@ -103,6 +114,11 @@ class DmHostTunnel(
     }
 
     private fun runAttempt(attempt: Attempt) {
+        // Fetched for every attempt: a reconnect may come long after the last ticket ran out.
+        val ticket = tickets.tunnelTicket(hostId).getOrElse { error ->
+            if (error is DmLoginExpiredException) throw TerminalException(TerminalFailure.LoginExpired)
+            throw IOException("暂时无法验证账号", error)
+        }
         attempt.startWatchdog()
         val control = attempt.newSocket()
         attempt.controlSocket = control
@@ -114,11 +130,13 @@ class DmHostTunnel(
         control.soTimeout = 5000
         val output = control.getOutputStream()
         val input = DataInputStream(control.getInputStream())
-        attempt.withSetupDeadline(control) { DmProtocol.writeRegister(output, hostId) }
+        attempt.withSetupDeadline(control) { DmProtocol.writeRegister(output, hostId, ticket, claimId) }
         val reply = attempt.withSetupDeadline(control) { DmProtocol.readRegistrationReply(input) }
         when (reply) {
             is DmProtocol.RegistrationReply.Ready -> {
                 attempt.session = reply.session
+                claimId = null
+                ticketRefusals = 0
                 control.soTimeout = 45000
                 attempt.lastControlActivity.set(System.nanoTime())
                 listener.onReady(reply.session, reply.gamePort)
@@ -126,6 +144,13 @@ class DmHostTunnel(
             DmProtocol.RegistrationReply.Busy -> throw TerminalException(TerminalFailure.Busy)
             DmProtocol.RegistrationReply.NoPort -> throw TerminalException(TerminalFailure.NoPort)
             DmProtocol.RegistrationReply.HostNotFound -> throw TerminalException(TerminalFailure.HostNotFound)
+            DmProtocol.RegistrationReply.ClaimRefused -> throw TerminalException(TerminalFailure.ClaimRefused)
+            DmProtocol.RegistrationReply.NotOwner -> throw TerminalException(TerminalFailure.NotOwner)
+            DmProtocol.RegistrationReply.TicketRefused -> {
+                // A ticket can run out on the way; a new one that is refused too will not get better.
+                if (++ticketRefusals >= MAX_TICKET_REFUSALS) throw TerminalException(TerminalFailure.TicketRefused)
+                throw IOException("DM票据被拒绝")
+            }
             DmProtocol.RegistrationReply.MasterUnavailable -> throw IOException("DM主服务暂时不可用")
         }
         attempt.startWriter(control, output)

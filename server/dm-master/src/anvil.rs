@@ -15,6 +15,8 @@ use std::{
 pub const SECTOR_BYTES: usize = 4096;
 pub const HEADER_BYTES: usize = SECTOR_BYTES * 2;
 pub const ENTRY_COUNT: usize = 1024;
+/// Region files with fewer data sectors than this are never rewritten by [`compact`].
+const COMPACT_MIN_SECTORS: usize = 16;
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub struct Slot {
@@ -113,8 +115,7 @@ pub fn read_entry(path: &Path, index: usize, table: &RegionTable) -> Result<Opti
         bail!("region entry compression version is invalid")
     }
     if version & 0x80 != 0 {
-        let (x, z) = region_coords(path)?;
-        let external = path.with_file_name(format!("c.{x}.{z}.mcc"));
+        let external = external_path(path, index)?;
         let payload = fs::read(external).context("read external region entry")?;
         let external_length = payload.len() + 1;
         let mut raw = Vec::with_capacity(length + 4);
@@ -214,8 +215,7 @@ pub fn write_entry(
     file.seek(SeekFrom::Start(0))?;
     file.write_all(&header)?;
     file.sync_all()?;
-    let (x, z) = region_coords(&path)?;
-    let _ = fs::remove_file(path.with_file_name(format!("c.{x}.{z}.mcc")));
+    let _ = fs::remove_file(external_path(&path, index)?);
     Ok(())
 }
 
@@ -235,8 +235,7 @@ fn write_external(
         .open(path)?;
     ensure_header(&mut file)?;
     let mut header = read_header(&mut file)?;
-    let (x, z) = region_coords(path)?;
-    let external = path.with_file_name(format!("c.{x}.{z}.mcc"));
+    let external = external_path(path, index)?;
     fs::write(&external, &raw[5..])?;
     let old = u32::from_be_bytes(header[index * 4..index * 4 + 4].try_into().unwrap());
     let start = if old >> 8 >= 2 {
@@ -277,9 +276,71 @@ pub fn clear(world_root: &Path, region: &str, index: usize, timestamp: i32) -> R
     file.seek(SeekFrom::Start(0))?;
     file.write_all(&header)?;
     file.sync_all()?;
-    let (x, z) = region_coords(&path)?;
-    let _ = fs::remove_file(path.with_file_name(format!("c.{x}.{z}.mcc")));
+    let _ = fs::remove_file(external_path(&path, index)?);
     Ok(())
+}
+
+/// Outcome of [`compact`].
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub enum Compaction {
+    /// The file holds no chunks; the caller may remove it.
+    Empty,
+    /// The file was rewritten without its free sectors.
+    Rewritten,
+    Unchanged,
+}
+
+/// Rewrites the region file at `path` without free sectors once more than half of its data
+/// sectors are unused, so cleared chunks give their space back.
+pub fn compact(path: &Path) -> Result<Compaction> {
+    if !path.is_file() {
+        return Ok(Compaction::Unchanged);
+    }
+    let mut file = File::open(path)?;
+    let length = file.metadata()?.len();
+    if length < HEADER_BYTES as u64 {
+        return Ok(Compaction::Unchanged);
+    }
+    let mut header = read_header(&mut file)?;
+    let mut entries = Vec::new();
+    for index in 0..ENTRY_COUNT {
+        let value = u32::from_be_bytes(header[index * 4..index * 4 + 4].try_into().unwrap());
+        let (start, count) = ((value >> 8) as usize, (value & 0xff) as usize);
+        if start >= 2 && count > 0 {
+            entries.push((index, start, count));
+        }
+    }
+    if entries.is_empty() {
+        return Ok(Compaction::Empty);
+    }
+    let data_sectors = (length.div_ceil(SECTOR_BYTES as u64) as usize).saturating_sub(2);
+    let used: usize = entries.iter().map(|entry| entry.2).sum();
+    if data_sectors < COMPACT_MIN_SECTORS || used * 2 >= data_sectors {
+        return Ok(Compaction::Unchanged);
+    }
+    entries.sort_by_key(|entry| entry.1);
+    let temp = path.with_extension("mca.compact");
+    let mut output = File::create(&temp)?;
+    output.write_all(&[0u8; HEADER_BYTES])?;
+    let mut next = 2usize;
+    let mut sectors = Vec::new();
+    for (index, start, count) in entries {
+        sectors.resize(count * SECTOR_BYTES, 0);
+        file.seek(SeekFrom::Start((start * SECTOR_BYTES) as u64))?;
+        file.read_exact(&mut sectors)
+            .context("region entry runs past the end of the file")?;
+        output.write_all(&sectors)?;
+        let offset = ((next as u32) << 8) | count as u32;
+        header[index * 4..index * 4 + 4].copy_from_slice(&offset.to_be_bytes());
+        next += count;
+    }
+    output.seek(SeekFrom::Start(0))?;
+    output.write_all(&header)?;
+    output.sync_all()?;
+    drop(output);
+    drop(file);
+    fs::rename(&temp, path)?;
+    Ok(Compaction::Rewritten)
 }
 
 fn ensure_header(file: &mut File) -> Result<()> {
@@ -296,6 +357,14 @@ fn read_header(file: &mut File) -> Result<[u8; HEADER_BYTES]> {
     file.seek(SeekFrom::Start(0))?;
     file.read_exact(&mut header)?;
     Ok(header)
+}
+
+/// Vanilla names an oversized chunk's external file after the chunk, not the region.
+fn external_path(region: &Path, index: usize) -> Result<std::path::PathBuf> {
+    let (x, z) = region_coords(region)?;
+    let chunk_x = x * 32 + (index & 31) as i32;
+    let chunk_z = z * 32 + (index >> 5) as i32;
+    Ok(region.with_file_name(format!("c.{chunk_x}.{chunk_z}.mcc")))
 }
 
 fn region_coords(path: &Path) -> Result<(i32, i32)> {
@@ -359,7 +428,55 @@ mod tests {
         let path = dir.path().join("region/r.0.0.mca");
         let table = read_table(&path).unwrap();
         assert_eq!(table.slots[4].sector_count, 1);
-        assert!(dir.path().join("region/c.0.0.mcc").is_file());
+        assert!(dir.path().join("region/c.4.0.mcc").is_file());
         assert_eq!(read_entry(&path, 4, &table).unwrap().unwrap(), value);
+    }
+
+    #[test]
+    fn external_files_are_named_after_the_chunk() {
+        let dir = tempdir().unwrap();
+        let region = "region/r.1.-1.mca";
+        let first = raw(&vec![1u8; 1_100_000]);
+        let second = raw(&vec![2u8; 1_100_000]);
+        // Slot 33 is local (1, 1): chunk (33, -31); slot 2 is chunk (34, -32).
+        write_entry(dir.path(), region, 33, 1, &first).unwrap();
+        write_entry(dir.path(), region, 2, 1, &second).unwrap();
+        write_entry(dir.path(), region, 5, 1, &raw(b"small")).unwrap();
+        assert!(dir.path().join("region/c.33.-31.mcc").is_file());
+        assert!(dir.path().join("region/c.34.-32.mcc").is_file());
+        let path = dir.path().join(region);
+        let table = read_table(&path).unwrap();
+        assert_eq!(read_entry(&path, 33, &table).unwrap().unwrap(), first);
+        assert_eq!(read_entry(&path, 2, &table).unwrap().unwrap(), second);
+        clear(dir.path(), region, 33, 2).unwrap();
+        assert!(!dir.path().join("region/c.33.-31.mcc").exists());
+        assert!(dir.path().join("region/c.34.-32.mcc").is_file());
+    }
+
+    #[test]
+    fn compaction_reclaims_cleared_sectors_and_keeps_entries() {
+        let dir = tempdir().unwrap();
+        let region = "region/r.0.0.mca";
+        let big = |fill: u8| raw(&vec![fill; 5 * SECTOR_BYTES]);
+        for index in 0..10 {
+            write_entry(dir.path(), region, index, index as i32 + 100, &big(index as u8)).unwrap();
+        }
+        for index in 0..8 {
+            clear(dir.path(), region, index, 0).unwrap();
+        }
+        let path = dir.path().join(region);
+        let before = fs::metadata(&path).unwrap().len();
+        assert_eq!(compact(&path).unwrap(), Compaction::Rewritten);
+        assert!(fs::metadata(&path).unwrap().len() < before / 2);
+        let table = read_table(&path).unwrap();
+        for index in 8..10 {
+            assert_eq!(table.slots[index].timestamp, index as i32 + 100);
+            assert_eq!(read_entry(&path, index, &table).unwrap().unwrap(), big(index as u8));
+        }
+        assert_eq!(compact(&path).unwrap(), Compaction::Unchanged);
+        for index in 8..10 {
+            clear(dir.path(), region, index, 0).unwrap();
+        }
+        assert_eq!(compact(&path).unwrap(), Compaction::Empty);
     }
 }

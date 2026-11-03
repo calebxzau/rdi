@@ -32,8 +32,11 @@ import calebxzau.rdi.client.ui.viewmodel.RdiHostGateway
 import calebxzau.rdi.client.ui.viewmodel.RdiSettingsGateway
 import calebxzau.rdi.client.ui.viewmodel.SettingsGateway
 import calebxzau.rdi.client.ui.viewmodel.SettingsViewModel
+import calebxzau.rdi.client.ui.viewmodel.DmRoomGateway
+import calebxzau.rdi.client.ui.viewmodel.DmRoomListViewModel
 import calebxzau.rdi.client.ui.viewmodel.HostListGateway
 import calebxzau.rdi.client.ui.viewmodel.HostListViewModel
+import calebxzau.rdi.client.ui.viewmodel.RdiDmRoomGateway
 import calebxzau.rdi.client.ui.viewmodel.RdiHostListGateway
 import calebxzau.rdi.client.ui.viewmodel.OnlinePlayersGateway
 import calebxzau.rdi.client.ui.viewmodel.OnlinePlayersViewModel
@@ -64,6 +67,7 @@ fun appModule(
     single<HostCreateGateway> { RdiHostCreateGateway() }
     single<HostGateway> { RdiHostGateway() }
     single<HostListGateway> { RdiHostListGateway() }
+    single<DmRoomGateway> { RdiDmRoomGateway() }
     single<OnlinePlayersGateway> { RdiOnlinePlayersGateway() }
     single<SettingsGateway> { RdiSettingsGateway() }
     single<ModpackInfoGateway> { RdiModpackInfoGateway() }
@@ -88,6 +92,7 @@ fun appModule(
     }
     viewModel { SettingsViewModel(gateway = get()) }
     viewModel { HostListViewModel(gateway = get(), useMockData = calebxzhou.rdi.client.Const.USE_MOCK_DATA) }
+    viewModel { DmRoomListViewModel(gateway = get()) }
     viewModel { OnlinePlayersViewModel(gateway = get()) }
     viewModel { parameters ->
         ModpackOptionViewModel(

@@ -1,17 +1,28 @@
 package calebxzau.rdi.mc.client.dm
 
+import calebxzau.rdi.mc.zstdcodec.v21.ZstdStreamActivation21
+import calebxzhou.rdi.mc.server.network.RServerBatching
+import calebxzhou.rdi.mc.server.network.RServerPacketRefs
+import calebxzhou.rdi.mc.server.network.RServerZlibTail
 import com.mojang.brigadier.arguments.StringArgumentType
 import net.minecraft.commands.CommandSourceStack
 import net.minecraft.commands.Commands
 import net.minecraft.client.Minecraft
+import net.minecraft.client.gui.screens.TitleScreen
+import net.minecraft.client.server.IntegratedServer
 import net.minecraft.network.chat.Component
+import net.minecraft.server.level.ServerPlayer
 import net.neoforged.api.distmarker.Dist
 import net.neoforged.bus.api.SubscribeEvent
 import net.neoforged.fml.common.EventBusSubscriber
 import net.neoforged.neoforge.client.event.ClientPlayerNetworkEvent
 import net.neoforged.neoforge.client.event.ClientTickEvent
 import net.neoforged.neoforge.client.event.RegisterClientCommandsEvent
+import net.neoforged.neoforge.client.event.ScreenEvent
 import net.neoforged.neoforge.event.GameShuttingDownEvent
+import net.neoforged.neoforge.event.entity.player.PlayerEvent
+import net.neoforged.neoforge.event.server.ServerStoppedEvent
+import net.neoforged.neoforge.event.server.ServerStoppingEvent
 import net.neoforged.neoforge.event.tick.ServerTickEvent
 import org.slf4j.LoggerFactory
 
@@ -62,23 +73,52 @@ class DmClientEvents {
         @SubscribeEvent
         @JvmStatic
         fun onLoggingIn(@Suppress("UNUSED_PARAMETER") event: ClientPlayerNetworkEvent.LoggingIn) {
-            onClientThread { DmHostService.autoStartIfAssociated() }
+            onClientThread {
+                DmParticipantSession.onLoggingIn(Minecraft.getInstance())
+                DmHostService.autoStartIfAssociated()
+            }
         }
 
         @SubscribeEvent
         @JvmStatic
         fun onLoggingOut(@Suppress("UNUSED_PARAMETER") event: ClientPlayerNetworkEvent.LoggingOut) {
             onClientThread {
-                DmWorldCheckpointService.stop()
+                DmParticipantSession.onLoggingOut(Minecraft.getInstance())
                 DmHostCreationService.cancel()
-                DmHostService.stop()
+                // A host saving and quitting stays connected until onServerStopped has uploaded the final checkpoint.
+                if (!DmHostService.beginLeaving()) {
+                    DmWorldCheckpointService.stop()
+                    DmHostService.stop()
+                }
             }
+        }
+
+        /** Runs after the main loop ends, while players are still online and before anything is saved. */
+        @SubscribeEvent
+        @JvmStatic
+        fun onServerStopping(event: ServerStoppingEvent) {
+            val server = event.server as? IntegratedServer ?: return
+            if (!DmHostService.isLeaving(server)) return
+            DmHostService.announceLeaving(server)
+            DmWorldCheckpointService.prepareFinal(server)
+        }
+
+        /** Runs once the world is fully saved; the game keeps showing its saving screen until this returns. */
+        @SubscribeEvent
+        @JvmStatic
+        fun onServerStopped(event: ServerStoppedEvent) {
+            val server = event.server as? IntegratedServer ?: return
+            if (!DmHostService.isLeaving(server)) return
+            DmWorldCheckpointService.runFinal(server)
+            DmHostService.finishLeaving(server)
         }
 
         @SubscribeEvent
         @JvmStatic
         fun onGameShuttingDown(@Suppress("UNUSED_PARAMETER") event: GameShuttingDownEvent) {
             onClientThread {
+                DmParticipantSession.stop()
+                DmTakeoverService.cancel()
                 DmWorldCheckpointService.stop()
                 DmHostCreationService.cancel()
                 DmHostService.stop()
@@ -96,8 +136,36 @@ class DmClientEvents {
 
         @SubscribeEvent
         @JvmStatic
+        fun onScreenOpening(event: ScreenEvent.Opening) {
+            if (event.newScreen is TitleScreen) DmParticipantSession.recordStartup()
+        }
+
+        @SubscribeEvent
+        @JvmStatic
         fun onServerTickPost(event: ServerTickEvent.Post) {
             DmWorldCheckpointService.onServerTickPost(event)
+            if (event.server is IntegratedServer) RServerBatching.flushAtTickEnd(event.server)
+        }
+
+        /**
+         * Guests of the host's own world get the same network extensions as on dedicated hosts, in the server mod's
+         * order: zstd stream, batching, packet references, zlib tails. The host's own connection is skipped.
+         */
+        @SubscribeEvent
+        @JvmStatic
+        fun onPlayerLoggedIn(event: PlayerEvent.PlayerLoggedInEvent) {
+            val player = event.entity as? ServerPlayer ?: return
+            if (player.server !is IntegratedServer) return
+            ZstdStreamActivation21.activate(player.connection.connection, player.gameProfile.name)
+            RServerBatching.onPlayerJoined(player)
+            RServerPacketRefs.onPlayerJoined(player)
+            RServerZlibTail.onPlayerJoined(player)
+        }
+
+        @SubscribeEvent
+        @JvmStatic
+        fun onPlayerLoggedOut(event: PlayerEvent.PlayerLoggedOutEvent) {
+            (event.entity as? ServerPlayer)?.let(DmWorldCheckpointService::onPlayerLoggedOut)
         }
 
         private fun onClientThread(action: () -> Unit) {

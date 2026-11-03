@@ -19,6 +19,9 @@ struct State {
     sync_required: bool,
     last_heartbeat: Option<Instant>,
     sessions: HashMap<Uuid, SessionRequest>,
+    /// Sessions whose host announced it is shutting down: still connected so its final checkpoint
+    /// can upload, but no longer joinable or open to takeover.
+    leaving: HashMap<Uuid, Uuid>,
 }
 
 impl Default for Presence {
@@ -29,6 +32,7 @@ impl Default for Presence {
                 sync_required: true,
                 last_heartbeat: None,
                 sessions: HashMap::new(),
+                leaving: HashMap::new(),
             })),
         }
     }
@@ -57,6 +61,10 @@ impl Presence {
             .into_iter()
             .map(|session| (session.host_id, session))
             .collect();
+        let State {
+            sessions, leaving, ..
+        } = &mut *state;
+        leaving.retain(|host, session| sessions.get(host).is_some_and(|s| s.session_id == *session));
         state.sync_required = false;
         Ok(())
     }
@@ -66,8 +74,27 @@ impl Presence {
         if !state.gateway_healthy || state.sync_required {
             return Err("gateway synchronization is required".into());
         }
+        if state.leaving.get(&host_id) != Some(&session.session_id) {
+            state.leaving.remove(&host_id);
+        }
         state.sessions.insert(host_id, session);
         Ok(())
+    }
+
+    /// Marks the host's current session as shutting down; false when `session_id` is not current.
+    pub async fn leaving(&self, host_id: Uuid, session_id: Uuid) -> bool {
+        let mut state = self.state.lock().await;
+        expire(&mut state);
+        let current = state.gateway_healthy
+            && !state.sync_required
+            && state
+                .sessions
+                .get(&host_id)
+                .is_some_and(|session| session.session_id == session_id);
+        if current {
+            state.leaving.insert(host_id, session_id);
+        }
+        current
     }
 
     pub async fn offline(&self, host_id: Uuid, session_id: Uuid) {
@@ -78,6 +105,7 @@ impl Presence {
             .is_some_and(|session| session.session_id == session_id)
         {
             state.sessions.remove(&host_id);
+            state.leaving.remove(&host_id);
         }
     }
 
@@ -94,6 +122,9 @@ impl Presence {
             return (PresenceState::Unavailable, None);
         }
         match state.sessions.get(&host_id) {
+            Some(session) if state.leaving.get(&host_id) == Some(&session.session_id) => {
+                (PresenceState::Leaving, None)
+            }
             Some(session) => (PresenceState::Online, Some(session.game_port)),
             None => (PresenceState::Offline, None),
         }
@@ -137,6 +168,53 @@ mod tests {
             session_id,
             game_port: 26000,
         }
+    }
+
+    #[tokio::test]
+    async fn a_leaving_session_keeps_uploading_until_it_goes_offline() {
+        let presence = Presence::default();
+        let host_id = Uuid::now_v7();
+        let first = Uuid::now_v7();
+        let second = Uuid::now_v7();
+        presence.heartbeat().await;
+        presence.sync(vec![]).await.unwrap();
+        presence
+            .online(host_id, session(host_id, first))
+            .await
+            .unwrap();
+        assert!(!presence.leaving(host_id, second).await);
+        assert!(presence.leaving(host_id, first).await);
+        assert!(matches!(
+            presence.state_for(host_id).await,
+            (PresenceState::Leaving, None)
+        ));
+        assert!(presence.has_active_session(host_id, first).await);
+        // A gateway resync that still lists the session keeps the mark.
+        presence.sync(vec![session(host_id, first)]).await.unwrap();
+        assert!(matches!(
+            presence.state_for(host_id).await.0,
+            PresenceState::Leaving
+        ));
+        presence.offline(host_id, first).await;
+        assert!(matches!(
+            presence.state_for(host_id).await.0,
+            PresenceState::Offline
+        ));
+
+        presence
+            .online(host_id, session(host_id, first))
+            .await
+            .unwrap();
+        assert!(presence.leaving(host_id, first).await);
+        // The next host's session is online, not leaving.
+        presence
+            .online(host_id, session(host_id, second))
+            .await
+            .unwrap();
+        assert!(matches!(
+            presence.state_for(host_id).await.0,
+            PresenceState::Online
+        ));
     }
 
     #[tokio::test]
