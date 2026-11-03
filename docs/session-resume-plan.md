@@ -1,6 +1,6 @@
 # 不退图换节点实现计划
 
-状态：第1阶段已完成并达到通过标准（2026-11-02）。第2阶段已批准，下个会话执行，从第5节开始。验证结果见`docs/session-resume-validation.md`。
+状态：第1阶段已完成并达到通过标准（2026-11-02）。第2阶段代码、打包和CI已完成（2026-11-03），还差5.6里的启动器退出验证和真实启动器本机联调。验证结果见`docs/session-resume-validation.md`。
 
 ## 1. 目标与边界
 
@@ -210,7 +210,7 @@ runServer ← 锚点proxy-rs ← fault_relay A、fault_relay B ← rdi-local-pro
 
 Linux不能用musl：它的`cdylib`不适合加载进glibc的JVM。要构建`x86_64-unknown-linux-gnu`，glibc要求不超过现有的2.35。
 
-## 5. 第2阶段：DLL接入启动器（已批准，下个会话执行）
+## 5. 第2阶段：DLL接入启动器（代码已完成，待本机联调）
 
 已确认的决定（2026-11-03）：
 
@@ -218,7 +218,7 @@ Linux不能用musl：它的`cdylib`不适合加载进glibc的JVM。要构建`x86
 - 国内玩家的候选节点不包含「国际出口」。
 - 用GitHub Actions代替NoMac验证macOS，见5.7。
 
-开工前先读第1阶段的代码和`docs/session-resume-validation.md`。按项目规则，改完的代码由用户提交，代理不执行Git写操作。
+开工前先读第1阶段的代码和`docs/session-resume-validation.md`。
 
 ### 5.1 共享模型（先改）
 
@@ -337,7 +337,8 @@ ended <session> <closed|expired|gone|violation> <detail>
 - `client-core`增加`runtimeOnly(project(":local-proxy-natives"))`。
 - 在`client/ui/build.gradle.kts:346`的`uiPlatformNativeMarkers`里登记三个平台的jar名，复用现有的平台校验。
 - 发布机需要`rustup target add aarch64-apple-darwin`、Zig 0.14.1和`cargo-zigbuild`。第1阶段探查已确认这套工具能在Windows上构建。
-- 确认dylib是否需要去掉符号：现在2.4MB，其他平台只有100至360KB。
+- 确认dylib是否需要去掉符号：现在2.4MB，其他平台只有100至360KB。（第2阶段结果见验证记录，导出接口后三个平台都变大了。）
+- 用`checkUiPlatformNatives`校验三个平台的natives。它不写发布目录；`packageUiRelease`会先删除再重建当前版本的发布目录和`latest.txt`，只在真正发版时运行。
 
 Gradle按项目规则运行：先试IntelliJ MCP，不可用再用`pwsh.exe`和模块内的`gradlew.bat`。参考项目记忆里的client-core测试基线。
 
@@ -366,21 +367,22 @@ Gradle按项目规则运行：先试IntelliJ MCP，不可用再用`pwsh.exe`和�
 
 ### 5.7 GitHub Actions macOS CI
 
-工作流`.github/workflows/macos-local-proxy.yml`已写好，等用户提交推送：
+工作流`.github/workflows/macos-local-proxy.yml`已推送并通过，结果见验证记录：
 
 - Windows任务交叉编译macOS版dylib并上传。
 - macOS任务跑三个crate的测试和64MiB随机故障测试，加载交叉编译的dylib并检查架构和签名，再跑恢复模式负载测试。
 - 探测步骤记录显卡信息并尝试截图。失败不影响结果，用来判断启动器界面截图是否可行。
 
-第2阶段要补充：
+第2阶段补充的内容（均已完成）：
 
-1. 写好`ffi.rs`后，增加JDK 25通过JNA调用DLL的冒烟测试，在三个平台上都跑：加载、读版本、启动、停止。
-2. 第一次运行后确认：`macos-15`在公开仓库是否免费；是否有图形会话。如果图形可用，再评估启动器界面截图。
+1. JDK 25通过JNA调用DLL的冒烟测试，在三个平台上都跑：加载、读版本、启动、停止（`client/local-proxy-rs/jna-smoke/JnaSmoke.java`）。
+2. 第一次运行后确认`macos-15`在公开仓库是否免费、是否有图形会话。
 
 注意：仓库公开，日志和构件别人也能看到，不能使用真实账号，不能输出节点地址或令牌。
 
 ## 6. 第3阶段：上线（第2阶段通过后另行确认）
 
+0. 核对生产配置：`id=0`节点的地址是否就是直连入口。启动器内置的`DEFAULT_GAME_NODE_ADDR`端口是65230，而`server/master/run/config.toml`里`id=0`的端口是65235，要确认两者是否都可用。
 1. 升级主机房的proxy-rs，让它能接受恢复连接，旧连接不受影响。节点不用改动。
 2. 发布带Rust代理的启动器，此时总开关保持关闭。
 3. 先在测试账号或测试房间验证，这是第一次经过公网和真实frp，重点看误判切换和恢复耗时。确认后再打开总开关。开关只影响新启动的游戏。
