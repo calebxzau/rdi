@@ -319,6 +319,16 @@ public class RdiDisplayWindow implements RdiEarlyDisplaySession {
         glfwWindowHint(GLFW_CONTEXT_CREATION_API, GLFW_NATIVE_CONTEXT_API);
         glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
         glfwWindowHint(GLFW_RESIZABLE, GLFW_TRUE);
+        DevWindowMode parsedMode = DevWindowMode.parse(System.getProperty(DevWindowMode.PROPERTY));
+        if (parsedMode == null) {
+            LOGGER.warn("Ignoring unknown {}={}", DevWindowMode.PROPERTY, System.getProperty(DevWindowMode.PROPERTY));
+        }
+        final boolean background = parsedMode == DevWindowMode.Background;
+        if (background) {
+            LOGGER.info("Starting the game window in the background");
+            glfwWindowHint(GLFW_FOCUS_ON_SHOW, GLFW_FALSE);
+            glfwWindowHint(GLFW_FOCUSED, GLFW_FALSE);
+        }
         if (mcVersion != null) {
             // this emulates what we would get without early progress window
             // as vanilla never sets these, so GLFW uses the first window title
@@ -404,7 +414,12 @@ public class RdiDisplayWindow implements RdiEarlyDisplaySession {
         this.winWidth = x[0];
         this.winHeight = y[0];
 
-        glfwSetWindowPos(window, (vidmode.width() - this.winWidth) / 2 + monitorX, (vidmode.height() - this.winHeight) / 2 + monitorY);
+        if (background) {
+            // Without focus it would still cover every window except the active one.
+            glfwSetWindowPos(window, rightOfAllMonitors(primaryMonitor), monitorY);
+        } else {
+            glfwSetWindowPos(window, (vidmode.width() - this.winWidth) / 2 + monitorX, (vidmode.height() - this.winHeight) / 2 + monitorY);
+        }
 
         // Attempt setting the icon
         int[] channels = new int[1];
@@ -436,6 +451,24 @@ public class RdiDisplayWindow implements RdiEarlyDisplaySession {
         this.fbWidth = x[0];
         this.fbHeight = y[0];
         glfwPollEvents();
+    }
+
+    private static int rightOfAllMonitors(long primaryMonitor) {
+        var monitors = glfwGetMonitors();
+        int right = 0;
+        int count = monitors == null ? 0 : monitors.remaining();
+        for (int i = 0; i <= count; i++) {
+            long monitor = i < count ? monitors.get(i) : primaryMonitor;
+            GLFWVidMode mode = glfwGetVideoMode(monitor);
+            if (mode == null) {
+                continue;
+            }
+            int[] x = new int[1];
+            int[] y = new int[1];
+            glfwGetMonitorPos(monitor, x, y);
+            right = Math.max(right, x[0] + mode.width());
+        }
+        return right + 64;
     }
 
     private void badWindowHandler(final int code, final long desc) {
