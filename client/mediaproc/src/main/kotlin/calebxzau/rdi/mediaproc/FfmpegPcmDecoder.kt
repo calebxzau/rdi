@@ -3,21 +3,20 @@ package calebxzau.rdi.mediaproc
 import org.bytedeco.ffmpeg.avcodec.AVCodec
 import org.bytedeco.ffmpeg.global.avcodec.AV_CODEC_ID_OPUS
 import org.bytedeco.ffmpeg.global.avcodec.avcodec_find_decoder
-import org.bytedeco.javacv.FFmpegFrameGrabber
-import org.bytedeco.javacv.FrameGrabber.SampleMode
 import java.io.Closeable
 import java.io.InputStream
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
-import java.nio.ShortBuffer
 
 data class PcmAudioFormat(
     val sampleRate: Int,
     val channels: Int
 )
 
+/** Thread-safe: the sound engine may close a stream while another thread is reading it. */
 class FfmpegPcmStream internal constructor(
-    private val grabber: FFmpegFrameGrabber,
+    private val reader: AudioFrameReader,
+    private val converter: Pcm16Converter,
     private val input: InputStream,
     val format: PcmAudioFormat
 ) : Closeable {
@@ -25,6 +24,7 @@ class FfmpegPcmStream internal constructor(
     private var endOfStream = false
     private var closed = false
 
+    @Synchronized
     fun read(maxBytes: Int): Result<ByteBuffer> = runCatching {
         check(!closed) { "PCM stream is closed" }
         require(maxBytes > 0) { "maxBytes must be positive" }
@@ -39,12 +39,13 @@ class FfmpegPcmStream internal constructor(
                 continue
             }
             if (endOfStream) break
-            pending = grabNextFrame()
+            pending = decodeNextChunk()
         }
         output.flip()
         output
     }
 
+    @Synchronized
     fun readAll(maxBytes: Int = FfmpegPcmDecoder.DEFAULT_MAX_COMPLETE_PCM_BYTES): Result<ByteBuffer> = runCatching {
         require(maxBytes > 0) { "maxBytes must be positive" }
         val frameSize = format.channels * Short.SIZE_BYTES
@@ -76,13 +77,18 @@ class FfmpegPcmStream internal constructor(
             }
     }
 
+    @Synchronized
     fun closeResult(): Result<Unit> = runCatching {
         if (closed) return@runCatching
         closed = true
         try {
-            grabber.release()
+            converter.close()
         } finally {
-            input.close()
+            try {
+                reader.close()
+            } finally {
+                input.close()
+            }
         }
     }
 
@@ -90,23 +96,11 @@ class FfmpegPcmStream internal constructor(
         closeResult().getOrThrow()
     }
 
-    private fun grabNextFrame(): ByteBuffer {
-        val frame = grabber.grabSamples()
-        if (frame == null) {
-            endOfStream = true
-            return ByteBuffer.allocate(0)
-        }
-        val samples = frame.samples
-        check(samples.size == 1 && samples[0] is ShortBuffer) {
-            "FFmpeg did not produce interleaved 16-bit PCM"
-        }
-        val shorts = (samples[0] as ShortBuffer).duplicate()
-        return ByteBuffer.allocateDirect(shorts.remaining() * Short.SIZE_BYTES)
-            .order(ByteOrder.LITTLE_ENDIAN)
-            .apply {
-                while (shorts.hasRemaining()) putShort(shorts.get())
-                flip()
-            }
+    private fun decodeNextChunk(): ByteBuffer {
+        val frame = reader.readFrame()
+        if (frame != null) return converter.copyOutput(converter.convert(frame))
+        endOfStream = true
+        return converter.copyOutput(converter.flush())
     }
 
     private fun copyBytes(source: ByteBuffer, target: ByteBuffer) {
@@ -127,7 +121,6 @@ object FfmpegPcmDecoder {
     private val readiness: Result<Unit> by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
         runCatching {
             FfmpegNativePreloader.ensureLoaded().getOrThrow()
-            FFmpegFrameGrabber.tryLoad()
             val decoder: AVCodec? = avcodec_find_decoder(AV_CODEC_ID_OPUS)
             check(decoder != null) { "Opus decoder is unavailable" }
         }
@@ -140,28 +133,22 @@ object FfmpegPcmDecoder {
         readiness.getOrElse { throw MediaProcUnavailableException(it) }
     }
 
+    /** Takes ownership of [input]: it is closed with the stream, or right away if this fails. */
     fun open(input: InputStream): Result<FfmpegPcmStream> {
-        var grabber: FFmpegFrameGrabber? = null
+        var reader: AudioFrameReader? = null
         return runCatching {
             ensureOpusReady().getOrThrow()
-            val activeGrabber = FFmpegFrameGrabber(input, 0)
-            grabber = activeGrabber
-            activeGrabber.setCloseInputStream(false)
-            activeGrabber.sampleMode = SampleMode.SHORT
-            activeGrabber.start()
-            check(activeGrabber.hasAudio()) { "OGG has no audio stream" }
-            val outputChannels = if (activeGrabber.audioChannels == 1) 1 else 2
-            activeGrabber.audioChannels = outputChannels
-            FfmpegPcmStream(
-                activeGrabber,
-                input,
-                PcmAudioFormat(
-                    sampleRate = activeGrabber.sampleRate,
-                    channels = outputChannels
-                )
+            val activeReader = AudioFrameReader.open(AvioInput(StreamAvioSource(input), seekable = false))
+            reader = activeReader
+            check(activeReader.channels > 0) { "OGG has no audio channels" }
+            check(activeReader.sampleRate > 0) { "OGG has no audio sample rate" }
+            val format = PcmAudioFormat(
+                sampleRate = activeReader.sampleRate,
+                channels = if (activeReader.channels == 1) 1 else 2,
             )
+            FfmpegPcmStream(activeReader, Pcm16Converter(format.channels, format.sampleRate), input, format)
         }.onFailure {
-            runCatching { grabber?.release() }
+            runCatching { reader?.close() }
             runCatching { input.close() }
         }
     }

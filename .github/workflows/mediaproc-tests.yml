@@ -43,10 +43,6 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           cache-read-only: false
-      # libavdevice links these; a desktop has them but the runner does not. Remove with avdevice.
-      - name: Install the libraries FFmpeg needs on Linux
-        if: ${{ runner.os == 'Linux' }}
-        run: sudo apt-get update && sudo apt-get install -y libpulse0 libasound2t64 libxcb1 libxcb-shm0
       - name: Run the tests
         working-directory: client/ui
         shell: pwsh

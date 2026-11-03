@@ -154,6 +154,7 @@ neoForge {
             // This directory holds every FFmpeg DLL, including the JavaCPP JNI libraries.
             systemProperty 'org.bytedeco.javacpp.pathsFirst', 'true'
             systemProperty 'org.bytedeco.javacpp.findLibraries', 'false'
+            systemProperty 'org.bytedeco.javacpp.maxPhysicalBytes', '0'
             systemProperty 'org.bytedeco.javacpp.platform.preloadpath', layout.buildDirectory.dir('mediaproc-natives/ffmpeg').get().asFile.absolutePath
 
         }
@@ -172,6 +173,7 @@ neoForge {
             // This directory holds every FFmpeg DLL, including the JavaCPP JNI libraries.
             systemProperty 'org.bytedeco.javacpp.pathsFirst', 'true'
             systemProperty 'org.bytedeco.javacpp.findLibraries', 'false'
+            systemProperty 'org.bytedeco.javacpp.maxPhysicalBytes', '0'
             systemProperty 'org.bytedeco.javacpp.platform.preloadpath', layout.buildDirectory.dir('mediaproc-natives/ffmpeg').get().asFile.absolutePath
         }
         client3 {
@@ -189,6 +191,7 @@ neoForge {
             // This directory holds every FFmpeg DLL, including the JavaCPP JNI libraries.
             systemProperty 'org.bytedeco.javacpp.pathsFirst', 'true'
             systemProperty 'org.bytedeco.javacpp.findLibraries', 'false'
+            systemProperty 'org.bytedeco.javacpp.maxPhysicalBytes', '0'
             systemProperty 'org.bytedeco.javacpp.platform.preloadpath', layout.buildDirectory.dir('mediaproc-natives/ffmpeg').get().asFile.absolutePath
         }
         configureEach {
@@ -299,15 +302,6 @@ extraJavaModuleInfo {
     failOnMissingModuleInfo = false
     skipLocalJars = true
 
-    module("org.bytedeco:javacv", "org.bytedeco.javacv") {
-        patchRealModule()
-        exportAllPackages()
-
-        requires("java.desktop")
-        requiresTransitive("org.bytedeco.javacpp")
-        requires("org.bytedeco.ffmpeg")
-    }
-
     activate(configurations.clientLegacyClasspath)
     activate(configurations.client2LegacyClasspath)
     activate(configurations.client3LegacyClasspath)
@@ -349,15 +343,9 @@ dependencies {
     additionalRuntimeClasspath(project(':mediaproc')) {
         transitive = false
     }
-    implementation("org.bytedeco:javacv:1.5.13") {
-        transitive = false
-    }
     implementation("org.bytedeco:javacpp:1.5.13")
     implementation("org.bytedeco:ffmpeg:8.0.1-1.5.13")
 
-    additionalRuntimeClasspath("org.bytedeco:javacv:1.5.13") {
-        transitive = false
-    }
     additionalRuntimeClasspath("org.bytedeco:javacpp:1.5.13")
     additionalRuntimeClasspath("org.bytedeco:ffmpeg:8.0.1-1.5.13")
     additionalRuntimeClasspath("org.bytedeco:ffmpeg:8.0.1-1.5.13:windows-x86_64-gpl")

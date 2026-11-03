@@ -7,6 +7,7 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.runBlocking
 import org.bytedeco.ffmpeg.global.avformat.AVSEEK_FORCE
 import org.bytedeco.ffmpeg.global.avformat.AVSEEK_SIZE
+import org.bytedeco.ffmpeg.global.avutil.AVERROR_EOF
 import java.awt.image.BufferedImage
 import java.io.ByteArrayOutputStream
 import java.nio.ByteBuffer
@@ -168,6 +169,13 @@ class FfmpegAvifDecoderTest {
                 assertTrue((3 until decoded.pixels.size step 4).all { decoded.pixels[it] == 0x80.toByte() })
             }
         }
+    }
+
+    @Test
+    fun errorTextStopsAtTheEndOfTheMessage() {
+        FfmpegNativePreloader.ensureLoaded().getOrThrow()
+
+        assertEquals("End of file", FfmpegAvifNative.errorText(AVERROR_EOF()))
     }
 
     @Test

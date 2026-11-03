@@ -462,7 +462,6 @@ Windows列用于回归：确认`DisplayModes`、sqlite原生库拆分、可复�
 | MC进程在mac上需要`-XstartOnFirstThread`，早期加载窗口（GLFW）在mac上能否正常工作未验证 | mac上可能进不了游戏 | 原版manifest的`osx`规则会给MC进程加`-XstartOnFirstThread`（已有单元测试）；`RdiDisplayWindow`的GLFW调用位置与NeoForge原版`DisplayWindow`一致，原版没有mac特殊处理。阶段G仍需实测；必要时mac上关闭RDI早期画面 |
 | 某个RDI jar不可复现（例如构建时写入时间或路径） | 合并出包时同名sha1冲突，发布失败 | Gradle 9默认可复现；冲突时错误信息列出文件名，逐个修 |
 | 玩家在Apple Silicon上装了x64版JDK | 加载x64原生库失败 | 8.4检查`os.arch`并提示 |
-| Linux最小化安装缺少`libpulse`、`libasound`、`libxcb`；`FfmpegNativePreloader`把`avdevice`当成必须加载的库 | 加载FFmpeg失败，整合包音频转码和游戏声音都受影响 | 阶段G在干净的Ubuntu桌面上验证；如果确实缺库，在说明文件里列出要装的包，或者评估能否把`avdevice`改成可选 |
 | bytedeco以后升级时可能再次提高最低系统版本 | mac或Linux玩家突然无法使用 | 升级FFmpeg时重新解析原生库，确认最低系统版本，并同步修改`rdi.sh`的检查 |
 | Linux桌面差异（Wayland、无合成器、缺GTK库） | 窗口、对话框、`Desktop` API异常 | 默认不透明窗口；`JFileChooser`；`xdg-open`回退 |
 | Apple Silicon上加载未签名的dylib | 原生库加载失败 | Temurin的JDK允许加载第三方库；Skiko、sqlite、bytedeco的arm64库自带签名或ad-hoc签名；阶段G验证 |

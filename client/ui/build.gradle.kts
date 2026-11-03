@@ -43,14 +43,6 @@ val zstdClassifier: String by extra
 extraJavaModuleInfo {
     failOnMissingModuleInfo.set(false)
     skipLocalJars.set(true)
-
-    module("org.bytedeco:javacv", "org.bytedeco.javacv") {
-        patchRealModule()
-        exportAllPackages()
-        requires("java.desktop")
-        requiresTransitive("org.bytedeco.javacpp")
-        requires("org.bytedeco.ffmpeg")
-    }
 }
 
 configurations.configureEach {

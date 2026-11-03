@@ -155,15 +155,6 @@ sourceSets.create('zstdTest') {
 extraJavaModuleInfo {
     failOnMissingModuleInfo = false
     skipLocalJars = true
-
-    module("org.bytedeco:javacv", "org.bytedeco.javacv") {
-        patchRealModule()
-        exportAllPackages()
-
-        requires("java.desktop")
-        requiresTransitive("org.bytedeco.javacpp")
-        requires("org.bytedeco.ffmpeg")
-    }
 }
 
 afterEvaluate {
@@ -287,6 +278,7 @@ legacyForge {
             systemProperty("rdi.play", Base64.encoder.encodeToString(playArg.getBytes(StandardCharsets.UTF_8)))
             systemProperty("org.bytedeco.javacpp.pathsFirst", "true")
             systemProperty("org.bytedeco.javacpp.findLibraries", "false")
+            systemProperty("org.bytedeco.javacpp.maxPhysicalBytes", "0")
             systemProperty("org.bytedeco.javacpp.platform.preloadpath", mediaProcNativeLibraryDir.get().asFile.absolutePath)
             //systemProperty("mixin.hotSwap", "true")
             programArguments = [
@@ -363,14 +355,8 @@ dependencies {
     additionalRuntimeClasspath "io.fusionauth:java-http:1.4.0"
 */
 
-    implementation("org.bytedeco:javacv:1.5.13") {
-        transitive = false
-    }
     implementation("org.bytedeco:javacpp:1.5.13")
     implementation("org.bytedeco:ffmpeg:8.0.1-1.5.13")
-    additionalRuntimeClasspath("org.bytedeco:javacv:1.5.13") {
-        transitive = false
-    }
     additionalRuntimeClasspath("org.bytedeco:javacpp:1.5.13")
     additionalRuntimeClasspath("org.bytedeco:ffmpeg:8.0.1-1.5.13")
     additionalRuntimeClasspath("org.bytedeco:ffmpeg:8.0.1-1.5.13:windows-x86_64-gpl")

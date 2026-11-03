@@ -357,6 +357,9 @@ class MinecraftLauncher(
             processedJvmArgs += "-Dorg.bytedeco.javacpp.pathsFirst=true"
             // FfmpegNativePreloader loads FFmpeg from preloadpath; JavaCPP's class-path probing scans every mod for seconds.
             processedJvmArgs += "-Dorg.bytedeco.javacpp.findLibraries=false"
+            // Otherwise JavaCPP compares the whole process's memory with 4x Xmx, and on a large modpack
+            // it keeps calling System.gc() and finally throws OutOfMemoryError.
+            processedJvmArgs += "-Dorg.bytedeco.javacpp.maxPhysicalBytes=0"
             processedJvmArgs += "-Dorg.bytedeco.javacpp.platform.preloadpath=${it.nativeLibraryDir.absolutePath}"
         }
 

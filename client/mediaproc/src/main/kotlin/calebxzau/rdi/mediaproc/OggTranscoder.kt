@@ -3,20 +3,16 @@ package calebxzau.rdi.mediaproc
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import org.bytedeco.ffmpeg.avcodec.AVCodec
+import org.bytedeco.ffmpeg.avutil.AVFrame
 import org.bytedeco.ffmpeg.global.avcodec.AV_CODEC_ID_OPUS
 import org.bytedeco.ffmpeg.global.avcodec.avcodec_find_decoder
 import org.bytedeco.ffmpeg.global.avcodec.avcodec_find_encoder_by_name
 import org.bytedeco.ffmpeg.global.avutil.AV_LOG_ERROR
 import org.bytedeco.ffmpeg.global.avutil.av_log_set_level
-import org.bytedeco.javacv.FFmpegFrameGrabber
-import org.bytedeco.javacv.FFmpegFrameRecorder
-import org.bytedeco.javacv.Frame
-import org.bytedeco.javacv.FrameGrabber.SampleMode
 import java.io.File
 import java.io.IOException
 import java.nio.file.Files
 import java.nio.file.Path
-import java.nio.ShortBuffer
 import java.util.concurrent.CancellationException
 
 class MediaProcUnavailableException(cause: Throwable) :
@@ -39,7 +35,8 @@ object OggTranscoder {
     private val semaphore = Semaphore(MAX_CONCURRENCY)
     private val readiness: Result<Unit> by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
         runCatching {
-            loadNativeLibraries()
+            FfmpegNativePreloader.ensureLoaded().getOrThrow()
+            av_log_set_level(AV_LOG_ERROR)
             val encoder: AVCodec? = avcodec_find_encoder_by_name(OUTPUT_CODEC_NAME)
             check(encoder != null) { "$OUTPUT_CODEC_NAME encoder is unavailable" }
             val decoder: AVCodec? = avcodec_find_decoder(AV_CODEC_ID_OPUS)
@@ -55,13 +52,6 @@ object OggTranscoder {
                 onSuccess = { transcodeWithTemporaryFiles(input, tempDir) },
                 onFailure = { Result.failure(MediaProcUnavailableException(it)) }
             )
-    }
-
-    private fun loadNativeLibraries() {
-        FfmpegNativePreloader.ensureLoaded().getOrThrow()
-        FFmpegFrameGrabber.tryLoad()
-        FFmpegFrameRecorder.tryLoad()
-        av_log_set_level(AV_LOG_ERROR)
     }
 
     private fun transcodeWithTemporaryFiles(
@@ -91,109 +81,55 @@ object OggTranscoder {
         }
     }
 
-    private fun transcodeFile(inputFile: File, outputFile: File): FileTranscodeResult {
-        var grabber: FFmpegFrameGrabber? = null
-        var recorder: FFmpegFrameRecorder? = null
-        try {
-            val activeGrabber = FFmpegFrameGrabber(inputFile)
-            grabber = activeGrabber
-            activeGrabber.sampleMode = SampleMode.SHORT
-            activeGrabber.start()
-            activeGrabber.audioChannels = OUTPUT_CHANNELS
-            val inputChannels = activeGrabber.audioChannels
-            check(inputChannels > 0) { "OGG has no audio channels" }
-
-            val activeRecorder = FFmpegFrameRecorder(outputFile, OUTPUT_CHANNELS)
-            recorder = activeRecorder
-            activeRecorder.format = "ogg"
-            activeRecorder.audioCodecName = OUTPUT_CODEC_NAME
-            activeRecorder.audioBitrate = OUTPUT_BITRATE
-            activeRecorder.sampleRate = OUTPUT_SAMPLE_RATE
-            activeRecorder.audioChannels = OUTPUT_CHANNELS
-            activeRecorder.setAudioOption("vbr", "on")
-            activeRecorder.setAudioOption("application", "audio")
-            try {
-                activeRecorder.start()
-            } catch (error: Throwable) {
-                throw MediaProcUnavailableException(error)
-            }
-
-            var recorded = false
-            var decodedDurationMicros = 0L
-            while (true) {
-                val frame = activeGrabber.grabSamples() ?: break
-                val frameDurationMicros = frameDurationMicros(frame, inputChannels, activeGrabber.sampleRate)
-                decodedDurationMicros = if (frameDurationMicros > MAX_DURATION_MICROS - decodedDurationMicros) {
-                    MAX_DURATION_MICROS + 1L
-                } else {
-                    decodedDurationMicros + frameDurationMicros
+    private fun transcodeFile(inputFile: File, outputFile: File): FileTranscodeResult =
+        AudioFrameReader.open(inputFile).use { reader ->
+            check(reader.channels > 0) { "OGG has no audio channels" }
+            encoding { OggOpusWriter(outputFile, OUTPUT_SAMPLE_RATE, OUTPUT_CHANNELS, OUTPUT_BITRATE) }.use { writer ->
+                Pcm16Converter(OUTPUT_CHANNELS, OUTPUT_SAMPLE_RATE).use { converter ->
+                    var recorded = false
+                    var decodedDurationMicros = 0L
+                    while (true) {
+                        val frame = reader.readFrame() ?: break
+                        val frameDurationMicros = frameDurationMicros(frame, reader.sampleRate)
+                        if (frameDurationMicros > MAX_DURATION_MICROS - decodedDurationMicros) {
+                            return FileTranscodeResult.TooLong(MAX_DURATION_MICROS + 1L)
+                        }
+                        decodedDurationMicros += frameDurationMicros
+                        val samples = converter.convert(frame)
+                        encoding { writer.write(converter.planes, samples) }
+                        recorded = true
+                    }
+                    check(recorded) { "OGG contains no decodable audio frames" }
+                    val remaining = converter.flush()
+                    encoding {
+                        writer.write(converter.planes, remaining)
+                        writer.finish()
+                    }
                 }
-                if (decodedDurationMicros > MAX_DURATION_MICROS) {
-                    break
-                }
-                try {
-                    activeRecorder.record(frame)
-                } catch (error: Throwable) {
-                    throw MediaProcUnavailableException(error)
-                }
-                recorded = true
-            }
-            if (decodedDurationMicros > MAX_DURATION_MICROS) {
-                try {
-                    stopRecorder(activeRecorder)
-                } finally {
-                    recorder = null
-                }
-                return FileTranscodeResult.TooLong(decodedDurationMicros)
-            }
-            check(recorded) { "OGG contains no decodable audio frames" }
-            try {
-                stopRecorder(activeRecorder)
-            } finally {
-                recorder = null
-            }
-            try {
-                activeGrabber.stop()
-            } finally {
-                grabber = null
             }
             check(outputFile.exists() && outputFile.length() > 0L) {
                 "FFmpeg produced an empty OGG file"
             }
-            return FileTranscodeResult.Encoded
-        } finally {
-            runCatching { recorder?.release() }
-            runCatching { grabber?.release() }
+            FileTranscodeResult.Encoded
         }
-    }
 
-    private fun stopRecorder(recorder: FFmpegFrameRecorder) {
-        try {
-            recorder.stop()
-        } catch (error: Throwable) {
-            throw MediaProcUnavailableException(error)
-        }
+    /** A failure while writing means the encoder is broken, whatever the file being transcoded. */
+    private inline fun <T> encoding(block: () -> T): T = try {
+        block()
+    } catch (error: Throwable) {
+        throw MediaProcUnavailableException(error)
     }
 
     private fun Throwable.asMediaProcUnavailable(): MediaProcUnavailableException? {
         if (this is MediaProcUnavailableException) return this
-        if (this is FFmpegFrameGrabber.Exception) {
-            val failureCause = cause
-            return (failureCause as? LinkageError)?.let { MediaProcUnavailableException(it) }
-        }
         if (this is IOException || this is LinkageError) return MediaProcUnavailableException(this)
         return null
     }
 
-    private fun frameDurationMicros(frame: Frame, inputChannels: Int, inputSampleRate: Int): Long {
-        val samples = frame.samples
-        check(samples != null && samples.size == 1 && samples[0] is ShortBuffer) {
-            "FFmpeg did not produce interleaved 16-bit PCM"
-        }
-        val sampleCount = (samples[0] as ShortBuffer).remaining().toLong() / inputChannels
-        val sampleRate = frame.sampleRate.takeIf { it > 0 } ?: inputSampleRate
+    private fun frameDurationMicros(frame: AVFrame, inputSampleRate: Int): Long {
+        val sampleRate = frame.sample_rate().takeIf { it > 0 } ?: inputSampleRate
         check(sampleRate > 0) { "OGG has no audio sample rate" }
-        return (sampleCount * 1_000_000L + sampleRate - 1L) / sampleRate
+        return (frame.nb_samples().toLong() * 1_000_000L + sampleRate - 1L) / sampleRate
     }
 
     private sealed interface FileTranscodeResult {

@@ -320,6 +320,7 @@ class MinecraftLauncherTest {
             assertTrue(command.any { it.split(File.pathSeparator).any { entry -> entry.contains("intermediary-1.20.1.jar") } })
             assertTrue(command.contains("-Dorg.bytedeco.javacpp.pathsFirst=true"))
             assertTrue(command.contains("-Dorg.bytedeco.javacpp.findLibraries=false"))
+            assertTrue(command.contains("-Dorg.bytedeco.javacpp.maxPhysicalBytes=0"))
             assertTrue(command.any { it.startsWith("-Dorg.bytedeco.javacpp.platform.preloadpath=") })
             assertTrue(command.none { it.contains("kotlin-runtime") })
         } finally {

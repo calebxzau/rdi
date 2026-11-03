@@ -72,7 +72,7 @@ object FfmpegAvifDecoder {
         val formatContext = avformat_alloc_context()
             ?: error("Unable to allocate FFmpeg input context")
         val memoryInput = try {
-            MemoryAvioInput(input)
+            AvioInput(MemoryAvioInput(input), seekable = true)
         } catch (failure: Throwable) {
             runCatching { avformat_free_context(formatContext) }
             formatContext.close()

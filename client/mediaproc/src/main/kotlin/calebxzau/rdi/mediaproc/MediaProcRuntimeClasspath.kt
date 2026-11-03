@@ -3,7 +3,6 @@ package calebxzau.rdi.mediaproc
 import kotlinx.coroutines.sync.Semaphore
 import org.bytedeco.ffmpeg.global.avcodec
 import org.bytedeco.javacpp.Loader
-import org.bytedeco.javacv.FFmpegFrameGrabber
 import java.io.File
 import java.util.jar.Attributes
 import java.util.jar.JarFile
@@ -15,7 +14,6 @@ object MediaProcRuntimeClasspath {
     ): Result<List<File>> = runCatching {
         val codeSources = listOf(
             FfmpegPcmDecoder::class.java,
-            FFmpegFrameGrabber::class.java,
             Loader::class.java,
             avcodec::class.java,
             Semaphore::class.java

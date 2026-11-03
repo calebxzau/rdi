@@ -1,8 +1,6 @@
 package calebxzau.rdi.mediaproc
 
 import org.bytedeco.ffmpeg.global.avcodec
-import org.bytedeco.ffmpeg.global.avdevice
-import org.bytedeco.ffmpeg.global.avfilter
 import org.bytedeco.ffmpeg.global.avformat
 import org.bytedeco.ffmpeg.global.avutil
 import org.bytedeco.ffmpeg.global.swresample
@@ -12,35 +10,36 @@ import org.bytedeco.javacpp.Loader
 import java.util.Properties
 
 /**
- * Loads FFmpeg natives from the extracted runtime directory when the game runs with
- * `org.bytedeco.javacpp.findLibraries=false`.
+ * Loads the FFmpeg natives. When the game runs with `org.bytedeco.javacpp.findLibraries=false`, they
+ * come from the extracted runtime directory.
  *
  * With library finding enabled, JavaCPP probes every candidate file name through the mod class loader,
  * which scans every mod module and takes seconds. With it disabled, JavaCPP only reuses libraries that
  * were already loaded, so they must be loaded here first, from `platform.preloadpath`, in dependency order.
  */
 object FfmpegNativePreloader {
-    // FFmpegFrameGrabber/FFmpegFrameRecorder.tryLoad order; avfilter is initialized through avdevice.
+    // Dependency order. avdevice and avfilter are left out on purpose: nothing here uses them, and
+    // on Linux avdevice cannot load without libpulse, libasound and libxcb.
     private val FFMPEG_CLASSES = listOf(
         avutil::class.java,
         swresample::class.java,
         avcodec::class.java,
         avformat::class.java,
         swscale::class.java,
-        avfilter::class.java,
-        avdevice::class.java,
     )
 
     private val result: Result<Unit> by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
         runCatching {
-            if (isLibraryFindingEnabled()) return@runCatching
-            synchronized(Loader::class.java) {
-                preload(Loader.loadProperties())
+            if (!isLibraryFindingEnabled()) {
+                synchronized(Loader::class.java) {
+                    preload(Loader.loadProperties())
+                }
             }
+            FFMPEG_CLASSES.forEach { Loader.load(it) }
         }
     }
 
-    /** No-op when JavaCPP may search for libraries itself. Must run before any FFmpeg class is loaded. */
+    /** Must run before any FFmpeg class is used. */
     fun ensureLoaded(): Result<Unit> = result
 
     private fun preload(platform: Properties) {

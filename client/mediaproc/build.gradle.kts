@@ -30,9 +30,6 @@ kotlin {
 }*/
 
 dependencies {
-    implementation("org.bytedeco:javacv:1.5.13") {
-        isTransitive = false
-    }
     implementation("org.bytedeco:javacpp:1.5.13")
     implementation("org.bytedeco:ffmpeg:8.0.1-1.5.13")
     runtimeOnly("org.bytedeco:ffmpeg:8.0.1-1.5.13:$ffmpegClassifier")

@@ -117,9 +117,6 @@ dependencies {
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher:6.1.1'
 
     modImplementation('com.github.luben:zstd-jni:1.5.7-11')
-    modImplementation('org.bytedeco:javacv:1.5.13') {
-        transitive = false
-    }
     modImplementation('org.bytedeco:javacpp:1.5.13')
     modImplementation('org.bytedeco:ffmpeg:8.0.1-1.5.13') {
         transitive = false

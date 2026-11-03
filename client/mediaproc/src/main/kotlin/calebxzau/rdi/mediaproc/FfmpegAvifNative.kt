@@ -6,7 +6,6 @@ import org.bytedeco.ffmpeg.global.avcodec.avcodec_find_encoder_by_name
 import org.bytedeco.ffmpeg.global.avformat.av_guess_format
 import org.bytedeco.ffmpeg.global.avutil.av_strerror
 import org.bytedeco.javacpp.BytePointer
-import org.bytedeco.javacv.FFmpegFrameGrabber
 
 internal object FfmpegAvifNative {
     private const val ERROR_BUFFER_SIZE = 256L
@@ -15,7 +14,6 @@ internal object FfmpegAvifNative {
     private val decodeReadiness: Result<Unit> by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
         runCatching {
             FfmpegNativePreloader.ensureLoaded().getOrThrow()
-            FFmpegFrameGrabber.tryLoad()
             check(avcodec_find_decoder(AV_CODEC_ID_AV1) != null) {
                 "FFmpeg AV1 decoder is unavailable"
             }
@@ -60,7 +58,8 @@ internal object FfmpegAvifNative {
         val buffer = BytePointer(ERROR_BUFFER_SIZE)
         return try {
             val result = av_strerror(code, buffer, ERROR_BUFFER_SIZE)
-            if (result < 0) "FFmpeg error $code" else buffer.getString()
+            // Without a limit, getString() reads the whole buffer, including what follows the terminator.
+            if (result < 0) "FFmpeg error $code" else buffer.limit(BytePointer.strlen(buffer)).getString()
         } finally {
             buffer.close()
         }
