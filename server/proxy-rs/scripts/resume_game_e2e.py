@@ -16,9 +16,9 @@ import argparse
 import http.client
 import http.server
 import json
-import os
 import random
 import re
+import shlex
 import subprocess
 import threading
 import time
@@ -83,7 +83,7 @@ class Stack:
             self.node_bytes[node] = (0, 0)
             threading.Thread(target=self._read_relay, args=(node, relay), daemon=True).start()
             self.relays[node] = relay
-        self.local = spawn([args.local_proxy, "--listen", args.listen, "--nodes", ",".join(self.nodes)])
+        self.local = spawn([*shlex.split(args.local_proxy), "--listen", args.listen, "--nodes", ",".join(self.nodes)])
         line = self.local.stdout.readline()
         if "ready" not in line:
             raise RuntimeError(f"local proxy did not start: {line!r}")
@@ -333,10 +333,10 @@ class Loader:
         self.thread.join(25.0)
 
 
-def process_stats(name: str) -> str:
+def process_stats(pid: int) -> str:
     """Peak memory and transferred bytes of a Windows helper, when it is one."""
     script = (
-        f"Get-CimInstance Win32_Process -Filter \"Name='{name}'\" | "
+        f"Get-CimInstance Win32_Process -Filter \"ProcessId={pid}\" | "
         "ForEach-Object { \"peak_ws_kb=$($_.PeakWorkingSetSize) read_bytes=$($_.ReadTransferCount) "
         "write_bytes=$($_.WriteTransferCount) other_bytes=$($_.OtherTransferCount)\" }"
     )
@@ -437,7 +437,7 @@ def run_manual(stack: Stack, game: GameControl, results: Results, load: str, set
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--proxy", required=True)
-    parser.add_argument("--local-proxy", required=True)
+    parser.add_argument("--local-proxy", required=True, help="command that runs the proxy; use / in Windows paths")
     parser.add_argument("--fault-relay", required=True)
     parser.add_argument("--listen", required=True, help="address the game client connects to")
     parser.add_argument("--backend-port", type=int, required=True)
@@ -504,8 +504,8 @@ def main() -> int:
             "alive_max_ms": alive_times[-1] if alive_times else None,
             "events": stack.event_count(),
             "traffic": traffic,
-            "proxy_stats": process_stats(os.path.basename(args.proxy)),
-            "local_proxy_stats": process_stats(os.path.basename(args.local_proxy)),
+            "proxy_stats": process_stats(stack.proxy.pid),
+            "local_proxy_stats": process_stats(stack.local.pid),
         }
         with open(args.report, "w", encoding="utf-8") as handle:
             json.dump({"report": report, "trials": results.trials, "events": stack.events}, handle, ensure_ascii=False, indent=1)
