@@ -82,6 +82,8 @@ sourceSets.main {
     kotlin.srcDir '../../../mc/common/codec/src/main/kotlin'
     kotlin.srcDir '../../../mc/common/codec/src/netty41/kotlin'
     kotlin.srcDir '../../../mc/rcmd/src/main/kotlin'
+    // Fabric does not include RMCP, and these two need its models.
+    kotlin.exclude '**/common2021/mcp/McpScreenControl.kt', '**/common2021/mcp/McpCommandControl.kt'
     resources {
         srcDir project(":c-mc-common").file("src/main/resources")
     }
