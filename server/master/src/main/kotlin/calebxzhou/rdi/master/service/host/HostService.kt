@@ -87,7 +87,7 @@ object HostService {
     internal const val PORT_END_EXCLUSIVE = 60000
     internal const val SHUTDOWN_THRESHOLD = 10
     internal const val HOSTS_PER_PAGE = 100
-    internal const val HOST_WORKDIR_LIMIT_BYTES: Long = 8L * 1024 * 1024 * 1024
+    internal const val HOST_WORKDIR_LIMIT_BYTES: Long = 16L * 1024 * 1024 * 1024
     internal const val ONLINE_PLAYERS_CACHE_TTL_MS = 15_000L
     internal const val COMMAND_RESPONSE_TIMEOUT_MS = 10_000L
 
