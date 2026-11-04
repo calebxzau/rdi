@@ -1,22 +1,58 @@
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::AppResult;
 use crate::installer::{InstallRequest, ProgressSink};
 
+static FATAL_REPORTED: AtomicBool = AtomicBool::new(false);
+
 pub fn run() -> i32 {
+    crate::windows::set_console_utf8();
+    std::panic::set_hook(Box::new(|info| {
+        report_fatal(&format!("安装器内部错误:{info}"));
+    }));
+    crate::windows::install_crash_handler();
+
     match run_inner() {
         Ok(()) => 0,
         Err(error) => {
-            eprintln!("安装失败:{error}");
+            report_fatal(&format!("安装失败:{error}"));
             1
         }
     }
 }
 
-fn run_inner() -> AppResult<()> {
-    crate::windows::set_console_utf8();
+/// 打印致命错误并停住窗口，让玩家能截图。
+///
+/// 只认回车键：截图快捷键（Win+Shift+S、Alt+PrtSc、Ctrl+Alt+A）会先按下修饰键，
+/// 按任意键退出的话窗口会在截图前关闭。
+///
+/// panic hook和崩溃处理也会调用这里，所以不能用可能再次panic的`eprintln!`；
+/// 如果报告过程本身又出错，后续调用直接返回，不会递归。
+pub fn report_fatal(message: &str) {
+    if FATAL_REPORTED.swap(true, Ordering::SeqCst) {
+        return;
+    }
 
+    print_error(message);
+    if !crate::windows::stdin_is_console() {
+        return;
+    }
+    print_error("");
+    print_error("请截图此窗口用于反馈，截好后按回车键退出。");
+    if let Err(error) = crate::windows::wait_for_enter() {
+        print_error(&format!("等待按键失败:{error}"));
+    }
+}
+
+fn print_error(message: &str) {
+    // 错误已经无处可报，写stderr失败时只能放弃。
+    let _ = writeln!(std::io::stderr(), "{message}");
+}
+
+fn run_inner() -> AppResult<()> {
     let default_path = crate::windows::select_default_path()?;
     let install_path = select_install_path(&default_path)?;
     let create_desktop_shortcut = ask_yes_no("要创建桌面图标吗？", "不创建")?;

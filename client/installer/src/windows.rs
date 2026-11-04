@@ -4,7 +4,7 @@ use std::mem::size_of;
 use std::os::windows::ffi::OsStrExt;
 use std::os::windows::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
-use std::ptr::null_mut;
+use std::ptr::{null, null_mut};
 
 use windows_sys::Win32::Foundation::{GetLastError, HANDLE};
 
@@ -21,6 +21,8 @@ const PROPERTY_STANDARD_QUERY: u32 = 0;
 const MOVEFILE_REPLACE_EXISTING: u32 = 0x0000_0001;
 const STD_INPUT_HANDLE: u32 = (-10i32) as u32;
 const KEY_EVENT: u16 = 0x0001;
+const VK_RETURN: u16 = 0x0D;
+const EXCEPTION_EXECUTE_HANDLER: i32 = 1;
 const ERROR_CANCELLED: i32 = 0x8007_04C7u32 as i32;
 const KF_FLAG_CREATE: u32 = 0x0000_8000;
 const COINIT_MULTITHREADED: u32 = 0;
@@ -124,6 +126,44 @@ pub fn set_console_utf8() {
         let _ = SetConsoleOutputCP(65001);
         let _ = SetConsoleCP(65001);
     }
+}
+
+pub fn stdin_is_console() -> bool {
+    let input = unsafe { GetStdHandle(STD_INPUT_HANDLE) };
+    let mut mode = 0;
+    !input.is_null()
+        && input != INVALID_HANDLE_VALUE
+        && unsafe { GetConsoleMode(input, &mut mode) != 0 }
+}
+
+pub fn wait_for_enter() -> AppResult<()> {
+    // 丢弃之前积压的按键，否则解压时误按的回车会让窗口立刻关闭。
+    // 清空失败时仍然继续等待，最坏只是提前退出。
+    unsafe {
+        FlushConsoleInputBuffer(GetStdHandle(STD_INPUT_HANDLE));
+    }
+    while read_key()? != VK_RETURN {}
+    Ok(())
+}
+
+pub fn install_crash_handler() {
+    unsafe {
+        SetUnhandledExceptionFilter(Some(on_unhandled_exception));
+    }
+}
+
+unsafe extern "system" fn on_unhandled_exception(pointers: *const ExceptionPointers) -> i32 {
+    let (code, address) = unsafe {
+        let record = (*pointers).exception_record;
+        ((*record).exception_code, (*record).exception_address)
+    };
+    let module_base = unsafe { GetModuleHandleW(null()) };
+    crate::cli::report_fatal(&describe_crash(code, address, module_base));
+    EXCEPTION_EXECUTE_HANDLER
+}
+
+fn describe_crash(code: u32, address: *const c_void, module_base: *const c_void) -> String {
+    format!("安装器崩溃:异常码{code:#010x}，地址{address:p}，模块基址{module_base:p}")
 }
 
 pub fn read_key() -> AppResult<u16> {
@@ -673,6 +713,21 @@ struct InputRecord {
     key_event: KeyEventRecord,
 }
 
+// 只声明读取到的前几个字段，这些结构体只通过系统传入的指针访问。
+#[repr(C)]
+struct ExceptionRecord {
+    exception_code: u32,
+    exception_flags: u32,
+    next_record: *const ExceptionRecord,
+    exception_address: *const c_void,
+}
+
+#[repr(C)]
+struct ExceptionPointers {
+    exception_record: *const ExceptionRecord,
+    context_record: *const c_void,
+}
+
 unsafe fn vtable(instance: HANDLE) -> *mut *mut c_void {
     unsafe { *(instance as *mut *mut *mut c_void) }
 }
@@ -816,6 +871,11 @@ unsafe extern "system" {
     fn GetCurrentProcessId() -> u32;
     fn GetStdHandle(standard_handle: u32) -> HANDLE;
     fn GetConsoleMode(console_handle: HANDLE, mode: *mut u32) -> i32;
+    fn FlushConsoleInputBuffer(console_input: HANDLE) -> i32;
+    fn GetModuleHandleW(module_name: *const u16) -> *mut c_void;
+    fn SetUnhandledExceptionFilter(
+        filter: Option<unsafe extern "system" fn(*const ExceptionPointers) -> i32>,
+    ) -> *const c_void;
     fn ReadConsoleInputW(
         console_input: HANDLE,
         records: *mut InputRecord,
@@ -920,9 +980,10 @@ mod tests {
     use super::create_shortcut;
     use super::{
         CLSCTX_INPROC_SERVER, CLSID_FILE_OPEN_DIALOG, COINIT_APARTMENTTHREADED, CoCreateInstance,
-        ComApartment, ComPtr, FOLDERID_PROFILE, IID_FILE_OPEN_DIALOG, fallback_install_path,
-        is_folder_picker_cancelled, read_known_folder,
+        ComApartment, ComPtr, FOLDERID_PROFILE, IID_FILE_OPEN_DIALOG, describe_crash,
+        fallback_install_path, is_folder_picker_cancelled, read_known_folder,
     };
+    use std::ffi::c_void;
     use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -953,6 +1014,19 @@ mod tests {
     fn reads_profile_folder() {
         let path = read_known_folder(&FOLDERID_PROFILE, "用户").expect("profile folder");
         assert!(path.is_dir(), "{} should exist", path.display());
+    }
+
+    #[test]
+    fn describes_crash_with_code_and_addresses() {
+        let message = describe_crash(
+            0xC000_0005,
+            0x7FF6_0000_1234usize as *const c_void,
+            0x7FF6_0000_0000usize as *const c_void,
+        );
+        assert_eq!(
+            message,
+            "安装器崩溃:异常码0xc0000005，地址0x7ff600001234，模块基址0x7ff600000000"
+        );
     }
 
     #[test]
