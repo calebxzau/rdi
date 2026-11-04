@@ -6,7 +6,9 @@ plugins {
 }
 
 apply(from = "../gradle/target-platform.gradle.kts")
+apply(from = "../gradle/ffmpeg-natives.gradle.kts")
 val ffmpegClassifier: String by extra
+val ffmpegNativesJar: File by extra
 
 repositories {
     mavenCentral()
@@ -32,13 +34,7 @@ kotlin {
 dependencies {
     implementation("org.bytedeco:javacpp:1.5.13")
     implementation("org.bytedeco:ffmpeg:8.0.1-1.5.13")
-    // -Prdi.ffmpegNativesJar=<path> tests a natives jar from ffmpeg/build-natives.sh in place of bytedeco's.
-    val nativesJarOverride = providers.gradleProperty("rdi.ffmpegNativesJar").orNull
-    if (nativesJarOverride != null) {
-        runtimeOnly(files(nativesJarOverride))
-    } else {
-        runtimeOnly("org.bytedeco:ffmpeg:8.0.1-1.5.13:$ffmpegClassifier")
-    }
+    runtimeOnly(files(ffmpegNativesJar))
     implementation(libs.kotlinx.coroutines.core)
 
     testImplementation(kotlin("test"))

@@ -212,6 +212,8 @@ def localRuntimeConfiguration = configurations.maybeCreate('localRuntime')
 def librariesConfiguration = configurations.maybeCreate('libraries')
 def shadedConfiguration = configurations.maybeCreate('shaded')
 def mediaProcNativeConfiguration = configurations.maybeCreate('mediaProcNative')
+apply from: '../../gradle/target-platform.gradle.kts'
+apply from: '../../gradle/ffmpeg-natives.gradle.kts'
 
 configurations.named('runtimeClasspath') {
     extendsFrom localRuntimeConfiguration
@@ -307,9 +309,7 @@ extraJavaModuleInfo {
     activate(configurations.client3LegacyClasspath)
 }
 dependencies {
-    mediaProcNative("org.bytedeco:ffmpeg:8.0.1-1.5.13:windows-x86_64-gpl") {
-        transitive = false
-    }
+    mediaProcNative(files(ffmpegNativesJar))
     implementation project(':c-mc-common')
     additionalRuntimeClasspath project(':c-mc-common')
     //RMCP runtime dependencies
@@ -348,7 +348,7 @@ dependencies {
 
     additionalRuntimeClasspath("org.bytedeco:javacpp:1.5.13")
     additionalRuntimeClasspath("org.bytedeco:ffmpeg:8.0.1-1.5.13")
-    additionalRuntimeClasspath("org.bytedeco:ffmpeg:8.0.1-1.5.13:windows-x86_64-gpl")
+    additionalRuntimeClasspath(files(ffmpegNativesJar))
     additionalRuntimeClasspath("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.11.0")
 
 

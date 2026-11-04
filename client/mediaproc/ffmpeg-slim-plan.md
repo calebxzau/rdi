@@ -1,8 +1,15 @@
 # mediaproc瘦身计划（待实施）
 
-状态（2026-11-04）：阶段1、2的代码已完成，阶段2发布前还要手动进游戏验证。阶段3第一步已完成：Zig交叉编译的三个平台jar通过了测试（run `41676537314`），还没有接入启动器。第二步等阶段2的手动验证通过后再做。
+状态（2026-11-04）：阶段1、2的代码已完成。阶段3第一步和第二步也已完成：精简jar发布为[`ffmpeg-natives-8.0.1-rdi1`](https://github.com/calebxzau/rdi/releases/tag/ffmpeg-natives-8.0.1-rdi1)（来自run `41761949133`），`mediaproc`和1.20.1 Forge、1.21.1 NeoForge的开发客户端都已换用。阶段2和阶段3合并做一轮发布前手动验证。
 
-阶段3第一步的实测：
+手动验证进度：
+
+- [x] 开发客户端里AVIF和Opus能解码
+- [ ] 真实上传一个含大PNG和OGG的整合包
+- [ ] 启动器首次安装和更新
+- [ ] macOS（NoMac）和Linux实机进游戏
+
+jar大小：
 
 | 平台 | jar大小 |
 |---|---|
@@ -10,13 +17,15 @@
 | Linux x64 | 5.04MiB |
 | macOS arm64 | 4.13MiB |
 
+和bytedeco的速度对比（Windows，Ryzen 7 7840HS，新旧各两轮的中位数）：AVIF编码基本不变，产物大小相同；AVIF解码约快一倍；Opus解码基本不变；转码约快一倍（原因未查）。Linux和macOS没有测。
+
+要换回bytedeco的jar来排查问题，用`-Prdi.ffmpegNativesJar=<jar路径>`。发新版本时，先让`ffmpeg-natives`工作流通过，再用`client/mediaproc/ffmpeg/publish-natives.sh <run id>`发布，最后更新`client/gradle/ffmpeg-natives.gradle.kts`里的版本和哈希。
+
 和下面的原计划不同的地方：
 
 - 用Zig在Ubuntu上交叉编译三个平台，脚本在`client/mediaproc/ffmpeg/`，不再分平台编译。
 - 多保留了FLAC解码器，这样Ogg FLAC的转码行为不变。
 - bytedeco的AV1解码其实走libaom，精简版换成了dav1d，样本解码结果一致。
-
-第二步要做：把jar发到GitHub Release（连同FFmpeg和三个库的源码包），Gradle按固定的SHA-256下载并替换`runtimeOnly`，对比编解码速度，然后手动进游戏验证。
 
 ## 决定
 
@@ -146,7 +155,8 @@ CI不跑游戏，原因：
 
 - **运行时位置（已定，2026-11-03）：** 和现在的FFmpeg jar一样，放在启动器的`lib/`里，随UI库manifest分发。
 - **授权（已定）：** RDI是GPLv3，所以FFmpeg的LGPL配置没有兼容问题。发布二进制时仍要提供对应源码、编译配置和许可证文本。
-- **待定：** 发布机如何拿到CI编译好的三个平台的jar。
+- **jar的来源（已定，2026-11-04）：** 构建时从GitHub Release下载，按固定的SHA-256校验，不符就让构建失败。
+- **`1.20.1-fabric`（待定）：** 这个模块还没运行过，配置里仍写着bytedeco的natives，类路径上现在新旧jar都有。真要运行时先处理。
 
 ## Rust方案（暂不做）
 

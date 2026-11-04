@@ -8,6 +8,7 @@ on:
     paths:
       - client/mediaproc/**
       - client/gradle/target-platform.gradle.kts
+      - client/gradle/ffmpeg-natives.gradle.kts
       - client/ui/gradle/libs.versions.toml
       - .github/workflows/mediaproc-tests.yml
 
