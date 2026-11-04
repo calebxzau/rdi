@@ -41,6 +41,14 @@ jobs:
           path: natives/*.jar
           retention-days: 14
           if-no-files-found: error
+      # publish-natives.sh releases these with the jars. They are the same for every platform.
+      - uses: actions/upload-artifact@v4
+        if: ${{ matrix.platform == 'linux-x64' }}
+        with:
+          name: ffmpeg-natives-sources
+          path: ${{ runner.temp }}/ffmpeg-work/downloads/*.tar.*
+          retention-days: 14
+          if-no-files-found: error
 
   test:
     needs: build

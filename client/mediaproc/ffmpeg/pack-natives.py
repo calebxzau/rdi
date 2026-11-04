@@ -7,6 +7,7 @@ import zipfile
 
 # JNI libraries of the FFmpeg parts we load; avfilter and avdevice are not built.
 GLUE = ("jniavutil", "jniavcodec", "jniavformat", "jniswresample", "jniswscale")
+MODULE_INFO = "META-INF/versions/9/module-info.class"
 # Fixed, so that the same input gives the same jar.
 ENTRY_TIME = (2026, 1, 1, 0, 0, 0)
 
@@ -67,6 +68,9 @@ def main():
         for name, path in sorted(license_files(args.sources)):
             with open(path, "rb") as file:
                 add(jar, f"META-INF/rdi-ffmpeg/licenses/{name}", file.read())
+
+        # Keeps the module name of bytedeco's jar. Without it the file name would give the module "ffmpeg".
+        add(jar, MODULE_INFO, bytedeco.read(MODULE_INFO))
 
         for path in sorted(libraries):
             with open(path, "rb") as file:
