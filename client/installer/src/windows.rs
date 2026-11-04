@@ -22,6 +22,7 @@ const MOVEFILE_REPLACE_EXISTING: u32 = 0x0000_0001;
 const STD_INPUT_HANDLE: u32 = (-10i32) as u32;
 const KEY_EVENT: u16 = 0x0001;
 const ERROR_CANCELLED: i32 = 0x8007_04C7u32 as i32;
+const KF_FLAG_CREATE: u32 = 0x0000_8000;
 const COINIT_MULTITHREADED: u32 = 0;
 const COINIT_APARTMENTTHREADED: u32 = 2;
 const CLSCTX_INPROC_SERVER: u32 = 1;
@@ -95,6 +96,12 @@ const FOLDERID_PROGRAMS: Guid = Guid {
     data2: 0x2E2B,
     data3: 0x44C3,
     data4: [0xA6, 0xA2, 0xAB, 0xA6, 0x01, 0x05, 0x4A, 0x51],
+};
+const FOLDERID_PROFILE: Guid = Guid {
+    data1: 0x5E6C858F,
+    data2: 0x0E22,
+    data3: 0x4760,
+    data4: [0x9A, 0xFE, 0xEA, 0x33, 0x17, 0xB6, 0x71, 0x73],
 };
 
 #[derive(Clone, Copy)]
@@ -207,7 +214,27 @@ pub fn select_default_path() -> AppResult<PathBuf> {
         return Ok(PathBuf::from(format!("{letter}:\\mc\\rdi")));
     }
 
-    Ok(known_folder_path(KnownFolder::Documents)?.join("rdi"))
+    fallback_install_path(known_folder_path(KnownFolder::Documents), || {
+        read_known_folder(&FOLDERID_PROFILE, "用户")
+    })
+}
+
+/// 没有合适的非C盘时的默认路径：文档文件夹，读不出来就用用户文件夹。
+///
+/// 文档文件夹可能被改到已经不存在的盘上，而这里只是给玩家建议一个路径，
+/// 不应该让安装在询问位置之前就失败。
+fn fallback_install_path(
+    documents: AppResult<PathBuf>,
+    profile: impl FnOnce() -> AppResult<PathBuf>,
+) -> AppResult<PathBuf> {
+    let documents_error = match documents {
+        Ok(path) => return Ok(path.join("rdi")),
+        Err(error) => error,
+    };
+    println!("warning:{documents_error}，改用用户文件夹");
+    profile()
+        .map(|path| path.join("rdi"))
+        .map_err(|profile_error| format!("{documents_error}；{profile_error}"))
 }
 
 fn is_ssd(root: &str) -> bool {
@@ -358,14 +385,24 @@ pub fn pick_install_folder(default_path: &Path) -> AppResult<Option<PathBuf>> {
 }
 
 pub fn known_folder_path(folder: KnownFolder) -> AppResult<PathBuf> {
-    let id = match folder {
-        KnownFolder::Documents => &FOLDERID_DOCUMENTS,
-        KnownFolder::Desktop => &FOLDERID_DESKTOP,
-        KnownFolder::Programs => &FOLDERID_PROGRAMS,
-    };
+    match folder {
+        KnownFolder::Documents => read_known_folder(&FOLDERID_DOCUMENTS, "文档"),
+        KnownFolder::Desktop => read_known_folder(&FOLDERID_DESKTOP, "桌面"),
+        KnownFolder::Programs => read_known_folder(&FOLDERID_PROGRAMS, "开始菜单"),
+    }
+}
+
+fn read_known_folder(id: &Guid, name: &str) -> AppResult<PathBuf> {
     let mut path = null_mut();
-    let status = unsafe { SHGetKnownFolderPath(id, 0, null_mut(), &mut path) };
-    check_hresult(status, "读取Windows已知文件夹失败")?;
+    // 不带KF_FLAG_CREATE时，目录被删掉就会返回0x80070003。
+    let status = unsafe { SHGetKnownFolderPath(id, KF_FLAG_CREATE, null_mut(), &mut path) };
+    if let Err(error) = check_hresult(status, &format!("读取Windows{name}文件夹失败")) {
+        // 文档要求失败时也释放输出指针；path为空时CoTaskMemFree什么也不做。
+        unsafe {
+            CoTaskMemFree(path as *mut c_void);
+        }
+        return Err(error);
+    }
     let result = unsafe { string_from_wide(path) };
     unsafe {
         CoTaskMemFree(path as *mut c_void);
@@ -883,9 +920,40 @@ mod tests {
     use super::create_shortcut;
     use super::{
         CLSCTX_INPROC_SERVER, CLSID_FILE_OPEN_DIALOG, COINIT_APARTMENTTHREADED, CoCreateInstance,
-        ComApartment, ComPtr, IID_FILE_OPEN_DIALOG, is_folder_picker_cancelled,
+        ComApartment, ComPtr, FOLDERID_PROFILE, IID_FILE_OPEN_DIALOG, fallback_install_path,
+        is_folder_picker_cancelled, read_known_folder,
     };
+    use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn default_path_uses_documents_when_readable() {
+        let path = fallback_install_path(Ok(PathBuf::from(r"C:\Users\p\Documents")), || {
+            panic!("documents is readable, profile must not be read")
+        });
+        assert_eq!(path, Ok(PathBuf::from(r"C:\Users\p\Documents\rdi")));
+    }
+
+    #[test]
+    fn default_path_falls_back_to_profile_when_documents_fails() {
+        let path = fallback_install_path(Err("文档失败".to_owned()), || {
+            Ok(PathBuf::from(r"C:\Users\p"))
+        });
+        assert_eq!(path, Ok(PathBuf::from(r"C:\Users\p\rdi")));
+    }
+
+    #[test]
+    fn default_path_reports_both_errors_when_nothing_is_readable() {
+        let path =
+            fallback_install_path(Err("文档失败".to_owned()), || Err("用户失败".to_owned()));
+        assert_eq!(path, Err("文档失败；用户失败".to_owned()));
+    }
+
+    #[test]
+    fn reads_profile_folder() {
+        let path = read_known_folder(&FOLDERID_PROFILE, "用户").expect("profile folder");
+        assert!(path.is_dir(), "{} should exist", path.display());
+    }
 
     #[test]
     fn recognizes_folder_picker_cancel() {
