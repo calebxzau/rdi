@@ -1,0 +1,88 @@
+import "../../ui/assets/fonts/src/main/resources/assets/fonts/1oppo.ttf";
+import "../../ui/assets/fonts/src/main/resources/assets/fonts/symbolsnerdfont.ttf";
+import { TileData, Theme } from "theme.slint";
+import { TitleBar } from "title_bar.slint";
+import { TileGrid } from "tile_grid.slint";
+import { GlassTabBar } from "glass_tab_bar.slint";
+import { GlassButton } from "glass_button.slint";
+export { TileData }
+export component AppWindow inherits Window {
+    title: "RDI Slint Prototype";
+    preferred-width: 1280px; preferred-height: 720px; min-width: 800px; min-height: 600px;
+    no-frame: true; background: transparent;
+    default-font-family: "OPPO Sans 4.0";
+    /// Background and glass, rendered with wgpu before each frame (see glass/mod.rs).
+    in property <image> backdrop;
+    in property <[TileData]> hosts;
+    in property <[TileData]> modpacks;
+    in property <string> player-name: "未登录";
+    in property <image> player-head;
+    in property <string> error;
+    in property <string> page-error;
+    in property <bool> loading: true;
+    in property <bool> loading-more;
+    in property <bool> show-others;
+    in property <int> online-count;
+    in property <int> selected: 0;
+    in-out property <length> host-scroll: 0px;
+    in-out property <length> modpack-scroll: 0px;
+    in property <int> host-pressed: -1;
+    in property <int> modpack-pressed: -1;
+    in property <float> host-scale: 1;
+    in property <float> modpack-scale: 1;
+    out property <float> tab-position: root.selected;
+    animate tab-position { duration: 350ms; easing: cubic-bezier(0.4,0,0.2,1); }
+    out property <float> logical-width: self.width / 1px;
+    out property <float> logical-height: self.height / 1px;
+    out property <float> grid-y: 40 + (self.height / 1px - 40 - 434) / 2;
+    callback window-action(int);
+    callback select-tab(int);
+    callback toggle-others();
+    callback tile-hover(int,int,bool);
+    callback tile-press(int,int,bool);
+    callback tile-action(int,int,bool);
+    callback pill-press(int,bool,float,float);
+    callback scroll-changed();
+    callback retry();
+    callback retry-page();
+    callback stub(string);
+    changed logical-width => {root.scroll-changed();}
+    Image { width: parent.width; height: parent.height; source: root.backdrop; image-fit: fill; }
+    TitleBar { y: 0px; width: parent.width; player-name: root.player-name; head: root.player-head; action(a) => {root.window-action(a);} stub(s) => {root.stub(s);} }
+    GlassTabBar { x: (parent.width - self.width) / 2; y: 56px; selected: root.selected; select(t) => {root.select-tab(t);} press(i,on,x,y) => {root.pill-press(i,on,x,y);} }
+    Rectangle { y: root.grid-y * 1px; width: parent.width; height: 434px; clip: true;
+        if !root.loading && root.error == "": TileGrid { x: -root.tab-position * root.width; width: root.width; tiles: root.hosts; scroll <=> root.host-scroll; fade: 1 - root.tab-position;
+            // `opacity` here would render the whole scrollable grid through one huge offscreen layer;
+            // tiles fade their leaves instead, and a fully faded grid is hidden.
+            visible: root.tab-position < 1;
+            pressed: root.host-pressed; press-scale: root.host-scale;
+            hover(i,on) => {root.tile-hover(0,i,on);} press(i,on) => {root.tile-press(0,i,on);} action(i,r) => {root.tile-action(0,i,r);} moved => {root.scroll-changed();}
+        }
+        if !root.loading && root.error == "": TileGrid { x: (1 - root.tab-position) * root.width; width: root.width; tiles: root.modpacks; scroll <=> root.modpack-scroll; fade: root.tab-position;
+            visible: root.tab-position > 0;
+            pressed: root.modpack-pressed; press-scale: root.modpack-scale;
+            hover(i,on) => {root.tile-hover(1,i,on);} press(i,on) => {root.tile-press(1,i,on);} action(i,r) => {root.tile-action(1,i,r);} moved => {root.scroll-changed();}
+        }
+        if root.loading: Text { text: "正在加载…"; color: Theme.ink; font-size: 18px; horizontal-alignment: center; vertical-alignment: center; width: parent.width; height: parent.height; }
+        if !root.loading && root.error == "" && (root.selected == 0 ? root.hosts.length == 0 : root.modpacks.length == 0): Text {
+            text: root.selected == 1 ? "还没有整合包，去整合广场看看吧" : root.show-others ? "暂无可展示的房间，等待朋友邀请" : "暂无可游玩的房间，可点击显示其他房间";
+            color: Theme.ink; font-size: 18px; horizontal-alignment: center; vertical-alignment: center; width: parent.width; height: parent.height;
+        }
+        if root.loading-more && root.selected == 0: Text { x: parent.width - 100px; y: parent.height / 2; text: "加载中…"; color: Theme.ink; }
+        if root.error != "": VerticalLayout { padding: 64px; alignment: center; spacing: 16px;
+            Text { text: root.error; wrap: word-wrap; horizontal-alignment: center; color: #902020; }
+            GlassButton { width: 120px; label: "重试"; glyph: "\u{f021}"; clicked => {root.retry();} }
+        }
+    }
+    if root.selected == 0: HorizontalLayout { x: (parent.width - 308px) / 2; y: parent.height - 60px; width: 308px; height: 36px; spacing: 12px;
+        GlassButton { width: 128px; label: "创建房间"; glyph: "\u{f067}"; clicked => {root.stub("创建房间");} press(on,x,y) => {root.pill-press(2,on,x,y);} }
+        GlassButton { width: 168px; label: root.show-others ? "隐藏其他房间" : "显示其他房间"; glyph: root.show-others ? "\u{f070}" : "\u{f06e}"; clicked => {root.toggle-others();} press(on,x,y) => {root.pill-press(3,on,x,y);} }
+    }
+    if root.selected == 1: HorizontalLayout { x: (parent.width - 484px) / 2; y: parent.height - 60px; width: 484px; height: 36px; spacing: 12px;
+        GlassButton { width: 128px; label: "整合广场"; glyph: "\u{f19d5}"; clicked => {root.stub("整合广场");} press(on,x,y) => {root.pill-press(4,on,x,y);} }
+        GlassButton { width: 176px; label: "整合包本地安装"; glyph: "\u{eaef}"; clicked => {root.stub("整合包本地安装");} press(on,x,y) => {root.pill-press(5,on,x,y);} }
+        GlassButton { width: 156px; label: "导入rdipack2"; glyph: "\u{f019}"; clicked => {root.stub("导入rdipack2");} press(on,x,y) => {root.pill-press(6,on,x,y);} }
+    }
+    if root.page-error != "": GlassButton { x: 16px; y: parent.height - 100px; width: 340px; label: "房间加载失败，点击重试"; glyph: "\u{f021}"; clicked => {root.retry-page();} }
+    Text { x: 16px; y: parent.height - 34px; text: "在线玩家" + root.online-count; color: #30353c; font-size: 12px; }
+}

@@ -1,0 +1,5 @@
+/target/
+# Measurement output stays local. Gate summaries and result tables are kept.
+/evidence/**
+!/evidence/**/
+!/evidence/**/*.md

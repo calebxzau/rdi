@@ -1,0 +1,1 @@
+Windows built-in WMI: GPU engine utilization and process dedicated/shared counters available. ThermalZoneInformation exposes a generic \_TZ.TZ01 reading (362K while compiling); no GPU-specific temperature or power-in-watts reading was exposed by Win32_TemperatureProbe. This zone cannot be attributed to the GPU or to scene rendering. No new sensor tools installed.

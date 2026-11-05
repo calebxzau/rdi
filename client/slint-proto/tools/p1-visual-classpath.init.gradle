@@ -1,0 +1,11 @@
+gradle.projectsEvaluated {
+    def reference = rootProject.project(':bg-renderer')
+    reference.tasks.register('p1VisualClasspath') {
+        dependsOn reference.tasks.named('testClasses')
+        doLast {
+            def output = new File(reference.projectDir, '../slint-proto/evidence/bg-port/p1/visual/kotlin-classpath.txt')
+            output.parentFile.mkdirs()
+            output.text = reference.sourceSets.test.runtimeClasspath.asPath
+        }
+    }
+}

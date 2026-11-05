@@ -1,0 +1,17 @@
+import { Theme } from "theme.slint";
+export component GlassButton inherits Rectangle {
+    in property <string> label;
+    in property <string> glyph;
+    in property <bool> circle: false;
+    in property <bool> destructive: false;
+    callback clicked();
+    callback press(bool,float,float);
+    height: 36px;
+    border-radius: self.height / 2;
+    background: touch.has-hover ? (root.destructive ? #e8112380 : #ffffff38) : transparent;
+    HorizontalLayout { padding-left: root.circle ? 0px : 12px; padding-right: root.circle ? 0px : 16px; spacing: 8px;
+        Text { text: root.glyph; font-family: Theme.symbols; color: Theme.ink; font-size: 18px; horizontal-alignment: center; vertical-alignment: center; }
+        if root.label != "": Text { text: root.label; color: Theme.ink; font-size: 14px; vertical-alignment: center; }
+    }
+    touch := TouchArea { mouse-cursor: pointer; clicked => {root.clicked();} pointer-event(e) => {if e.button == PointerEventButton.left {root.press(e.kind == PointerEventKind.down,self.mouse-x / 1px,self.mouse-y / 1px);}} }
+}

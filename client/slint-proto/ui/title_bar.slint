@@ -1,0 +1,27 @@
+import { GlassButton } from "glass_button.slint";
+import { PlayerHead } from "player_head.slint";
+import { Theme } from "theme.slint";
+export component TitleBar inherits Rectangle {
+    in property <string> player-name;
+    in property <image> head;
+    callback action(int);
+    callback stub(string);
+    height: 40px;
+    background: #ffffff45;
+    TouchArea { pointer-event(e) => {if e.kind == PointerEventKind.down && e.button == PointerEventButton.left {root.action(0);}} double-clicked => {root.action(2);} }
+    Image { x: 14px; y: 8px; width: 24px; height: 24px; source: @image-url("../../ui/assets/src/main/resources/icon.png"); }
+    Text { x: 46px; height: parent.height; text: "rdi"; color: Theme.ink; font-size: 18px; font-weight: 700; vertical-alignment: center; }
+    GlassButton { x: 80px; y: 6px; width: 28px; height: 28px; circle: true; glyph: "\u{f015}"; clicked => {root.stub("主页");} }
+    HorizontalLayout { x: parent.width - 470px; width: 470px; height: 40px; spacing: 8px; padding: 6px;
+        GlassButton { width: 28px; height: 28px; circle: true; glyph: "m"; clicked => {root.stub("MC百科");} }
+        GlassButton { width: 28px; height: 28px; circle: true; glyph: "\u{f0e0}"; clicked => {root.stub("邮件");} }
+        GlassButton { width: 28px; height: 28px; circle: true; glyph: "\u{f11b}"; clicked => {root.stub("游戏");} }
+        GlassButton { width: 28px; height: 28px; circle: true; glyph: "\u{f0ae}"; clicked => {root.stub("任务");} }
+        GlassButton { width: 28px; height: 28px; circle: true; glyph: "\u{eb51}"; clicked => {root.stub("设置");} }
+        PlayerHead { width: 24px; height: 24px; source: root.head; }
+        Text { text: root.player-name; width: 86px; overflow: elide; color: Theme.ink; vertical-alignment: center; }
+        GlassButton { width: 38px; height: 28px; circle: true; glyph: "\u{f2d1}"; clicked => {root.action(1);} }
+        GlassButton { width: 38px; height: 28px; circle: true; glyph: "\u{eab9}"; clicked => {root.action(2);} }
+        GlassButton { width: 38px; height: 28px; circle: true; destructive: true; glyph: "\u{f00d}"; clicked => {root.action(3);} }
+    }
+}
