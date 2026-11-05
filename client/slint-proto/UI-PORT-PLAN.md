@@ -107,6 +107,8 @@ Steps:
 
 If `macos-15` has no usable Metal adapter, report that, keep compile and tests, and try `macos-14` once. Do not start paid NoMac time without asking. Real-Mac and real-GPU Linux tests remain required before U5.
 
+Owner decision 2026-11-05: wrong background terrain on Mac is acceptable, because Mac has only one or two players. It blocks no gate and is not investigated for now. The launcher UI, IME and game launch on Mac are still tested at U5.
+
 ### U1 pass criteria
 
 Each result is **pass, fail or not verified**, with evidence.
@@ -115,7 +117,7 @@ Each result is **pass, fail or not verified**, with evidence.
 |---|---|---|
 | 1 | Form | Validation, submit and keyboard work; owner confirms IME |
 | 2 | List and menu | On the 780M, 60Hz display, focused, in every one of 3 runs each: 1000-row list over the held scene frame, and wheel scrolling on the real menu over the live scene. Long frames (interval over 25ms, a missed vsync) ≤ 1%, delivered FPS ≥ 58, frame CPU p95 ≤ 16.7ms, no steady memory growth |
-| 3 | Panel and modal | Alignment within 1 physical pixel at all scales, during animation |
+| 3 | Panel and modal | No visible offset at all scales, during animation (owner replaced the 1 physical pixel limit on 2026-11-05; the limit was never measured) |
 | 4 | Window | Every action in item 4 works |
 | 5 | Text | Readable at all scales, with no missing glyphs |
 | 6 | Platforms | Mac and Linux CI results reported, including what stays unverified |

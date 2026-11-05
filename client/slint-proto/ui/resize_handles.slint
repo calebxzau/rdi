@@ -1,0 +1,26 @@
+/// One edge or corner of the no-frame window. Starts a native resize on left press.
+component ResizeHandle inherits TouchArea {
+    in property <int> edge;
+    callback start(int);
+    pointer-event(e) => {
+        if e.kind == PointerEventKind.down && e.button == PointerEventButton.left {
+            root.start(root.edge);
+        }
+    }
+}
+
+/// Every position is explicit: Slint centers an element in its parent when x or y is omitted.
+export component ResizeHandles {
+    callback start(int);
+    private property <length> edge-size: 5px;
+    private property <length> corner-size: 10px;
+    ResizeHandle { edge: 0; x: 0px; y: 0px; width: root.edge-size; height: root.height; mouse-cursor: ew-resize; start(e) => { root.start(e); } }
+    ResizeHandle { edge: 1; x: root.width - root.edge-size; y: 0px; width: root.edge-size; height: root.height; mouse-cursor: ew-resize; start(e) => { root.start(e); } }
+    ResizeHandle { edge: 2; x: 0px; y: 0px; width: root.width; height: root.edge-size; mouse-cursor: ns-resize; start(e) => { root.start(e); } }
+    ResizeHandle { edge: 3; x: 0px; y: root.height - root.edge-size; width: root.width; height: root.edge-size; mouse-cursor: ns-resize; start(e) => { root.start(e); } }
+    // Corners come last so they win over the edges they overlap.
+    ResizeHandle { edge: 4; x: root.width - root.corner-size; y: root.height - root.corner-size; width: root.corner-size; height: root.corner-size; mouse-cursor: nwse-resize; start(e) => { root.start(e); } }
+    ResizeHandle { edge: 5; x: 0px; y: root.height - root.corner-size; width: root.corner-size; height: root.corner-size; mouse-cursor: nesw-resize; start(e) => { root.start(e); } }
+    ResizeHandle { edge: 6; x: root.width - root.corner-size; y: 0px; width: root.corner-size; height: root.corner-size; mouse-cursor: nesw-resize; start(e) => { root.start(e); } }
+    ResizeHandle { edge: 7; x: 0px; y: 0px; width: root.corner-size; height: root.corner-size; mouse-cursor: nwse-resize; start(e) => { root.start(e); } }
+}

@@ -31,18 +31,36 @@ pub fn wire(ui: &AppWindow, paused: Arc<AtomicBool>, probe_unfocused: bool) {
         if let Some(ui) = resize_ui.upgrade() {
             ui.window().with_winit_window(|w| {
                 use slint::winit_030::winit::window::ResizeDirection;
-                let direction = match edge { 0 => ResizeDirection::West, 1 => ResizeDirection::East,
-                    2 => ResizeDirection::North, 3 => ResizeDirection::South, _ => ResizeDirection::SouthEast };
+                let direction = match edge {
+                    0 => ResizeDirection::West,
+                    1 => ResizeDirection::East,
+                    2 => ResizeDirection::North,
+                    3 => ResizeDirection::South,
+                    4 => ResizeDirection::SouthEast,
+                    5 => ResizeDirection::SouthWest,
+                    6 => ResizeDirection::NorthEast,
+                    7 => ResizeDirection::NorthWest,
+                    other => {
+                        tracing::error!(edge = other, "Unknown window resize edge");
+                        return;
+                    }
+                };
                 if let Err(error) = w.drag_resize_window(direction) { tracing::warn!(?error,"Window resize failed"); }
             });
         }
     });
+    let state_ui = ui.as_weak();
     ui.window().on_winit_window_event(move |window, event| {
         let focus = match event {
             slint::winit_030::winit::event::WindowEvent::Focused(value) => Some(*value),
             _ => None,
         };
         window.with_winit_window(|w| {
+            if let slint::winit_030::winit::event::WindowEvent::Resized(_) = event
+                && let Some(ui) = state_ui.upgrade()
+            {
+                ui.set_window_maximized(w.is_maximized());
+            }
             let inactive = w.is_minimized().unwrap_or(false)
                 || !w.is_visible().unwrap_or(true)
                 || (!probe_unfocused && !focus.unwrap_or_else(|| w.has_focus()));

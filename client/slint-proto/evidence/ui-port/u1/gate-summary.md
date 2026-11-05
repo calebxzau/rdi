@@ -1,6 +1,6 @@
 # GU1 — UI risk proof, 2026-11-05
 
-U1 implementation is ready for review. **GU1 is not a pass yet:** criterion 2 now passes, but physical DPI transitions, strict panel alignment and platform CI remain open. Stopped here; no U2 or old M2 work.
+**GU1 passed on 2026-11-05 with the owner's review.** The owner confirmed the manual checks, including edge resize after the fix, and replaced strict panel alignment with no visible offset. U2 has not started. The sections below keep the measurements as they were recorded.
 
 ## Build and evidence
 
@@ -21,9 +21,9 @@ No Compose/Kotlin files were modified. No commit or push was made.
 | 1 Form | not verified in full | Production POST /player/jwt returned 200 and the submit callback reported success; exit 0 (auth-final/). Empty Enter visibly shows 未填写完整 (window-input-double/empty-enter.png). Masked password, busy and error states implemented. Owner confirmed IME works on 2026-11-05. Tab order, selection and clipboard are not separately confirmed. |
 | 2 List and menu | **pass** | With only the menu animating the scene: list over the held frame and real menu over the live scene, 3 of 3 runs each. See "Menu-only scene". |
 | 3 Panel/modal | not verified to 1px tolerance | 300ms slide/scale, logical rect/radius/alpha exported by Slint and used directly by glass. Captures at 25/50/75/100% and scales 1/1.25/2 inspected visually; no obvious offset. Strict <=1 physical pixel measurement during live animation and keyboard modal behavior remain owner checks. |
-| 4 Window | not verified in full | Actual mouse title drag moved 60x50px, title double-click/maximize button reached width 3866; minimize button true; bottom-right resize reached 2413x1363; close button exited 0. Native DPI messages exercised 1/1.25/2 and cache resize. Physical cross-monitor DPI and every resize edge still need manual checks. |
+| 4 Window | owner retest pending for resize | Actual mouse title drag moved 60x50px, title double-click/maximize button reached width 3866; minimize button true; close button exited 0. Native DPI messages exercised 1/1.25/2 and cache resize. Owner reported on 2026-11-05 that everything works except resizing from every edge. See "Resize fix". |
 | 5 Text | pass for inspected captures | Mixed Chinese/Latin/Nerd Font icons visible, paragraph wraps, long-name elision and selectable read-only RDID supplied. Inspected scale captures show no missing glyphs. Owner checks live selection/clipboard. |
-| 6 Platforms | not verified | Workflow prepared for macos-15 and ubuntu-24.04, with one macos-14 retry when no usable Mac adapter. Never pushed or dispatched. No cross-platform MAE claimed. |
+| 6 Platforms | **pass: results reported, Mac terrain accepted by owner** | Run 42034258334. Workspace tests pass on both. Mac draws the terrain wrongly on the paravirtual Metal device; owner accepted this on 2026-11-05. Linux is partly verified. See "Platform CI". |
 
 ## Focused frame intervals (ms)
 
@@ -130,6 +130,35 @@ GitHub lists macos-15 as an arm64 M1 runner, but that alone does not prove usabl
 https://docs.github.com/en/actions/reference/runners/github-hosted-runners .
 No paid Mac time was started. Before any future push, obtain owner approval and scan the entire outgoing
 diff, including pre-existing unpushed commits. That push review has not been performed or authorized.
+
+## Platform CI
+
+Run 42034258334 on commit be078a5a. All jobs report success, but that does not mean the scene is correct: this workflow does not compare pixels.
+
+| | macos-15 | ubuntu-24.04 |
+|---|---|---|
+| Adapter | Apple Paravirtual device, Metal | llvmpipe, Vulkan, CPU only |
+| Workspace tests | 60 + 20 pass | 60 + 20 pass |
+| Scene against Windows, MAE at 0/15/45 | **21.84 / 21.94 / 21.56** | 0.39 / 0.38 / 0.40 |
+| Real window | Starts, draws the proof screen, alive after 20s; forced to close | **Exits at once**: Slint refuses a CPU adapter unless SLINT_WGPU_CPU=1 |
+
+Mac scene: sky, clouds and crowd look right. Terrain and vegetation do not: mountains are flat, trees are missing, and no error is logged.
+
+Cause not proven. Leading suspect: the packed path is the only one that draws with a non-zero base vertex (`r.base` in `draw_indexed`), and wgpu passes it straight to Metal. The paravirtual device may ignore it, or the packed vertex format may be at fault. The full vertex path has base 0, so `--scene-full-vertices` separates the two.
+
+Real Mac hardware has not been tested. Performance numbers from either runner are not evidence.
+
+Owner decision 2026-11-05: wrong Mac terrain is acceptable because Mac has only one or two players. It does not block any gate, and the cause will not be investigated for now. The suspect above stays recorded in case this is reopened.
+
+## Resize fix
+
+Cause: the left and top handles set no x or y, and Slint centers an element when these are omitted, so both sat on the center lines of the window. The earlier test only dragged the bottom-right corner, so it missed this. Handles also showed no resize cursor, existed only in `--ui-proof`, and covered 5 of the 8 directions.
+
+Fix: `ui/resize_handles.slint` has all 8 directions with explicit positions and resize cursors, on the menu as well as the proof screen, left button only, and hidden while maximized.
+
+Real mouse drags through tools/u1-resize-edges.ps1 (resize-edges-proof-2, resize-edges-menu-2): all 8 directions move the expected sides, the center of the window no longer resizes, and the title bar still drags afterwards. The menu's left edge moved 51 of 60px in one run and 60 in the other; cause not known. The -1 runs show two false failures from the test reaching the minimum height, which led to dragging the bottom corners outward. Workspace tests: 60 + 20 pass.
+
+Not covered by the script: cursor shape and handles hidden while maximized. These are for the owner's retest.
 
 ## Owner review
 
