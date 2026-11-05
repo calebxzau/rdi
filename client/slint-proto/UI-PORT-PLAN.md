@@ -3,6 +3,44 @@
 Written 2026-11-05 for an agent with no prior context. This replaces M2-M4 in `M1-M2-PLAN.md`; M1 is finished and committed. The owner reviews at every gate.
 `/tmp` is a tmpfs, so this repository copy is the one to keep up to date.
 
+## Current status (handoff)
+
+Updated 2026-11-05. **Next task: U2 (section 5), stop at GU2.** The owner has seen the U2 scope and is handing it to a new agent. U2 is within this approved plan, so it needs no new approval unless the scope materially changes.
+
+- U1 is finished. GU1 passed with the owner's review on 2026-11-05 (`evidence/ui-port/u1/gate-summary.md`, commit `c6f21e82`). No U2 code exists yet.
+- Later gates are unchanged. The accepted Mac terrain problem is recorded in section 4.
+- `dev` has unpushed commits: `c6f21e82` and the owner's `a1646b01`. Do not push them without approval.
+
+### Before starting U2
+
+Read `AGENTS.md`, `client/ui/AGENTS.md`, sections 1-3 and 5 of this plan, and section 2 of `M1-M2-PLAN.md`. Then run `git status`: `client/ui` and `common` hold a lot of the owner's uncommitted work, which must not be staged or overwritten.
+
+### Known test baselines for U2
+
+These notes are 2-3 weeks old, so record a fresh baseline on the current tree before moving any code. A failure that is already there is not caused by the move, but it must still be reported.
+
+- Prefer focused `--tests` runs in `client/ui`. A full `:test` was seen hanging in `ModpackVersionBaseWorldManageViewModelTest`, and `ModpackUploaderManageViewModelTest`, `ImageDecodingTest`, `HostTest` and `ModpackTest` failed independently of UI work.
+- `HostCreateViewModelTest` had 2 known failures.
+- `:client-core:test` had 199 tests with 4 failures: 3 stale Fabric-rejection tests and `MediaProcGameClasspathTest`.
+- `:net:compileTestKotlin` does not compile because of `RHttpClientTest.kt`. With that file excluded, 3 `FileDownloaderTest` cases fail on HEAD.
+- Non-Unit `runBlocking` test functions are silently skipped. Declare test functions with a Unit return.
+
+### Environment for U2
+
+- `client/ui` Gradle through IntelliJ MCP needs `executeInShell: true` for `.\gradlew.bat`, and MCP truncates long output, so redirect to a log and read that. Do not use the Gradle daemon under a WSL `pwsh.exe` pipe: it holds the pipe open until timeout even though the work succeeded.
+- Do not compile `client/ui` while the owner's Compose hot reload app is running; both write `build/classes`.
+- If tests throw `NoClassDefFoundError` for a `:mclaunch` class, the jar is stale: run `:mclaunch:jar --rerun` with the tests.
+- Game launch tests need the monitor on. If a screen named `WinDisc` is present, or the game exits with `Failed to find a primary monitor`, ask the owner to turn it on. Do not debug the game.
+- Mouse-driving tests take over the owner's cursor. Say so before running them.
+- `ktorClient` SSE reconnects forever, so a service subscription built on it must stop on a terminal event.
+- Keep Compose startup flags in mind: the service has no UI, so do not carry the launcher's `-X` and JBR hot reload settings across without a reason.
+
+### Open items from U1 that U2 must not disturb
+
+- `src/main.rs` `scene_frozen` is only set by `--ui-proof` today. Hooking it to navigation and a running game is U3 work, but the running-game state U2 exposes must make that possible.
+- `src/window.rs` and `ui/resize_handles.slint` hold the window controls, now on the menu as well.
+- Slint printed one "long callback/instantiation chain detected" warning in each long run, in every case including Slint only. Not attributed.
+
 ## 1. Goal and decisions
 
 Port the launcher UI (`client/ui`, Kotlin + Compose) to Slint on the Rust + wgpu base in `client/slint-proto`. The Compose launcher keeps shipping until the final switch.
@@ -53,6 +91,7 @@ Additional rules:
 - Do not replace a `VecModel` on refresh. Update it in place. `SharedPixelBuffer` images re-upload.
 - Slint has no backdrop blur or custom shaders. Glass draws below all Slint content. Overlapping glass panels cannot refract each other's text.
 - `forgecdn` resets TLS beyond about 5 parallel connections; keep the per-host image limit.
+- Slint centers an element in its parent when `x` or `y` is omitted. Set both when placing by hand. This put the window's left and top resize handles on its center lines.
 
 ## 3. Code facts
 

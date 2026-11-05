@@ -235,3 +235,9 @@
 - Added the hold (src/main.rs, ui_proof::scene_held) and a real menu scroll measurement (--menu-proof). --ui-proof holds by default; --ui-proof-live-scene keeps the old behavior.
 - List over the held frame and menu over the live scene pass 3 of 3 runs each: long frames ≤ 0.11%, FPS ≥ 59.97, CPU p95 ≤ 13.25ms.
 - Held: CPU 11.7% to 0.2% of a core, clock stops and resumes without a jump, captures identical, resize works. U3 must hook navigation and game running to the hold.
+
+## 2026-11-05 (GU1 passed, U2 handed off)
+
+- Fixed window edge resize: the left and top handles had no x or y, so Slint centered them. All 8 directions now work on the menu and the proof screen (`ui/resize_handles.slint`, `tools/u1-resize-edges.ps1`).
+- Owner accepted wrong Mac terrain, confirmed the manual checks, and replaced the 1 physical pixel panel limit with no visible offset. GU1 passed.
+- **Next: U2, stop at GU2.** Handoff is in `UI-PORT-PLAN.md`, "Current status (handoff)". No U2 code exists yet.
