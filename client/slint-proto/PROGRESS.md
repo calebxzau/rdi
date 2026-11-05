@@ -207,3 +207,8 @@
 
 ## 2026-11-05 (G1 passed)
 - Owner passed G1. M1 committed, not pushed. **Next: M2.1-M2.3, stop at G2a.** M2.8 must first make measurement runs really focused.
+
+## 2026-11-05 (priority change: UI port)
+- Owner put the UI port ahead of the complete 3D scene. M2 is on hold and was not started.
+- Owner cut the code editor, quest viewer and host file manager from the Slint launcher. Mac testing starts with headless GitHub Actions.
+- Plan: `UI-PORT-PLAN.md`. **Next: U1, stop at GU1.**

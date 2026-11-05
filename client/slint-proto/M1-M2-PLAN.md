@@ -1,5 +1,7 @@
 # M1 + M2 implementation plan: renderer crate and 3D main-frame validation
 
+**Status 2026-11-05: M1 is done. M2 is on hold because the owner put the UI port first; follow `UI-PORT-PLAN.md`. Keep this file as the reference for later 3D work.**
+
 Written 2026-11-05 for an agent with no prior context. The owner reviews at every gate listed here.
 `/tmp` is a tmpfs and earlier plans there were lost, so the copy at
 `client/slint-proto/M1-M2-PLAN.md` is the one to keep up to date.
