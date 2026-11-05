@@ -212,3 +212,26 @@
 - Owner put the UI port ahead of the complete 3D scene. M2 is on hold and was not started.
 - Owner cut the code editor, quest viewer and host file manager from the Slint launcher. Mac testing starts with headless GitHub Actions.
 - Plan: `UI-PORT-PLAN.md`. **Next: U1, stop at GU1.**
+
+## 2026-11-05 (U1: UI risk proof, GU1)
+- UI-PORT-PLAN.md replaces old M2-M4. Added --ui-proof / --ui-proof-script; old M2.1-M2.3 not started.
+- Login appearance/Chinese labels, masked password/Enter validation and real production JWT submit; 1000-row virtualized ListView with two shared network images and retry states; mixed text/selectable RDID.
+- Added glass::Panel with Slint-owned geometry, radius, tint and leaf alpha; 300ms slide/scale, dimmed modal and no new parent opacity/clip layers.
+- 60 renderer+18 app tests, all-target/all-feature Clippy and release pass. Six explicit glass captures pass, legacy max delta1/255. No Kotlin/Compose changes.
+- Three truly focused live-scene runs, no rejected frames. List p95 18.97/20.37/19.81ms fails16.7ms; p99 21.91/23.08/23.02ms. Cause not attributed to Slint. Warm WS/private stabilizes475.58/516.73MiB across final2 rounds.
+- Production login HTTP200/success; actual title drag/double-click/maximize/minimize/resize/close exercised, exit0. Physical DPI/IME and strict1px moving-edge measurement remain manual.
+- Portable adapter/scene preview and Mac/Linux GitHub workflow prepared; no push or CI run. Owner approval required for every push.
+- Evidence: evidence/ui-port/u1/gate-summary.md and owner-checklist.md. **Stopped at GU1 with fail/not-verified criteria; U2 not started.**
+
+## 2026-11-05 (GU1 rerun under the new list criterion)
+- Owner confirmed IME works and replaced list criterion 2: long frames ≤ 1%, FPS ≥ 58, CPU p95 ≤ 16.7ms, in each of 3 focused 60Hz live runs.
+- Harness now records pacing and the scene+glass share of each frame, and runs without scene or glass. Interleaved runner: tools/u1-pacing.ps1.
+- Result: **fail.** Live runs: pass, fail (2.30% long, CPU p95 18.36), fail (CPU p95 17.07). All 6 no-scene runs stay under the limits.
+- Slint alone costs about 11.6ms CPU per list frame; glass about 0.2ms; the live scene about 1.6ms plus the tail. Not profiled inside Slint.
+- CI workflow matrix output fixed locally, not pushed. **Stopped at GU1, U2 not started.**
+
+## 2026-11-05 (menu-only scene, criterion 2 passes)
+- Owner decided only the menu animates the scene; other screens hold its last frame with the scene kept loaded, and the game running holds it too.
+- Added the hold (src/main.rs, ui_proof::scene_held) and a real menu scroll measurement (--menu-proof). --ui-proof holds by default; --ui-proof-live-scene keeps the old behavior.
+- List over the held frame and menu over the live scene pass 3 of 3 runs each: long frames ≤ 0.11%, FPS ≥ 59.97, CPU p95 ≤ 13.25ms.
+- Held: CPU 11.7% to 0.2% of a core, clock stops and resumes without a jump, captures identical, resize works. U3 must hook navigation and game running to the hold.

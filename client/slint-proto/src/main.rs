@@ -9,6 +9,7 @@ mod images;
 use rdi_slint_proto::scene;
 mod runtime_probe;
 mod window;
+mod ui_proof;
 use slint::ComponentHandle;
 use std::{
     rc::Rc,
@@ -68,6 +69,17 @@ fn main() -> anyhow::Result<()> {
         paused.clone(),
         config.scene.probe && config.scene.probe_unfocused,
     );
+    let proof = if config.ui_proof || config.menu_proof {
+        ui.set_ui_proof(config.ui_proof);
+        Some(ui_proof::Proof::wire(&ui, runtime.handle().clone(), config.server.clone(), config.ui_proof_script, !(config.no_scene || config.no_glass), config.menu_proof))
+    } else { None };
+    // Only the menu screen animates the scene. Other screens keep showing its last frame,
+    // and the scene stays loaded so returning to the menu resumes at once.
+    let scene_frozen = Rc::new(std::cell::Cell::new(config.ui_proof && !config.ui_proof_live_scene));
+    let render_frozen = scene_frozen.clone();
+    let timer_frozen = scene_frozen.clone();
+    let render_proof = proof.clone();
+    let timer_proof = proof.clone();
     let scene_options = config.scene;
     scene::diagnostics::enable(scene_options.probe);
     let mut last_snapshot = Instant::now();
@@ -136,6 +148,7 @@ fn main() -> anyhow::Result<()> {
                 }
             }
             slint::RenderingState::BeforeRendering if !failed => {
+                if let Some(proof) = &render_proof { proof.borrow_mut().before_frame(); }
                 if let (Some(r), Some(ui), Some(app)) =
                     (&mut renderer, weak.upgrade(), state.upgrade())
                 {
@@ -164,8 +177,9 @@ fn main() -> anyhow::Result<()> {
                         if let Some(scene) = &mut scene_renderer { scene.pause(); }
                         scene_epoch = epoch;
                     }
-                    if render_paused.load(Ordering::Relaxed) && let Some(scene) = &mut scene_renderer { scene.pause(); }
-                    if !render_paused.load(Ordering::Relaxed) && let Some(scene) = &mut scene_renderer {
+                    let hold = render_paused.load(Ordering::Relaxed) || ui_proof::scene_held(render_frozen.get(), scene_bound);
+                    if hold && let Some(scene) = &mut scene_renderer { scene.pause(); }
+                    if !hold && let Some(scene) = &mut scene_renderer {
                         let appearance=app.borrow_mut().take_player_appearance();
                         let crowd_skins=app.borrow_mut().take_crowd_skins();
                         let result=(|| {
@@ -213,6 +227,7 @@ fn main() -> anyhow::Result<()> {
                             ui.set_error(format!("玻璃绘制失败：{error:#}").into());
                         }
                     }
+                    if let Some(proof) = &render_proof { proof.borrow_mut().underlay_done(); }
                     if scene_options.probe && last_snapshot.elapsed().as_secs() >= 5 {
                         r.device().poll(slint::wgpu_30::wgpu::PollType::Poll).ok();
                         scene::diagnostics::snapshot(r.device(), if scene_bound {"app-live-glass"} else {"app-static"});
@@ -220,7 +235,11 @@ fn main() -> anyhow::Result<()> {
                     }
                 }
             }
+            slint::RenderingState::BeforeRendering => {
+                if let Some(proof) = &render_proof { proof.borrow_mut().before_frame(); }
+            }
             slint::RenderingState::AfterRendering => {
+                if let Some(proof) = &render_proof { proof.borrow_mut().after_frame(scene_bound); }
                 render_stats.borrow_mut().ui_frames+=1;
                 if let Some(start) = scene_start.take() && start.send(()).is_err() {
                     tracing::error!("Scene worker disconnected before initialization");
@@ -266,7 +285,8 @@ fn main() -> anyhow::Result<()> {
             let now = Instant::now();
             let dt = now.duration_since(last).as_secs_f32();
             last = now;
-            let active = scene_enabled.load(Ordering::Relaxed) && !paused.load(Ordering::Relaxed);
+            let active = scene_enabled.load(Ordering::Relaxed) && !paused.load(Ordering::Relaxed)
+                && !ui_proof::scene_held(timer_frozen.get(), stats.borrow().bound);
             if clock.borrow_mut().tick(now, active)
                 && let Some(ui) = timer_ui.upgrade()
             {
@@ -274,7 +294,8 @@ fn main() -> anyhow::Result<()> {
             }
             if scene_options.probe && last_probe_redraw.elapsed().as_secs() >= 1 {
                 if let Some(ui) = timer_ui.upgrade() {
-                    control.poll(&ui);
+                    control.poll(&ui, &timer_frozen);
+                    if let Some(proof) = &timer_proof { proof.borrow().heartbeat(); }
                     runtime_probe::heartbeat(
                         &ui,
                         &stats.borrow(),
@@ -286,6 +307,7 @@ fn main() -> anyhow::Result<()> {
                 }
                 last_probe_redraw = now;
             }
+            if let Some(proof) = &timer_proof { proof.borrow_mut().tick(stats.borrow().bound); }
             if let Some(app) = state.upgrade() {
                 app.borrow_mut().tick(dt);
             }

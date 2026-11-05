@@ -26,6 +26,17 @@ pub fn wire(ui: &AppWindow, paused: Arc<AtomicBool>, probe_unfocused: bool) {
             });
         }
     });
+    let resize_ui = ui.as_weak();
+    ui.on_window_resize(move |edge| {
+        if let Some(ui) = resize_ui.upgrade() {
+            ui.window().with_winit_window(|w| {
+                use slint::winit_030::winit::window::ResizeDirection;
+                let direction = match edge { 0 => ResizeDirection::West, 1 => ResizeDirection::East,
+                    2 => ResizeDirection::North, 3 => ResizeDirection::South, _ => ResizeDirection::SouthEast };
+                if let Err(error) = w.drag_resize_window(direction) { tracing::warn!(?error,"Window resize failed"); }
+            });
+        }
+    });
     ui.window().on_winit_window_event(move |window, event| {
         let focus = match event {
             slint::winit_030::winit::event::WindowEvent::Focused(value) => Some(*value),

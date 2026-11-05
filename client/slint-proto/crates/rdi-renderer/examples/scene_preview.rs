@@ -1,4 +1,4 @@
-//! Windows-only headless preview: scene_preview [output-directory] [elapsed seconds...].
+//! Portable headless preview: scene_preview [output-directory] [elapsed seconds...].
 use anyhow::{Context, Result};
 use rdi_renderer::scene;
 use std::{
@@ -9,7 +9,6 @@ fn main() -> Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(std::env::var("RUST_LOG").unwrap_or_else(|_| "info".into()))
         .init();
-    anyhow::ensure!(cfg!(windows), "Run the preview on Windows (MSVC)");
     let mut args = std::env::args().skip(1);
     let directory =
         std::path::PathBuf::from(args.next().unwrap_or_else(|| "evidence/bg-port".into()));
@@ -65,7 +64,7 @@ fn main() -> Result<()> {
     };
     std::fs::create_dir_all(&directory)?;
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-        backends: wgpu::Backends::DX12,
+        backends: if cfg!(windows) { wgpu::Backends::DX12 } else { wgpu::Backends::PRIMARY },
         ..wgpu::InstanceDescriptor::new_without_display_handle()
     });
     let adapter =

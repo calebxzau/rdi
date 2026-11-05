@@ -10,7 +10,7 @@ Port the launcher UI (`client/ui`, Kotlin + Compose) to Slint on the Rust + wgpu
 | Topic | Owner decision (2026-11-05) |
 |---|---|
 | Priority | UI port now. The complete 3D scene is not urgent |
-| Background | Keep the current golden valley with its default camera. No walking, object picking or world expansion. Those parts of the old plan (M2.1-M2.3, resolution and 30FPS A/B) are on hold |
+| Background | Keep the current golden valley with its default camera. No walking, object picking or world expansion. Those parts of the old plan (M2.1-M2.3, resolution and 30FPS A/B) are on hold. Only the menu screen animates the scene; other screens hold its last frame with the scene kept loaded, and the game running keeps it held too |
 | Order | U1 risk check first, then U2-U5 below |
 | Cut features | Not ported: code editor, quest viewer, host file manager |
 | Business logic | Stays in Kotlin, in a headless child process |
@@ -114,11 +114,13 @@ Each result is **pass, fail or not verified**, with evidence.
 | # | Criterion | Requirement |
 |---|---|---|
 | 1 | Form | Validation, submit and keyboard work; owner confirms IME |
-| 2 | List | 1000 rows: p95 ≤ 16.7ms, p99 ≤ 25ms on the 780M, no steady memory growth |
+| 2 | List and menu | On the 780M, 60Hz display, focused, in every one of 3 runs each: 1000-row list over the held scene frame, and wheel scrolling on the real menu over the live scene. Long frames (interval over 25ms, a missed vsync) ≤ 1%, delivered FPS ≥ 58, frame CPU p95 ≤ 16.7ms, no steady memory growth |
 | 3 | Panel and modal | Alignment within 1 physical pixel at all scales, during animation |
 | 4 | Window | Every action in item 4 works |
 | 5 | Text | Readable at all scales, with no missing glyphs |
 | 6 | Platforms | Mac and Linux CI results reported, including what stays unverified |
+
+Owner approved criterion 2 on 2026-11-05, replacing p95 ≤ 16.7ms and p99 ≤ 25ms: frame intervals average 16.67ms at 60Hz, so a p95 limit of 16.7ms fails on normal jitter even when no frame is missed. The new limits were written down before the rerun. On the same day the owner decided that only the menu screen animates the scene; every other screen shows its last frame, and the scene stays loaded. The list is therefore measured over the held frame, and the menu over the live scene, with the same limits.
 
 If a failure is a Slint limit and the workaround would take more than a day, **stop and report** with options. Do not begin replacing Slint.
 

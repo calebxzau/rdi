@@ -318,3 +318,23 @@ Gate results are in `evidence/m1/gate-summary.md`. M2 requires owner review at G
 unloadable DXC cases. It reads the existing test account from the Debian WSL UNC path into process
 environment variables, without writing or logging credentials. `tools/m1-compare.py` (Pillow/NumPy)
 compares repeated captures and writes local `evidence/m1/comparison.json`.
+
+## U1 UI risk check (GU1)
+
+Run `target/release/rdi-slint-proto.exe --ui-proof` for the login form, 1000-row virtualized room list,
+layout-driven glass panel, modal and mixed-text examples over the unchanged valley.
+Login calls POST /player/jwt; account/password are not saved. Network image loading has loading/error/retry states.
+`--ui-proof-script` waits for a live scene and five seconds of focus, then scripts 30s wheel scrolling
+and 10s panel animation. It logs p50/p95/p99/worst frame intervals and CPU render work separately.
+Unfocused or missing-scene frames invalidate the run. These are UI callback intervals, not GPU timestamps.
+
+- `tools/u1-validate.ps1`: workspace tests, all-target/all-feature Clippy, release app/examples.
+- `tools/u1-runtime.ps1 -Tag <new-tag>`: three focused runs, memory samples and native DPI/window captures.
+- `tools/u1-auth.ps1 -Tag <new-tag>`: real login through the proof submit callback using the existing
+  local test-account file, never copying credentials into commands or logs.
+- `tools/u1-platform-compare.py <Windows-dir> <platform-artifact-dir>`: RGB MAE for 0/15/45 captures.
+- `.github/workflows/slint-proto-platforms.yml`: adapter-first macOS/Linux CI; requires owner approval
+  before pushing. No credentials are supplied to CI.
+
+[GU1 manual checks](evidence/ui-port/u1/owner-checklist.md) include Windows Chinese IME and physical-monitor DPI.
+U1 replaces the old M2 work; walking, picking, world expansion and resolution/FPS changes remain on hold.

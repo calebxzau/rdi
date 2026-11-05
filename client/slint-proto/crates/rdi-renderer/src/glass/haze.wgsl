@@ -27,6 +27,7 @@ struct Params {
     refraction_scale: f32,
     content_normal_blend: f32,
     fresnel_exponent: f32,
+    opacity: f32,
 }
 
 @group(0) @binding(0) var<uniform> params: Params;
@@ -493,5 +494,5 @@ fn shade(coord: vec2f) -> vec4f {
 
 @fragment
 fn fs(@builtin(position) pos: vec4f) -> @location(0) vec4f {
-    return shade(pos.xy);
+    return shade(pos.xy) * params.opacity;
 }

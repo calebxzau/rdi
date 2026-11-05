@@ -1,5 +1,11 @@
 use anyhow::{Context, Result, bail};
 pub struct Config {
+    pub ui_proof: bool,
+    pub ui_proof_script: bool,
+    /// Keep the scene moving on the proof screen. It normally holds its last frame, like any non-menu screen.
+    pub ui_proof_live_scene: bool,
+    /// Measure scripted wheel scrolling on the real menu screen.
+    pub menu_proof: bool,
     pub show_others: bool,
     pub all_playable: bool,
     pub solid: bool,
@@ -17,6 +23,10 @@ pub struct Config {
 impl Config {
     pub fn read() -> Result<Self> {
         let mut c = Self {
+            ui_proof: false,
+            ui_proof_script: false,
+            ui_proof_live_scene: false,
+            menu_proof: false,
             show_others: false,
             all_playable: false,
             solid: false,
@@ -33,6 +43,10 @@ impl Config {
         let mut args = std::env::args().skip(1);
         while let Some(a) = args.next() {
             match a.as_str() {
+                "--ui-proof" => c.ui_proof = true,
+                "--ui-proof-script" => { c.ui_proof = true; c.ui_proof_script = true; }
+                "--ui-proof-live-scene" => { c.ui_proof = true; c.ui_proof_live_scene = true; }
+                "--menu-proof" => c.menu_proof = true,
                 "--show-others" => c.show_others = true,
                 "--all-playable" => c.all_playable = true,
                 "--solid-window" => c.solid = true,

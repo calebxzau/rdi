@@ -36,12 +36,21 @@ pub struct Pill {
     pub progress: f32,
     pub pivot: [f32; 2],
 }
+/// Logical-pixel rectangle supplied by the UI layout.
+#[derive(Clone, Copy, Debug)]
+pub struct Panel {
+    pub rect: [f32; 4],
+    pub corner_radius: f32,
+    pub tint: [f32; 4],
+    pub opacity: f32,
+}
 pub struct Frame {
     pub width: i32,
     pub height: i32,
     pub scale: f32,
     pub grids: Vec<Grid>,
     pub pills: Vec<Pill>,
+    pub panels: Vec<Panel>,
 }
 /// Every texture is plain 8-bit RGBA, like femtovg's swapchain (no sRGB conversion).
 const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
@@ -592,6 +601,16 @@ impl Renderer {
                 batch.add(&self.pipelines.rim, frost, &writer.finish(), None)?;
             }
         }
+        for panel in &f.panels {
+            validate_panel(panel)?;
+            if panel.opacity <= 0. || panel.rect[2] <= 0. || panel.rect[3] <= 0. { continue; }
+            let g = PillGeometry::new(&Pill { rect: panel.rect, selected: false, progress: 0., pivot: [0.; 2] }, f.scale);
+            let frost = &cache.frosts[FROST_HAZE].group;
+            haze_surface(&mut writer, f, transform, &g, Some(panel));
+            batch.add(&self.pipelines.haze, frost, &writer.finish(), None)?;
+            rim_surface(&mut writer, f, &g, Some(panel));
+            batch.add(&self.pipelines.rim, frost, &writer.finish(), None)?;
+        }
         self.queue.write_buffer(&self.uniforms, 0, &batch.bytes);
         let mut encoder = self
             .device
@@ -745,6 +764,12 @@ impl PillGeometry {
 // The functions below write the fields of each shader's `Params` struct in declaration order;
 // `tests::params_match_shaders` checks them against the WGSL layouts.
 /// Frame pixels per background image pixel when the image covers the frame (ContentScale.Crop).
+fn validate_panel(panel: &Panel) -> Result<()> {
+    anyhow::ensure!(panel.rect.iter().chain(panel.tint.iter()).all(|v| v.is_finite())
+        && panel.corner_radius.is_finite() && panel.corner_radius >= 0.
+        && panel.opacity.is_finite() && (0. ..=1.).contains(&panel.opacity), "invalid glass panel");
+    Ok(())
+}
 fn content_cover_scale(f: &Frame, image_size: [f32; 2]) -> f32 {
     (f.width as f32 / image_size[0]).max(f.height as f32 / image_size[1])
 }
@@ -833,10 +858,13 @@ fn pill_params(w: &mut UniformWriter, f: &Frame, transform: [f32; 4], g: &PillGe
     .f32(0.5 * g.progress); // glow_intensity
 }
 fn haze_params(w: &mut UniformWriter, f: &Frame, transform: [f32; 4], g: &PillGeometry) {
+    haze_surface(w, f, transform, g, None);
+}
+fn haze_surface(w: &mut UniformWriter, f: &Frame, transform: [f32; 4], g: &PillGeometry, panel: Option<&Panel>) {
     let s = f.scale;
     let height = g.rect[3];
-    w.vec4([height * 0.5 * g.k; 4]) // corner_radii
-        .vec4([0.98, 0.97, 1.0, 0.35]) // tint_color
+    w.vec4([panel.map_or(height * 0.5 * g.k, |p| p.corner_radius * s); 4])
+        .vec4(panel.map_or([0.98, 0.97, 1.0, 0.35], |p| p.tint))
         .vec4(transform)
         .vec2([f.width as f32, f.height as f32]) // sample_size
         .vec2(g.origin())
@@ -856,11 +884,15 @@ fn haze_params(w: &mut UniformWriter, f: &Frame, transform: [f32; 4], g: &PillGe
         .f32(1.5) // chroma_multiplier
         .f32(48.0 * s) // refraction_scale
         .f32(0.15) // content_normal_blend
-        .f32(3.0); // fresnel_exponent
+        .f32(3.0) // fresnel_exponent
+        .f32(panel.map_or(1.0, |p| p.opacity)); // opacity
 }
 fn rim_params(w: &mut UniformWriter, f: &Frame, g: &PillGeometry) {
+    rim_surface(w, f, g, None);
+}
+fn rim_surface(w: &mut UniformWriter, f: &Frame, g: &PillGeometry, panel: Option<&Panel>) {
     let [_, _, width, height] = g.rect;
-    w.vec4([height * 0.5 * g.k; 4]) // corner_radii
+    w.vec4([panel.map_or(height * 0.5 * g.k, |p| p.corner_radius * f.scale); 4]) // corner_radii
         .vec4([0.0, 0.0, 0.0, 0.14]) // edge_shadow
         .vec2(g.origin())
         .vec2(g.size())
@@ -868,10 +900,29 @@ fn rim_params(w: &mut UniformWriter, f: &Frame, g: &PillGeometry) {
         .f32(2.0) // sample_step
         .f32(0.48) // specular_intensity
         .f32(24.0) // specular_exponent
-        .f32(f.scale); // edge_softness
+        .f32(f.scale) // edge_softness
+        .f32(panel.map_or(1.0, |p| p.opacity)); // opacity
 }
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn panel_geometry_and_opacity_are_packed_with_the_shader_layout() {
+        let f = frame(1280, 720);
+        let panel = Panel { rect:[20.,30.,400.,240.],corner_radius:24.,tint:[0.1,0.2,0.3,0.4],opacity:0.5 };
+        let g = PillGeometry::new(&Pill { rect:panel.rect,selected:false,progress:0.,pivot:[0.;2] },f.scale);
+        let mut w = UniformWriter::default();
+        haze_surface(&mut w,&f,[1.;4],&g,Some(&panel));
+        let (offsets, _) = shaders::tests::params_layout(shaders::HAZE);
+        assert_eq!(w.offsets(), offsets);
+        let bytes = w.finish();
+        let values: &[f32] = bytemuck::cast_slice(&bytes);
+        assert_eq!(&values[..4], &[24.;4]);
+        assert_eq!(&values[4..8], &panel.tint);
+        assert_eq!(values[*offsets.last().unwrap() as usize / 4], 0.5);
+        assert!(validate_panel(&panel).is_ok());
+        assert!(validate_panel(&Panel { opacity:f32::NAN,..panel }).is_err());
+    }
+
     fn test_metrics() -> super::GridMetrics {
         super::GridMetrics {
             tile: 126.,
@@ -889,6 +940,7 @@ mod tests {
             scale: 1.0,
             grids: vec![],
             pills: vec![],
+            panels: vec![],
         }
     }
     fn uv(t: [f32; 4], p: [f32; 2]) -> [f32; 2] {
@@ -952,6 +1004,7 @@ mod tests {
             width: (1280.0 * scale) as i32,
             height: (720.0 * scale) as i32,
             scale,
+            panels: vec![],
             grids: vec![grid(163.0, 2, -1), grid(420.0, -1, 1)],
             pills: vec![
                 pill(10.0, true, 0.5),
@@ -1018,6 +1071,7 @@ mod tests {
             scale: 2.0,
             grids: vec![],
             pills: vec![],
+            panels: vec![],
         };
         let grid = Grid {
             y: 163.0,

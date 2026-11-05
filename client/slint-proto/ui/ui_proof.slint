@@ -1,0 +1,111 @@
+import { LineEdit, Button, ListView, TextEdit, ScrollView } from "std-widgets.slint";
+import { Theme } from "theme.slint";
+export struct ProofRow { name: string, detail: string, icon: image, state: string }
+export struct ProofRect { x: float, y: float, w: float, h: float, radius: float, alpha: float }
+component Field inherits Rectangle {
+    in property <string> label;
+    in-out property <string> text;
+    in property <bool> password;
+    callback accepted();
+    forward-focus: edit;
+    height: 48px; border-width: 1px; border-color: #79747e; border-radius: 24px;
+    background: #ffffffb8;
+    edit := LineEdit {
+        x: 12px; width: parent.width - 24px; height: parent.height;
+        text <=> root.text; placeholder-text: root.label;
+        input-type: root.password ? InputType.password : InputType.text;
+        accepted => { root.accepted(); }
+    }
+}
+export component UiProof inherits Rectangle {
+    in property <[ProofRow]> rows;
+    in property <bool> busy;
+    in property <string> message;
+    in-out property <bool> panel-open;
+    in-out property <bool> modal-open;
+    in-out property <float> freeze: -1;
+    private property <float> animated-progress: root.panel-open ? 1 : 0;
+    animate animated-progress { duration: 300ms; easing: ease-in-out; }
+    out property <float> progress: root.freeze >= 0 ? root.freeze : root.animated-progress;
+    out property <float> scroll: -list.content-y / 1px;
+    out property <ProofRect> form-rect: { x: form.x / 1px, y: 40 + form.y / 1px, w: form.width / 1px, h: form.height / 1px, radius: 28, alpha: 1 };
+    out property <ProofRect> list-rect: { x: list-panel.x / 1px, y: 40 + list-panel.y / 1px, w: list-panel.width / 1px, h: list-panel.height / 1px, radius: 24, alpha: 1 };
+    out property <ProofRect> panel-rect: { x: panel.x / 1px, y: 40 + panel.y / 1px, w: panel.width / 1px, h: panel.height / 1px, radius: 24 * (0.92 + 0.08 * root.progress), alpha: root.progress };
+    out property <ProofRect> modal-rect: { x: modal.x / 1px, y: 40 + modal.y / 1px, w: modal.width / 1px, h: modal.height / 1px, radius: 24, alpha: root.modal-open ? 1 : 0 };
+    callback submit(string, string);
+    callback images();
+    callback start();
+    callback wheel(float);
+    wheel(delta) => {
+        list.content-y = clamp(list.content-y + delta * 1px, min(0px, list.height - list.content-height), 0px);
+    }
+    form := FocusScope {
+        enabled: !root.modal-open;
+        x: 20px; y: 20px; width: min(380px, parent.width * 0.36); height: parent.height - 40px;
+        ScrollView { width: parent.width; height: parent.height;
+        VerticalLayout {
+            padding: 22px; spacing: 8px;
+            Text { text: "RDi"; font-size: 24px; font-weight: 700; horizontal-alignment: center; color: Theme.ink; }
+            account := Field { label: "RDID/QQ号"; accepted => { root.submit(account.text, password.text); } }
+            password := Field { label: "密码"; password: true; accepted => { root.submit(account.text, password.text); } }
+            Button { text: root.busy ? "登录中.." : "登录"; enabled: !root.busy; clicked => {root.submit(account.text, password.text);} }
+            Text { text: root.message; color: #402040; wrap: word-wrap; font-size: 13px; }
+            Text { text: "房间名称"; color: Theme.ink; }
+            Field { label: "给房间起个名字"; }
+            Text { text: "中文Minecraft1.21.1 · RDi 123"; color: Theme.ink; font-size: 16px; }
+            Text { text: "\u{f015}  \u{f11b}  \u{f013}"; font-family: Theme.symbols; color: Theme.ink; font-size: 20px; }
+            Text { text: "长文本换行：与朋友一起探索世界，建造房屋，分享Minecraft的冒险。English words wrap with 中文。"; wrap: word-wrap; color: Theme.ink; }
+            Text { text: "超长房间名称LongRoomName会在末尾省略，保持卡片宽度"; overflow: elide; color: Theme.ink; }
+            TextEdit { text: "可选择复制的RDID：0123456789abcdef"; read-only: true; height: 40px; }
+            Button { text: root.panel-open ? "关闭房间面板" : "打开房间面板"; clicked => {root.panel-open = !root.panel-open;} }
+            Button { text: "打开对话框"; clicked => {root.modal-open = true;} }
+            Button { text: "重新加载网络图片"; clicked => {root.images();} }
+            Button { text: "开始30秒滚动与动画检查"; clicked => {root.start();} }
+        }
+    }
+    }
+    list-panel := FocusScope {
+        enabled: !root.modal-open;
+        x: form.x + form.width + 20px; y: 20px; width: parent.width - self.x - 20px; height: parent.height - 40px;
+        Text { x: 16px; y: 12px; text: "房间列表 · 1000个"; color: Theme.ink; font-size: 18px; }
+        list := ListView {
+            x: 8px; y: 44px; width: parent.width - 16px; height: parent.height - 52px;
+            for row[index] in root.rows: Rectangle {
+                height: 84px; width: list.width;
+                background: mod(index, 2) == 0 ? #ffffff45 : #ffffff18;
+                Image { x: 12px; y: 10px; width: 60px; height: 60px; source: row.icon; image-fit: cover; }
+                Text { x: 84px; y: 10px; width: parent.width - 96px; text: row.name; overflow: elide; font-weight: 600; color: Theme.ink; }
+                Text { x: 84px; y: 32px; width: parent.width - 96px; text: row.detail; overflow: elide; color: Theme.ink; font-size: 13px; }
+                Text { x: 84px; y: 54px; width: parent.width - 96px; text: row.state; color: #404040; font-size: 12px; }
+            }
+        }
+    }
+    panel := FocusScope {
+        enabled: !root.modal-open;
+        x: parent.width - self.width - 36px + (1 - root.progress) * 120px;
+        y: 90px + (1 - root.progress) * 24px;
+        width: 360px * (0.92 + 0.08 * root.progress); height: 240px * (0.92 + 0.08 * root.progress);
+        visible: root.progress > 0;
+        // Alpha on leaves only; no parent opacity or rounded clip layers.
+        TouchArea {}
+        Text { x: 24px; y: 24px; text: "朋友的房间"; color: #171a1f.with-alpha(root.progress); font-size: 22px; }
+        Text { x: 24px; y: 65px; width: parent.width - 48px; wrap: word-wrap; text: "玻璃跟随布局滑动与缩放。叠放面板不会折射其他面板的文字。"; color: #171a1f.with-alpha(root.progress); }
+        Text { x: 24px; y: parent.height - 50px; text: "关闭"; color: #171a1f.with-alpha(root.progress); TouchArea { clicked => {root.panel-open = false;} } }
+    }
+    if root.modal-open: Rectangle {
+        width: parent.width; height: parent.height; background: #00000066;
+        TouchArea { clicked => {root.modal-open = false;} }
+    }
+    modal := Rectangle {
+        x: (parent.width - self.width) / 2; y: (parent.height - self.height) / 2;
+        width: 360px; height: 200px; visible: root.modal-open;
+        background: #f8f4ffe8; border-radius: 24px;
+        TouchArea {}
+        VerticalLayout {
+            padding: 24px; spacing: 16px;
+            Text { text: "房间提示"; font-size: 22px; color: Theme.ink; }
+            Text { text: "对话框会阻止下方的点击。按确定继续。"; wrap: word-wrap; color: Theme.ink; }
+            Button { text: "确定"; clicked => {root.modal-open = false;} }
+        }
+    }
+}

@@ -192,7 +192,7 @@ impl App {
             last_scale: 0.0,
         }));
         Self::wire(&app, ui);
-        app.borrow_mut().login();
+        if !app.borrow().config.ui_proof { app.borrow_mut().login(); }
         Ok(app)
     }
     fn wire(app: &Rc<RefCell<Self>>, ui: &AppWindow) {
@@ -751,6 +751,7 @@ impl App {
         }
     }
     pub fn frame(&self, ui: &AppWindow) -> glass::Frame {
+        if ui.get_ui_proof() { return crate::ui_proof::frame(ui); }
         let size = ui.window().size();
         let width = ui.get_logical_width();
         let height = ui.get_logical_height();
@@ -823,6 +824,7 @@ impl App {
             scale: ui.window().scale_factor(),
             grids,
             pills,
+            panels: vec![],
         }
     }
 }

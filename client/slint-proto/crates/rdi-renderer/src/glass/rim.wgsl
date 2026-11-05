@@ -13,6 +13,7 @@ struct Params {
     specular_intensity: f32,
     specular_exponent: f32,
     edge_softness: f32,
+    opacity: f32,
 }
 
 @group(0) @binding(0) var<uniform> params: Params;
@@ -67,5 +68,5 @@ fn shade(coord: vec2f) -> vec4f {
 
 @fragment
 fn fs(@builtin(position) pos: vec4f) -> @location(0) vec4f {
-    return shade(pos.xy);
+    return shade(pos.xy) * params.opacity;
 }

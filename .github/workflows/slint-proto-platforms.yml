@@ -1,0 +1,103 @@
+name: Slint prototype platforms
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'client/slint-proto/**'
+      - '.github/workflows/slint-proto-platforms.yml'
+permissions:
+  contents: read
+jobs:
+  platforms:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15, ubuntu-24.04]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: client/slint-proto
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - name: Linux graphics dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y mesa-vulkan-drivers libvulkan1 libxkbcommon-dev libfontconfig1-dev libx11-dev libxi-dev libxcursor-dev libxrandr-dev libxinerama-dev xvfb x11-apps wmctrl openbox
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Probe primary adapter first
+        id: probe
+        run: |
+          mkdir -p evidence/ui-port/u1/platform
+          status=0
+          cargo run -p rdi-renderer --example adapter_probe > evidence/ui-port/u1/platform/adapter.log 2>&1 || status=$?
+          echo "$status" > evidence/ui-port/u1/platform/adapter.exit
+          echo "usable=$status" >> "$GITHUB_OUTPUT"
+      - name: Compile and test workspace
+        run: cargo test --workspace > evidence/ui-port/u1/platform/tests.log 2>&1
+      - name: Draw scene
+        if: always() && steps.probe.outputs.usable == '0'
+        run: |
+          if [ "$RUNNER_OS" = Linux ]; then
+            xvfb-run -a cargo run --release -p rdi-renderer --example scene_preview -- evidence/ui-port/u1/platform 0 15 45 --crowd=50 --capture-only > evidence/ui-port/u1/platform/scene.log 2>&1
+          else
+            cargo run --release -p rdi-renderer --example scene_preview -- evidence/ui-port/u1/platform 0 15 45 --crowd=50 --capture-only > evidence/ui-port/u1/platform/scene.log 2>&1
+          fi
+      - name: Build application
+        if: always()
+        run: cargo build --release -p rdi-slint-proto > evidence/ui-port/u1/platform/build.log 2>&1
+      - name: Best effort window check without secrets
+        continue-on-error: true
+        run: |
+          if [ "$RUNNER_OS" = Linux ]; then
+            xvfb-run -a sh -c 'openbox >/tmp/openbox.log 2>&1 & python3 tools/u1-platform-window.py'
+          else
+            python3 tools/u1-platform-window.py
+          fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: slint-proof-${{ matrix.os }}
+          path: client/slint-proto/evidence/ui-port/u1/platform/
+  mac-fallback:
+    needs: platforms
+    if: always()
+    runs-on: macos-14
+    defaults:
+      run:
+        working-directory: client/slint-proto
+        shell: bash
+    steps:
+      - uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: slint-proof-macos-15
+          path: ${{ runner.temp }}/macos-15
+      - name: Retry only when macos-15 had no usable adapter
+        id: decide
+        working-directory: .
+        run: |
+          if [ "$(tr -d '[:space:]' < "$RUNNER_TEMP/macos-15/adapter.exit" 2>/dev/null)" = 0 ]; then
+            echo "retry=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "retry=true" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/checkout@v4
+        if: steps.decide.outputs.retry == 'true'
+      - uses: dtolnay/rust-toolchain@stable
+        if: steps.decide.outputs.retry == 'true'
+      - name: One macos-14 retry
+        if: steps.decide.outputs.retry == 'true'
+        run: |
+          mkdir -p evidence/ui-port/u1/platform
+          cargo run -p rdi-renderer --example adapter_probe > evidence/ui-port/u1/platform/adapter.log 2>&1
+          cargo test --workspace > evidence/ui-port/u1/platform/tests.log 2>&1
+          cargo run --release -p rdi-renderer --example scene_preview -- evidence/ui-port/u1/platform 0 15 45 --crowd=50 --capture-only > evidence/ui-port/u1/platform/scene.log 2>&1
+          cargo build --release -p rdi-slint-proto > evidence/ui-port/u1/platform/build.log 2>&1
+          python3 tools/u1-platform-window.py
+      - uses: actions/upload-artifact@v4
+        if: always() && steps.decide.outputs.retry == 'true'
+        with:
+          name: slint-proof-macos-14
+          path: client/slint-proto/evidence/ui-port/u1/platform/
