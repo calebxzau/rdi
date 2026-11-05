@@ -1,5 +1,4 @@
-//! GPU scene shared by the application and its Windows preview tool.
-pub mod scene;
-
+//! Compatibility exports for application diagnostics.
 #[cfg(feature = "allocation-probe")]
-pub mod allocation_probe;
+pub use rdi_renderer::allocation_probe;
+pub use rdi_renderer::scene;

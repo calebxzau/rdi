@@ -193,3 +193,17 @@
 - Corrected the DXC license reading: `dxcompiler.dll` is under `LICENSE-LLVM.txt`, and `LICENSE-MS.txt` covers only `dxil.dll`, which is not shipped.
 - Crate is now tracked in git. `client/.gitignore` no longer ignores it. `evidence/` stays local except `*.md`; `target/` stays ignored.
 - M1 and M2 plan: `M1-M2-PLAN.md`, to be implemented by another agent. **Next: M1.**
+
+## 2026-11-05 (M1: UI-independent renderer, G1)
+- Extracted scene/glass/allocation probe and four examples into workspace member crates/rdi-renderer.
+- Direct wgpu30.0.1 dependency; no Slint in renderer normal/build tree, one workspace wgpu.
+- App owns GridMetrics, texture-to-Slint conversion, default GPU settings/DXC location and existing shutdown leak/Automatic fallback.
+- Added explicit CameraPose/FrameInput; legacy uniform oracle and explicit main/reflection input tests pass.
+- Windows default/all-feature tests: 59 renderer +16 app; both all-target Clippy checks pass. 12 explicit glass captures pass.
+- All28 paired captures identical, including0/15/45 Steve+50 crowd and both compiler/three-scale glass; repeated noise0. All30 WGSL files unchanged.
+- Final sequential authenticated A/B: first frame564→575ms, first live1622→1637ms (medians rounds2–6). New app close172–186ms/exit0. Missing/unloadable DXC both reach live FXC and exit0.
+- Focused memory not verified: captured runs were unfocused; exploratory values and limits are in evidence/m1/gate-summary.md.
+- Added M1 helpers and renderer API docs. No Kotlin/Gradle/M2 changes, commits or pushes. **Stopped at G1 for owner review.**
+
+## 2026-11-05 (G1 passed)
+- Owner passed G1. M1 committed, not pushed. **Next: M2.1-M2.3, stop at G2a.** M2.8 must first make measurement runs really focused.

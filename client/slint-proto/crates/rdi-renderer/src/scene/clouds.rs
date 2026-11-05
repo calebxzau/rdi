@@ -2,7 +2,6 @@
 use super::{diagnostics, terrain::hash01, textures};
 use anyhow::Result;
 use glam::Vec3;
-use slint::wgpu_30::wgpu;
 
 #[derive(Clone, Copy, Debug)]
 pub struct Coordinates {
@@ -208,7 +207,7 @@ impl Clouds {
         frame_layout: &wgpu::BindGroupLayout,
         samples: u32,
     ) -> Result<Self> {
-        let mut image=image::load_from_memory(include_bytes!("../../../bg-renderer/src/main/resources/assets/minecraft/textures/environment/clouds.png"))?.to_rgba8();
+        let mut image=image::load_from_memory(include_bytes!("../../../../../bg-renderer/src/main/resources/assets/minecraft/textures/environment/clouds.png"))?.to_rgba8();
         thin_cover(&mut image, 0.45);
         let view = textures::upload_image(device, queue, image, "scene clouds SRGB", true, false);
         let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {

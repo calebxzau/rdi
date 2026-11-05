@@ -1,7 +1,6 @@
 //! Diagnostic allocator attribution, separate from the production executable and its timings.
 use anyhow::Result;
-use rdi_slint_proto::scene;
-use slint::wgpu_30::wgpu;
+use rdi_renderer::scene;
 use std::{
     alloc::{GlobalAlloc, Layout, System},
     sync::atomic::{AtomicU64, Ordering},
@@ -96,7 +95,10 @@ fn main() -> Result<()> {
         if deadline > now {
             std::thread::sleep(deadline - now);
         }
-        anyhow::ensure!(renderer.render(i as f64 / 60.)?, "diagnostic frame skipped");
+        anyhow::ensure!(
+            renderer.render(scene::FrameInput::at(i as f64 / 60.))?,
+            "diagnostic frame skipped"
+        );
         device.poll(wgpu::PollType::wait_indefinitely())?;
         if i == 0 {
             mark(Some(&device), "after-first-frame");

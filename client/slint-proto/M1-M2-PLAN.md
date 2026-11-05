@@ -249,6 +249,8 @@ Replace `WIDTH/HEIGHT` constants with a `RenderSize` chosen at creation, includi
 
 Add a `--main-frame-script` mode that plays a fixed 60s sequence: walk, orbit, hover, open and close a panel, scroll the list. It logs per-frame CPU time, GPU completion time (`perf` already measures completion), UI frame count, and p50/p95/p99 and the worst frame.
 
+First make the measurement harness run with a really focused window. Every G1 run logged `focused=false`, and the scene pauses without focus unless the probe overrides it, so check the runtime snapshot and reject any round that is not focused.
+
 Compare on the 780M, focused, three rounds each:
 
 - Scene at 1280x720, 1600x900 and 1920x1080.

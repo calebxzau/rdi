@@ -1,7 +1,7 @@
 //! One bounded upload buffer, reused only after the preceding copy completes (debug experiment).
 use super::diagnostics;
 use anyhow::Result;
-use slint::wgpu_30::wgpu::{self, util::DeviceExt};
+use wgpu::util::DeviceExt;
 pub fn buffer(
     device: &wgpu::Device,
     queue: &wgpu::Queue,

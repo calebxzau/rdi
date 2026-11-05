@@ -1,11 +1,10 @@
 //! Reference PNGs are embedded by path; color mips are averaged in linear light.
 use super::{diagnostics, mesh::Material, state::srgb_to_linear};
 use anyhow::{Context, Result};
-use slint::wgpu_30::wgpu;
 macro_rules! block {
     ($n:literal) => {
         include_bytes!(concat!(
-            "../../../bg-renderer/src/main/resources/assets/minecraft/textures/block/",
+            "../../../../../bg-renderer/src/main/resources/assets/minecraft/textures/block/",
             $n,
             ".png"
         ))
@@ -197,7 +196,7 @@ pub fn upload_image(
     texture.create_view(&Default::default())
 }
 pub const SUN: &[u8] = include_bytes!(
-    "../../../bg-renderer/src/main/resources/assets/minecraft/textures/environment/sun.png"
+    "../../../../../bg-renderer/src/main/resources/assets/minecraft/textures/environment/sun.png"
 );
 #[cfg(test)]
 mod tests {

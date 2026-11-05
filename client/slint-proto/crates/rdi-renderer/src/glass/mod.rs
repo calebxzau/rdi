@@ -1,8 +1,15 @@
 mod shaders;
 pub mod uniforms;
-use crate::hosts::{HEIGHT, PADDING, PITCH, ROWS, TILE};
+/// Layout metrics in logical pixels, owned by the calling UI.
+#[derive(Clone, Copy)]
+pub struct GridMetrics {
+    pub tile: f32,
+    pub pitch: f32,
+    pub padding: f32,
+    pub rows: usize,
+    pub height: f32,
+}
 use anyhow::{Context, Result, bail};
-use slint::wgpu_30::wgpu;
 use std::{
     future::Future,
     num::NonZeroU64,
@@ -118,6 +125,7 @@ impl<'a> Batch<'a> {
     }
 }
 pub struct Renderer {
+    metrics: GridMetrics,
     device: wgpu::Device,
     queue: wgpu::Queue,
     layout: wgpu::BindGroupLayout,
@@ -160,10 +168,10 @@ impl Renderer {
     pub fn device(&self) -> &wgpu::Device {
         &self.device
     }
-    pub fn new(device: wgpu::Device, queue: wgpu::Queue) -> Result<Self> {
-        validated(&device.clone(), || Self::create(device, queue))
+    pub fn new(device: wgpu::Device, queue: wgpu::Queue, metrics: GridMetrics) -> Result<Self> {
+        validated(&device.clone(), || Self::create(device, queue, metrics))
     }
-    fn create(device: wgpu::Device, queue: wgpu::Queue) -> Result<Self> {
+    fn create(device: wgpu::Device, queue: wgpu::Queue, metrics: GridMetrics) -> Result<Self> {
         let info = device.adapter_info();
         tracing::info!(backend = ?info.backend, adapter = %info.name, driver = %info.driver_info, "wgpu setup");
         let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -265,7 +273,7 @@ impl Renderer {
             ..Default::default()
         });
         let started = Instant::now();
-        let image = image::load_from_memory(include_bytes!("../../assets/bg.png"))
+        let image = image::load_from_memory(include_bytes!("../../../../assets/bg.png"))
             .context("背景图片解码失败")?
             .to_rgba8();
         tracing::info!(
@@ -298,6 +306,7 @@ impl Renderer {
             extent([w, h]),
         );
         Ok(Self {
+            metrics,
             device,
             queue,
             layout,
@@ -387,7 +396,7 @@ impl Renderer {
                 .chain(cache.frosts.iter())
                 .map(|b| u64::from(b.texture.width()) * u64::from(b.texture.height()) * 4)
                 .sum();
-            rdi_slint_proto::scene::diagnostics::resource(
+            crate::scene::diagnostics::resource(
                 "glass live retained downsample+horizontal+frost",
                 bytes,
             );
@@ -431,7 +440,7 @@ impl Renderer {
             .iter()
             .map(|b| u64::from(b.texture.width()) * u64::from(b.texture.height()) * 4)
             .sum();
-        rdi_slint_proto::scene::diagnostics::resource("glass static retained frost", bytes);
+        crate::scene::diagnostics::resource("glass static retained frost", bytes);
         tracing::info!(
             width = size[0],
             height = size[1],
@@ -511,24 +520,21 @@ impl Renderer {
         self.submit_passes(&batch, &targets);
         Ok(())
     }
-    pub fn render(&mut self, f: &Frame, scene_changed: bool) -> Result<Option<slint::Image>> {
+    pub fn render(&mut self, f: &Frame, scene_changed: bool) -> Result<Option<wgpu::Texture>> {
         if f.width <= 0 || f.height <= 0 {
             return Ok(None);
         }
         let device = self.device.clone();
         validated(&device, || self.render_inner(f, scene_changed))
     }
-    fn render_inner(&mut self, f: &Frame, scene_changed: bool) -> Result<Option<slint::Image>> {
+    fn render_inner(&mut self, f: &Frame, scene_changed: bool) -> Result<Option<wgpu::Texture>> {
         let key = (f.width as u32, f.height as u32, f.scale.to_bits());
         let mut created = None;
         if self.cache.as_ref().map(|c| c.key) != Some(key) {
             // Release the old textures before allocating the new ones.
             self.cache = None;
             let cache = self.build_cache(f)?;
-            created = Some(
-                slint::Image::try_from(cache.backdrop.clone())
-                    .map_err(|e| anyhow::anyhow!("背景纹理无法交给Slint：{e}"))?,
-            );
+            created = Some(cache.backdrop.clone());
             self.cache = Some(cache);
         }
         let Some(cache) = &self.cache else {
@@ -558,11 +564,12 @@ impl Renderer {
             }
             // The shader repeats tiles by modulo, so it must be clipped to the grid band.
             let top = (grid.y * f.scale).clamp(0.0, size[1] as f32) as u32;
-            let bottom = ((grid.y + HEIGHT) * f.scale).clamp(0.0, size[1] as f32) as u32;
+            let bottom =
+                ((grid.y + self.metrics.height) * f.scale).clamp(0.0, size[1] as f32) as u32;
             if bottom <= top {
                 continue;
             }
-            grid_params(&mut writer, f, transform, grid);
+            grid_params(&mut writer, f, transform, grid, self.metrics);
             let frost = &cache.frosts[FROST_TILE].group;
             batch.add(
                 &self.pipelines.grid,
@@ -759,19 +766,28 @@ fn background_params(w: &mut UniformWriter, transform: [f32; 4]) {
 fn blur_params(w: &mut UniformWriter, size: [f32; 2], direction: [f32; 2], sigma: f32) {
     w.vec2(size).vec2(direction).f32(sigma);
 }
-fn grid_params(w: &mut UniformWriter, f: &Frame, transform: [f32; 4], grid: &Grid) {
+fn grid_params(
+    w: &mut UniformWriter,
+    f: &Frame,
+    transform: [f32; 4],
+    grid: &Grid,
+    metrics: GridMetrics,
+) {
     let s = f.scale;
     let t = uniforms::tile(s);
     w.vec4([1.0, 1.0, 1.0, 0.2]) // tint
         .vec4([1.0, 1.0, 1.0, 0.7]) // hairline
         .vec4(transform)
-        .vec2([(PADDING + grid.scroll + grid.x) * s, (grid.y + PADDING) * s]) // origin
-        .vec2([PITCH * s; 2])
-        .vec2([TILE * s; 2])
+        .vec2([
+            (metrics.padding + grid.scroll + grid.x) * s,
+            (grid.y + metrics.padding) * s,
+        ]) // origin
+        .vec2([metrics.pitch * s; 2])
+        .vec2([metrics.tile * s; 2])
         .vec2(t.light)
         .vec2(t.shadow)
         .vec2([3.0 * s, 6.0 * s]) // shadow_offset_y
-        .f32(ROWS as f32)
+        .f32(metrics.rows as f32)
         .f32(grid.count as f32)
         .f32(t.radius)
         .f32(t.bevel)
@@ -856,6 +872,15 @@ fn rim_params(w: &mut UniformWriter, f: &Frame, g: &PillGeometry) {
 }
 #[cfg(test)]
 mod tests {
+    fn test_metrics() -> super::GridMetrics {
+        super::GridMetrics {
+            tile: 126.,
+            pitch: 138.,
+            padding: 16.,
+            rows: 3,
+            height: 434.,
+        }
+    }
     use super::*;
     fn frame(width: i32, height: i32) -> Frame {
         Frame {
@@ -904,7 +929,8 @@ mod tests {
         let (device, queue) =
             pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default()))
                 .expect("device");
-        let mut renderer = Renderer::new(device.clone(), queue.clone()).expect("renderer");
+        let mut renderer =
+            Renderer::new(device.clone(), queue.clone(), test_metrics()).expect("renderer");
         let grid = |y: f32, hover: i32, pressed: i32| Grid {
             y,
             x: 0.0,
@@ -1028,7 +1054,7 @@ mod tests {
             (
                 "grid",
                 shaders::GRID,
-                Box::new(|w| grid_params(w, &frame, [1.0; 4], &grid)),
+                Box::new(|w| grid_params(w, &frame, [1.0; 4], &grid, test_metrics())),
             ),
             (
                 "pill",

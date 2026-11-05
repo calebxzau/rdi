@@ -5,7 +5,6 @@ use super::{
     player::{self, Skin},
 };
 use anyhow::Result;
-use slint::wgpu_30::wgpu;
 use std::ops::Range;
 
 pub const SOURCE: &str = concat!(include_str!("common.wgsl"), include_str!("crowd.wgsl"));

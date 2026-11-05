@@ -2,7 +2,7 @@ mod anim;
 mod api;
 mod app;
 mod config;
-mod glass;
+use rdi_renderer::glass;
 mod gpu_setup;
 mod hosts;
 mod images;
@@ -104,7 +104,7 @@ fn main() -> anyhow::Result<()> {
                         elapsed_ms = started.elapsed().as_millis(),
                         "Startup stage"
                     );
-                    match glass::Renderer::new(device.clone(), queue.clone()) {
+                    match glass::Renderer::new(device.clone(), queue.clone(), hosts::grid_metrics()) {
                         Ok(r) => {
                             tracing::info!(
                                 stage = "glass-ready",
@@ -171,7 +171,7 @@ fn main() -> anyhow::Result<()> {
                         let result=(|| {
                             if let Some(appearance)=appearance { scene.set_player_appearance(appearance)?; }
                             for (id,skin) in crowd_skins { scene.set_crowd_skin(&id,skin)?; }
-                            scene.render(render_clock.borrow().elapsed())
+                            scene.render(scene::FrameInput::at(render_clock.borrow().elapsed()))
                         })();
                         match result {
                             Ok(rendered) => {
@@ -198,7 +198,13 @@ fn main() -> anyhow::Result<()> {
                         }
                     }
                     {let mut stats=render_stats.borrow_mut();stats.bound=scene_bound;stats.loading=scene_loader.is_some();}
-                    match r.render(&frame, changed) {
+                    let backdrop = r.render(&frame, changed).and_then(|texture| {
+                        texture.map(|texture| {
+                            slint::Image::try_from(texture)
+                                .map_err(|e| anyhow::anyhow!("背景纹理无法交给Slint：{e}"))
+                        }).transpose()
+                    });
+                    match backdrop {
                         Ok(Some(backdrop)) => ui.set_backdrop(backdrop),
                         Ok(None) => {}
                         Err(error) => {

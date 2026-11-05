@@ -1,5 +1,4 @@
 use super::Renderer;
-use slint::wgpu_30::wgpu;
 use std::sync::mpsc;
 
 pub fn spawn(

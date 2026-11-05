@@ -1,6 +1,6 @@
 //! Read-only P1 source-contract audit. No P1 geometry is quantized or submitted to the scene.
 use anyhow::Result;
-use rdi_slint_proto::scene::{
+use rdi_renderer::scene::{
     mesh::{PackedVertex, Vertex},
     terrain::{Grid, hash01},
 };

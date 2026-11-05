@@ -73,7 +73,14 @@ impl Params {
         Self::for_pass(t, false)
     }
     pub fn for_pass(t: f64, reflection: bool) -> Self {
-        let (main_eye, main_target) = camera_pose(t);
+        Self::for_input(super::FrameInput::at(t), reflection)
+    }
+    pub fn for_input(input: super::FrameInput, reflection: bool) -> Self {
+        let t = input.seconds;
+        let super::CameraPose {
+            eye: main_eye,
+            target: main_target,
+        } = input.camera;
         let coordinates = super::clouds::coordinates(t, main_eye);
         let reflection_view = glam::camera::rh::view::look_at_mat4(
             reflected(main_eye),
@@ -139,5 +146,86 @@ mod tests {
             assert!((p.z / p.w - if z < 1. { 0. } else { 1. }).abs() < 1e-5);
         }
         assert!(m.is_finite());
+    }
+}
+
+#[cfg(test)]
+impl Params {
+    fn legacy_for_pass(t: f64, reflection: bool) -> Self {
+        let (main_eye, main_target) = camera_pose(t);
+        let coordinates = super::clouds::coordinates(t, main_eye);
+        let reflection_view = glam::camera::rh::view::look_at_mat4(
+            reflected(main_eye),
+            reflected(main_target),
+            -Vec3::Y,
+        );
+        let reflection_vp = projection() * reflection_view;
+        let (eye, mut view) = if reflection {
+            (reflected(main_eye), reflection_view)
+        } else {
+            (
+                main_eye,
+                glam::camera::rh::view::look_at_mat4(main_eye, main_target, Vec3::Y),
+            )
+        };
+        let vp = projection() * view;
+        view.w_axis = glam::Vec4::W;
+        Self {
+            vp: vp.to_cols_array_2d(),
+            inverse_vp: vp.inverse().to_cols_array_2d(),
+            eye: eye.extend(1.).to_array(),
+            sun: to_sun().extend(0.).to_array(),
+            shadow_vp: Mat4::IDENTITY.to_cols_array_2d(),
+            lighting: [t.rem_euclid(31.41592653589793) as f32, 1.0, 0.0, 0.0],
+            viewport: [
+                if reflection { 640. } else { 1280. },
+                if reflection { 360. } else { 720. },
+                reflection as u8 as f32,
+                0.,
+            ],
+            reflection_vp: reflection_vp.to_cols_array_2d(),
+            cloud_vp: (projection() * view).to_cols_array_2d(),
+            cloud: [
+                coordinates.fraction[0],
+                coordinates.fraction[2],
+                coordinates.fraction[1] + if reflection { main_eye.y - eye.y } else { 0. },
+                0.,
+            ],
+            animation: [
+                t.rem_euclid(31.41592653589793) as f32,
+                (t * 0.0495).rem_euclid(20.) as f32,
+                0.,
+                0.,
+            ],
+        }
+    }
+}
+
+#[cfg(test)]
+mod camera_input_tests {
+    use super::*;
+    #[test]
+    fn default_input_preserves_legacy_uniform_bytes() {
+        for seconds in [0., 15., 45., -10., 123.456] {
+            for reflection in [false, true] {
+                let legacy = Params::legacy_for_pass(seconds, reflection);
+                let explicit = Params::for_input(super::super::FrameInput::at(seconds), reflection);
+                assert_eq!(bytemuck::bytes_of(&legacy), bytemuck::bytes_of(&explicit));
+            }
+        }
+    }
+    #[test]
+    fn explicit_camera_reaches_main_and_reflection_uniforms() {
+        let mut input = super::super::FrameInput::at(15.);
+        input.camera.eye += Vec3::X;
+        input.camera.target += Vec3::X;
+        assert_eq!(
+            Params::for_input(input, false).eye,
+            input.camera.eye.extend(1.).to_array()
+        );
+        assert_eq!(
+            Params::for_input(input, true).eye,
+            reflected(input.camera.eye).extend(1.).to_array()
+        );
     }
 }

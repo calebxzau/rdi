@@ -1,6 +1,5 @@
 //! Persistent P3 fog/composite/mips/bloom resources. No frame-time texture allocation or readback.
 use super::{diagnostics::PostStage, fog, state, water};
-use slint::wgpu_30::wgpu;
 use std::time::Instant;
 
 pub const FOG: &str = concat!(include_str!("common.wgsl"), include_str!("fog.wgsl"));

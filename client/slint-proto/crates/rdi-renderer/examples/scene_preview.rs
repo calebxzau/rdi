@@ -1,7 +1,6 @@
 //! Windows-only headless preview: scene_preview [output-directory] [elapsed seconds...].
 use anyhow::{Context, Result};
-use rdi_slint_proto::scene;
-use slint::wgpu_30::wgpu;
+use rdi_renderer::scene;
 use std::{
     sync::mpsc,
     time::{Duration, Instant},
@@ -151,7 +150,7 @@ fn main() -> Result<()> {
                 )),
             )?;
         }
-        renderer.render(t)?;
+        renderer.render(scene::FrameInput::at(t))?;
         device.poll(wgpu::PollType::wait_indefinitely())?;
         let mut encoder = device.create_command_encoder(&Default::default());
         encoder.copy_texture_to_buffer(
@@ -222,7 +221,7 @@ fn main() -> Result<()> {
                 directory.join(format!("clouds-{t:.1}.bin")),
                 bytemuck::cast_slice(&scene::clouds::mesh(coordinates)),
             )?;
-            let mut clouds=image::load_from_memory(include_bytes!("../../bg-renderer/src/main/resources/assets/minecraft/textures/environment/clouds.png"))?.to_rgba8();
+            let mut clouds=image::load_from_memory(include_bytes!("../../../../bg-renderer/src/main/resources/assets/minecraft/textures/environment/clouds.png"))?.to_rgba8();
             scene::clouds::thin_cover(&mut clouds, 0.45);
             std::fs::write(directory.join("cloud-cover.rgba"), clouds.as_raw())?;
         }
@@ -233,7 +232,7 @@ fn main() -> Result<()> {
     }
     // Warm up, then pace continuous 60Hz deadlines. Includes CPU encode + GPU completion, no readback.
     for i in 0..30 {
-        renderer.render(i as f64 / 60.)?;
+        renderer.render(scene::FrameInput::at(i as f64 / 60.))?;
         device.poll(wgpu::PollType::wait_indefinitely())?;
     }
     let mut samples = vec![];
@@ -245,7 +244,7 @@ fn main() -> Result<()> {
             std::thread::sleep(deadline - now);
         }
         let start = Instant::now();
-        renderer.render(i as f64 / 60.)?;
+        renderer.render(scene::FrameInput::at(i as f64 / 60.))?;
         device.poll(wgpu::PollType::wait_indefinitely())?;
         samples.push(start.elapsed().as_secs_f64() * 1000.);
         deadline += Duration::from_secs_f64(1. / 60.);
@@ -293,7 +292,11 @@ fn add_preview_crowd(
             }
         }
         files.sort();
-        anyhow::ensure!(!files.is_empty(), "No crowd skins in {}", directory.display());
+        anyhow::ensure!(
+            !files.is_empty(),
+            "No crowd skins in {}",
+            directory.display()
+        );
     }
     for index in 0..count {
         let skin = if files.is_empty() {

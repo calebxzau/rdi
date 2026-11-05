@@ -24,8 +24,26 @@ pub mod village;
 mod water;
 use anyhow::{Context, Result};
 use mesh::{DrawRange, Material};
-use slint::wgpu_30::wgpu;
 use state::{HEIGHT, Params, WIDTH};
+#[derive(Clone, Copy, Debug)]
+pub struct CameraPose {
+    pub eye: glam::Vec3,
+    pub target: glam::Vec3,
+}
+#[derive(Clone, Copy, Debug)]
+pub struct FrameInput {
+    pub seconds: f64,
+    pub camera: CameraPose,
+}
+impl FrameInput {
+    pub fn at(seconds: f64) -> Self {
+        let (eye, target) = state::camera_pose(seconds);
+        Self {
+            seconds,
+            camera: CameraPose { eye, target },
+        }
+    }
+}
 use std::{sync::mpsc, time::Instant};
 const PACKED: &str = concat!(
     include_str!("common.wgsl"),
@@ -824,19 +842,22 @@ impl Renderer {
         options.checkpoint(&renderer.device, "pipelines-shadow-ready");
         Ok(renderer)
     }
-    fn params(&self, seconds: f64) -> Params {
-        self.pass_params(seconds, false)
+    fn params(&self, input: FrameInput) -> Params {
+        self.pass_params(input, false)
     }
-    fn pass_params(&self, seconds: f64, reflection: bool) -> Params {
-        let mut p = Params::for_pass(seconds, reflection);
+    fn pass_params(&self, input: FrameInput, reflection: bool) -> Params {
+        let mut p = Params::for_input(input, reflection);
         p.shadow_vp = self.shadow_frame.vp.to_cols_array_2d();
         p.lighting[1] = self.shadow_frame.depth_range;
         p.lighting[2] = self.visual_probe as f32;
         p
     }
     fn bake_shadow(&mut self) -> Result<()> {
-        self.queue
-            .write_buffer(&self.uniforms, 0, bytemuck::bytes_of(&self.params(0.0)));
+        self.queue.write_buffer(
+            &self.uniforms,
+            0,
+            bytemuck::bytes_of(&self.params(FrameInput::at(0.0))),
+        );
         let mut encoder = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -957,7 +978,8 @@ impl Renderer {
     pub fn set_visual_probe_for_preview(&mut self, probe: u32) {
         self.visual_probe = probe;
     }
-    pub fn render(&mut self, seconds: f64) -> Result<bool> {
+    pub fn render(&mut self, input: FrameInput) -> Result<bool> {
+        let seconds = input.seconds;
         self.device
             .poll(wgpu::PollType::Poll)
             .context("Scene device poll failed")?;
@@ -997,10 +1019,7 @@ impl Renderer {
                 diagnostics::snapshot(&self.device, "lazy-targets-first-frame");
             }
             if let Some(clouds) = &mut self.clouds {
-                clouds.update(
-                    &self.queue,
-                    clouds::coordinates(seconds, state::camera(seconds).0),
-                )?;
+                clouds.update(&self.queue, clouds::coordinates(seconds, input.camera.eye))?;
             }
             if let Some(post) = &self.complete_post {
                 post.update(&self.queue, seconds);
@@ -1015,11 +1034,11 @@ impl Renderer {
             let mesh = self.mesh.as_ref().unwrap();
             let start = Instant::now();
             self.queue
-                .write_buffer(&self.uniforms, 0, bytemuck::bytes_of(&self.params(seconds)));
+                .write_buffer(&self.uniforms, 0, bytemuck::bytes_of(&self.params(input)));
             self.queue.write_buffer(
                 &self.uniforms,
                 state::FRAME_STRIDE as u64,
-                bytemuck::bytes_of(&self.pass_params(seconds, true)),
+                bytemuck::bytes_of(&self.pass_params(input, true)),
             );
             let mut encoder = self
                 .device

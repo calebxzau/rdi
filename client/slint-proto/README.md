@@ -52,13 +52,13 @@ WSL toolchain.
 - `ui/*.slint` — window, title bar, tab bar, tile grid, tiles, buttons.
 - `src/api` — login, envelope handling, typed DTOs. `src/hosts.rs` — paging/merge/filter and grid constants.
 - `src/images.rs` — icon download/decode/resize, player heads. `src/app.rs` — state, jobs, Slint wiring.
-- `src/glass` — wgpu pass run before Slint renders each frame. It draws the cover-cropped background and all
+- `crates/rdi-renderer/src/glass` — wgpu pass run before Slint renders each frame. It draws the cover-cropped background and all
   glass into one texture that Slint shows behind the UI (`backdrop` in `app.slint`). WGSL ports:
   `grid.wgsl` (`GLASS_TILE_GRID_SKSL`), `pill.wgsl` + `liquid.wgsl` (`LIQUID_GLASS_SKSL`, selected tab),
   `haze.wgsl` + `rim.wgsl` (Haze glass for the tab bar and buttons). Blurs are computed in background image
   space. `cargo test` validates every shader with naga and checks the Rust uniform layouts against them.
   The earlier OpenGL version is archived under `DEL/20261030-slint-proto-gl-to-wgpu/`.
-- `src/scene` — golden-valley P4a: accepted deterministic terrain/forest/village/grass, source
+- `crates/rdi-renderer/src/scene` — golden-valley P4a: accepted deterministic terrain/forest/village/grass, source
   textures and2048² shadows, clear sky/sun, fancy clouds and planar water/reflection. Adds64³ R8
   valley-fog noise,640×360 march, bilateral HDR composition, linear mip chain, bloom atlas and
   final tonemap/saturation. Includes the account player with idle arm/head/cape motion in both
@@ -69,7 +69,7 @@ WSL toolchain.
   uploads one mesh shared by the shadow bake and main pass. The24B local fixed-point packer stays strict.
 - Live glass shares half/quarter downsample targets; its existing pause/fallback policy is preserved.
 - `examples/scene_preview.rs` — Windows/DX12 captures at0/15/45, shadow-depth PNG and paced timings:
-  `cargo run --release --example scene_preview -- evidence/bg-port/p4a/preview 0 15 45`.
+  `cargo run --release -p rdi-renderer --example scene_preview -- evidence/bg-port/p4a/preview 0 15 45`.
 - `examples/p1_mesh_report.rs` — count, strict codec and displacement audit without account/network access.
   `examples/p1_precision_audit.rs` retains the original off-grid source examples that motivated approval.
 - `tools/p3-validate.ps1`, `p3-preview.ps1`, `p3-reference.ps1` — Windows validation, phase diagnostics
@@ -118,7 +118,7 @@ make forced-focus automation unreliable; the controlled diagnostic batch explici
 rendering and records the real foreground process. The normal application keeps its focus policy.
 The P0.5 measurement tables remain historical. `tools/p1-decision-validate.ps1`, `p1-decision-previews.ps1`, and `p1-decision-measure.ps1` validate and re-baseline the selected defaults against a retained P0.5 best executable. These preserve the earlier decision evidence; the coordinate stop has since been resolved by approval. Use `tools/p1-full-*` for current P1 verification.
 
-The local position packer accepts exact1/16 coordinates and fails explicitly otherwise; it never uses f16 positions or silently rounds. `cargo run --release --example p1_precision_audit` reproduces the off-grid Kotlin grass/window/lantern inputs. The owner has approved rounding emitted P1 positions to1/16 with at most1/32 per-axis displacement. Placement/attributes remain unrounded; all safety checks fail explicitly. See `p1_mesh_report` and REPORT.md for measured deviation.
+The local position packer accepts exact1/16 coordinates and fails explicitly otherwise; it never uses f16 positions or silently rounds. `cargo run --release -p rdi-renderer --example p1_precision_audit` reproduces the off-grid Kotlin grass/window/lantern inputs. The owner has approved rounding emitted P1 positions to1/16 with at most1/32 per-axis displacement. Placement/attributes remain unrounded; all safety checks fail explicitly. See `p1_mesh_report` and REPORT.md for measured deviation.
 
 P1 brightness/texture follow-up evidence is in `evidence/bg-port/p1/visual`: same-region before/after
 crops, matched post/AA controls and `visual-summary.json`. `tools/p1-visual-reference.ps1` uses the
@@ -300,3 +300,21 @@ tools/p4b-fallback.ps1       terminal fallback resource check
 ```
 
 Results are in `REPORT.md` and `evidence/bg-port/p4b/gate-summary.md`. **P4b complete, stopped for owner review.**
+
+## M1 workspace and review gate
+
+The app depends on the UI-independent [rdi-renderer](crates/rdi-renderer/README.md) crate.
+Renderer examples now belong to that package; use `-p rdi-renderer` when running them.
+The `allocation-probe` app feature forwards to the renderer; the app owns the global allocator.
+Historical `tools/p*.ps1` remain unchanged.
+
+`tools/m1-reference.ps1 before|after` saves release binaries, tests, repeated scene/glass captures,
+six startup runs and clean-close measurements in `evidence/m1/<phase>`.
+Run `before` only on the unmodified source. It intentionally fails on build/capture errors.
+`tools/m1-validate.ps1` runs workspace tests and Clippy for both feature sets and records dependency trees.
+Gate results are in `evidence/m1/gate-summary.md`. M2 requires owner review at G1.
+
+`tools/m1-runtime.ps1` runs a counterbalanced authenticated before/after startup batch and missing/
+unloadable DXC cases. It reads the existing test account from the Debian WSL UNC path into process
+environment variables, without writing or logging credentials. `tools/m1-compare.py` (Pillow/NumPy)
+compares repeated captures and writes local `evidence/m1/comparison.json`.

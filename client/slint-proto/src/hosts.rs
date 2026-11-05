@@ -46,6 +46,16 @@ pub fn columns(scroll: f32, width: f32, count: usize, margin: usize) -> std::ops
         ((((-scroll + width - PADDING).max(0.0) / PITCH).floor() as usize) + 1 + margin).min(total);
     first..last.max(first)
 }
+pub fn grid_metrics() -> rdi_renderer::glass::GridMetrics {
+    rdi_renderer::glass::GridMetrics {
+        tile: TILE,
+        pitch: PITCH,
+        padding: PADDING,
+        rows: ROWS,
+        height: HEIGHT,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

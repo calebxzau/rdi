@@ -1,6 +1,6 @@
 //! Independent CPU audit of the approved generator deviation. No account/network access.
 use anyhow::Result;
-use rdi_slint_proto::scene::{geometry, mesh, quantize, surface, village};
+use rdi_renderer::scene::{geometry, mesh, quantize, surface, village};
 fn main() -> Result<()> {
     let (m, vegetation, terrain) = geometry::build(true)?;
     let (packed, indices, ranges) = mesh::pack_mesh(&m)?;

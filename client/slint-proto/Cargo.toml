@@ -1,12 +1,17 @@
+[workspace]
+members = ["crates/rdi-renderer"]
+resolver = "3"
+
 [package]
 name = "rdi-slint-proto"
 version = "0.1.0"
 edition = "2024"
 
 [features]
-allocation-probe = []
+allocation-probe = ["rdi-renderer/allocation-probe"]
 
 [dependencies]
+rdi-renderer = { path = "crates/rdi-renderer" }
 glam = "=0.34.1"
 half = "=2.7.1"
 bytemuck = { version = "=1.25.2", features = ["derive"] }

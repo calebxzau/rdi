@@ -1,5 +1,4 @@
 //! Opt-in P0.5 allocation instrumentation. No sampling, sleeps or extra GPU objects in normal runs.
-use slint::wgpu_30::wgpu;
 use std::sync::atomic::{AtomicBool, Ordering};
 static ENABLED: AtomicBool = AtomicBool::new(false);
 pub fn enable(value: bool) {

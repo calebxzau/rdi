@@ -3695,6 +3695,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "rdi-renderer"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bytemuck",
+ "glam",
+ "half",
+ "image",
+ "naga",
+ "pollster",
+ "serde",
+ "serde_json",
+ "tracing",
+ "tracing-subscriber",
+ "wgpu",
+]
+
+[[package]]
 name = "rdi-slint-proto"
 version = "0.1.0"
 dependencies = [
@@ -3707,6 +3725,7 @@ dependencies = [
  "lru",
  "naga",
  "pollster",
+ "rdi-renderer",
  "reqwest",
  "serde",
  "serde_json",

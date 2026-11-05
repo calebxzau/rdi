@@ -5,7 +5,6 @@ use super::{
     textures,
 };
 use anyhow::Result;
-use slint::wgpu_30::wgpu;
 pub const SOURCE: &str = concat!(include_str!("common.wgsl"), include_str!("water.wgsl"));
 pub struct Water {
     layout: wgpu::BindGroupLayout,
@@ -155,7 +154,7 @@ impl Water {
             device,
             queue,
             include_bytes!(
-                "../../../bg-renderer/src/main/resources/assets/complementary/textures/cloud-water.png"
+                "../../../../../bg-renderer/src/main/resources/assets/complementary/textures/cloud-water.png"
             ),
             "scene water normal linear",
         )?;
@@ -163,7 +162,7 @@ impl Water {
             device,
             queue,
             include_bytes!(
-                "../../../bg-renderer/src/main/resources/assets/complementary/textures/noise.png"
+                "../../../../../bg-renderer/src/main/resources/assets/complementary/textures/noise.png"
             ),
             "scene water noise linear",
         )?;
