@@ -32,6 +32,7 @@ WSL toolchain.
 
 | Flag | Meaning |
 |---|---|
+| `--gallery` | Start the U3 shared-component gallery without an account; Home opens the real menu if credentials are supplied |
 | `--show-others` | Start with 显示其他房间 on |
 | `--all-playable` | Treat every host as playable (mimics the special account override; no dimming) |
 | `--solid-window` | Opaque window instead of a transparent one |
@@ -53,7 +54,9 @@ WSL toolchain.
 ## Layout
 
 - `ui/*.slint` — window, title bar, tab bar, tile grid, tiles, buttons.
-- `src/api` — login, envelope handling, typed DTOs. `src/hosts.rs` — paging/merge/filter and grid constants.
+- `src/navigation.rs`, `src/shell.rs` — back stack, shared window state and layout-to-glass bridge.
+- `src/gallery.rs`, `ui/gallery.slint` — U3 fixtures and interactive component review. Console/tasks use sample data here; real service integration waits for U4.
+- `src/api` — service-backed login, envelope handling, typed DTOs. `src/hosts.rs` — paging/merge/filter and grid constants.
 - `src/images.rs` — icon download/decode/resize, player heads. `src/app.rs` — state, jobs, Slint wiring.
 - `crates/rdi-renderer/src/glass` — wgpu pass run before Slint renders each frame. It draws the cover-cropped background and all
   glass into one texture that Slint shows behind the UI (`backdrop` in `app.slint`). WGSL ports:
@@ -386,3 +389,24 @@ Service crash recovery retains process identity (PID plus creation time) in the
 Rust UI and restores management after restarting Kotlin. The local game
 connection drops on a crash and may require reconnecting; console history in the
 dead service is not restored.
+
+## U3 component review (GU3)
+
+Run `target/release/rdi-slint-proto.exe --gallery`. No account is needed. Review
+buttons/fields, content/images, console/tasks and glass tiles using the four tabs.
+Home returns to the real menu; the back stack preserves menu tab/scroll state.
+Only the menu animates the loaded scene, and a running game holds it too.
+U4 destinations still invoke the existing stub callback; no placeholder screens were added.
+
+Windows validation: `./tools/u3-validate.ps1`. Capture each gallery page and its
+loading/empty/error states with `./tools/u3-gallery.ps1 -Scale 1` and
+`./tools/u3-gallery.ps1 -Scale 2` (choose a new `-Tag` on reruns). These use
+`capture.ps1`, `--scale` and native DPI messages, verifying actual scale/size first.
+`u3-interact.ps1` exercises Win32 clicks, native mouse scrollbar drags, keyboard and the sample clipboard;
+`u3-shell.ps1` checks focus, navigation and scene hold/resume (the game state is
+explicitly simulated, not an in-game acceptance test). `u3-measure.ps1` measures
+release UI/service memory separately with the real test account; its first run is
+warm-up. Keep the monitor on, desktop unlocked and application foreground.
+
+See `evidence/ui-port/u3/gate-summary.md` and `evidence/ui-port/u3/owner-checklist.md` for results and
+remaining owner checks. Stop at GU3 until the owner accepts the gallery.

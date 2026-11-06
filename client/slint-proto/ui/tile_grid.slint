@@ -1,6 +1,9 @@
+import { GlassShape } from "surfaces.slint";
 import { TileData } from "theme.slint";
 import { HostTile } from "host_tile.slint";
 export component TileGrid inherits Rectangle {
+    out property <GlassShape> shape: { x: root.absolute-position.x / 1px, y: root.absolute-position.y / 1px, w: root.width / 1px, h: root.height / 1px, radius: 22, alpha: root.fade, tint: transparent };
+    out property <length> scroll-extent: flick.content-width;
     in property <[TileData]> tiles;
     in-out property <length> scroll: 0px;
     in property <int> pressed: -1;

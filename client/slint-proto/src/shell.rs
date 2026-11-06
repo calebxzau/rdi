@@ -1,0 +1,211 @@
+//! Shared shell state and layout bridge, independent of room/login jobs in app.rs.
+use crate::{
+    AppWindow, GlassShape,
+    app::Interaction,
+    navigation::{Navigation, Screen},
+};
+use rdi_renderer::glass;
+use slint::{ComponentHandle, Model};
+use std::{
+    cell::{Cell, RefCell},
+    rc::Rc,
+    time::{Duration, Instant},
+};
+
+pub struct Shell {
+    ui: slint::Weak<AppWindow>,
+    navigation: Navigation,
+    menu_started: bool,
+    toast_since: Rc<Cell<Option<Instant>>>,
+    _gallery: Rc<RefCell<crate::gallery::Gallery>>,
+}
+impl Shell {
+    pub fn new(
+        ui: &AppWindow,
+        gallery: bool,
+        runtime: tokio::runtime::Handle,
+    ) -> Rc<RefCell<Self>> {
+        let mut navigation = Navigation::default();
+        if gallery {
+            navigation.push(Screen::Gallery);
+        }
+        ui.set_gallery_enabled(gallery);
+        let state = Rc::new(RefCell::new(Self {
+            ui: ui.as_weak(),
+            navigation,
+            menu_started: !gallery,
+            toast_since: Rc::new(Cell::new(None)),
+            _gallery: crate::gallery::Gallery::wire(ui, runtime),
+        }));
+        state.borrow().sync(ui);
+        let weak = Rc::downgrade(&state);
+        ui.on_navigate(move |action| {
+            if let Some(state) = weak.upgrade() {
+                let mut s = state.borrow_mut();
+                let Some(ui) = s.ui.upgrade() else {
+                    return;
+                };
+                if ui.get_modal_open() {
+                    return;
+                }
+                match action.as_str() {
+                    "back" if ui.get_activity_panel() != 0 => ui.set_activity_panel(0),
+                    "back" => s.navigation.back(),
+                    "home" => {
+                        s.navigation.home();
+                        ui.set_activity_panel(0);
+                    }
+                    "gallery" if ui.get_gallery_enabled() => s.navigation.push(Screen::Gallery),
+                    "console" => ui.set_activity_panel(1),
+                    "tasks" => ui.set_activity_panel(2),
+                    _ => {
+                        ui.invoke_stub(action);
+                    }
+                }
+                s.sync(&ui);
+                if s.navigation.current() == Screen::Menu && !s.menu_started {
+                    s.menu_started = true;
+                    ui.invoke_retry();
+                }
+            }
+        });
+        let toast_since = state.borrow().toast_since.clone();
+        let weak_ui = ui.as_weak();
+        ui.on_notify(move |message| {
+            if let Some(ui) = weak_ui.upgrade() {
+                ui.set_toast_message(message);
+            }
+            toast_since.set(Some(Instant::now()));
+        });
+        state
+    }
+    fn sync(&self, ui: &AppWindow) {
+        ui.set_gallery(self.navigation.current() == Screen::Gallery);
+        ui.set_can_back(self.navigation.can_back());
+    }
+    pub fn scene_frozen(&self, ui: &AppWindow) -> bool {
+        self.navigation.scene_frozen(ui.get_game_running()) || ui.get_activity_panel() != 0
+    }
+    pub fn tick(&mut self) {
+        self._gallery.borrow_mut().tick();
+        if self
+            .toast_since
+            .get()
+            .is_some_and(|t| t.elapsed() >= Duration::from_secs(5))
+        {
+            if let Some(ui) = self.ui.upgrade() {
+                ui.set_toast_message("".into());
+            }
+            self.toast_since.set(None);
+        }
+    }
+}
+fn rect(s: &GlassShape) -> [f32; 4] {
+    [s.x, s.y, s.w, s.h]
+}
+fn panel(s: GlassShape) -> glass::Panel {
+    glass::Panel {
+        rect: rect(&s),
+        corner_radius: s.radius,
+        opacity: s.alpha,
+        tint: [
+            s.tint.red() as f32 / 255.,
+            s.tint.green() as f32 / 255.,
+            s.tint.blue() as f32 / 255.,
+            s.tint.alpha() as f32 / 255.,
+        ],
+    }
+}
+/// Slint alone owns geometry. Rust contributes interaction springs and domain row counts.
+pub fn frame(
+    ui: &AppWindow,
+    interactions: &[Interaction; 2],
+    pills: &[crate::anim::Spring; 7],
+    pivots: &[[f32; 2]; 7],
+    selected: usize,
+) -> glass::Frame {
+    if ui.get_ui_proof() {
+        return crate::ui_proof::frame(ui);
+    }
+    let size = ui.window().size();
+    let mut f = glass::Frame {
+        width: size.width as i32,
+        height: size.height as i32,
+        scale: ui.window().scale_factor(),
+        grids: vec![],
+        pills: vec![],
+        panels: vec![],
+    };
+    if ui.get_gallery() {
+        f.panels.extend(
+            ui.get_glass_panels()
+                .iter()
+                .take(2)
+                .enumerate()
+                .filter(|(i, _)| ui.get_gallery_page() != 3 || *i != 0)
+                .map(|(_, s)| panel(s)),
+        );
+        if ui.get_gallery_page() == 3 {
+            let shape = ui.get_gallery_grid();
+            f.grids.push(glass::Grid {
+                clip: rect(&shape),
+                x: shape.x,
+                y: shape.y,
+                scroll: ui.get_gallery_scroll(),
+                count: ui.get_gallery_tiles().row_count(),
+                opacity: 1.,
+                hover: ui.get_gallery_hover(),
+                hover_progress: 1.,
+                pressed: ui.get_gallery_pressed(),
+                press_scale: ui.get_gallery_press_scale(),
+            });
+        }
+    } else {
+        if !ui.get_loading() && ui.get_error().is_empty() {
+            for (tab, shape) in ui.get_menu_grids().iter().enumerate() {
+                let i = &interactions[tab];
+                f.grids.push(glass::Grid {
+                    clip: rect(&shape),
+                    x: shape.x,
+                    y: shape.y,
+                    scroll: if tab == 0 {
+                        ui.get_host_scroll()
+                    } else {
+                        ui.get_modpack_scroll()
+                    },
+                    count: if tab == 0 {
+                        ui.get_hosts().row_count()
+                    } else {
+                        ui.get_modpacks().row_count()
+                    },
+                    opacity: shape.alpha,
+                    hover: i.hover,
+                    hover_progress: i.hover_spring.value,
+                    pressed: i.pressed,
+                    press_scale: 1. - 0.04 * i.press_spring.value,
+                });
+            }
+        }
+        for (index, shape) in ui.get_menu_pills().iter().enumerate() {
+            let spring = match index {
+                0 => None,
+                1 => Some(selected),
+                2..=3 if selected == 0 => Some(index),
+                4..=6 if selected == 1 => Some(index),
+                _ => continue,
+            };
+            f.pills.push(glass::Pill {
+                rect: rect(&shape),
+                selected: index == 1,
+                progress: spring.map_or(0., |i| pills[i].value),
+                pivot: spring.map_or([0.; 2], |i| pivots[i]),
+            });
+        }
+    }
+    if ui.get_modal_open()
+        && let Some(shape) = ui.get_glass_panels().row_data(2)
+    {
+        f.panels.push(panel(shape));
+    }
+    f
+}

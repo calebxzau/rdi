@@ -1,9 +1,12 @@
 import { GlassButton } from "glass_button.slint";
-import { PlayerHead } from "player_head.slint";
+import { HeadButton } from "shared.slint";
 import { Theme } from "theme.slint";
 export component TitleBar inherits Rectangle {
     in property <string> player-name;
     in property <image> head;
+    in property <bool> can-back;
+    in property <bool> gallery-enabled;
+    callback navigate(string);
     callback action(int);
     callback stub(string);
     height: 40px;
@@ -11,17 +14,18 @@ export component TitleBar inherits Rectangle {
     TouchArea { pointer-event(e) => {if e.kind == PointerEventKind.down && e.button == PointerEventButton.left {root.action(0);}} double-clicked => {root.action(2);} }
     Image { x: 14px; y: 8px; width: 24px; height: 24px; source: @image-url("../../ui/assets/src/main/resources/icon.png"); }
     Text { x: 46px; height: parent.height; text: "rdi"; color: Theme.ink; font-size: 18px; font-weight: 700; vertical-alignment: center; }
-    GlassButton { x: 80px; y: 6px; width: 28px; height: 28px; circle: true; glyph: "\u{f015}"; clicked => {root.stub("主页");} }
-    HorizontalLayout { x: parent.width - 470px; width: 470px; height: 40px; spacing: 8px; padding: 6px;
+    GlassButton { x: 80px; y: 6px; width: 28px; height: 28px; circle: true; glyph: "\u{f015}"; clicked => {root.navigate("home");} }
+    if root.can-back: GlassButton { x: 116px; y: 6px; width: 28px; height: 28px; circle: true; glyph: "\u{f060}"; accessible-label: "返回"; clicked => {root.navigate("back");} }
+    if root.gallery-enabled: GlassButton { x: 154px; y: 6px; width: 96px; height: 28px; label: "组件画廊"; clicked => {root.navigate("gallery");} }
+    HorizontalLayout { x: parent.width - 496px; y: 0px; width: 496px; height: 40px; spacing: 8px; padding: 0px;
         GlassButton { width: 28px; height: 28px; circle: true; glyph: "m"; clicked => {root.stub("MC百科");} }
         GlassButton { width: 28px; height: 28px; circle: true; glyph: "\u{f0e0}"; clicked => {root.stub("邮件");} }
-        GlassButton { width: 28px; height: 28px; circle: true; glyph: "\u{f11b}"; clicked => {root.stub("游戏");} }
-        GlassButton { width: 28px; height: 28px; circle: true; glyph: "\u{f0ae}"; clicked => {root.stub("任务");} }
+        GlassButton { width: 28px; height: 28px; circle: true; glyph: "\u{f11b}"; clicked => {root.navigate("console");} }
+        GlassButton { width: 28px; height: 28px; circle: true; glyph: "\u{f0ae}"; clicked => {root.navigate("tasks");} }
         GlassButton { width: 28px; height: 28px; circle: true; glyph: "\u{eb51}"; clicked => {root.stub("设置");} }
-        PlayerHead { width: 24px; height: 24px; source: root.head; }
-        Text { text: root.player-name; width: 86px; overflow: elide; color: Theme.ink; vertical-alignment: center; }
-        GlassButton { width: 38px; height: 28px; circle: true; glyph: "\u{f2d1}"; clicked => {root.action(1);} }
-        GlassButton { width: 38px; height: 28px; circle: true; glyph: "\u{eab9}"; clicked => {root.action(2);} }
-        GlassButton { width: 38px; height: 28px; circle: true; destructive: true; glyph: "\u{f00d}"; clicked => {root.action(3);} }
+        HeadButton { width: 116px; source: root.head; player-name: root.player-name; clicked => {root.stub("玩家信息");} }
+        GlassButton { width: 46px; height: 40px; border-radius: 0px; glyph: "\u{f2d1}"; clicked => {root.action(1);} }
+        GlassButton { width: 46px; height: 40px; border-radius: 0px; glyph: "\u{eab9}"; clicked => {root.action(2);} }
+        GlassButton { width: 46px; height: 40px; border-radius: 0px; destructive: true; glyph: "\u{f00d}"; clicked => {root.action(3);} }
     }
 }

@@ -1,17 +1,42 @@
 import { Theme } from "theme.slint";
+import { GlassShape } from "surfaces.slint";
 export component GlassButton inherits Rectangle {
+    in property <bool> enabled: true;
     in property <string> label;
     in property <string> glyph;
     in property <bool> circle: false;
     in property <bool> destructive: false;
+    in property <bool> busy: false;
+    in property <bool> filled: false;
+    in-out property <bool> checked: false;
+    // Only the gallery uses forced-state; production uses actual pointer/focus state.
+    in property <int> preview-state: 0;
+    out property <bool> hovered: touch.has-hover || root.preview-state == 1;
+    out property <bool> pressed: touch.pressed || root.preview-state == 2;
+    out property <bool> focused: focus.has-focus || root.preview-state == 3;
+    out property <GlassShape> shape: { x: root.absolute-position.x / 1px, y: root.absolute-position.y / 1px,
+        w: root.width / 1px, h: root.height / 1px, radius: root.height / 2px, alpha: root.visible ? 1 : 0, tint: #ffffff65 };
     callback clicked();
     callback press(bool,float,float);
-    height: 36px;
+    forward-focus: focus;
+    accessible-role: button;
+    accessible-label: root.label;
+    height: 36px; min-width: root.circle ? root.height : 64px;
     border-radius: self.height / 2;
-    background: touch.has-hover ? (root.destructive ? #e8112380 : #ffffff38) : transparent;
-    HorizontalLayout { padding-left: root.circle ? 0px : 12px; padding-right: root.circle ? 0px : 16px; spacing: 8px;
-        Text { text: root.glyph; font-family: Theme.symbols; color: Theme.ink; font-size: 18px; horizontal-alignment: center; vertical-alignment: center; }
-        if root.label != "": Text { text: root.label; color: Theme.ink; font-size: 14px; vertical-alignment: center; }
+    border-width: root.focused ? 2px : 0px;
+    border-color: #446c49;
+    background: !root.enabled ? #313b3115 : root.pressed ? #446c4960 : root.checked || root.filled ? #446c49 : root.hovered ? (root.destructive ? #e8112380 : #ffffff70) : transparent;
+    HorizontalLayout { alignment: center; padding-left: root.circle ? 0px : 12px; padding-right: root.circle ? 0px : 16px; spacing: 8px;
+        if root.glyph != "" || root.busy: Text { text: root.busy ? "◌" : root.glyph; font-family: root.busy ? "OPPO Sans 4.0" : Theme.symbols; color: !root.enabled ? #777b77 : root.filled || root.checked ? white : Theme.ink; font-size: 18px; horizontal-alignment: center; vertical-alignment: center; }
+        if root.label != "": Text { text: root.label; overflow: elide; color: !root.enabled ? #777b77 : root.filled || root.checked ? white : Theme.ink; font-size: 14px; vertical-alignment: center; }
     }
-    touch := TouchArea { mouse-cursor: pointer; clicked => {root.clicked();} pointer-event(e) => {if e.button == PointerEventButton.left {root.press(e.kind == PointerEventKind.down,self.mouse-x / 1px,self.mouse-y / 1px);}} }
+    focus := FocusScope { enabled: root.enabled && !root.busy; x: 0px; y: 0px; width: root.width; height: root.height;
+        key-pressed(e) => { if (e.text == Key.Space || e.text == Key.Return) && root.enabled && !root.busy { root.clicked(); return accept; } return reject; }
+    }
+    touch := TouchArea { enabled: root.enabled && !root.busy; mouse-cursor: pointer;
+        clicked => { focus.focus(); root.clicked(); }
+        pointer-event(e) => { if e.button == PointerEventButton.left { root.press(e.kind == PointerEventKind.down,self.mouse-x / 1px,self.mouse-y / 1px); } }
+    }
 }
+export component CircleIconButton inherits GlassButton { circle: true; width: self.height; }
+export component ToggleButton inherits CircleIconButton { clicked => { self.checked = !self.checked; } }

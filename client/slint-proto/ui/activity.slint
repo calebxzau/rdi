@@ -1,0 +1,66 @@
+import { ListView, TextEdit } from "std-widgets.slint";
+import { Theme } from "theme.slint";
+import { GlassButton, CircleIconButton } from "glass_button.slint";
+import { LogRow, TaskRow, EmptyState, RScrollbar } from "shared.slint";
+export component Console inherits Rectangle {
+    in property <[LogRow]> lines;
+    in property <string> selected-text;
+    in property <string> all-text;
+    in-out property <bool> follow-tail: true;
+    callback copy-all();
+    callback export();
+    callback clear();
+    callback select-line(int);
+    background: #fafcf4e8; border-radius: 16px;
+    copy-buffer := TextEdit { visible: false; text: root.all-text; read-only: true; }
+    HorizontalLayout { x: 12px; y: 8px; width: parent.width - 24px; height: 36px; spacing: 8px;
+        Text { text: "控制台"; color: Theme.ink; vertical-alignment: center; horizontal-stretch: 1; }
+        GlassButton { label: "复制"; enabled: root.lines.length > 0; clicked => {copy-buffer.select-all(); copy-buffer.copy(); root.copy-all();} }
+        GlassButton { label: "导出"; enabled: root.lines.length > 0; clicked => {root.export();} }
+        GlassButton { label: "清空"; enabled: root.lines.length > 0; clicked => {root.clear();} }
+        CircleIconButton { glyph: "\u{f063}"; checked: root.follow-tail; accessible-label: "跟随最新日志"; clicked => {root.follow-tail = true; list.content-y = min(0px,list.height - list.content-height);} }
+    }
+    list := ListView { vertical-scrollbar-policy: always-off; horizontal-scrollbar-policy: always-off; x: 12px; y: 52px; width: parent.width - 28px; height: parent.height - 132px;
+        for line[i] in root.lines: Rectangle { height: max(28px, label.preferred-height + 8px); width: list.width;
+            label := Text { x: 4px; y: 4px; width: parent.width - 8px; text: line.text; wrap: word-wrap; color: line.level == 2 ? #ba3434 : line.level == 1 ? #9a6700 : #286338; font-size: 12px; }
+            TouchArea { clicked => {root.select-line(i);} }
+        }
+        changed content-y => { root.follow-tail = self.content-y <= min(0px, self.height - self.content-height) + 2px; }
+        changed content-height => { if root.follow-tail { self.content-y = min(0px,self.height - self.content-height); } }
+    }
+    RScrollbar { x: parent.width - 10px; y: 52px; width: 6px; height: list.height; viewport: list.height; extent: list.content-height; position: -list.content-y;
+        scrolled(offset) => { list.content-y = -offset; root.follow-tail = offset >= self.extent - self.viewport - 2px; }
+    }
+    if root.lines.length == 0: EmptyState { x: 12px; y: 52px; width: parent.width - 24px; height: list.height; label: "暂无日志"; }
+    TextEdit { x: 12px; y: parent.height - 72px; width: parent.width - 24px; height: 60px; text: root.selected-text; read-only: true; }
+}
+export component TaskProgress inherits Rectangle {
+    in property <string> title: "任务详情";
+    in property <string> message: "准备中";
+    in property <string> error;
+    in property <float> fraction: -1;
+    in property <[TaskRow]> rows;
+    callback toggle(int);
+    callback hidden();
+    background: #fafcf4e8; border-radius: 24px;
+    Text { x: 20px; y: 16px; width: parent.width - 170px; text: root.title; overflow: elide; font-size: 20px; font-weight: 600; color: Theme.ink; }
+    GlassButton { x: parent.width - 144px; y: 12px; width: 124px; label: "隐藏到后台"; glyph: "\u{f00d}"; clicked => {root.hidden();} }
+    Rectangle { x: 20px; y: 60px; width: parent.width - 40px; height: 4px; background: #dce5d4;
+        Rectangle { x: 0px; y: 0px; height: parent.height; width: parent.width * clamp(root.fraction,0,1); background: #446c49; }
+    }
+    Text { x: 20px; y: 76px; width: parent.width - 40px; text: root.message + (root.fraction >= 0 ? " · " + round(root.fraction * 100) + "%" : ""); color: #446c49; font-size: 13px; }
+    Text { x: 20px; y: 102px; width: parent.width - 40px; text: root.error; color: #ba3434; font-size: 12px; overflow: elide; }
+    list := ListView { vertical-scrollbar-policy: always-off; horizontal-scrollbar-policy: always-off; x: 16px; y: 130px; width: parent.width - 32px; height: parent.height - 146px;
+        for row[i] in root.rows: Rectangle { height: 62px;
+            Text { x: 4px + row.depth * 16px; y: 4px; width: parent.width - self.x - 72px; text: (row.group ? (row.expanded ? "▼ " : "▶ ") : "") + row.title; overflow: elide; color: row.status == 3 ? #ba3434 : Theme.ink; font-size: 14px; }
+            Text { x: parent.width - 68px; y: 4px; text: row.status == 0 ? "排队中" : row.status == 1 ? "执行中" : row.status == 2 ? "已完成" : row.status == 3 ? "失败" : "已取消"; color: row.status == 3 ? #ba3434 : #446c49; font-size: 12px; }
+            Text { x: 4px + row.depth * 16px; y: 28px; width: parent.width - self.x - 8px; text: row.detail; overflow: elide; color: #667064; font-size: 12px; }
+            if row.progress >= 0: Rectangle { x: 4px + row.depth * 16px; y: 52px; width: parent.width - self.x - 8px; height: 3px; background: #dce5d4;
+                Rectangle { x: 0px; y: 0px; width: parent.width * clamp(row.progress,0,1); height: 3px; background: #446c49; }
+            }
+            if row.group: TouchArea { clicked => {root.toggle(i);} }
+        }
+    }
+    RScrollbar { x: parent.width - 10px; y: 130px; width: 6px; height: list.height; viewport: list.height; extent: list.content-height; position: -list.content-y; scrolled(offset) => {list.content-y = -offset;} }
+    if root.rows.length == 0: EmptyState { x: 16px; y: 130px; width: parent.width - 32px; height: list.height; label: "暂无任务"; }
+}

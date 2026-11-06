@@ -5,15 +5,18 @@ Written 2026-11-05 for an agent with no prior context. This replaces M2-M4 in `M
 
 ## Current status (handoff)
 
-Updated 2026-11-06. **Next task: U3 (section 6), stop at GU3.** The owner is handing U3 to a new agent. U3 is within this approved plan, so it needs no new approval unless the scope materially changes.
+Updated 2026-11-06. **GU3 passed with owner approval. U4 not started; wait for the owner to say who implements it.**
+See `evidence/ui-port/u3/gate-summary.md` and `owner-checklist.md`. U3 was executed
+under the approval recorded below.
 
 - GU1 passed 2026-11-05 (`evidence/ui-port/u1/gate-summary.md`, commit `c6f21e82`).
 - GU2 passed 2026-11-06 (`evidence/ui-port/u2/gate-summary.md`, commit `8a6fe6a9`), after the concurrency follow-up.
+- GU3 passed 2026-11-06 (`evidence/ui-port/u3/gate-summary.md`, including "Owner review follow-up"). The owner checked IME and scale changes; button centering and field label fixes were made in review. Open nits for U4: modal scrim leaves the title bar undimmed, the toast is drawn under the scrim, empty lists still show a scrollbar thumb, name sort is lexical (1, 10, 13), panel title spacing.
 - Later gates are unchanged. The accepted Mac terrain problem is recorded in section 4.
 - `dev` has unpushed commits: `c6f21e82`, the owner's `a1646b01`, `4cbf217e`, `8a6fe6a9` and the U3 handoff commit. Do not push without approval.
 - Do not stage, commit or push. Report at GU3; the reviewer commits after the owner's review. `client/ui` and `common` hold a lot of the owner's uncommitted work, some of it only CRLF flips; never overwrite it.
 
-### Before starting U3
+### U3 handoff instructions (retained for context)
 
 Read `AGENTS.md`, `client/ui/AGENTS.md`, sections 1-3 and 6 of this plan, `README.md` here, and both gate summaries above for their limits. The "Environment for U2" notes below still apply.
 
@@ -21,7 +24,7 @@ Read `AGENTS.md`, `client/ui/AGENTS.md`, sections 1-3 and 6 of this plan, `READM
 
 Section 6 is the scope. These notes add the facts and decisions it depends on.
 
-- **Scene freeze (carried from U1/U2, owner decision 2026-11-05).** Only the menu screen animates the 3D scene. Every other screen holds its last frame, and so does a running game; the scene stays loaded. Today `scene_frozen` (`src/main.rs`, around line 78) is set only by `--ui-proof`. Drive it from the navigation's current screen and from `game-running`, which `src/app.rs` sets from the service's `game.state` event. GU1 criterion 2 was measured under this policy (`evidence/ui-port/u1/held-menu-1`, `freeze-1`).
+- **Scene freeze (implemented in U3, owner decision 2026-11-05).** Only the menu screen animates the 3D scene. Every other screen holds its last frame, and so does a running game; the scene stays loaded. `scene_frozen` now follows the shell navigation and `game-running`, which `src/app.rs` sets from the service's `game.state` event. The proof-only diagnostic override remains separate. GU1 criterion 2 was measured under this policy (`evidence/ui-port/u1/held-menu-1`, `freeze-1`).
 - **Navigation.** Replace `AppNavigation.kt` (`client/ui/src/main/kotlin/calebxzhou/rdi/client/ui/AppNavigation.kt`) with a back stack, without the cut features in section 1. U3 builds the shell only; destinations whose screens arrive in U4 keep calling the existing `stub` callback. Do not build placeholder screens.
 - **Current Slint code.** `ui/*.slint` is small (app 162 lines, plus title bar, tab bar, tile grid, tiles, glass button, player head, resize handles, theme). `src/app.rs` (950 lines) holds state, jobs and Slint wiring; split it as the shell grows instead of letting it absorb every screen.
 - **Compose sources to match.** `calebxzau/rdi/client/ui/window/WindowChrome.kt`, `GlassTileGrid.kt`, `LiquidGlass.kt`, `Dialogs.kt`, `IconButtons.kt` (`CircleIconButton`, which `AGENTS.md` prefers for icon actions) and `calebxzhou/rdi/client/ui/comp/` (`ContentGrid`, `ContentCard`, `HttpImage`, `RScrollbar`, `PasswordField`/`RPasswordField`, `ToggleButton`, `Console`, `Task2DetailDialog`, `HeadButton`, `IconTileCard`). Match look and behavior, not structure.

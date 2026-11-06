@@ -1,5 +1,6 @@
 use anyhow::{Context, Result, bail};
 pub struct Config {
+    pub gallery: bool,
     pub ui_proof: bool,
     pub ui_proof_script: bool,
     /// Keep the scene moving on the proof screen. It normally holds its last frame, like any non-menu screen.
@@ -23,6 +24,7 @@ pub struct Config {
 impl Config {
     pub fn read() -> Result<Self> {
         let mut c = Self {
+            gallery: false,
             ui_proof: false,
             ui_proof_script: false,
             ui_proof_live_scene: false,
@@ -43,6 +45,7 @@ impl Config {
         let mut args = std::env::args().skip(1);
         while let Some(a) = args.next() {
             match a.as_str() {
+                "--gallery" => c.gallery = true,
                 "--ui-proof" => c.ui_proof = true,
                 "--ui-proof-script" => { c.ui_proof = true; c.ui_proof_script = true; }
                 "--ui-proof-live-scene" => { c.ui_proof = true; c.ui_proof_live_scene = true; }

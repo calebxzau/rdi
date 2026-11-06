@@ -2,6 +2,9 @@ mod anim;
 mod api;
 mod app;
 mod config;
+mod navigation;
+mod shell;
+mod gallery;
 use rdi_renderer::glass;
 mod gpu_setup;
 mod hosts;
@@ -99,6 +102,7 @@ fn main() -> anyhow::Result<()> {
     let mut scene_renderer = None;
     let mut scene_bound = false;
     let mut scene_epoch = 0;
+    let shell = shell::Shell::new(&ui, config.gallery, runtime.handle().clone());
     let app = app::App::new(&ui, config, runtime.handle().clone(), paused.clone())?;
     log_stage("app-created");
     let weak = ui.as_weak();
@@ -285,6 +289,12 @@ fn main() -> anyhow::Result<()> {
             let now = Instant::now();
             let dt = now.duration_since(last).as_secs_f32();
             last = now;
+            if let Some(ui) = timer_ui.upgrade() {
+                let mut shell = shell.borrow_mut();
+                shell.tick();
+                // Proof-only diagnostics retain their own freeze override. Production follows navigation/game state.
+                if !ui.get_ui_proof() { timer_frozen.set(shell.scene_frozen(&ui)); }
+            }
             let active = scene_enabled.load(Ordering::Relaxed) && !paused.load(Ordering::Relaxed)
                 && !ui_proof::scene_held(timer_frozen.get(), stats.borrow().bound);
             if clock.borrow_mut().tick(now, active)

@@ -1,0 +1,11 @@
+// Geometry is measured by Slint after layout, including ancestor offsets and DPI-independent coordinates.
+export struct GlassShape { x: float, y: float, w: float, h: float, radius: float, alpha: float, tint: color }
+export component GlassSurface inherits Rectangle {
+    in property <float> glass-alpha: 1;
+    in property <color> tint: #ffffff65;
+    in property <length> radius: 24px;
+    out property <GlassShape> shape: { x: root.absolute-position.x / 1px, y: root.absolute-position.y / 1px,
+        w: root.width / 1px, h: root.height / 1px, radius: root.radius / 1px, alpha: root.visible ? root.glass-alpha : 0, tint: root.tint };
+    // The wgpu underlay paints this surface. Never clip or apply opacity to its children.
+    @children
+}

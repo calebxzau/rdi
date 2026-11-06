@@ -19,6 +19,8 @@ use std::{
 use uniforms::UniformWriter;
 #[derive(Clone, Copy)]
 pub struct Grid {
+    /// Slint layout viewport, in logical pixels.
+    pub clip: [f32; 4],
     pub y: f32,
     pub x: f32,
     pub scroll: f32,
@@ -572,19 +574,14 @@ impl Renderer {
                 continue;
             }
             // The shader repeats tiles by modulo, so it must be clipped to the grid band.
-            let top = (grid.y * f.scale).clamp(0.0, size[1] as f32) as u32;
-            let bottom =
-                ((grid.y + self.metrics.height) * f.scale).clamp(0.0, size[1] as f32) as u32;
-            if bottom <= top {
-                continue;
-            }
+            let Some(scissor) = grid_clip(grid.clip, f.scale, size) else { continue; };
             grid_params(&mut writer, f, transform, grid, self.metrics);
             let frost = &cache.frosts[FROST_TILE].group;
             batch.add(
                 &self.pipelines.grid,
                 frost,
                 &writer.finish(),
-                Some([0, top, size[0], bottom - top]),
+                Some(scissor),
             )?;
         }
         for pill in &f.pills {
@@ -764,6 +761,15 @@ impl PillGeometry {
 // The functions below write the fields of each shader's `Params` struct in declaration order;
 // `tests::params_match_shaders` checks them against the WGSL layouts.
 /// Frame pixels per background image pixel when the image covers the frame (ContentScale.Crop).
+/// Intersect a layout viewport with the physical framebuffer, including translated tabs.
+fn grid_clip(rect: [f32; 4], scale: f32, size: [u32; 2]) -> Option<[u32; 4]> {
+    if !scale.is_finite() || scale <= 0. || !rect.iter().all(|v| v.is_finite()) || rect[2] <= 0. || rect[3] <= 0. { return None; }
+    let left = (rect[0] * scale).round().clamp(0.,size[0] as f32) as u32;
+    let top = (rect[1] * scale).round().clamp(0.,size[1] as f32) as u32;
+    let right = ((rect[0]+rect[2]) * scale).round().clamp(0.,size[0] as f32) as u32;
+    let bottom = ((rect[1]+rect[3]) * scale).round().clamp(0.,size[1] as f32) as u32;
+    (right > left && bottom > top).then_some([left,top,right.saturating_sub(left),bottom.saturating_sub(top)])
+}
 fn validate_panel(panel: &Panel) -> Result<()> {
     anyhow::ensure!(panel.rect.iter().chain(panel.tint.iter()).all(|v| v.is_finite())
         && panel.corner_radius.is_finite() && panel.corner_radius >= 0.
@@ -923,6 +929,13 @@ mod tests {
         assert!(validate_panel(&Panel { opacity:f32::NAN,..panel }).is_err());
     }
 
+    #[test]
+    fn grid_viewport_clips_embedded_panels_and_translated_tabs() {
+        assert_eq!(grid_clip([20.,140.,610.,434.],2.,[2560,1440]),Some([40,280,1220,868]));
+        assert_eq!(grid_clip([-100.,163.,1280.,434.],1.,[1280,720]),Some([0,163,1180,434]));
+        assert_eq!(grid_clip([1300.,0.,1280.,434.],1.,[1280,720]),None);
+        assert_eq!(grid_clip([0.,0.,f32::NAN,434.],1.,[1280,720]),None);
+    }
     fn test_metrics() -> super::GridMetrics {
         super::GridMetrics {
             tile: 126.,
@@ -984,6 +997,7 @@ mod tests {
         let mut renderer =
             Renderer::new(device.clone(), queue.clone(), test_metrics()).expect("renderer");
         let grid = |y: f32, hover: i32, pressed: i32| Grid {
+            clip: [0.,y,1280.,434.],
             y,
             x: 0.0,
             scroll: 37.0,
@@ -1074,6 +1088,7 @@ mod tests {
             panels: vec![],
         };
         let grid = Grid {
+            clip: [0.,163.,1280.,434.],
             y: 163.0,
             x: 0.0,
             scroll: 0.0,

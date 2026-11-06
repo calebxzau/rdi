@@ -54,10 +54,10 @@ enum Event {
 }
 #[derive(Default)]
 pub struct Interaction {
-    hover: i32,
-    pressed: i32,
-    hover_spring: Spring,
-    press_spring: Spring,
+    pub(crate) hover: i32,
+    pub(crate) pressed: i32,
+    pub(crate) hover_spring: Spring,
+    pub(crate) press_spring: Spring,
 }
 impl Interaction {
     fn new() -> Self {
@@ -195,7 +195,7 @@ impl App {
             last_scale: 0.0,
         }));
         Self::wire(&app, ui);
-        if !app.borrow().config.ui_proof { app.borrow_mut().login(); }
+        if !app.borrow().config.ui_proof && !app.borrow().config.gallery { app.borrow_mut().login(); } else { ui.set_loading(false); }
         Ok(app)
     }
     fn wire(app: &Rc<RefCell<Self>>, ui: &AppWindow) {
@@ -304,6 +304,8 @@ impl App {
                             let _ = tx.send(Event::Started(result));
                         });
                     }
+                } else if let Some(ui) = a.borrow().ui.upgrade() {
+                    ui.invoke_stub(if tab == 0 { "房间详情".into() } else { "整合包详情".into() });
                 }
             }
         });
@@ -838,81 +840,7 @@ impl App {
         }
     }
     pub fn frame(&self, ui: &AppWindow) -> glass::Frame {
-        if ui.get_ui_proof() { return crate::ui_proof::frame(ui); }
-        let size = ui.window().size();
-        let width = ui.get_logical_width();
-        let height = ui.get_logical_height();
-        let pos = ui.get_tab_position();
-        let grids = (0..2)
-            .map(|tab| {
-                let i = &self.interactions[tab];
-                glass::Grid {
-                    y: ui.get_grid_y(),
-                    x: if tab == 0 {
-                        -pos * width
-                    } else {
-                        (1.0 - pos) * width
-                    },
-                    scroll: if tab == 0 {
-                        ui.get_host_scroll()
-                    } else {
-                        ui.get_modpack_scroll()
-                    },
-                    count: if tab == 0 {
-                        ui.get_hosts().row_count()
-                    } else {
-                        ui.get_modpacks().row_count()
-                    },
-                    opacity: if tab == 0 { 1.0 - pos } else { pos },
-                    hover: i.hover,
-                    hover_progress: i.hover_spring.value,
-                    pressed: i.pressed,
-                    press_scale: 1.0 - 0.04 * i.press_spring.value,
-                }
-            })
-            .collect();
-        let navx = (width - 292.0) / 2.0;
-        let mut pills = vec![glass::Pill {
-            rect: [navx, 56.0, 292.0, 56.0],
-            selected: false,
-            progress: 0.0,
-            pivot: [146.0, 28.0],
-        }];
-        let idx = self.selected;
-        pills.push(glass::Pill {
-            rect: [navx + 6.0 + 158.0 * pos, 62.0, 154.0 - 32.0 * pos, 44.0],
-            selected: true,
-            progress: self.pills[idx].value,
-            pivot: self.pivots[idx],
-        });
-        let rects: Vec<(usize, [f32; 4])> = if self.selected == 0 {
-            let x = (width - 308.0) / 2.0;
-            vec![
-                (2, [x, height - 60.0, 128.0, 36.0]),
-                (3, [x + 140.0, height - 60.0, 168.0, 36.0]),
-            ]
-        } else {
-            let x = (width - 484.0) / 2.0;
-            vec![
-                (4, [x, height - 60.0, 128.0, 36.0]),
-                (5, [x + 140.0, height - 60.0, 176.0, 36.0]),
-                (6, [x + 328.0, height - 60.0, 156.0, 36.0]),
-            ]
-        };
-        pills.extend(rects.into_iter().map(|(index, rect)| glass::Pill {
-            rect,
-            selected: false,
-            progress: self.pills[index].value,
-            pivot: self.pivots[index],
-        }));
-        glass::Frame {
-            width: size.width as i32,
-            height: size.height as i32,
-            scale: ui.window().scale_factor(),
-            grids,
-            pills,
-            panels: vec![],
-        }
+        crate::shell::frame(ui, &self.interactions, &self.pills, &self.pivots, self.selected)
     }
 }
 /// Updates `model` to `rows`, touching only rows that changed so unchanged tiles keep their textures.

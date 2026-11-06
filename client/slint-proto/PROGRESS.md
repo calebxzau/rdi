@@ -280,3 +280,24 @@
   without an outer lock; requests without a valid id are ignored. Tests: ui-service 11,
   ui-logic 6, Rust 24, clippy clean, real service smoke passed.
 - GU2 passed with owner review. U3 not started.
+
+## 2026-11-06 (U3, stopped at GU3)
+
+- Added Slint shell/back stack and layout-owned glass geometry. Menu/game state
+  controls the loaded scene hold/resume policy; no U4 destinations were ported.
+- Added a four-page `--gallery` with shared controls, content/image states,
+  dialogs/toasts, console/task fixtures and glass tiles. Split shell/navigation/
+  gallery Rust code out of the existing application jobs.
+- Fresh Rust baseline4+20 passed; implementation workspace61+4+23 passed
+  (one existing GPU capture ignored), workspace Clippy and release build passed.
+- Scale1/2 captures,16 keyboard/pointer/clipboard checks and6 focused navigation/
+  scene phases recorded. Held phases add0 scene frames. IME is an owner check.
+- Initial release batch: UI470.52MiB WS/512.54MiB private; service254.23/303.17MiB.
+  First frame986ms, first scene2844ms, service handshake1173ms (three-run medians;
+  warm-up excluded,15 focused memory pairs). Final build single-run check:
+  UI426.96/499.97MiB, service252.84/299.94MiB, first frame828ms/live2246ms;
+  separate service handshake median644ms. Final18 captures and native vertical/
+  horizontal scrollbar drags passed. See the GU3 summary for binary hashes and
+  sample boundaries; no debug comparison or long-term stability claim.
+- See `evidence/ui-port/u3/gate-summary.md` and `owner-checklist.md`. Wait for GU3
+  acceptance. No Kotlin/Gradle changes, staging, commits, pushes or U4 work.

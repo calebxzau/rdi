@@ -1,0 +1,168 @@
+import { ListView, TextEdit } from "std-widgets.slint";
+import { Theme, TileData } from "theme.slint";
+import { GlassButton, CircleIconButton } from "glass_button.slint";
+import { GlassSurface } from "surfaces.slint";
+import { TextField } from "fields.slint";
+import { PlayerHead } from "player_head.slint";
+export struct ContentRow { name: string, version: string, detail: string, icon: image, image-state: int, kind: string }
+export struct TaskRow { title: string, detail: string, depth: int, group: bool, expanded: bool, status: int, progress: float }
+export struct LogRow { text: string, level: int }
+export component LoadingState inherits Rectangle {
+    in property <string> label: "正在加载…";
+    Text { text: "◌  " + root.label; color: #446c49; font-size: 16px; horizontal-alignment: center; vertical-alignment: center; }
+}
+export component EmptyState inherits Rectangle {
+    in property <string> label: "没有可展示的内容";
+    Text { text: root.label; color: #5b625b; wrap: word-wrap; horizontal-alignment: center; vertical-alignment: center; }
+}
+export component ErrorState inherits Rectangle {
+    in property <string> message: "加载失败，请稍后重试";
+    callback retry();
+    VerticalLayout { padding: 12px; spacing: 8px; alignment: center;
+        Text { text: root.message; color: #ba3434; wrap: word-wrap; horizontal-alignment: center; }
+        GlassButton { label: "重试"; glyph: "\u{f021}"; clicked => {root.retry();} }
+    }
+}
+// The same host-limited image downloader/cache supplies these images and player heads.
+// image-state: 0=loading, 1=ready, 2=empty, 3=error.
+export component HttpImage inherits Rectangle {
+    in property <image> source;
+    in property <int> image-state: 1;
+    in property <string> fallback: "图片";
+    background: #e2e8df; border-radius: 12px;
+    if root.image-state == 1: Image { x: 0px; y: 0px; width: parent.width; height: parent.height; source: root.source; image-fit: contain; }
+    if root.image-state != 1: Text { text: root.image-state == 0 ? "◌" : root.image-state == 3 ? "加载失败" : root.fallback; wrap: word-wrap; color: root.image-state == 3 ? #ba3434 : #667064; font-size: 12px; horizontal-alignment: center; vertical-alignment: center; }
+}
+export component HeadButton inherits Rectangle {
+    in property <image> source;
+    in property <string> player-name;
+    callback clicked();
+    height: 36px;
+    PlayerHead { x: 6px; y: 6px; width: 24px; height: 24px; source: root.source; }
+    Text { x: 38px; y: 0px; width: parent.width - 44px; height: parent.height; text: root.player-name; overflow: elide; vertical-alignment: center; color: Theme.ink; }
+    TouchArea { mouse-cursor: pointer; clicked => {root.clicked();} }
+}
+export component ContentCard inherits Rectangle {
+    in property <ContentRow> item;
+    callback clicked();
+    height: 80px; border-radius: 16px; background: touch.has-hover ? #f3f7f0 : #ffffffc8;
+    HttpImage { x: 12px; y: 12px; width: 56px; height: 56px; source: root.item.icon; image-state: root.item.image-state; fallback: root.item.kind; }
+    Text { x: 84px; y: 8px; width: parent.width - 180px; text: root.item.name; overflow: elide; font-size: 16px; font-weight: 600; color: Theme.ink; }
+    Text { x: parent.width - 92px; y: 10px; width: 80px; text: root.item.version; overflow: elide; font-size: 12px; color: #667064; }
+    Text { x: 84px; y: 34px; width: parent.width - 96px; height: 38px; text: root.item.detail; wrap: word-wrap; overflow: elide; font-size: 13px; color: #5b625b; }
+    touch := TouchArea { mouse-cursor: pointer; clicked => {root.clicked();} }
+}
+// A drag/page scrollbar, usable for both axes. Position is a positive content offset.
+export component RScrollbar inherits Rectangle {
+    in property <bool> horizontal;
+    in property <length> viewport;
+    in property <length> extent;
+    in property <length> position;
+    callback scrolled(length);
+    private property <length> track: root.horizontal ? root.width : root.height;
+    private property <length> thumb-size: min(root.track, max(28px, root.track * root.viewport / max(1px, root.extent)));
+    private property <length> travel: max(1px, root.track - root.thumb-size);
+    private property <length> limit: max(0px, root.extent - root.viewport);
+    private property <length> drag-start;
+    visible: root.extent > root.viewport;
+    background: #58645012; border-radius: 4px;
+    private property <bool> thumb-drag;
+    private property <length> thumb-position: root.position / max(1px,root.limit) * root.travel;
+    Rectangle { x: root.horizontal ? root.thumb-position : 0px;
+        y: root.horizontal ? 0px : root.thumb-position;
+        width: root.horizontal ? root.thumb-size : root.width;
+        height: root.horizontal ? root.height : root.thumb-size;
+        border-radius: 4px; background: drag.has-hover || drag.pressed ? #6e7b69 : #a6b19f;
+    }
+    // Keep the drag area stationary: coordinates relative to a moving thumb feed back into the drag.
+    drag := TouchArea { mouse-cursor: pointer;
+        pointer-event(e) => { if e.kind == PointerEventKind.down {
+            root.drag-start = root.position;
+            root.thumb-drag = (root.horizontal ? self.mouse-x : self.mouse-y) >= root.thumb-position &&
+                (root.horizontal ? self.mouse-x : self.mouse-y) <= root.thumb-position + root.thumb-size;
+        } }
+        clicked => { if !root.thumb-drag {root.scrolled(clamp(((root.horizontal ? self.mouse-x : self.mouse-y) - root.thumb-size / 2) / root.travel * root.limit, 0px, root.limit));} }
+        moved => { if self.pressed && root.thumb-drag {
+            root.scrolled(clamp(root.drag-start + ((root.horizontal ? self.mouse-x - self.pressed-x : self.mouse-y - self.pressed-y) / root.travel * root.limit), 0px, root.limit));
+        } }
+    }
+}
+// Presentation-only filtering/sorting is delegated to the caller; domain data stays in Kotlin.
+export component ContentGrid inherits Rectangle {
+    out property <length> scroll-offset: root.icon-only ? -icons.content-y : -list.content-y;
+    in property <[ContentRow]> items;
+    in property <bool> loading;
+    in property <string> error;
+    in-out property <string> query;
+    in-out property <int> kind;
+    in-out property <bool> descending;
+    in-out property <bool> icon-only;
+    callback filter(string,int,bool);
+    callback retry();
+    callback selected(int);
+    HorizontalLayout { x: 0px; y: 0px; width: parent.width; height: 64px; spacing: 8px;
+        TextField { width: parent.width - 250px; reserve-error: false; label: "搜索"; hint: "搜索Mod、资源包和光影"; text <=> root.query; edited(q) => {root.filter(q,root.kind,root.descending);} }
+        // Center on the outline, which sits below the field label.
+        VerticalLayout { alignment: end; padding-bottom: 6px;
+            GlassButton { width: 90px; label: root.descending ? "名称↓" : "名称↑"; clicked => {root.descending = !root.descending; root.filter(root.query,root.kind,root.descending);} }
+        }
+        VerticalLayout { alignment: end; padding-bottom: 6px;
+            GlassButton { width: 90px; label: root.icon-only ? "列表" : "图标"; clicked => {root.icon-only = !root.icon-only;} }
+        }
+    }
+    HorizontalLayout { x: 0px; y: 76px; width: 300px; height: 32px; spacing: 8px;
+        for name[i] in ["全部", "Mod", "资源包", "光影"]: GlassButton { label: name; checked: root.kind == i; clicked => {root.kind = i; root.filter(root.query,i,root.descending);} }
+    }
+    list := ListView { vertical-scrollbar-policy: always-off; horizontal-scrollbar-policy: always-off; x: 0px; y: 118px; width: parent.width - 12px; height: parent.height - 118px; visible: !root.loading && root.error == "" && !root.icon-only;
+        for item[i] in root.items: ContentCard { item: item; height: 84px; clicked => {root.selected(i);} }
+    }
+    icons := Flickable { x: 0px; y: 118px; width: parent.width - 12px; height: parent.height - 118px; visible: !root.loading && root.error == "" && root.icon-only;
+        private property <int> columns: max(1, floor(self.width / 104px));
+        content-height: ceil(root.items.length / self.columns) * 112px;
+        for item[i] in root.items: Rectangle { x: mod(i,icons.columns) * 104px; y: floor(i / icons.columns) * 112px; width: 96px; height: 104px;
+            HttpImage { x: 12px; y: 4px; width: 72px; height: 72px; source: item.icon; image-state: item.image-state; fallback: item.kind; }
+            Text { x: 0px; y: 80px; width: parent.width; text: item.name; overflow: elide; horizontal-alignment: center; color: Theme.ink; font-size: 12px; }
+            TouchArea { clicked => {root.selected(i);} }
+        }
+    }
+    RScrollbar { x: parent.width - 8px; y: 118px; width: 6px; height: parent.height - 118px; viewport: list.height; extent: root.icon-only ? icons.content-height : list.content-height; position: root.icon-only ? -icons.content-y : -list.content-y;
+        scrolled(offset) => {if root.icon-only {icons.content-y = -offset;} else {list.content-y = -offset;} }
+    }
+    if root.loading: LoadingState { y: 118px; height: parent.height - 118px; width: parent.width; }
+    if root.error != "": ErrorState { y: 118px; height: parent.height - 118px; width: parent.width; message: root.error; retry => {root.retry();} }
+    if !root.loading && root.error == "" && root.items.length == 0: EmptyState { y: 118px; height: parent.height - 118px; width: parent.width; label: root.query == "" ? "没有可识别的内容" : "没有符合条件的内容"; }
+}
+export component Toast inherits Rectangle {
+    in property <string> message;
+    callback dismissed();
+    height: 48px; background: #303b30; border-radius: 16px;
+    Text { x: 16px; y: 0px; width: parent.width - 64px; height: parent.height; text: root.message; overflow: elide; color: white; vertical-alignment: center; }
+    CircleIconButton { x: parent.width - 44px; y: 6px; glyph: "\u{f00d}"; filled: true; accessible-label: "关闭提示"; clicked => {root.dismissed();} }
+}
+export component SharedDialog inherits GlassSurface {
+    in property <string> title;
+    in property <string> message;
+    in property <string> confirm-label: "确定";
+    in property <bool> cancel-visible: true;
+    callback confirmed();
+    callback dismissed();
+    width: 480px; height: 240px; tint: #f3f4ecf2; background: #f3f4ec; border-radius: 24px;
+    out property <bool> contains-focus: confirm.focused || cancel.focused;
+    public function focus-dialog() { confirm.focus(); }
+    FocusScope {
+    forward-focus: confirm;
+    key-pressed(e) => {
+        if e.text == Key.Escape {root.dismissed(); return accept;}
+        if e.text == Key.Tab {if root.cancel-visible && confirm.focused {cancel.focus();} else {confirm.focus();} return accept;}
+        return reject;
+    }
+    VerticalLayout { padding: 24px; spacing: 16px;
+        Text { text: root.title; font-size: 22px; font-weight: 600; color: Theme.ink; }
+        Text { text: root.message; wrap: word-wrap; color: Theme.ink; vertical-stretch: 1; }
+        HorizontalLayout { alignment: end; spacing: 12px;
+            cancel := GlassButton { visible: root.cancel-visible; label: "取消"; clicked => {root.dismissed();} }
+            confirm := GlassButton { filled: true; label: root.confirm-label; clicked => {root.confirmed();} }
+        }
+    }
+    }
+}

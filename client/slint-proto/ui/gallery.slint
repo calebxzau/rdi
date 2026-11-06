@@ -1,0 +1,120 @@
+import { TileGrid } from "tile_grid.slint";
+import { Theme, TileData } from "theme.slint";
+import { GlassButton, CircleIconButton, ToggleButton } from "glass_button.slint";
+import { TextField, PasswordField } from "fields.slint";
+import { GlassSurface, GlassShape } from "surfaces.slint";
+import { ContentGrid, ContentRow, RScrollbar, HttpImage, HeadButton, LoadingState, EmptyState, ErrorState, TaskRow, LogRow } from "shared.slint";
+import { Console, TaskProgress } from "activity.slint";
+export component ComponentGallery inherits FocusScope {
+    in-out property <bool> password-revealed;
+    in-out property <length> content-scroll;
+    in-out property <int> page;
+    in property <image> head;
+    in property <int> image-state;
+    in property <[ContentRow]> items;
+    in property <[TileData]> tiles;
+    in-out property <int> tile-hover: -1;
+    in-out property <int> tile-pressed: -1;
+    private property <float> press-scale: root.tile-pressed >= 0 ? 0.96 : 1;
+    animate press-scale { duration: 140ms; easing: ease-out; }
+    out property <GlassShape> tile-shape: tile-grid.shape;
+    out property <length> tile-scroll: tile-grid.scroll;
+    out property <float> tile-scale: root.press-scale;
+    in property <[LogRow]> logs;
+    in property <string> selected-log;
+    in property <string> all-logs;
+    in property <[TaskRow]> tasks;
+    in-out property <int> content-state;
+    callback filter(string,int,bool);
+    callback notify(string);
+    callback dialog();
+    callback console-action(string);
+    callback select-log(int);
+    callback toggle-task(int);
+    out property <[GlassShape]> surfaces: [left.shape, right.shape];
+    HorizontalLayout { x: 20px; y: 16px; width: parent.width - 40px; height: 36px; spacing: 12px;
+        Text { text: "共享组件"; font-size: 22px; color: Theme.ink; vertical-alignment: center; horizontal-stretch: 1; }
+        for tab[i] in ["按钮与输入", "内容与图片", "控制台与任务", "瓷砖网格"]: GlassButton { label: tab; checked: root.page == i; clicked => {root.page = i;} }
+    }
+    left := GlassSurface { x: 20px; y: 68px; width: root.page == 1 ? parent.width * 0.6 - 30px : parent.width / 2 - 30px; height: parent.height - 88px; tint: #ffffffb8;
+        if root.page == 0: VerticalLayout { padding: 20px; spacing: 8px;
+            Text { text: "按钮 · 圆形图标 · 切换"; color: Theme.ink; font-size: 18px; }
+            HorizontalLayout { spacing: 8px;
+                GlassButton { label: "普通"; filled: true; clicked => {root.notify("已点击普通按钮");} }
+                GlassButton { label: "悬停"; preview-state: 1; }
+                GlassButton { label: "按下"; preview-state: 2; }
+            }
+            HorizontalLayout { spacing: 8px;
+                GlassButton { label: "已禁用"; enabled: false; }
+                GlassButton { label: "键盘焦点"; preview-state: 3; }
+                GlassButton { label: "加载中"; busy: true; }
+            }
+            HorizontalLayout { spacing: 12px; alignment: start;
+                CircleIconButton { glyph: "\u{f067}"; accessible-label: "添加"; filled: true; clicked => {root.notify("添加");} }
+                CircleIconButton { glyph: "\u{f021}"; accessible-label: "刷新"; preview-state: 1; }
+                CircleIconButton { glyph: "\u{f00d}"; accessible-label: "删除"; destructive: true; enabled: false; }
+                ToggleButton { glyph: "\u{f00c}"; checked: true; }
+                ToggleButton { glyph: "\u{f070}"; }
+            }
+            GlassButton { label: "这是一段非常长的中文按钮文字Minecraft1.21.1整合包本地安装与朋友一起探索世界"; glyph: "\u{f1b2}"; clicked => {root.notify("长标签已点击");} }
+            Text { text: "提示与对话框"; color: Theme.ink; font-size: 18px; }
+            HorizontalLayout { spacing: 12px;
+                GlassButton { label: "打开对话框"; clicked => {root.dialog();} }
+                GlassButton { label: "显示提示"; clicked => {root.notify("房间已准备好，与朋友一起开始冒险吧");} }
+            }
+            LoadingState { height: 40px; }
+            EmptyState { height: 40px; label: "暂无房间，等待朋友邀请"; }
+            ErrorState { height: 96px; message: "连接失败，请检查网络后重试"; retry => {root.notify("已重试（画廊样例）");} }
+        }
+        if root.page == 1: ContentGrid { changed scroll-offset => {root.content-scroll = self.scroll-offset;} x: 16px; y: 16px; width: parent.width - 32px; height: parent.height - 32px; items: root.items;
+            loading: root.content-state == 1; error: root.content-state == 3 ? "内容加载失败" : "";
+            filter(q,k,d) => {root.filter(q,k,d);} retry => {root.content-state = 0; root.filter("",0,false);}
+            selected(i) => {root.notify("已选择" + root.items[i].name);} }
+        tile-grid := TileGrid { x: 0px; y: 32px; width: parent.width; visible: root.page == 3; tiles: root.tiles;
+            pressed: root.tile-pressed; press-scale: root.press-scale;
+            hover(i,on) => {root.tile-hover = on ? i : -1;} press(i,on) => {root.tile-pressed = on ? i : -1;}
+            action(i,right) => {root.notify((right ? "查看" : "选择") + root.tiles[i].name);}
+        }
+        if root.page == 3: RScrollbar { x: 16px; y: 480px; width: parent.width - 32px; height: 6px; horizontal: true;
+            viewport: tile-grid.width; extent: tile-grid.scroll-extent; position: -tile-grid.scroll;
+            scrolled(offset) => {tile-grid.scroll = -offset;}
+        }
+        if root.page == 2: Console { x: 12px; y: 12px; width: parent.width - 24px; height: parent.height - 24px; lines: root.logs; selected-text: root.selected-log; all-text: root.all-logs;
+            copy-all => {root.console-action("copy");} export => {root.console-action("export");} clear => {root.console-action("clear");} select-line(i) => {root.select-log(i);} }
+    }
+    right := GlassSurface { x: left.x + left.width + 20px; y: left.y; width: parent.width - self.x - 20px; height: left.height; tint: #ffffffb8;
+        if root.page == 0: VerticalLayout { padding: 20px; spacing: 4px;
+            Text { text: "输入框 · Tab/Enter · 中文输入"; font-size: 18px; color: Theme.ink; }
+            TextField { label: "房间名称"; hint: "给房间起个名字"; accepted => {root.notify("房间名称已提交");} }
+            PasswordField { reveal <=> root.password-revealed; text: "Minecraft123"; accepted => {root.notify("密码已提交（未记录内容）");} }
+            TextField { label: "焦点状态"; text: "中文Minecraft1.21.1"; preview-focus: true; }
+            TextField { label: "错误状态"; text: ""; error: "未填写完整"; }
+            TextField { label: "禁用状态"; text: "房间已关闭"; enabled: false; }
+            Text { text: "长文本换行：与朋友一起探索世界，建造房屋，分享Minecraft的冒险。中文与English混排。"; wrap: word-wrap; color: Theme.ink; }
+        }
+        if root.page == 1: VerticalLayout { padding: 20px; spacing: 12px;
+            Text { text: "网络图片与玩家头像"; font-size: 18px; color: Theme.ink; }
+            HorizontalLayout { spacing: 10px;
+                HttpImage { width: 64px; height: 64px; source: root.head; image-state: root.image-state; }
+                HttpImage { width: 64px; height: 64px; image-state: 0; }
+                HttpImage { width: 64px; height: 64px; image-state: 2; fallback: "空图片"; }
+                HttpImage { width: 64px; height: 64px; image-state: 3; }
+            }
+            HeadButton { source: root.head; player-name: "Steve和朋友们的超长名字"; clicked => {root.notify("玩家详情留待U4");} }
+            Text { text: "列表状态"; font-size: 18px; color: Theme.ink; }
+            for name[i] in ["正常", "加载中", "空列表", "加载失败"]: GlassButton { label: name; checked: root.content-state == i; clicked => {root.content-state = i; root.filter("",0,false);} }
+            Text { text: "可搜索、筛选、按名称排序，切换图标/列表；拖动右侧滚动条。图片由现有缓存提供。"; wrap: word-wrap; color: Theme.ink; }
+        }
+        if root.page == 3: VerticalLayout { padding: 24px; spacing: 16px; alignment: start;
+            Text { text: "玻璃瓷砖网格"; font-size: 20px; color: Theme.ink; }
+            Text { text: "鼠标滚轮横向浏览；悬停显示房间名称，按下缩小，右键查看详情。"; wrap: word-wrap; color: Theme.ink; }
+            Text { text: root.tile-hover >= 0 ? root.tiles[root.tile-hover].name : "将鼠标移到瓷砖上"; wrap: word-wrap; color: #446c49; }
+            Text { text: "样例包含普通、不可游玩、运行中和准备中的房间，以及空图标和玩家头像。"; wrap: word-wrap; color: Theme.ink; }
+            HeadButton { source: root.head; player-name: "Steve和朋友们"; }
+        }
+        if root.page == 2: TaskProgress { x: 12px; y: 12px; width: parent.width - 24px; height: parent.height - 24px;
+            title: "安装整合包（画廊样例）"; message: "下载游戏文件 · 8/12个 · 24MiB/40MiB"; fraction: 0.6;
+            rows: root.tasks; error: "可选资源下载失败（样例）";
+            toggle(i) => {root.toggle-task(i);} hidden => {root.notify("任务已隐藏到后台（画廊样例）");} }
+    }
+}
