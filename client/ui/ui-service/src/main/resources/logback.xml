@@ -1,0 +1,9 @@
+<configuration>
+    <appender name="STDERR" class="ch.qos.logback.core.ConsoleAppender">
+        <target>System.err</target>
+        <encoder><pattern>%date %-5level %logger - %msg%n</pattern></encoder>
+    </appender>
+    <!-- Legacy informational messages contain play arguments; never log those in the service. -->
+    <logger name="lgr" level="WARN"/>
+    <root level="INFO"><appender-ref ref="STDERR"/></root>
+</configuration>

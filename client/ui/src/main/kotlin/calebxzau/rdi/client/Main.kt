@@ -174,6 +174,7 @@ fun main() {
         val minimumSize = remember(screen) { Dimension(screen.width / 3, screen.height / 3) }
         val taskEntries by ClientTaskManager.entries.collectAsState()
         val activeTasks = remember(taskEntries) { taskEntries.filter(::isActiveTask) }
+        McPlayStore.revision.collectAsState().value
         val runningMcSessions = activeMcSessions(McPlayStore.sessions)
         var showExitConfirm by remember { mutableStateOf(false) }
         val globalSnackbar = remember { SnackbarHostState() }

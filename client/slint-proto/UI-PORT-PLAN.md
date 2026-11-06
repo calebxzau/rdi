@@ -5,13 +5,31 @@ Written 2026-11-05 for an agent with no prior context. This replaces M2-M4 in `M
 
 ## Current status (handoff)
 
-Updated 2026-11-05. **Next task: U2 (section 5), stop at GU2.** The owner has seen the U2 scope and is handing it to a new agent. U2 is within this approved plan, so it needs no new approval unless the scope materially changes.
+Updated 2026-11-06. **GU2 passed with the owner's review on 2026-11-06. U3 is next and has not started; wait for the owner to hand it off.**
+Read `evidence/ui-port/u2/gate-summary.md` for acceptance results and limits.
+The owner approved GU2 after the concurrency follow-up below.
 
-- U1 is finished. GU1 passed with the owner's review on 2026-11-05 (`evidence/ui-port/u1/gate-summary.md`, commit `c6f21e82`). No U2 code exists yet.
+- U1 is finished. GU1 passed with the owner's review on 2026-11-05 (`evidence/ui-port/u1/gate-summary.md`, commit `c6f21e82`). U2 implementation has started; see the update below.
 - Later gates are unchanged. The accepted Mac terrain problem is recorded in section 4.
-- `dev` has unpushed commits: `c6f21e82` and the owner's `a1646b01`. Do not push them without approval.
+- `dev` has unpushed commits: `c6f21e82`, the owner's `a1646b01`, `4cbf217e` and the U2 commit. Do not push them without approval.
 
-### Before starting U2
+### U2 results (2026-11-06)
+
+Shared Kotlin logic and the headless service are implemented. Real Slint login,
+room list, in-game launch, duplicate/stop/close behavior, menu/in-game service
+crash recovery, and Compose runtime were checked on Windows. The owner-installed
+pack and owner-requested local core JAR were used. Service crash interrupts the
+game connection; reconnecting was verified. There are4 unchanged client-core
+baseline failures. See the GU2 gate summary; wait for owner review before U3.
+
+Owner review follow-up (2026-11-06): a launcher/service crash disconnecting or ending the
+game is accepted. Requests are now handled concurrently on both sides (Kotlin
+`RequestDispatcher`, Rust `Arc<Service>` without an outer lock); requests without a valid
+id are ignored. See "Owner review follow-up" in the gate summary. Still open for U3/U4:
+the 「Compose启动器」 install message, game window sizing through the headless AWT fallback,
+and remeasuring memory/startup on a release build.
+
+### Original U2 preparation notes (historical)
 
 Read `AGENTS.md`, `client/ui/AGENTS.md`, sections 1-3 and 5 of this plan, and section 2 of `M1-M2-PLAN.md`. Then run `git status`: `client/ui` and `common` hold a lot of the owner's uncommitted work, which must not be staged or overwritten.
 

@@ -45,6 +45,7 @@ struct CachedArt {
 }
 enum Event {
     Loaded(u64, Result<Loaded>),
+    Started(Result<serde_json::Value>),
     Appearance(u64, Result<Appearance>),
     CrowdSkin(u64, String, Skin),
     Page(u64, Result<Vec<HostBrief>>),
@@ -124,6 +125,7 @@ pub struct App {
     hosts: Hosts,
     packs: Vec<ModpackBrief>,
     api: Option<Client>,
+    running_processes: Vec<serde_json::Value>,
     heads: HeadCache,
     cache: lru::LruCache<String, CachedArt>,
     jobs: HashMap<String, JoinHandle<()>>,
@@ -171,6 +173,7 @@ impl App {
             hosts: Hosts::default(),
             packs: vec![],
             api: None,
+            running_processes: vec![],
             heads: HeadCache::default(),
             cache: lru::LruCache::new(NonZeroUsize::new(60).unwrap()),
             jobs: HashMap::new(),
@@ -289,7 +292,48 @@ impl App {
                 && let Some(entry) = a.borrow().entries(tab as usize).get(index as usize)
             {
                 let action = if right { "detail" } else { "play" };
-                tracing::info!(id = %entry.id, action, "Prototype tile action");
+                tracing::info!(id = %entry.id, action, "Room tile action");
+                if tab == 0 && !right {
+                    let a = a.borrow();
+                    if let Some(api) = a.api.clone() {
+                        let id = entry.id.clone();
+                        let size = a.ui.upgrade().map(|ui| ui.window().size()).unwrap_or(slint::PhysicalSize::new(1280, 720));
+                        let tx = a.tx.clone();
+                        a.runtime.spawn(async move {
+                            let result = api.call("host.start", serde_json::json!({"hostId":id,"windowWidth":size.width,"windowHeight":size.height})).await;
+                            let _ = tx.send(Event::Started(result));
+                        });
+                    }
+                }
+            }
+        });
+        let stop_app = Rc::downgrade(app);
+        ui.on_stop_games(move || {
+            if let Some(app) = stop_app.upgrade() {
+                let app = app.borrow();
+                if let Some(api) = app.api.clone() {
+                    let tx = app.tx.clone();
+                    app.runtime.spawn(async move {
+                        let result = api.call("game.stopAll", serde_json::json!({})).await;
+                        let _ = tx.send(Event::Started(result));
+                    });
+                }
+            }
+        });
+        let duplicate_app = Rc::downgrade(app);
+        ui.on_confirm_duplicate(move || {
+            if let Some(app) = duplicate_app.upgrade() {
+                let app = app.borrow();
+                if let (Some(api), Some(ui)) = (app.api.clone(), app.ui.upgrade()) {
+                    let id = ui.get_duplicate_host().to_string();
+                    ui.set_duplicate_host("".into());
+                    let size = ui.window().size();
+                    let tx = app.tx.clone();
+                    app.runtime.spawn(async move {
+                        let result = api.call("host.start", serde_json::json!({"hostId":id,"allowDuplicateVersion":true,"windowWidth":size.width,"windowHeight":size.height})).await;
+                        let _ = tx.send(Event::Started(result));
+                    });
+                }
             }
         });
         ui.on_stub(|name| tracing::info!(action=%name,"Prototype action"));
@@ -371,6 +415,7 @@ impl App {
         let epoch = self.epoch;
         let base = self.config.server.clone();
         let heads = self.heads.clone();
+        let running_processes = self.running_processes.clone();
         self.login_job = Some(self.runtime.spawn(async move {
             let result = async {
                 let (usr, pwd) = Config::credentials()?;
@@ -382,6 +427,10 @@ impl App {
                 let mine = api.get("/host/my").await?;
                 let page = api.get("/host/list/0").await?;
                 let packs: ModpackPage = api.get("/modpack/search?offset=0&limit=100").await?;
+                if !running_processes.is_empty() {
+                    api.call("game.restore", serde_json::json!({"sessions":running_processes})).await?;
+                }
+                api.call("game.subscribe", serde_json::json!({})).await?;
                 let head = match heads.get(&api, &uid).await {
                     Ok(h) => h,
                     Err(e) => {
@@ -582,14 +631,52 @@ impl App {
         let Some(ui) = self.ui.upgrade() else {
             return;
         };
+        if self.api.as_ref().is_some_and(Client::has_exited) {
+            self.login();
+            ui.set_error("启动服务意外退出，正在重新连接".into());
+            return;
+        }
+        if let Some(api) = &self.api {
+            for event in api.take_events() {
+                if event["event"] == "game.state" {
+                    let state = &event["params"];
+                    if let Some(error) = state["errorMessage"].as_str() {
+                        ui.set_action_error(error.into());
+                        continue;
+                    }
+                    ui.set_game_running(state["running"].as_bool().unwrap_or(false));
+                    if let Some(sessions) = state["sessions"].as_array() {
+                        self.running_processes = sessions.iter().filter_map(|session| session.get("process").cloned()).collect();
+                        let status = sessions.iter().map(|session| {
+                            let title = session["title"].as_str().unwrap_or("游戏");
+                            let status = if session["preparing"] == true { "启动中" } else if session["running"] == true { "运行中" } else { session["exitMessage"].as_str().unwrap_or("已结束") };
+                            format!("{title}：{status}")
+                        }).collect::<Vec<_>>().join("；");
+                        ui.set_game_status(status.into());
+                    }
+                }
+            }
+        }
         let mut dirty = false;
         while let Ok(event) = self.rx.try_recv() {
             match event {
+                Event::Started(result) => {
+                    if let Some(ui) = self.ui.upgrade() {
+                        match result {
+                            Ok(value) if value["duplicateVersion"] == true => {
+                                ui.set_duplicate_host(value["hostId"].as_str().unwrap_or("").into());
+                            }
+                            Ok(_) => {},
+                            Err(error) => ui.set_action_error(format!("{error:#}").into()),
+                        }
+                    }
+                },
                 Event::Loaded(epoch, result) if epoch == self.epoch => {
                     self.login_job = None;
                     ui.set_loading(false);
                     match result {
                         Ok(data) => {
+                            ui.set_error("".into());
                             if self.player_enabled() {
                                 let http = data.api.http.clone();
                                 let cloth = data.player.cloth;

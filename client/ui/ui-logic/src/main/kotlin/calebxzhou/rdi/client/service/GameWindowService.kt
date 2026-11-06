@@ -1,7 +1,6 @@
 package calebxzhou.rdi.client.service
 
 import calebxzau.rdi.client.RDIClient
-import calebxzau.rdi.client.ui.decodeImageBitmap
 import calebxzhou.rdi.common.net.httpRequest
 import io.ktor.client.plugins.timeout
 import io.ktor.client.request.url
@@ -26,7 +25,7 @@ import java.util.concurrent.ConcurrentHashMap
 import javax.imageio.ImageIO
 import kotlin.coroutines.coroutineContext
 
-class GameWindowService internal constructor(
+class GameWindowService constructor(
     private val launcherDir: () -> Path = { RDIClient.DIR.toPath() },
     private val download: suspend (String) -> ByteArray = ::downloadWindowIcon,
     private val encodePng: (ByteArray) -> ByteArray = ::encodeWindowIconPng,
@@ -123,7 +122,7 @@ class GameWindowService internal constructor(
     }
 }
 
-internal fun gameWindowTitle(modpackName: String, hostName: String?, versionName: String = ""): String {
+fun gameWindowTitle(modpackName: String, hostName: String?, versionName: String = ""): String {
     fun clean(value: String) = value.replace(Regex("[\\p{Cntrl}]"), " ").trim()
     fun shorten(value: String, limit: Int): String {
         if (value.length <= limit) return value
@@ -141,7 +140,7 @@ internal fun gameWindowTitle(modpackName: String, hostName: String?, versionName
     return "${shorten(pack, packLimit)}${separator}${shorten(host, budget - packLimit)}"
 }
 
-internal fun isGameWindowJvmArg(argument: String): Boolean =
+fun isGameWindowJvmArg(argument: String): Boolean =
     argument.substringBefore('=') in setOf("-Drdi.window.icon", "-Drdi.window.title")
 
 private suspend fun downloadWindowIcon(iconUrl: String): ByteArray {
@@ -157,13 +156,21 @@ private suspend fun downloadWindowIcon(iconUrl: String): ByteArray {
     return response.bodyAsBytes()
 }
 
-internal fun encodeWindowIconPng(bytes: ByteArray): ByteArray {
-    val bitmap = decodeImageBitmap(bytes).getOrThrow()
-    val pixels = IntArray(Math.multiplyExact(bitmap.width, bitmap.height))
-    bitmap.readPixels(pixels)
-    val image = BufferedImage(bitmap.width, bitmap.height, BufferedImage.TYPE_INT_ARGB)
+fun encodeWindowIconPng(bytes: ByteArray): ByteArray {
+    val image = if (calebxzau.rdi.mediaproc.FfmpegAvifDecoder.isAvif(bytes)) {
+        val decoded = calebxzau.rdi.mediaproc.FfmpegAvifDecoder.decode(bytes).getOrThrow()
+        BufferedImage(decoded.width, decoded.height, BufferedImage.TYPE_INT_ARGB).also { image ->
+            val pixels = IntArray(decoded.width * decoded.height) { index ->
+                val offset = index * 4
+                ((decoded.pixels[offset + 3].toInt() and 255) shl 24) or
+                    ((decoded.pixels[offset].toInt() and 255) shl 16) or
+                    ((decoded.pixels[offset + 1].toInt() and 255) shl 8) or
+                    (decoded.pixels[offset + 2].toInt() and 255)
+            }
+            image.setRGB(0, 0, decoded.width, decoded.height, pixels, 0, decoded.width)
+        }
+    } else requireNotNull(ImageIO.read(bytes.inputStream())) { "无法解码整合包图标" }
     try {
-        image.setRGB(0, 0, bitmap.width, bitmap.height, pixels, 0, bitmap.width)
         return ByteArrayOutputStream().use { output ->
             check(ImageIO.write(image, "png", output)) { "无法编码整合包PNG图标" }
             output.toByteArray()

@@ -1,9 +1,8 @@
 package calebxzhou.rdi.client.ui
 
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateListOf
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.setValue
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import calebxzau.rdi.mclaunch.MinecraftAccount
 import calebxzhou.rdi.client.ui.comp.ConsoleState
 import calebxzhou.rdi.client.service.ModpackLifecycleCoordinator
@@ -15,25 +14,40 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.util.UUID
+import kotlin.uuid.Uuid
 
-private val mcPlaySessionScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+private val mcPlaySessionScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
 class McGameSession(
-    val id: String = UUID.randomUUID().toString(),
+    val id: String = Uuid.generateV7().toString(),
     val args: McPlayArgs,
     val consoleState: ConsoleState = ConsoleState(),
     val startedAt: Long = System.currentTimeMillis(),
     private val cleanup: () -> Unit = {}
 ) {
-    var process: Process? by mutableStateOf(null)
-    var preparing: Boolean by mutableStateOf(true)
-    var exitMessage: String? by mutableStateOf(null)
-    var stopRequested: Boolean by mutableStateOf(false)
+    @Volatile var process: Process? = null
+        set(value) { field = value; McPlayStore.changed() }
+    @Volatile var preparing: Boolean = true
+        set(value) { field = value; McPlayStore.changed() }
+    @Volatile var exitMessage: String? = null
+        set(value) { field = value; McPlayStore.changed() }
+    @Volatile var stopRequested: Boolean = false
+        set(value) { field = value; McPlayStore.changed() }
     private var cleanedUp = false
 
     val title: String get() = args.title
     val versionId: String get() = args.versionId
+
+    @Synchronized
+    fun attachProcess(started: Process): Boolean {
+        if (stopRequested) {
+            started.destroyForcibly()
+            return false
+        }
+        process = started
+        preparing = false
+        return true
+    }
 
     fun isAlive(): Boolean = process?.isAlive == true
 
@@ -43,6 +57,7 @@ class McGameSession(
         }
     }
 
+    @Synchronized
     fun markExited(message: String? = null) {
         preparing = false
         process = null
@@ -55,6 +70,7 @@ class McGameSession(
         }
     }
 
+    @Synchronized
     fun requestStop(force: Boolean = false) {
         stopRequested = true
         val currentProcess = process
@@ -70,8 +86,12 @@ object McPlayStore {
     var pendingLaunch: McPlayArgs? = null
     var onBack: (() -> Unit)? = null
     var openConsoleOnly: Boolean = false
-    var selectedSessionId: String? by mutableStateOf(null)
-    val sessions = mutableStateListOf<McGameSession>()
+    @Volatile var selectedSessionId: String? = null
+        set(value) { field = value; McPlayStore.changed() }
+    private val mutableRevision = MutableStateFlow(0L)
+    val revision = mutableRevision.asStateFlow()
+    fun changed() { mutableRevision.update { it + 1 } }
+    val sessions = java.util.concurrent.CopyOnWriteArrayList<McGameSession>()
 
     fun launchSessionTask(block: suspend () -> Unit) {
         mcPlaySessionScope.launch { block() }
@@ -94,11 +114,13 @@ object McPlayStore {
 
     suspend fun admitSession(args: McPlayArgs, allowDuplicateVersion: Boolean): McGameSession? =
         ModpackLifecycleCoordinator.withVersionLock(args.versionId) {
-            withContext(Dispatchers.Main.immediate) {
+            withContext(Dispatchers.Default) {
+                synchronized(sessions) {
                 if (!allowDuplicateVersion && aliveCount(args.versionId) > 0) {
                     null
                 } else {
                     createSession(args)
+                }
                 }
             }
         }
@@ -122,6 +144,7 @@ object McPlayStore {
         }
         session.markExited(session.exitMessage)
         sessions.removeAt(index)
+        changed()
         if (selectedSessionId == sessionId || sessions.none { it.id == selectedSessionId }) {
             selectedSessionId = nextSelectedId
         }

@@ -5,10 +5,23 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
 };
 pub fn wire(ui: &AppWindow, paused: Arc<AtomicBool>, probe_unfocused: bool) {
+    let close_ui = ui.as_weak();
+    ui.window().on_close_requested(move || {
+        if let Some(ui) = close_ui.upgrade() && ui.get_game_running() {
+            ui.set_confirm_exit(true);
+            slint::CloseRequestResponse::KeepWindowShown
+        } else {
+            slint::CloseRequestResponse::HideWindow
+        }
+    });
     let weak = ui.as_weak();
     ui.on_window_action(move |action| {
         if let Some(ui) = weak.upgrade() {
-            if action == 3 {
+            if action == 3 && ui.get_game_running() {
+                ui.set_confirm_exit(true);
+                return;
+            }
+            if action == 3 || action == 4 {
                 if let Err(e) = slint::quit_event_loop() {
                     tracing::error!(error=?e,"Closing window failed");
                 }

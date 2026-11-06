@@ -1,12 +1,14 @@
 # rdi-slint-proto
 
 Rust + Slint rebuild of the launcher's main menu (`MenuScreen`), used to judge visual parity and memory against
-the Compose launcher. Standalone: not part of Gradle, the updater, or any release.
+the Compose launcher. The Rust UI remains outside Gradle and releases; U2 uses a headless Kotlin child service built by the client/ui Gradle project.
 
 ## Build and run (Windows, MSVC toolchain)
 
 ```powershell
-cd C:\Users\calebxzhou\Documents\coding\rdi5\client\slint-proto
+cd C:\Users\calebxzhou\Documents\coding\rdi5\client\ui
+.\gradlew.bat :ui-service:installDist --no-daemon
+cd ..\slint-proto
 cargo build --release
 $env:RDI_PROTO_USR = '<account>'
 $env:RDI_PROTO_PWD = '<password>'
@@ -20,8 +22,9 @@ WSL toolchain.
 
 | Variable | Meaning |
 |---|---|
-| `RDI_PROTO_USR`, `RDI_PROTO_PWD` | Account used for `POST /player/jwt` (required; never commit them) |
-| `RDI_PROTO_SERVER` | API base URL, default `https://rdi.calebxzhou.cn:65331` |
+| `RDI_PROTO_USR`, `RDI_PROTO_PWD` | Account sent over framed stdio to Kotlin PlayerService.login (required; never commit them) |
+| `RDI_PROTO_SERVER` | Optional Kotlin debug-server host override; otherwise use Kotlin launcher routing |
+| `RDI_SERVICE_COMMAND` | Development override: JSON array of executable and arguments, without shell evaluation |
 | `WGPU_BACKEND` | Overrides the forced DX12 backend on Windows (`vulkan`, `gl`), for comparisons only |
 | `WGPU_DX12_COMPILER` | `fxc` or `dxc` overrides the default shader compiler (the `dxcompiler.dll` beside the exe, then FXC), for comparisons only |
 
@@ -338,3 +341,48 @@ Unfocused or missing-scene frames invalidate the run. These are UI callback inte
 
 [GU1 manual checks](evidence/ui-port/u1/owner-checklist.md) include Windows Chinese IME and physical-monitor DPI.
 U1 replaces the old M2 work; walking, picking, world expansion and resolution/FPS changes remain on hold.
+
+## U2 Kotlin service development
+
+Build `:ui-service:installDist` from `client/ui` with the Windows wrapper before
+running the Rust UI. The default command discovers JDK25 using the updater's
+candidate search and launches `calebxzau.rdi.service.MainKt` with the development
+service classpath. It uses `client/ui/run` as its data directory. The updater is
+unchanged. Shipping paths and cross-platform packaging are U5 work.
+
+`RDI_SERVICE_COMMAND` accepts a JSON argument array; e.g. an absolute Java path,
+`-cp`, a classpath, and the main class. Credentials are sent in the login request,
+not passed on the child environment or command line. Images still download on
+the Rust side. API requests run through the Kotlin service.
+
+The protocol is documented in `protocol/README.md`. `tools/service-client.py`
+is an interactive framed JSON client. `tools/u2-service-smoke.ps1` checks the
+real service, login when credentials are supplied, and EOF shutdown. Its
+`-LaunchGame` option requires an installed playable test room; it closes the
+service (and therefore the test game) when done. `tools/u2-ui-smoke.ps1` brings
+the UI foreground, captures it, kills its service child, verifies restart and
+menu recovery, then closes the UI. These are development checks, not shipping
+commands. Never print or record test credentials.
+
+Service logs: `client/ui/run/logs/ui-service.log`; native/JVM stderr is captured
+in `ui-service-stderr.log` under the Rust application's working directory.
+Missing packs must currently be installed through Compose (installation UI is
+U4). Windows main-flow acceptance is recorded in `evidence/ui-port/u2/gate-summary.md`; stop at GU2 pending owner review.
+
+`tools/u2-game.ps1 -Action Start -LocalCore` starts the test UI and sends a click
+on its first visible room card. `-LocalCore` explicitly sets RDI_SERVICE_CORE_JAR
+to the local1.21.1 NeoForge build; the headless service applies this after normal
+core synchronization. A different existing JAR is archived under a unique
+repository DEL path before copying. This is a development override, never a
+release/updater change. Omit it for normal core synchronization.
+
+`tools/u2-compose.gradle` supplies the development runtime classpath task;
+`tools/u2-compose.ps1` checks the existing Compose launcher without packaging a
+release. The game-run helper's Capture/Duplicate/CancelDialog/Stop/CloseRequest/
+ConfirmClose actions support the GU2 Windows checks. RMCP screen tools were used
+for game UI control once the owner-requested local core was installed.
+
+Service crash recovery retains process identity (PID plus creation time) in the
+Rust UI and restores management after restarting Kotlin. The local game
+connection drops on a crash and may require reconnecting; console history in the
+dead service is not restored.

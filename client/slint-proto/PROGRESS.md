@@ -241,3 +241,42 @@
 - Fixed window edge resize: the left and top handles had no x or y, so Slint centered them. All 8 directions now work on the menu and the proof screen (`ui/resize_handles.slint`, `tools/u1-resize-edges.ps1`).
 - Owner accepted wrong Mac terrain, confirmed the manual checks, and replaced the 1 physical pixel panel limit with no visible offset. GU1 passed.
 - **Next: U2, stop at GU2.** Handoff is in `UI-PORT-PLAN.md`, "Current status (handoff)". No U2 code exists yet.
+
+## 2026-11-06 (U2 in progress)
+
+- Extracted Compose-free ui-logic and headless ui-service; Rust menu uses framed
+  Kotlin login/data calls and can request room launch. Direct Rust API client
+  archived. Updater unchanged; nothing staged or shipped.
+- Compose compiles, 41 focused UI tests and 8 new module tests pass. Baseline
+  client-core has235 tests/4 pre-existing failures; see U2 work-in-progress note.
+- Real login/list, EOF shutdown and menu-session service kill/restart validated.
+  Latest focused sample: UI459.71MiB WS, service266.18MiB WS. Handshake251ms in
+  a separate standalone sample; these are not medians or growth measurements.
+- GU2 pending: test room requires pack installation through Compose; in-game,
+  running-game shutdown/crash behavior and Compose runtime acceptance remain.
+- See evidence/ui-port/u2/work-in-progress.md. Do not begin U3.
+
+## 2026-11-06 (GU2 ready for review)
+
+- Real Slint-to-Kotlin login/list/game launch reached the overworld. Owner
+  installed the test pack. At the owner's request the local1.21.1 core was used
+  for RMCP screen_read/screen_click; in-game state and reconnection verified.
+- Stop, duplicate confirmation/cancel, close confirmation, and service crash
+  recovery with an active game verified. PID/start-time snapshots restore game
+  management after a crash; connection interruption still requires reconnect.
+- Compose runtime opened and closed normally.41 existing focused UI +12 new
+  Kotlin module tests and22 Rust tests pass; clippy passes. Final client-core
+  rerun remains235 tests/4 original failures.
+- Latest focused sample: UI627.14MiB WS, service251.66MiB WS. Service handshake
+  median644ms (672/640/644). Debug UI first frame1017ms/live scene5300ms; no
+  release-performance or steady-growth claim.
+- Stop at GU2 pending owner review. See evidence/ui-port/u2/gate-summary.md.
+  No staging, commits, push, release packaging or U3 work.
+
+## 2026-11-06 (GU2 passed)
+
+- Owner follow-up: a launcher/service crash disconnecting or ending the game is accepted.
+  Requests are now handled concurrently: Kotlin `RequestDispatcher`, Rust `Arc<Service>`
+  without an outer lock; requests without a valid id are ignored. Tests: ui-service 11,
+  ui-logic 6, Rust 24, clippy clean, real service smoke passed.
+- GU2 passed with owner review. U3 not started.

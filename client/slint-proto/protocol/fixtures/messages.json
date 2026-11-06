@@ -1,0 +1,102 @@
+[
+  {
+    "id": 1,
+    "method": "handshake",
+    "params": {
+      "protocolVersion": 1
+    }
+  },
+  {
+    "id": 1,
+    "result": {
+      "protocolVersion": 1
+    }
+  },
+  {
+    "id": 2,
+    "method": "login",
+    "params": {
+      "usr": "example",
+      "pwd": "example-only"
+    }
+  },
+  {
+    "id": 2,
+    "error": {
+      "code": "LOGIN_FAILED",
+      "message": "登录失败，请检查账号和密码"
+    }
+  },
+  {
+    "event": "hostList.state",
+    "params": {
+      "hosts": [],
+      "initialLoading": false
+    }
+  },
+  {
+    "id": 3,
+    "method": "host.start",
+    "params": {
+      "hostId": "0123456789abcdef01234567"
+    }
+  },
+  {
+    "id": 4,
+    "method": "game.stop",
+    "params": {
+      "sessionId": "example",
+      "force": false
+    }
+  },
+  {
+    "event": "game.state",
+    "params": {
+      "sessions": [],
+      "running": false
+    }
+  },
+  {
+    "id": 5,
+    "method": "game.restore",
+    "params": {
+      "sessions": [
+        {
+          "id": "01900000-0000-7000-8000-000000000001",
+          "title": "Example room",
+          "versionId": "example_1.0.0",
+          "versionName": "1.0.0",
+          "mcVersion": "V211",
+          "modLoader": "neoforge",
+          "pid": 12345,
+          "processStartedAt": 1700000000000
+        }
+      ]
+    }
+  },
+  {
+    "event": "game.state",
+    "params": {
+      "running": true,
+      "sessions": [
+        {
+          "id": "01900000-0000-7000-8000-000000000001",
+          "title": "Example room",
+          "preparing": false,
+          "running": true,
+          "stopRequested": false,
+          "process": {
+            "id": "01900000-0000-7000-8000-000000000001",
+            "title": "Example room",
+            "versionId": "example_1.0.0",
+            "versionName": "1.0.0",
+            "mcVersion": "V211",
+            "modLoader": "neoforge",
+            "pid": 12345,
+            "processStartedAt": 1700000000000
+          }
+        }
+      ]
+    }
+  }
+]

@@ -1,0 +1,11 @@
+// Development-only runtime check; never packages or replaces a release directory.
+gradle.projectsEvaluated {
+    def ui = gradle.rootProject
+    ui.tasks.register('u2RuntimeClasspath') {
+        dependsOn ui.tasks.named('classes')
+        dependsOn ui.configurations.runtimeClasspath
+        doLast {
+            new File(ui.projectDir, 'build/u2-runtime-classpath.txt').text = ui.sourceSets.main.runtimeClasspath.asPath
+        }
+    }
+}

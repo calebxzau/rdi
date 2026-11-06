@@ -72,6 +72,7 @@ class HostListViewModel(
     private val gateway: HostListGateway,
     private val useMockData: Boolean = Const.USE_MOCK_DATA,
     private var showOtherHosts: Boolean = false,
+    private val scope: kotlinx.coroutines.CoroutineScope? = null,
 ) : ViewModel() {
     private val _uiState = MutableStateFlow(HostListUiState(showOtherHosts = showOtherHosts))
     val uiState: StateFlow<HostListUiState> = _uiState.asStateFlow()
@@ -118,7 +119,7 @@ class HostListViewModel(
             return
         }
 
-        loadJob = viewModelScope.launch {
+        loadJob = (scope ?: viewModelScope).launch {
             loadMoreInternal(currentGeneration, currentSourceState)
         }
     }
@@ -149,7 +150,7 @@ class HostListViewModel(
         val refreshAvailable = availableRefreshRequested
         availableRefreshRequested = false
         if (refreshAvailable) currentSourceState.legacyAvailableEnded = false
-        loadJob = viewModelScope.launch {
+        loadJob = (scope ?: viewModelScope).launch {
             loadMoreInternal(currentGeneration, currentSourceState, loadUnavailable = !refreshAvailable)
         }
     }
@@ -237,7 +238,7 @@ class HostListViewModel(
         if (_uiState.value.launchingHost != null) return
         val target = host.target
         _uiState.update { it.copy(launchingHost = target) }
-        viewModelScope.launch {
+        (scope ?: viewModelScope).launch {
             try {
                 resultOf { gateway.startHost(host).getOrThrow() }.fold(
                     onSuccess = { outcome ->

@@ -79,3 +79,5 @@ project(":render-core").projectDir = file("../render-core")
 project(":bg-renderer").projectDir = file("../bg-renderer")
 project(":local-mc-proxy").projectDir = file("../local-mc-proxy")
 project(":mc-proxy").projectDir = file("../../mc/proxy")
+
+include(":ui-logic", ":ui-service")

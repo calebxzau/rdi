@@ -33,6 +33,7 @@ import calebxzau.rdi.client.ui.asIconText
 import calebxzhou.rdi.client.auth.LocalCredentials
 import calebxzhou.rdi.client.net.RServer
 import calebxzhou.rdi.client.service.PlayerService
+import calebxzau.rdi.client.logic.LoginController
 import calebxzhou.rdi.client.ui.*
 import calebxzhou.rdi.common.DEBUG
 import kotlinx.coroutines.Dispatchers
@@ -53,6 +54,7 @@ fun LoginScreen(
     val routeState by RServer.routeState.collectAsState()
     var showPassword by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
+    val loginController = remember { LoginController { account, password -> PlayerService.login(account, password).map { Unit } } }
     val creds = remember { LocalCredentials.read() }
     val storedAccounts = remember(creds.loginInfos) {
         creds.loginInfos.entries.sortedByDescending { it.value.lastLoggedTime }
@@ -77,7 +79,7 @@ fun LoginScreen(
         loginError = null
         scope.launch {
             val result = withContext(Dispatchers.IO) {
-                PlayerService.login(qq, pwd)
+                loginController.login(qq, pwd)
             }
             submitting = false
             result.onFailure {

@@ -181,6 +181,7 @@ private fun TitleBar(
     onOpenPlayerInfo: () -> Unit,
     onOpenWardrobe: () -> Unit
 ) {
+    McPlayStore.revision.collectAsState().value
     val activeSessions = McPlayStore.sessions
 
     Box(

@@ -137,6 +137,7 @@ dependencies {
     implementation(project(":database"))
     implementation(project(":client-store"))
     implementation(project(":client-core"))
+    implementation(project(":ui-logic"))
     implementation(project(":misc"))
     implementation(project(":model"))
     implementation(project(":net"))
