@@ -5,13 +5,37 @@ Written 2026-11-05 for an agent with no prior context. This replaces M2-M4 in `M
 
 ## Current status (handoff)
 
-Updated 2026-11-06. **GU2 passed with the owner's review on 2026-11-06. U3 is next and has not started; wait for the owner to hand it off.**
-Read `evidence/ui-port/u2/gate-summary.md` for acceptance results and limits.
-The owner approved GU2 after the concurrency follow-up below.
+Updated 2026-11-06. **Next task: U3 (section 6), stop at GU3.** The owner is handing U3 to a new agent. U3 is within this approved plan, so it needs no new approval unless the scope materially changes.
 
-- U1 is finished. GU1 passed with the owner's review on 2026-11-05 (`evidence/ui-port/u1/gate-summary.md`, commit `c6f21e82`). U2 implementation has started; see the update below.
+- GU1 passed 2026-11-05 (`evidence/ui-port/u1/gate-summary.md`, commit `c6f21e82`).
+- GU2 passed 2026-11-06 (`evidence/ui-port/u2/gate-summary.md`, commit `8a6fe6a9`), after the concurrency follow-up.
 - Later gates are unchanged. The accepted Mac terrain problem is recorded in section 4.
-- `dev` has unpushed commits: `c6f21e82`, the owner's `a1646b01`, `4cbf217e` and the U2 commit. Do not push them without approval.
+- `dev` has unpushed commits: `c6f21e82`, the owner's `a1646b01`, `4cbf217e`, `8a6fe6a9` and the U3 handoff commit. Do not push without approval.
+- Do not stage, commit or push. Report at GU3; the reviewer commits after the owner's review. `client/ui` and `common` hold a lot of the owner's uncommitted work, some of it only CRLF flips; never overwrite it.
+
+### Before starting U3
+
+Read `AGENTS.md`, `client/ui/AGENTS.md`, sections 1-3 and 6 of this plan, `README.md` here, and both gate summaries above for their limits. The "Environment for U2" notes below still apply.
+
+### U3 scope notes
+
+Section 6 is the scope. These notes add the facts and decisions it depends on.
+
+- **Scene freeze (carried from U1/U2, owner decision 2026-11-05).** Only the menu screen animates the 3D scene. Every other screen holds its last frame, and so does a running game; the scene stays loaded. Today `scene_frozen` (`src/main.rs`, around line 78) is set only by `--ui-proof`. Drive it from the navigation's current screen and from `game-running`, which `src/app.rs` sets from the service's `game.state` event. GU1 criterion 2 was measured under this policy (`evidence/ui-port/u1/held-menu-1`, `freeze-1`).
+- **Navigation.** Replace `AppNavigation.kt` (`client/ui/src/main/kotlin/calebxzhou/rdi/client/ui/AppNavigation.kt`) with a back stack, without the cut features in section 1. U3 builds the shell only; destinations whose screens arrive in U4 keep calling the existing `stub` callback. Do not build placeholder screens.
+- **Current Slint code.** `ui/*.slint` is small (app 162 lines, plus title bar, tab bar, tile grid, tiles, glass button, player head, resize handles, theme). `src/app.rs` (950 lines) holds state, jobs and Slint wiring; split it as the shell grows instead of letting it absorb every screen.
+- **Compose sources to match.** `calebxzau/rdi/client/ui/window/WindowChrome.kt`, `GlassTileGrid.kt`, `LiquidGlass.kt`, `Dialogs.kt`, `IconButtons.kt` (`CircleIconButton`, which `AGENTS.md` prefers for icon actions) and `calebxzhou/rdi/client/ui/comp/` (`ContentGrid`, `ContentCard`, `HttpImage`, `RScrollbar`, `PasswordField`/`RPasswordField`, `ToggleButton`, `Console`, `Task2DetailDialog`, `HeadButton`, `IconTileCard`). Match look and behavior, not structure.
+- **Glass.** Glass is a wgpu pass drawn below all Slint content (`crates/rdi-renderer/src/glass`). Generalize it so panel rectangles come from Slint layout instead of duplicated hand-placed rectangles. The Slint lessons in section 2 apply: no rounded `clip` or `opacity` on elements with children, update `VecModel`s in place, set both `x` and `y` when placing by hand.
+- **Images.** Network images and player heads already exist in `src/images.rs`; keep its per-host connection limit (forgecdn).
+- **Gallery.** Behind a flag (for example `--gallery`), show every component with its states: normal, hover, pressed, disabled, focused, loading, empty and error, plus a dialog, a toast and a long Chinese label. Capture it with `tools/capture.ps1` at scales 1 and 2 (`--scale`). Chinese text follows `AGENTS.md` section 12.
+- **Console and task progress need service data.** If they get real data in U3, add events to the protocol schema and golden fixtures (`protocol/`) in both languages. The Rust reader in `src/service.rs` treats any event other than `hostList.state` and `game.state` as a broken stream and drops the connection, so update its allowlist with the new events. Gallery-only sample data is fine for U3 if the service side waits for U4.
+- **Service rules from U2.** `RequestDispatcher` runs every handler on the single `runBlocking` thread: suspend, or move blocking work into `withContext(Dispatchers.IO)`, never block that thread. On the Rust side call the service only through `api.call` (it uses `spawn_blocking`), never from the UI thread. Classes used by plain JUnit tests must not reference `calebxzau.rdi.client.lgr`; its file also loads `AppConfig` and fails at class init. Use a local `KotlinLogging` logger.
+- **Report at GU3, not a criterion.** Remeasure memory and startup on a release build with the focused-window protocol from U1/U2, UI process and service separately. The GU2 numbers came from a debug build and are not comparable with earlier gates.
+- **Not U3.** The 「Compose启动器」 install message and game window sizing through the headless AWT fallback belong to U4 (batches c and b). The owner has not decided whether to move `LocalModpackInstallScreen` earlier in U4; do not reorder U4.
+
+### Validation baselines after U2
+
+`client-core:test` 235 tests with 4 known failures (3 Fabric-rejection tests and `MediaProcGameClasspathTest`); ui-service 11 and ui-logic 6 pass; existing focused Compose tests 41 pass; Rust library 4 + binary 20 pass; `cargo clippy --all-targets -- -D warnings` clean. Run Rust tests with `cargo test --lib --bins` through Windows `pwsh.exe`. Record a fresh baseline before moving code.
 
 ### U2 results (2026-11-06)
 
@@ -43,7 +67,7 @@ These notes are 2-3 weeks old, so record a fresh baseline on the current tree be
 - `:net:compileTestKotlin` does not compile because of `RHttpClientTest.kt`. With that file excluded, 3 `FileDownloaderTest` cases fail on HEAD.
 - Non-Unit `runBlocking` test functions are silently skipped. Declare test functions with a Unit return.
 
-### Environment for U2
+### Environment for U2 (still applies to U3)
 
 - `client/ui` Gradle through IntelliJ MCP needs `executeInShell: true` for `.\gradlew.bat`, and MCP truncates long output, so redirect to a log and read that. Do not use the Gradle daemon under a WSL `pwsh.exe` pipe: it holds the pipe open until timeout even though the work succeeded.
 - Do not compile `client/ui` while the owner's Compose hot reload app is running; both write `build/classes`.
@@ -53,7 +77,7 @@ These notes are 2-3 weeks old, so record a fresh baseline on the current tree be
 - `ktorClient` SSE reconnects forever, so a service subscription built on it must stop on a terminal event.
 - Keep Compose startup flags in mind: the service has no UI, so do not carry the launcher's `-X` and JBR hot reload settings across without a reason.
 
-### Open items from U1 that U2 must not disturb
+### Open items from U1 that U2 must not disturb (historical)
 
 - `src/main.rs` `scene_frozen` is only set by `--ui-proof` today. Hooking it to navigation and a running game is U3 work, but the running-game state U2 exposes must make that possible.
 - `src/window.rs` and `ui/resize_handles.slint` hold the window controls, now on the menu as well.
