@@ -1,0 +1,169 @@
+import { ListView, ScrollView, CheckBox, TextEdit } from "std-widgets.slint";
+import { GlassButton, CircleIconButton } from "glass_button.slint";
+import { TextField } from "fields.slint";
+import { ContentGrid, ContentRow, EmptyState, LoadingState } from "shared.slint";
+import { GlassShape } from "surfaces.slint";
+import { Theme } from "theme.slint";
+
+export struct CandidateRow { name: string, detail: string, index: int, group: string, header: bool, collapsed: bool }
+export struct OptionDraft { java-custom-enabled: bool, java-path: string, memory-custom-enabled: bool, max-memory-text: string, jdwp-enabled: bool, jdwp-param: string, custom-jvm-params: string, forgeguard-disabled: bool }
+export component LocalModpackInstall inherits FocusScope {
+    out property <GlassShape> shape: { x: root.absolute-position.x / 1px, y: root.absolute-position.y / 1px, w: root.width / 1px, h: root.height / 1px, radius: 24, alpha: root.visible ? 1 : 0, tint: #ffffffbb };
+    in property <bool> editor;
+    in property <bool> loading;
+    in property <bool> scanning;
+    in property <bool> can-submit;
+    in property <bool> version-selectable;
+    in property <bool> include-saves;
+    in property <string> source;
+    in property <string> source-directory;
+    in property <string> error;
+    in property <string> progress;
+    in property <float> progress-fraction: -1;
+    in property <string> name;
+    in property <string> comment;
+    in property <string> icon-url;
+    in property <string> size-text;
+    in property <int> missing-count;
+    in property <[CandidateRow]> candidates;
+    in property <[string]> runtimes;
+    in property <int> runtime-index;
+    in property <[ContentRow]> contents;
+    callback action(string,string);
+    callback filter(string,int,bool);
+
+    HorizontalLayout { x: 24px; y: 16px; width: parent.width - 48px; height: 40px; spacing: 12px;
+        CircleIconButton { glyph: "\u{f060}"; accessible-label: "返回"; clicked => {root.action("back", "");} }
+        Text { text: root.source == "empty" ? "创建整合包" : "导入整合包"; color: Theme.ink; font-size: 18px; font-weight: 600; vertical-alignment: center; horizontal-stretch: 1; }
+        Text { visible: root.editor; text: root.size-text; color: #667064; vertical-alignment: center; }
+        GlassButton { visible: root.editor; enabled: root.can-submit; label: root.source == "empty" ? "创建" : "导入"; glyph: "\u{f019}"; clicked => {root.action("install", "");} }
+    }
+    if !root.editor: ScrollView { x: 24px; y: 72px; width: parent.width - 48px; height: parent.height - 96px; content-height: source-layout.preferred-height;
+        source-layout := VerticalLayout { width: parent.width; height: self.preferred-height; spacing: 12px;
+            Text { text: "此处装的包只保存在电脑本地 不会上传到RDI整合广场 开始MC时可选离线/正版登录"; wrap: word-wrap; color: Theme.ink; }
+            HorizontalLayout { spacing: 12px; alignment: start;
+                Text { text: "整合包安装包（CurseForge的zip或Modrinth的mrpack）"; vertical-alignment: center; color: Theme.ink; }
+                GlassButton { enabled: !root.loading; filled: true; label: "选取..."; glyph: "\u{eaef}"; clicked => {root.action("pickArchive", "");} }
+            }
+            HorizontalLayout { spacing: 12px; alignment: start;
+                Text { text: "其他启动器的mc文件夹（.minecraft或某个版本的文件夹）"; vertical-alignment: center; color: Theme.ink; }
+                GlassButton { enabled: !root.loading; filled: true; label: "选择文件夹"; glyph: "\u{f07c}"; clicked => {root.action("pickDirectory", "");} }
+            }
+            HorizontalLayout { spacing: 8px; alignment: start;
+                Text { text: "创建空整合包"; color: Theme.ink; vertical-alignment: center; }
+                for runtime[i] in root.runtimes: GlassButton { label: runtime; filled: true; clicked => {root.action("create",i);} }
+            }
+            HorizontalLayout {
+                Text { text: "电脑里之前安装过的整合包"; font-size: 18px; color: Theme.ink; horizontal-stretch: 1; }
+                CircleIconButton { glyph: "\u{f021}"; accessible-label: "重新扫描"; clicked => {root.action("scan", "");} }
+            }
+            if root.loading || root.scanning: LoadingState { height: 60px; }
+            if !root.scanning && root.candidates.length == 0: EmptyState { height: 72px; label: "没有找到之前装过的1.20.1或1.21.1整合包，可以用上面的“选择文件夹”"; }
+            for candidate in root.candidates: VerticalLayout { spacing: 8px;
+                if candidate.header: GlassButton { label: (candidate.collapsed ? "▶ " : "▼ ") + candidate.group; filled: false; clicked => {root.action("group",candidate.group);} }
+                if !candidate.collapsed: HorizontalLayout { alignment: start;
+                    GlassButton { label: candidate.name; filled: true; glyph: "\u{f0ad}"; clicked => {root.action("candidate",candidate.index);} }
+                }
+            }
+            Text { text: root.error; color: #ba3434; wrap: word-wrap; }
+        }
+    }
+    if root.editor: Rectangle { x: 24px; y: 72px; width: parent.width - 48px; height: parent.height - 92px;
+        HorizontalLayout { x: 0px; y: 0px; width: parent.width; height: 84px; spacing: 12px;
+            TextField { horizontal-stretch: 1; label: "包名"; text: root.name; edited(v) => {root.action("name",v);} }
+            TextField { horizontal-stretch: 1; label: "简介"; text: root.comment; edited(v) => {root.action("comment",v);} }
+            TextField { horizontal-stretch: 1; label: "图标链接 可选"; text: root.icon-url; edited(v) => {root.action("icon",v);} }
+        }
+        HorizontalLayout { x: 0px; y: 86px; width: parent.width; height: 36px; spacing: 8px; alignment: start;
+            if !root.version-selectable: Text { text: root.runtimes[root.runtime-index]; color: Theme.ink; vertical-alignment: center; }
+            for runtime[i] in root.runtimes: GlassButton { visible: root.version-selectable; label: runtime; checked: root.runtime-index == i; clicked => {root.action("runtime",i);} }
+            CheckBox { visible: root.source == "directory"; text: "同时导入单机存档"; checked: root.include-saves; toggled => {root.action("includeSaves", "");} }
+        }
+        if root.source == "directory": Text { x: 0px; y: 140px; width: parent.width; text: "从" + root.source-directory + "复制模组、配置、资源包等文件"; wrap: word-wrap; color: #667064; }
+
+        Text { x: 0px; y: 130px; width: parent.width; text: root.progress; color: #446c49; }
+        if root.loading: Rectangle { x: 0px; y: 151px; width: parent.width; height: 3px; background: #dce5d4;
+            Rectangle { x: 0px; y: 0px; width: parent.width * (root.progress-fraction < 0 ? 0.35 : clamp(root.progress-fraction,0,1)); height: 3px; background: #446c49; }
+        }
+        if root.missing-count > 0: Text { x: 0px; y: 128px; width: parent.width; text: "有" + root.missing-count + "个文件无法自动下载，导入时会列出"; color: #ba3434; }
+        ContentGrid { x: 0px; y: root.missing-count > 0 ? 158px + 24px : 158px; width: parent.width; height: parent.height - self.y - 32px; visible: root.source == "archive" || root.source == "reading";
+            items: root.contents; loading: root.loading; error: root.error;
+            filter(q,k,d) => {root.filter(q,k,d);} selected(i) => {root.action("optionalIndex",i);} retry => {root.action("retryArchive", "");}
+        }
+        Text { x: 0px; y: parent.height - 26px; width: parent.width; text: root.error; color: #ba3434; overflow: elide; }
+    }
+}
+
+export component ModpackLocalAdvanceOption inherits FocusScope {
+    out property <GlassShape> shape: { x: root.absolute-position.x / 1px, y: root.absolute-position.y / 1px, w: root.width / 1px, h: root.height / 1px, radius: 24, alpha: root.visible ? 1 : 0, tint: #ffffffbb };
+    in property <string> title;
+    in property <bool> loading;
+    in property <bool> enabled-controls;
+    in property <string> error;
+    in property <int> total-memory;
+    in-out property <OptionDraft> draft;
+    callback action(string,string);
+
+    HorizontalLayout { x: 24px; y: 16px; width: parent.width - 48px; height: 40px; spacing: 12px;
+        CircleIconButton { glyph: "\u{f060}"; accessible-label: "返回"; clicked => {root.action("back", "");} }
+        Text { text: root.title + "·设置"; color: Theme.ink; font-size: 18px; font-weight: 600; vertical-alignment: center; horizontal-stretch: 1; overflow: elide; }
+        CircleIconButton { enabled: root.enabled-controls; glyph: "\u{f021}"; accessible-label: "恢复默认"; clicked => {root.action("reset", "");} }
+        CircleIconButton { enabled: root.enabled-controls; glyph: "\u{f0c7}"; accessible-label: "保存"; clicked => {root.action("save", "");} }
+    }
+    if root.loading: LoadingState { x: 24px; y: 80px; width: parent.width - 48px; height: parent.height - 100px; }
+    if !root.loading: ScrollView { enabled: root.enabled-controls; x: 24px; y: 76px; width: parent.width - 48px; height: parent.height - 96px; content-height: options-layout.preferred-height;
+        // Conditional fields use `if`: an invisible element still takes its full height in a layout.
+        options-layout := VerticalLayout { width: parent.width; height: self.preferred-height; spacing: 12px; padding-right: 16px;
+            HorizontalLayout { spacing: 12px; alignment: start; min-height: 36px;
+                CheckBox { enabled: root.enabled-controls; text: "指定java"; checked <=> root.draft.java-custom-enabled; toggled => {root.action("update", "");} }
+                if root.draft.java-custom-enabled: TextField { enabled: root.enabled-controls; reserve-error: false; label: "java路径"; horizontal-stretch: 1; text <=> root.draft.java-path; edited(v) => {root.action("update", "");} }
+                if root.draft.java-custom-enabled: VerticalLayout { alignment: end; padding-bottom: 6px;
+                    CircleIconButton { glyph: "\u{f07c}"; accessible-label: "选择JDK目录"; clicked => {root.action("pickJdk", "");} }
+                }
+            }
+            HorizontalLayout { spacing: 12px; alignment: start; min-height: 36px;
+                CheckBox { enabled: root.enabled-controls; text: "内存限制"; checked <=> root.draft.memory-custom-enabled; toggled => {root.action("update", "");} }
+                if root.draft.memory-custom-enabled: TextField { enabled: root.enabled-controls; reserve-error: false; width: 180px; label: "最大内存MB"; text <=> root.draft.max-memory-text; edited(v) => {root.action("update", "");} }
+                if root.draft.memory-custom-enabled: Text { text: "总" + root.total-memory + "MB"; vertical-alignment: bottom; color: #667064; }
+            }
+            HorizontalLayout { spacing: 12px; alignment: start; min-height: 36px;
+                CheckBox { enabled: root.enabled-controls; text: "JDWP debugger"; checked <=> root.draft.jdwp-enabled; toggled => {root.action("update", "");} }
+                if root.draft.jdwp-enabled: TextField { enabled: root.enabled-controls; reserve-error: false; horizontal-stretch: 1; label: "param"; text <=> root.draft.jdwp-param; edited(v) => {root.action("update", "");} }
+            }
+            Text { text: "xtra jvm param"; color: Theme.ink; }
+            TextEdit { enabled: root.enabled-controls; height: 120px; placeholder-text: "1line1param"; text <=> root.draft.custom-jvm-params; edited => {root.action("update", "");} }
+            CheckBox { enabled: root.enabled-controls; text: "禁用Forgeguard"; checked <=> root.draft.forgeguard-disabled; toggled => {root.action("update", "");} }
+            Text { text: root.error; color: #ba3434; wrap: word-wrap; }
+        }
+    }
+}
+
+export component LocalPlay inherits Rectangle {
+    in property <string> name;
+    in property <bool> online-available;
+    in property <bool> busy;
+    in property <string> device-uri;
+    in property <string> error;
+    in property <bool> nonstandard-name;
+    in-out property <string> nickname;
+    in-out property <bool> online;
+    callback action(string,string);
+    preferred-height: play-layout.preferred-height;
+    background: #f7faf0f5; border-radius: 24px;
+    play-layout := VerticalLayout { padding: 24px; spacing: 12px;
+        Text { text: "开始游戏 " + root.name; color: Theme.ink; font-size: 22px; font-weight: 600; }
+        GlassButton { enabled: !root.busy; label: "离线模式"; checked: !root.online; clicked => {root.online = false;} }
+        TextField { visible: !root.online; enabled: !root.busy; label: "游戏昵称"; text <=> root.nickname; edited(v) => {root.action("nickname",v);} }
+        Text { visible: !root.online && root.nonstandard-name && root.nickname != ""; text: "昵称不是3～16位的字母、数字或下划线，单机一般能玩，但部分模组和局域网联机可能出问题"; color: #9a6700; wrap: word-wrap; }
+        GlassButton { enabled: !root.busy && root.online-available; label: "正版登录"; checked: root.online; clicked => {root.online = true;} }
+        Text { text: !root.online-available ? "需要先在玩家信息里绑定微软账号" : root.online ? "使用RDI账号绑定的微软账号进入游戏，首次使用需要在浏览器里登录" : ""; color: #667064; wrap: word-wrap; }
+        Text { visible: root.busy; text: root.device-uri == "" ? "正在准备游戏…" : "请在浏览器中完成微软登录（10分钟内有效）"; color: #446c49; }
+        GlassButton { visible: root.device-uri != ""; label: "打开微软登录页面"; clicked => {root.action("browser",root.device-uri);} }
+        Text { visible: root.device-uri != ""; text: root.device-uri; wrap: word-wrap; color: #446c49; }
+        Text { text: root.error; color: #ba3434; wrap: word-wrap; }
+        HorizontalLayout { alignment: end; spacing: 12px;
+            GlassButton { label: "取消"; clicked => {root.action("cancel", "");} }
+            GlassButton { enabled: !root.busy; label: "开始游戏"; clicked => {root.action("start", "");} }
+        }
+    }
+}

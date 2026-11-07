@@ -7,6 +7,10 @@ export component Console inherits Rectangle {
     in property <string> selected-text;
     in property <string> all-text;
     in-out property <bool> follow-tail: true;
+    // The activity panel draws its own title; the gallery keeps this one.
+    in property <bool> title-visible: true;
+    // The selected-line viewer only takes space once a line is selected.
+    private property <length> detail-height: root.selected-text != "" ? 72px : 0px;
     callback copy-all();
     callback export();
     callback clear();
@@ -14,13 +18,13 @@ export component Console inherits Rectangle {
     background: #fafcf4e8; border-radius: 16px;
     copy-buffer := TextEdit { visible: false; text: root.all-text; read-only: true; }
     HorizontalLayout { x: 12px; y: 8px; width: parent.width - 24px; height: 36px; spacing: 8px;
-        Text { text: "控制台"; color: Theme.ink; vertical-alignment: center; horizontal-stretch: 1; }
+        Text { text: root.title-visible ? "控制台" : ""; color: Theme.ink; vertical-alignment: center; horizontal-stretch: 1; }
         GlassButton { label: "复制"; enabled: root.lines.length > 0; clicked => {copy-buffer.select-all(); copy-buffer.copy(); root.copy-all();} }
         GlassButton { label: "导出"; enabled: root.lines.length > 0; clicked => {root.export();} }
         GlassButton { label: "清空"; enabled: root.lines.length > 0; clicked => {root.clear();} }
         CircleIconButton { glyph: "\u{f063}"; checked: root.follow-tail; accessible-label: "跟随最新日志"; clicked => {root.follow-tail = true; list.content-y = min(0px,list.height - list.content-height);} }
     }
-    list := ListView { vertical-scrollbar-policy: always-off; horizontal-scrollbar-policy: always-off; x: 12px; y: 52px; width: parent.width - 28px; height: parent.height - 132px;
+    list := ListView { vertical-scrollbar-policy: always-off; horizontal-scrollbar-policy: always-off; x: 12px; y: 52px; width: parent.width - 28px; height: parent.height - 60px - root.detail-height;
         for line[i] in root.lines: Rectangle { height: max(28px, label.preferred-height + 8px); width: list.width;
             label := Text { x: 4px; y: 4px; width: parent.width - 8px; text: line.text; wrap: word-wrap; color: line.level == 2 ? #ba3434 : line.level == 1 ? #9a6700 : #286338; font-size: 12px; }
             TouchArea { clicked => {root.select-line(i);} }
@@ -32,7 +36,7 @@ export component Console inherits Rectangle {
         scrolled(offset) => { list.content-y = -offset; root.follow-tail = offset >= self.extent - self.viewport - 2px; }
     }
     if root.lines.length == 0: EmptyState { x: 12px; y: 52px; width: parent.width - 24px; height: list.height; label: "暂无日志"; }
-    TextEdit { x: 12px; y: parent.height - 72px; width: parent.width - 24px; height: 60px; text: root.selected-text; read-only: true; }
+    if root.selected-text != "": TextEdit { x: 12px; y: parent.height - 72px; width: parent.width - 24px; height: 60px; text: root.selected-text; read-only: true; }
 }
 export component TaskProgress inherits Rectangle {
     in property <string> title: "任务详情";

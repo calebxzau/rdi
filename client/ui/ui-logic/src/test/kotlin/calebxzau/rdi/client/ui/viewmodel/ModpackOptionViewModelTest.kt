@@ -82,6 +82,7 @@ class ModpackOptionViewModelTest {
 
     private fun createViewModel(store: MemoryModpackLaunchOptionsStore): ModpackOptionViewModel =
         ModpackOptionViewModel(
+            scope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.Unconfined),
             versionId = VERSION_ID,
             store = store,
             runtime = TestModpackOptionRuntime,

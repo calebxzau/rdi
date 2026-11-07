@@ -55,7 +55,12 @@ WSL toolchain.
 
 - `ui/*.slint` — window, title bar, tab bar, tile grid, tiles, buttons.
 - `src/navigation.rs`, `src/shell.rs` — back stack, shared window state and layout-to-glass bridge.
-- `src/gallery.rs`, `ui/gallery.slint` — U3 fixtures and interactive component review. Console/tasks use sample data here; real service integration waits for U4.
+- `src/packs.rs`, `ui/packs.slint` — U4a local import, installed packs, advanced
+  options, account-choice dialog, tasks and console. Business state comes from
+  the Kotlin service; native pickers and folder/browser actions run on the Rust side.
+- `src/gallery.rs`, `ui/gallery.slint` — deterministic component fixtures and
+  interactive review. The title-bar console/tasks use real service data in U4a;
+  gallery console/tasks intentionally retain their samples.
 - `src/api` — service-backed login, envelope handling, typed DTOs. `src/hosts.rs` — paging/merge/filter and grid constants.
 - `src/images.rs` — icon download/decode/resize, player heads. `src/app.rs` — state, jobs, Slint wiring.
 - `crates/rdi-renderer/src/glass` — wgpu pass run before Slint renders each frame. It draws the cover-cropped background and all

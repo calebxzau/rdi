@@ -29,7 +29,7 @@ struct Loaded {
     head: image::RgbaImage,
     mine: Vec<HostBrief>,
     page: Vec<HostBrief>,
-    packs: Vec<ModpackBrief>,
+    packs: Vec<crate::packs::InstalledPack>,
 }
 struct Art {
     icon: Option<image::RgbaImage>,
@@ -123,9 +123,10 @@ pub struct App {
     rx: mpsc::Receiver<Event>,
     config: Config,
     hosts: Hosts,
-    packs: Vec<ModpackBrief>,
+    packs: Vec<crate::packs::InstalledPack>,
     api: Option<Client>,
     running_processes: Vec<serde_json::Value>,
+    pack_ui: Rc<RefCell<crate::packs::PackUi>>,
     heads: HeadCache,
     cache: lru::LruCache<String, CachedArt>,
     jobs: HashMap<String, JoinHandle<()>>,
@@ -163,6 +164,7 @@ impl App {
         let tiles = [Rc::new(VecModel::default()), Rc::new(VecModel::default())];
         ui.set_hosts(ModelRc::from(tiles[0].clone()));
         ui.set_modpacks(ModelRc::from(tiles[1].clone()));
+        let pack_ui = crate::packs::PackUi::wire(ui, runtime.clone());
         let app = Rc::new(RefCell::new(Self {
             ui: ui.as_weak(),
             runtime,
@@ -173,6 +175,7 @@ impl App {
             hosts: Hosts::default(),
             packs: vec![],
             api: None,
+            pack_ui,
             running_processes: vec![],
             heads: HeadCache::default(),
             cache: lru::LruCache::new(NonZeroUsize::new(60).unwrap()),
@@ -293,7 +296,10 @@ impl App {
             {
                 let action = if right { "detail" } else { "play" };
                 tracing::info!(id = %entry.id, action, "Room tile action");
-                if tab == 0 && !right {
+                if tab == 1 {
+                    let version = a.borrow().pack_version(&entry.id);
+                    a.borrow().pack_ui.borrow_mut().open_pack(&entry.id, &entry.name, &version, right);
+                } else if tab == 0 && !right {
                     let a = a.borrow();
                     if let Some(api) = a.api.clone() {
                         let id = entry.id.clone();
@@ -329,6 +335,10 @@ impl App {
                 if let (Some(api), Some(ui)) = (app.api.clone(), app.ui.upgrade()) {
                     let id = ui.get_duplicate_host().to_string();
                     ui.set_duplicate_host("".into());
+                    if id.starts_with("pack:") {
+                        app.pack_ui.borrow_mut().action("play.duplicate", "");
+                        return;
+                    }
                     let size = ui.window().size();
                     let tx = app.tx.clone();
                     app.runtime.spawn(async move {
@@ -401,6 +411,7 @@ impl App {
         };
         self.hosts = Hosts::default();
         self.packs.clear();
+        self.pack_ui.borrow_mut().connect(None);
         self.api = None;
         self.cache.clear();
         let Some(ui) = self.ui.upgrade() else {
@@ -428,7 +439,7 @@ impl App {
                 let player: PlayerInfo = api.get(&format!("/player/{uid}/info")).await?;
                 let mine = api.get("/host/my").await?;
                 let page = api.get("/host/list/0").await?;
-                let packs: ModpackPage = api.get("/modpack/search?offset=0&limit=100").await?;
+                let packs = Vec::new();
                 if !running_processes.is_empty() {
                     api.call("game.restore", serde_json::json!({"sessions":running_processes})).await?;
                 }
@@ -446,12 +457,19 @@ impl App {
                     head,
                     mine,
                     page,
-                    packs: packs.items,
+                    packs,
                 })
             }
             .await;
             let _ = tx.send(Event::Loaded(epoch, result));
         }));
+    }
+    fn pack_version(&self, id: &str) -> String {
+        self.packs
+            .iter()
+            .find(|p| p.id == id)
+            .map(|p| p.version.clone())
+            .unwrap_or_default()
     }
     fn entries(&self, tab: usize) -> Vec<Entry> {
         if tab == 0 {
@@ -479,7 +497,7 @@ impl App {
                 .map(|m| Entry {
                     id: m.id.clone(),
                     name: m.name.clone(),
-                    detail: String::new(),
+                    detail: format!("{} · {}", if m.local { "本地导入" } else { "RDI" }, m.version),
                     url: m.icon.clone(),
                     owner: None,
                     heads: vec![],
@@ -638,8 +656,18 @@ impl App {
             ui.set_error("启动服务意外退出，正在重新连接".into());
             return;
         }
+        self.pack_ui.borrow_mut().tick();
+        let mut dirty = false;
         if let Some(api) = &self.api {
             for event in api.take_events() {
+                let topic = event["event"].as_str().unwrap_or("");
+                self.pack_ui.borrow_mut().event(topic, &event["params"]);
+                if topic == "installedPacks.state" && let Some(packs) = event["params"].get("packs") {
+                    match serde_json::from_value(packs.clone()) {
+                        Ok(packs) => { self.packs = packs; dirty = true; }
+                        Err(error) => ui.set_packs_error(format!("读取整合包列表失败：{error}").into()),
+                    }
+                }
                 if event["event"] == "game.state" {
                     let state = &event["params"];
                     if let Some(error) = state["errorMessage"].as_str() {
@@ -659,7 +687,6 @@ impl App {
                 }
             }
         }
-        let mut dirty = false;
         while let Ok(event) = self.rx.try_recv() {
             match event {
                 Event::Started(result) => {
@@ -706,6 +733,7 @@ impl App {
                             self.hosts.page(data.page);
                             self.packs = data.packs;
                             self.api = Some(data.api.clone());
+                            self.pack_ui.borrow_mut().connect(Some(data.api.clone()));
                             tracing::info!(
                                 hosts = self.hosts.items.len(),
                                 modpacks = self.packs.len(),

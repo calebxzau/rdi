@@ -27,17 +27,6 @@ pub struct HostBrief {
     #[serde(default)]
     pub status: HostStatus,
 }
-#[derive(Clone, Debug, Deserialize)]
-pub struct ModpackBrief {
-    pub id: String,
-    pub name: String,
-    #[serde(default)]
-    pub icon: Option<String>,
-}
-#[derive(Deserialize)]
-pub struct ModpackPage {
-    pub items: Vec<ModpackBrief>,
-}
 #[derive(Clone, Deserialize)]
 pub struct PlayerInfo {
     pub name: String,
@@ -83,7 +72,6 @@ mod tests {
     fn samples() {
         let h: HostBrief = serde_json::from_str(r#"{"_id":"6ae30c","name":"KDFT","intro":null,"iconUrl":"https://example.org/a.png","ownerId":"6ade15","modpackName":"FTB空岛飞艇2","packVer":"1.13.0","version":2,"port":55981,"playable":false,"isMember":false,"role":null,"onlinePlayerIds":["p"],"status":"STOPPED"}"#).unwrap();
         assert_eq!(h.status, HostStatus::Stopped);
-        let m: ModpackBrief = serde_json::from_str(r#"{"id":"6abde2","name":"无限遗产2私货","authorId":"68fdb0","authorName":"davickk","modCount":393,"fileSize":78182782,"playCount":64,"lastUpdatedTime":1792899698303,"icon":"https://example.org/a.jpeg","info":"","categories":["MEDIUM"]}"#).unwrap();
-        assert_eq!(m.id, "6abde2");
+
     }
 }

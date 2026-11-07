@@ -37,6 +37,7 @@ class LocalModpackInstallViewModelTest {
     private val tasks = RecordingTaskSubmitter()
 
     private fun createViewModel() = LocalModpackInstallViewModel(
+        scope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.Unconfined),
         scanner = LocalModpackScanner(EmptyInstallationStore, Files.createTempDirectory("rdi-managed")),
         installer = LocalModpackInstaller(Files.createTempDirectory("rdi-versions"), taskSubmitter = tasks),
         archiveReader = ModpackArchiveReader(OneFileCatalog),

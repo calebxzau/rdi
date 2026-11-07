@@ -27,8 +27,8 @@ fun main() {
     System.setProperty("java.awt.headless", "true")
     var exitCode = 0
     try {
-        ServiceRuntime.open().getOrThrow().use {
-            runBlocking { ServiceSession(Protocol(System.`in`, protocolOutput)).run() }
+        ServiceRuntime.open().getOrThrow().use { runtime ->
+            runBlocking { ServiceSession(Protocol(System.`in`, protocolOutput), runtime).run() }
         }
     } catch (error: Exception) {
         exitCode = 1
@@ -40,7 +40,7 @@ fun main() {
     kotlin.system.exitProcess(exitCode)
 }
 
-private class ServiceSession(private val protocol: Protocol) {
+private class ServiceSession(private val protocol: Protocol, private val runtime: ServiceRuntime) {
     private var handshake = false
     private var loggedIn = false
     private var hostList: HostListViewModel? = null
@@ -51,6 +51,7 @@ private class ServiceSession(private val protocol: Protocol) {
         beforeProcessStart = { args -> withContext(Dispatchers.IO) { DevelopmentCoreOverride.install(args).getOrThrow() } },
     )
     private val subscriptions = mutableMapOf<String, Job>()
+    private var packs: PackService? = null
 
     /** Requests run concurrently on this coroutine's thread; see [RequestDispatcher]. */
     suspend fun run(): Unit = coroutineScope {
@@ -58,6 +59,8 @@ private class ServiceSession(private val protocol: Protocol) {
         try {
             RequestDispatcher(protocol) { method, params -> handle(scope, method, params) }.run()
         } finally {
+            packs?.stopTasks()
+            packs?.close()
             // Subscriptions and view-model loads live in this scope; stop them before returning.
             coroutineContext.cancelChildren()
             McPlayStore.sessions.forEach { it.requestStop(force = true) }
@@ -67,6 +70,9 @@ private class ServiceSession(private val protocol: Protocol) {
     private suspend fun handle(scope: CoroutineScope, method: String, params: JsonObject): JsonElement {
         check(handshake || method == "handshake") { "请先连接启动服务" }
         check(loggedIn || method in setOf("handshake", "login", "shutdown")) { "请先登录" }
+        if (method.substringBefore('.') in setOf("installedPacks", "installer", "packOptions", "packPlay", "tasks", "console")) {
+            return (packs ?: PackService(RuntimePackServiceDependencies(runtime), scope, controller::startSession, ::event).also { packs = it }).handle(method, params)
+        }
         return when (method) {
             "handshake" -> {
                 require(params["protocolVersion"]?.jsonPrimitive?.int == Protocol.VERSION) { "启动服务版本不匹配，请更新启动器" }
@@ -100,7 +106,7 @@ private class ServiceSession(private val protocol: Protocol) {
             }
             "data.get" -> {
                 val path = params["path"]?.jsonPrimitive?.content ?: error("请求路径无效")
-                require(path in setOf("/host/my", "/host/online-player-ids", "/player/unique-skin-list", "/modpack/search?offset=0&limit=100") ||
+                require(path in setOf("/host/my", "/host/online-player-ids", "/player/unique-skin-list") ||
                     Regex("/host/list/[0-9]{1,6}").matches(path) || Regex("/player/[a-fA-F0-9]{24}/info").matches(path)) { "不支持的数据请求" }
                 if (path == "/host/my" || path.startsWith("/host/list/")) {
                     val response = server.makeRequest<List<Host.BriefVo>>(path.removePrefix("/"))

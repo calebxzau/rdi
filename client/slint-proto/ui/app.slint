@@ -1,5 +1,8 @@
 import "../../ui/assets/fonts/src/main/resources/assets/fonts/1oppo.ttf";
 import "../../ui/assets/fonts/src/main/resources/assets/fonts/symbolsnerdfont.ttf";
+import { LocalModpackInstall, ModpackLocalAdvanceOption, LocalPlay, CandidateRow, OptionDraft } from "packs.slint";
+import { GlassSurface } from "surfaces.slint";
+import { ListView } from "std-widgets.slint";
 import { ComponentGallery } from "gallery.slint";
 import { GlassShape } from "surfaces.slint";
 import { SharedDialog, Toast, ContentRow, LogRow, TaskRow } from "shared.slint";
@@ -8,11 +11,71 @@ import { TileData, Theme } from "theme.slint";
 import { TitleBar } from "title_bar.slint";
 import { TileGrid } from "tile_grid.slint";
 import { GlassTabBar } from "glass_tab_bar.slint";
-import { GlassButton } from "glass_button.slint";
+import { GlassButton, CircleIconButton } from "glass_button.slint";
 import { UiProof, ProofRow, ProofRect } from "ui_proof.slint";
 import { ResizeHandles } from "resize_handles.slint";
-export { TileData, ProofRow, ProofRect, GlassShape, ContentRow, LogRow, TaskRow }
+export { CandidateRow, OptionDraft, TileData, ProofRow, ProofRect, GlassShape, ContentRow, LogRow, TaskRow }
 export component AppWindow inherits Window {
+    out property <[GlassShape]> pack-panels: [install-view.shape, options-view.shape];
+    in property <int> pack-screen;
+    callback pack-action(string,string);
+    callback pack-filter(string,int,bool);
+    callback pack-proof(string,string);
+    in property <bool> install-editor;
+    in property <bool> install-loading;
+    in property <bool> install-scanning;
+    in property <bool> install-can-submit;
+    in property <bool> install-version-selectable;
+    in property <bool> install-include-saves;
+    in property <string> install-source;
+    in property <string> install-source-directory;
+    in property <string> install-error;
+    in property <string> install-progress;
+    in property <float> install-progress-fraction: -1;
+    in property <string> install-name;
+    in property <string> install-comment;
+    in property <string> install-icon;
+    in property <string> install-size;
+    in property <[CandidateRow]> install-candidates;
+    in property <[CandidateRow]> picked-candidates;
+    in property <[string]> install-runtimes;
+    in property <int> install-runtime-index;
+    in property <[ContentRow]> install-contents;
+    in-out property <bool> install-missing;
+    in property <string> install-missing-text;
+    in property <int> install-missing-count;
+    in property <string> pack-selected-id;
+    in-out property <bool> pack-menu;
+    in property <string> pack-name;
+    // Name plus version name, as in the Compose options title.
+    in property <string> options-title;
+    in property <bool> options-loading;
+    in property <bool> options-enabled;
+    in property <bool> options-dirty;
+    in property <string> options-error;
+    in property <int> options-total-memory;
+    in-out property <OptionDraft> options-draft;
+    in-out property <bool> discard-options;
+    in-out property <bool> local-play;
+    in property <bool> play-online-available;
+    in property <bool> play-busy;
+    in property <string> play-device-uri;
+    in property <string> play-error;
+    in property <bool> play-nonstandard-name;
+    in-out property <string> play-nickname;
+    in-out property <bool> play-online;
+    in property <[TaskRow]> activity-tasks;
+    in property <[LogRow]> activity-logs;
+    in property <[CandidateRow]> activity-task-list;
+    in property <[CandidateRow]> activity-sessions;
+    in property <string> activity-title;
+    in property <string> activity-message;
+    in property <string> activity-error;
+    in property <float> activity-fraction;
+    in-out property <string> activity-selected-log;
+    in property <string> activity-log-text;
+    in property <bool> packs-loading;
+    in property <string> packs-error;
     in property <bool> gallery-enabled;
     in property <bool> gallery;
     in property <bool> can-back;
@@ -43,7 +106,7 @@ export component AppWindow inherits Window {
     callback toggle-task(int);
     out property <bool> dialog-focused: dialog.contains-focus;
     out property <bool> gallery-password-revealed: gallery-view.password-revealed;
-    out property <bool> modal-open: root.action-error != "" || root.duplicate-host != "" || root.confirm-exit || root.gallery-dialog;
+    out property <bool> modal-open: root.action-error != "" || root.duplicate-host != "" || root.confirm-exit || root.gallery-dialog || root.local-play || root.pack-menu || root.discard-options || root.install-missing || root.picked-candidates.length > 0;
     out property <[GlassShape]> menu-grids: [host-grid.shape, pack-grid.shape];
     out property <[GlassShape]> menu-pills: [tabs.shape, tabs.selected-shape, create.shape, others.shape, plaza.shape, install.shape, import-pack.shape];
     out property <[GlassShape]> glass-panels: [gallery-view.surfaces[0], gallery-view.surfaces[1], dialog.shape];
@@ -51,6 +114,7 @@ export component AppWindow inherits Window {
     in-out property <string> duplicate-host;
     callback confirm-duplicate();
     in property <bool> game-running;
+    in property <bool> tasks-running;
     in property <string> game-status;
     in-out property <bool> confirm-exit;
     callback stop-games();
@@ -123,7 +187,7 @@ export component AppWindow inherits Window {
         }
     Image { width: parent.width; height: parent.height; source: root.backdrop; image-fit: fill; }
     TitleBar { y: 0px; width: parent.width; player-name: root.player-name; head: root.player-head; action(a) => {root.window-action(a);} stub(s) => {root.stub(s);} can-back: root.can-back; gallery-enabled: root.gallery-enabled; navigate(s) => {root.navigate(s);} }
-    menu := FocusScope { x: 0px; y: 40px; width: parent.width; height: parent.height - 40px; visible: !root.ui-proof && !root.gallery; enabled: !root.modal-open && root.activity-panel == 0;
+    menu := FocusScope { x: 0px; y: 40px; width: parent.width; height: parent.height - 40px; visible: !root.ui-proof && !root.gallery && root.pack-screen == 0; enabled: !root.modal-open && root.activity-panel == 0;
     tabs := GlassTabBar { x: (parent.width - self.width) / 2; y: 16px; tab-position: root.tab-position; selected: root.selected; select(t) => {root.select-tab(t);} press(i,on,x,y) => {root.pill-press(i,on,x,y);} }
     Rectangle { y: root.grid-y * 1px - 40px; width: parent.width; height: 434px; clip: true;
         host-grid := TileGrid { visible: !root.loading && root.error == "" && root.tab-position < 1; x: -root.tab-position * root.width; width: root.width; tiles: root.hosts; scroll <=> root.host-scroll; fade: 1 - root.tab-position;
@@ -133,13 +197,13 @@ export component AppWindow inherits Window {
             pressed: root.host-pressed; press-scale: root.host-scale;
             hover(i,on) => {root.tile-hover(0,i,on);} press(i,on) => {root.tile-press(0,i,on);} action(i,r) => {root.tile-action(0,i,r);} moved => {root.scroll-changed();}
         }
-        pack-grid := TileGrid { visible: !root.loading && root.error == "" && root.tab-position > 0; x: (1 - root.tab-position) * root.width; width: root.width; tiles: root.modpacks; scroll <=> root.modpack-scroll; fade: root.tab-position;
+        pack-grid := TileGrid { visible: !root.loading && !root.packs-loading && root.packs-error == "" && root.error == "" && root.tab-position > 0; x: (1 - root.tab-position) * root.width; width: root.width; tiles: root.modpacks; scroll <=> root.modpack-scroll; fade: root.tab-position;
 
             pressed: root.modpack-pressed; press-scale: root.modpack-scale;
             hover(i,on) => {root.tile-hover(1,i,on);} press(i,on) => {root.tile-press(1,i,on);} action(i,r) => {root.tile-action(1,i,r);} moved => {root.scroll-changed();}
         }
-        if root.loading: Text { text: "正在加载…"; color: Theme.ink; font-size: 18px; horizontal-alignment: center; vertical-alignment: center; width: parent.width; height: parent.height; }
-        if !root.loading && root.error == "" && (root.selected == 0 ? root.hosts.length == 0 : root.modpacks.length == 0): Text {
+        if root.loading || (root.selected == 1 && root.packs-loading): Text { text: "正在加载…"; color: Theme.ink; font-size: 18px; horizontal-alignment: center; vertical-alignment: center; width: parent.width; height: parent.height; }
+        if !root.loading && !root.packs-loading && root.packs-error == "" && root.error == "" && (root.selected == 0 ? root.hosts.length == 0 : root.modpacks.length == 0): Text {
             text: root.selected == 1 ? "还没有整合包，去整合广场看看吧" : root.show-others ? "暂无可展示的房间，等待朋友邀请" : "暂无可游玩的房间，可点击显示其他房间";
             color: Theme.ink; font-size: 18px; horizontal-alignment: center; vertical-alignment: center; width: parent.width; height: parent.height;
         }
@@ -155,12 +219,29 @@ export component AppWindow inherits Window {
     }
     HorizontalLayout { visible: root.selected == 1; x: (parent.width - 484px) / 2; y: parent.height - 60px; width: 484px; height: 36px; spacing: 12px;
         plaza := GlassButton { width: 128px; label: "整合广场"; glyph: "\u{f19d5}"; clicked => {root.stub("整合广场");} press(on,x,y) => {root.pill-press(4,on,x,y);} }
-        install := GlassButton { width: 176px; label: "整合包本地安装"; glyph: "\u{eaef}"; clicked => {root.stub("整合包本地安装");} press(on,x,y) => {root.pill-press(5,on,x,y);} }
+        install := GlassButton { width: 176px; label: "整合包本地安装"; glyph: "\u{eaef}"; clicked => {root.navigate("install");} press(on,x,y) => {root.pill-press(5,on,x,y);} }
         import-pack := GlassButton { width: 156px; label: "导入rdipack2"; glyph: "\u{f019}"; clicked => {root.stub("导入rdipack2");} press(on,x,y) => {root.pill-press(6,on,x,y);} }
     }
     if root.page-error != "": GlassButton { x: 16px; y: parent.height - 100px; width: 340px; label: "房间加载失败，点击重试"; glyph: "\u{f021}"; clicked => {root.retry-page();} }
     Text { x: 16px; y: parent.height - 34px; text: "在线玩家" + root.online-count; color: #30353c; font-size: 12px; }
     }
+    install-view := LocalModpackInstall { visible: root.pack-screen == 1;
+        x: root.width * 0.05; y: 40px + (root.height - 40px) * 0.05; width: root.width * 0.9; height: (root.height - 40px) * 0.9; enabled: !root.modal-open && root.activity-panel == 0;
+        editor: root.install-editor; loading: root.install-loading; scanning: root.install-scanning;
+        can-submit: root.install-can-submit; version-selectable: root.install-version-selectable; include-saves: root.install-include-saves;
+        source: root.install-source; source-directory: root.install-source-directory; error: root.install-error; progress: root.install-progress; progress-fraction: root.install-progress-fraction;
+        name: root.install-name; comment: root.install-comment; icon-url: root.install-icon; size-text: root.install-size; missing-count: root.install-missing-count;
+        candidates: root.install-candidates; runtimes: root.install-runtimes; runtime-index: root.install-runtime-index; contents: root.install-contents;
+        action(a,v) => {if a == "back" {root.navigate("back");} else {root.pack-action("installer." + a,v);} }
+        filter(q,k,d) => {root.pack-filter(q,k,d);}
+    }
+    options-view := ModpackLocalAdvanceOption { visible: root.pack-screen == 2;
+        x: root.width * 0.05; y: 40px + (root.height - 40px) * 0.05; width: root.width * 0.9; height: (root.height - 40px) * 0.9; enabled: !root.modal-open && root.activity-panel == 0;
+        title: root.options-title; loading: root.options-loading; enabled-controls: root.options-enabled;
+        error: root.options-error; total-memory: root.options-total-memory; draft <=> root.options-draft;
+        action(a,v) => {if a == "back" {root.navigate("back");} else {root.pack-action("options." + a,v);} }
+    }
+    if root.selected == 1 && root.pack-screen == 0 && root.packs-error != "": GlassButton { x: 32px; y: root.height / 2; width: root.width - 64px; label: root.packs-error + " · 重试"; clicked => {root.pack-action("packs.refresh", "");} }
     if root.game-status != "": Text { x: 180px; y: parent.height - 34px; width: parent.width - 380px; text: root.game-status; overflow: elide; color: #30353c; }
     if root.game-running: GlassButton { x: parent.width - 180px; y: parent.height - 48px; width: 160px; label: "终止游戏"; clicked => { root.stop-games(); } }
     gallery-view := ComponentGallery {
@@ -172,22 +253,86 @@ export component AppWindow inherits Window {
     }
     if root.activity-panel != 0: Rectangle { x: 0px; y: 40px; width: parent.width; height: parent.height - 40px; background: #0006;
         TouchArea { clicked => {root.activity-panel = 0;} }
-        if root.activity-panel == 1: Console { x: 32px; y: 24px; width: parent.width - 64px; height: parent.height - 48px; }
-        if root.activity-panel == 2: TaskProgress { x: 32px; y: 24px; width: parent.width - 64px; height: parent.height - 48px; hidden => {root.activity-panel = 0;} }
-        GlassButton { x: parent.width - 100px; y: parent.height - 44px; width: 80px; label: "关闭"; clicked => {root.activity-panel = 0;} }
+        // Panels are centered with a margin; a TouchArea under each keeps clicks on empty panel space from closing it.
+        if root.activity-panel == 1: Rectangle { width: min(1100px, parent.width - 48px); height: parent.height - 48px;
+            x: (parent.width - self.width) / 2; y: (parent.height - self.height) / 2;
+            background: #fafcf4f2; border-radius: 24px;
+            TouchArea {}
+            HorizontalLayout { x: 16px; y: 12px; width: parent.width - 32px; height: 36px; spacing: 8px;
+                Text { text: "控制台"; color: Theme.ink; font-size: 18px; font-weight: 600; vertical-alignment: center; }
+                // `collapsed` marks the session whose log is shown.
+                for session in root.activity-sessions: GlassButton { label: session.name; checked: session.collapsed; clicked => {root.pack-action("console.select",session.detail);} }
+                Rectangle { horizontal-stretch: 1; }
+                CircleIconButton { glyph: "\u{f021}"; accessible-label: "刷新"; clicked => {root.pack-action("console.subscribe", "");} }
+                CircleIconButton { glyph: "\u{f00d}"; accessible-label: "关闭"; clicked => {root.activity-panel = 0;} }
+            }
+            Console { x: 4px; y: 52px; width: parent.width - 8px; height: parent.height - 68px; background: transparent; title-visible: false;
+                lines: root.activity-logs; all-text: root.activity-log-text; selected-text: root.activity-selected-log;
+                export => {root.pack-action("console.export", "");} clear => {root.pack-action("console.clear", "");} select-line(i) => {root.pack-action("console.line",i);}
+            }
+        }
+        if root.activity-panel == 2: task-panel := Rectangle {
+            property <bool> has-list: root.activity-task-list.length > 1;
+            width: min(self.has-list ? 1000px : 760px, parent.width - 48px); height: min(520px, parent.height - 48px);
+            x: (parent.width - self.width) / 2; y: (parent.height - self.height) / 2;
+            background: #fafcf4f2; border-radius: 24px;
+            TouchArea {}
+            if task-panel.has-list: ListView { x: 12px; y: 16px; width: 220px; height: parent.height - 32px;
+                for task in root.activity-task-list: GlassButton { height: 44px; label: task.name; clicked => {root.pack-action("tasks.watch",task.detail);} }
+            }
+            TaskProgress { x: task-panel.has-list ? 236px : 0px; y: 0px; width: parent.width - self.x; height: parent.height; background: transparent;
+                title: root.activity-title; message: root.activity-message; error: root.activity-error; fraction: root.activity-fraction; rows: root.activity-tasks;
+                toggle(i) => {root.pack-action("tasks.toggle",i);} hidden => {root.activity-panel = 0;}
+            }
+        }
     }
-    if root.toast-message != "": Toast { x: (parent.width - self.width) / 2; y: parent.height - 64px; width: min(560px, parent.width - 48px); message: root.toast-message; dismissed => {root.toast-message = "";} }
-    if root.modal-open: Rectangle { x: 0px; y: 40px; width: parent.width; height: parent.height - 40px; background: #0009; TouchArea {} }
+
+    if root.modal-open: Rectangle { x: 0px; y: 0px; width: parent.width; height: parent.height; background: #0009; TouchArea {} }
     dialog := SharedDialog {
         width: min(480px, root.width - 48px);
-        x: (parent.width - self.width) / 2; y: (parent.height - self.height) / 2; visible: root.modal-open;
+        x: (parent.width - self.width) / 2; y: (parent.height - self.height) / 2; visible: root.modal-open && !root.local-play && !root.pack-menu && !root.discard-options && !root.install-missing && root.picked-candidates.length == 0;
         title: root.confirm-exit ? "退出启动器" : root.duplicate-host != "" ? "重复启动" : root.action-error != "" ? "错误" : "与朋友一起冒险";
-        message: root.confirm-exit ? "游戏仍在运行，退出将终止游戏。是否继续？" : root.duplicate-host != "" ? "该整合包已在运行。再次启动可能造成存档、配置、日志或Mod缓存冲突。是否继续？" : root.action-error != "" ? root.action-error : "准备好探索Minecraft世界了吗？这段较长的中文说明会自动换行。";
-        confirm-label: root.confirm-exit ? "终止游戏并退出" : root.duplicate-host != "" ? "继续启动" : "确定";
+        message: root.confirm-exit ? (root.tasks-running ? "任务仍在进行，退出将终止任务和正在运行的游戏。是否继续？" : "游戏仍在运行，退出将终止游戏。是否继续？") : root.duplicate-host != "" ? "该整合包已在运行。再次启动可能造成存档、配置、日志或Mod缓存冲突。是否继续？" : root.action-error != "" ? root.action-error : "准备好探索Minecraft世界了吗？这段较长的中文说明会自动换行。";
+        confirm-label: root.confirm-exit ? (root.tasks-running ? "终止并退出" : "终止游戏并退出") : root.duplicate-host != "" ? "继续启动" : "确定";
         cancel-visible: root.action-error == "";
         dismissed => {root.confirm-exit = false; root.duplicate-host = ""; root.action-error = ""; root.gallery-dialog = false;}
         confirmed => {if root.confirm-exit {root.window-action(4);} else if root.duplicate-host != "" {root.confirm-duplicate();} else {root.action-error = ""; root.gallery-dialog = false;} }
     }
+    if root.pack-menu: Rectangle { x: (root.width - 360px) / 2; y: (root.height - 320px) / 2; width: 360px; height: 320px; background: #f7faf0f5; border-radius: 24px;
+        VerticalLayout { padding: 24px; spacing: 12px;
+            Text { text: root.pack-name; font-size: 22px; color: Theme.ink; overflow: elide; }
+            for label[i] in ["开始游戏", "高级", "目录", "详情", "内容", "取消"]: GlassButton { label: label; clicked => {root.pack-action("menu",i);} }
+        }
+    }
+    if root.local-play: LocalPlay { x: (root.width - self.width) / 2; y: (root.height - self.height) / 2; width: min(560px,root.width - 48px); height: min(self.preferred-height,root.height - 48px);
+        name: root.pack-name; online-available: root.play-online-available; busy: root.play-busy; device-uri: root.play-device-uri; error: root.play-error; nonstandard-name: root.play-nonstandard-name;
+        nickname <=> root.play-nickname; online <=> root.play-online;
+        action(a,v) => {root.pack-action("play." + a,v);}
+    }
+    if root.discard-options: Rectangle { x: (root.width - 520px) / 2; y: (root.height - 200px) / 2; width: 520px; height: 200px; border-radius: 24px; background: #f7faf0f5;
+        VerticalLayout { padding: 24px; spacing: 16px;
+            Text { text: "未保存修改"; color: Theme.ink; font-size: 22px; }
+            Text { text: "要保存修改后返回吗？"; color: Theme.ink; }
+            HorizontalLayout { spacing: 8px;
+                GlassButton { label: "保存并返回"; clicked => {root.discard-options = false; root.pack-action("options.saveBack", "");} }
+                GlassButton { label: "放弃修改"; clicked => {root.discard-options = false; root.pack-action("options.discard", "");} }
+                GlassButton { label: "取消"; clicked => {root.discard-options = false;} }
+            }
+        }
+    }
+    if root.install-missing: SharedDialog { x: (root.width - self.width) / 2; y: (root.height - self.height) / 2; width: min(560px,root.width - 48px);
+        height: min(root.height - 96px, 220px + min(root.install-missing-count, 12) * 18px);
+        title: "有" + root.install-missing-count + "个文件无法自动下载"; message: root.install-missing-text; confirm-label: "继续导入";
+        confirmed => {root.pack-action("installer.confirmMissing", "");} dismissed => {root.pack-action("installer.dismissMissing", "");}
+    }
+    if root.picked-candidates.length > 0: Rectangle { x: (root.width - 560px) / 2; y: 80px; width: 560px; height: root.height - 160px; background: #f7faf0f5; border-radius: 24px;
+        VerticalLayout { padding: 24px; spacing: 12px;
+            Text { text: "选择要导入的版本"; font-size: 22px; color: Theme.ink; }
+            ListView { for candidate in root.picked-candidates: GlassButton { height: 44px; label: candidate.name + " · " + candidate.detail; clicked => {root.pack-action("installer.pickedCandidate",candidate.index);} } }
+            GlassButton { label: "取消"; clicked => {root.pack-action("installer.dismissCandidates", "");} }
+        }
+    }
+    if root.toast-message != "": Toast { x: (parent.width - self.width) / 2; y: parent.height - 64px; width: min(560px, parent.width - 48px); message: root.toast-message; dismissed => {root.toast-message = "";} }
     proof := UiProof {
         visible: root.ui-proof; y: 40px; width: parent.width; height: parent.height - 40px;
         rows: root.proof-rows; busy: root.proof-busy; message: root.proof-message;

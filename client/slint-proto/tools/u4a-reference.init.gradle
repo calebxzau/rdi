@@ -1,0 +1,10 @@
+gradle.projectsEvaluated {
+    def ui = gradle.rootProject
+    ui.tasks.register('u4aReferenceClasspath') {
+        dependsOn ui.tasks.named('testClasses')
+        doLast {
+            def sources = ui.extensions.getByType(org.gradle.api.tasks.SourceSetContainer)
+            new File(ui.buildDir, 'u4a-reference-classpath.txt').text = sources.test.runtimeClasspath.asPath
+        }
+    }
+}

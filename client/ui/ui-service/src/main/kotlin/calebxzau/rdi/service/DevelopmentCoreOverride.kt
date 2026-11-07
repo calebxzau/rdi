@@ -8,6 +8,7 @@ import java.nio.file.Path
 /** Explicit development override, applied after normal core synchronization. */
 internal object DevelopmentCoreOverride {
     fun install(args: McPlayArgs): Result<Unit> = runCatching {
+        if (!args.withRdiCore) return@runCatching
         val configured = System.getenv("RDI_SERVICE_CORE_JAR") ?: return@runCatching
         val source = Path.of(configured).toAbsolutePath().normalize()
         val expectedName = "rdi-5-mc-client-${args.mcVer.mcVer}-${args.modLoader.directorySlug}.jar"

@@ -1,5 +1,22 @@
 # Progress
 
+## 2026-11-06 (U4a, stopped at GU4a)
+
+- Implemented local import, installed RDI/local tab, advanced options, local
+  account choice, real task/console subscriptions and native picker/export actions.
+- Moved two view models/tests into ui-logic without changing their package names;
+  preserved originals in DEL. Compose compilation and actual launcher run pass.
+- Final tests: renderer61/library5/app24 pass,1 existing GPU ignore; ui-logic15
+  and ui-service18 pass; Clippy/release pass. client-core235/4 known failures unchanged.
+- Windows native archive/directory import, option persistence, local/RDI title
+  launches, empty-pack automatic task panel, console/native export and both-scale
+  modal/Toast interaction checked. No msid: online local launch not verified.
+-38 paired Compose/Slint fixture screenshots at scales1/2, plus real-menu/game
+  captures. Final Rust SHA256 B79BC1BDA8C138D559182ACB36EE1A37737D1E8B1CF1C5DE4419635B6150CF8B.
+- Evidence and review limits: evidence/ui-port/u4a/gate-summary.md and
+  owner-checklist.md. GU4a owner visual/IME review pending. No batch b, Git writes,
+  publishing, package switch or backend changes.
+
 ## 2026-10-30
 - Approved plan: `/tmp/slint-proto-plan.md`. Additive scope only.
 - Read root AGENTS.md and UI source instructions; source references inspected.

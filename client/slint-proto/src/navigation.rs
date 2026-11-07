@@ -4,6 +4,8 @@ pub enum Screen {
     #[default]
     Menu,
     Gallery,
+    LocalModpackInstall,
+    ModpackLocalAdvanceOption,
 }
 #[derive(Default, Debug)]
 pub struct Navigation {
@@ -60,5 +62,18 @@ mod tests {
         assert!(n.scene_frozen(false));
         n.back();
         assert!(!n.scene_frozen(false));
+    }
+
+    #[test]
+    fn local_pack_screens_hold_scene_and_return_to_menu() {
+        for screen in [Screen::LocalModpackInstall, Screen::ModpackLocalAdvanceOption] {
+            let mut navigation = Navigation::default();
+            navigation.push(screen);
+            assert!(navigation.can_back());
+            assert!(navigation.scene_frozen(false));
+            navigation.back();
+            assert_eq!(navigation.current(), Screen::Menu);
+            assert!(!navigation.scene_frozen(false));
+        }
     }
 }

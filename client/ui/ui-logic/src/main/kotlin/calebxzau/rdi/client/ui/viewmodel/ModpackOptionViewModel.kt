@@ -5,7 +5,7 @@ import androidx.lifecycle.viewModelScope
 import calebxzhou.rdi.client.database.ModpackLaunchOptionsRecord
 import calebxzhou.rdi.client.database.ModpackLaunchOptionsStore
 import calebxzhou.rdi.client.service.SettingsService
-import calebxzau.rdi.client.lgr
+import io.github.oshai.kotlinlogging.KotlinLogging
 import calebxzau.rdi.client.service.normalizeModpackJvmParams
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -15,8 +15,11 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
+private val lgr = KotlinLogging.logger {}
+
 const val DEFAULT_JDWP_PARAM = "transport=dt_socket,server=y,suspend=y,address=*:5005"
 
+@kotlinx.serialization.Serializable
 data class ModpackOptionDraft(
     val javaCustomEnabled: Boolean = false,
     val javaPath: String = "",
@@ -70,6 +73,7 @@ class ModpackOptionViewModel(
     private val versionId: String,
     private val store: ModpackLaunchOptionsStore,
     private val runtime: ModpackOptionRuntime,
+    private val scope: kotlinx.coroutines.CoroutineScope? = null,
 ) : ViewModel() {
     private val _uiState = MutableStateFlow(ModpackOptionUiState())
     val uiState: StateFlow<ModpackOptionUiState> = _uiState.asStateFlow()
@@ -100,7 +104,7 @@ class ModpackOptionViewModel(
 
         val draft = state.draft
         _uiState.update { it.copy(saving = true, errorMessage = null, completedAction = null) }
-        viewModelScope.launch(Dispatchers.IO) {
+        (scope ?: viewModelScope).launch(Dispatchers.IO) {
             try {
                 val record = buildRecord(draft, _uiState.value.totalMemoryMb)
                 if (record == null) {
@@ -144,7 +148,7 @@ class ModpackOptionViewModel(
     }
 
     private fun load() {
-        viewModelScope.launch(Dispatchers.IO) {
+        (scope ?: viewModelScope).launch(Dispatchers.IO) {
             try {
                 val totalMemoryMb = runtime.getTotalPhysicalMemoryMb()
                 val record = store.find(versionId).getOrThrow()

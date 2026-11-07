@@ -46,18 +46,38 @@ impl Shell {
                     return;
                 };
                 if ui.get_modal_open() {
+                    if action == "back" {
+                        if ui.get_local_play() { ui.invoke_pack_action("play.cancel".into(), "".into()); }
+                        else if ui.get_install_missing() { ui.invoke_pack_action("installer.dismissMissing".into(), "".into()); }
+                        else if ui.get_picked_candidates().row_count() > 0 { ui.invoke_pack_action("installer.dismissCandidates".into(), "".into()); }
+                        else if !ui.get_action_error().is_empty() { ui.set_action_error("".into()); ui.invoke_pack_action("installer.dismissError".into(), "".into()); }
+                        else { ui.set_pack_menu(false); ui.set_discard_options(false); ui.set_duplicate_host("".into()); ui.set_confirm_exit(false); ui.set_gallery_dialog(false); }
+                    }
                     return;
                 }
                 match action.as_str() {
+                    "install" => { s.navigation.push(Screen::LocalModpackInstall); ui.invoke_pack_action("installer.open".into(), "".into()); }
+                    "options" => s.navigation.push(Screen::ModpackLocalAdvanceOption),
+                    "packs" => { s.navigation.home(); ui.invoke_select_tab(1); }
+                    "back" | "home" if ui.get_pack_screen() == 2 && ui.get_options_dirty() => { ui.set_discard_options(true); return; }
+                    "back" if ui.get_pack_screen() == 1 && ui.get_install_editor() => {ui.invoke_pack_action("installer.back".into(), "".into()); return;}
                     "back" if ui.get_activity_panel() != 0 => ui.set_activity_panel(0),
-                    "back" => s.navigation.back(),
+                    "back" => {
+                        if ui.get_pack_screen() == 1 { ui.invoke_pack_action("installer.close".into(), "".into()); }
+                        if ui.get_pack_screen() == 2 { ui.invoke_pack_action("options.close".into(), "".into()); }
+                        let was_pack = ui.get_pack_screen() != 0;
+                        s.navigation.back();
+                        if was_pack && s.navigation.current() == Screen::Menu {ui.invoke_select_tab(1);}
+                    },
                     "home" => {
+                        if ui.get_pack_screen() == 1 { ui.invoke_pack_action("installer.close".into(), "".into()); }
+                        if ui.get_pack_screen() == 2 { ui.invoke_pack_action("options.close".into(), "".into()); }
                         s.navigation.home();
                         ui.set_activity_panel(0);
                     }
                     "gallery" if ui.get_gallery_enabled() => s.navigation.push(Screen::Gallery),
-                    "console" => ui.set_activity_panel(1),
-                    "tasks" => ui.set_activity_panel(2),
+                    "console" => { ui.set_activity_panel(1); ui.invoke_pack_action("console.subscribe".into(), "".into()); }
+                    "tasks" => { ui.set_activity_panel(2); ui.invoke_pack_action("tasks.subscribe".into(), "".into()); }
                     _ => {
                         ui.invoke_stub(action);
                     }
@@ -81,6 +101,7 @@ impl Shell {
     }
     fn sync(&self, ui: &AppWindow) {
         ui.set_gallery(self.navigation.current() == Screen::Gallery);
+        ui.set_pack_screen(match self.navigation.current() { Screen::LocalModpackInstall => 1, Screen::ModpackLocalAdvanceOption => 2, _ => 0 });
         ui.set_can_back(self.navigation.can_back());
     }
     pub fn scene_frozen(&self, ui: &AppWindow) -> bool {
@@ -160,7 +181,7 @@ pub fn frame(
                 press_scale: ui.get_gallery_press_scale(),
             });
         }
-    } else {
+    } else if ui.get_pack_screen() == 0 {
         if !ui.get_loading() && ui.get_error().is_empty() {
             for (tab, shape) in ui.get_menu_grids().iter().enumerate() {
                 let i = &interactions[tab];
@@ -201,6 +222,9 @@ pub fn frame(
                 pivot: spring.map_or([0.; 2], |i| pivots[i]),
             });
         }
+    }
+    if ui.get_pack_screen() != 0 {
+        f.panels.extend(ui.get_pack_panels().iter().filter(|s| s.alpha > 0.).map(panel));
     }
     if ui.get_modal_open()
         && let Some(shape) = ui.get_glass_panels().row_data(2)

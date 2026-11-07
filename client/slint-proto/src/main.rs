@@ -1,6 +1,7 @@
 mod anim;
 mod api;
 mod app;
+mod packs;
 mod config;
 mod navigation;
 mod shell;

@@ -4,7 +4,8 @@ import { GlassButton, CircleIconButton } from "glass_button.slint";
 import { GlassSurface } from "surfaces.slint";
 import { TextField } from "fields.slint";
 import { PlayerHead } from "player_head.slint";
-export struct ContentRow { name: string, version: string, detail: string, icon: image, image-state: int, kind: string }
+// selection: 0=none, 1=optional selected, 2=optional unselected, 3=required (fixed), as Compose ContentSelectionState.
+export struct ContentRow { name: string, version: string, detail: string, icon: image, image-state: int, kind: string, selection: int }
 export struct TaskRow { title: string, detail: string, depth: int, group: bool, expanded: bool, status: int, progress: float }
 export struct LogRow { text: string, level: int }
 export component LoadingState inherits Rectangle {
@@ -45,12 +46,21 @@ export component HeadButton inherits Rectangle {
 export component ContentCard inherits Rectangle {
     in property <ContentRow> item;
     callback clicked();
-    height: 80px; border-radius: 16px; background: touch.has-hover ? #f3f7f0 : #ffffffc8;
-    HttpImage { x: 12px; y: 12px; width: 56px; height: 56px; source: root.item.icon; image-state: root.item.image-state; fallback: root.item.kind; }
-    Text { x: 84px; y: 8px; width: parent.width - 180px; text: root.item.name; overflow: elide; font-size: 16px; font-weight: 600; color: Theme.ink; }
-    Text { x: parent.width - 92px; y: 10px; width: 80px; text: root.item.version; overflow: elide; font-size: 12px; color: #667064; }
-    Text { x: 84px; y: 34px; width: parent.width - 96px; height: 38px; text: root.item.detail; wrap: word-wrap; overflow: elide; font-size: 13px; color: #5b625b; }
+    private property <length> trailing: root.item.selection == 0 ? 0px : root.item.selection == 3 ? 44px : 84px;
+    // Unselected optional content is dimmed per leaf; `opacity` would add an offscreen layer per card.
+    private property <float> fade: root.item.selection == 2 ? 0.6 : 1;
+    height: 80px; border-radius: 16px;
+    background: touch.has-hover ? #f3f7f0 : root.item.selection == 1 || root.item.selection == 3 ? #dce8d4e6 : #ffffffc8;
     touch := TouchArea { mouse-cursor: pointer; clicked => {root.clicked();} }
+    HttpImage { x: 12px; y: 12px; width: 56px; height: 56px; source: root.item.icon; image-state: root.item.image-state; fallback: root.item.kind; }
+    Text { x: 84px; y: 8px; width: parent.width - 180px - root.trailing; text: root.item.name; overflow: elide; font-size: 16px; font-weight: 600; color: Theme.ink.with-alpha(root.fade); }
+    Text { x: parent.width - 92px - root.trailing; y: 10px; width: 80px; text: root.item.version; overflow: elide; font-size: 12px; color: #667064; }
+    Text { x: 84px; y: 34px; width: parent.width - 96px - root.trailing; height: 38px; text: root.item.detail; wrap: word-wrap; overflow: elide; font-size: 13px; color: #5b625b.with-alpha(root.fade); }
+    if root.item.selection == 3: CircleIconButton { x: parent.width - 48px; y: (parent.height - self.height) / 2; glyph: "\u{f00c}"; checked: true; accessible-label: "必需内容"; }
+    if root.item.selection == 1 || root.item.selection == 2: HorizontalLayout { x: parent.width - 92px; y: (parent.height - 36px) / 2; width: 80px; height: 36px; spacing: 8px;
+        CircleIconButton { glyph: "\u{f00c}"; checked: root.item.selection == 1; accessible-label: "选择"; clicked => {if root.item.selection == 2 {root.clicked();} } }
+        CircleIconButton { glyph: "\u{f00d}"; checked: root.item.selection == 2; accessible-label: "不选择"; clicked => {if root.item.selection == 1 {root.clicked();} } }
+    }
 }
 // A drag/page scrollbar, usable for both axes. Position is a positive content offset.
 export component RScrollbar inherits Rectangle {
@@ -121,11 +131,14 @@ export component ContentGrid inherits Rectangle {
         content-height: ceil(root.items.length / self.columns) * 112px;
         for item[i] in root.items: Rectangle { x: mod(i,icons.columns) * 104px; y: floor(i / icons.columns) * 112px; width: 96px; height: 104px;
             HttpImage { x: 12px; y: 4px; width: 72px; height: 72px; source: item.icon; image-state: item.image-state; fallback: item.kind; }
-            Text { x: 0px; y: 80px; width: parent.width; text: item.name; overflow: elide; horizontal-alignment: center; color: Theme.ink; font-size: 12px; }
+            if item.selection == 1 || item.selection == 3: Rectangle { x: 66px; y: 0px; width: 22px; height: 22px; border-radius: 11px; background: #446c49;
+                Text { text: "\u{f00c}"; font-family: Theme.symbols; color: white; font-size: 12px; horizontal-alignment: center; vertical-alignment: center; }
+            }
+            Text { x: 0px; y: 80px; width: parent.width; text: item.name; overflow: elide; horizontal-alignment: center; color: Theme.ink.with-alpha(item.selection == 2 ? 0.6 : 1); font-size: 12px; }
             TouchArea { clicked => {root.selected(i);} }
         }
     }
-    RScrollbar { x: parent.width - 8px; y: 118px; width: 6px; height: parent.height - 118px; viewport: list.height; extent: root.icon-only ? icons.content-height : list.content-height; position: root.icon-only ? -icons.content-y : -list.content-y;
+    RScrollbar { x: parent.width - 8px; y: 118px; width: 6px; height: parent.height - 118px; viewport: list.height; extent: root.loading || root.error != "" || root.items.length == 0 ? 0px : root.icon-only ? icons.content-height : list.content-height; position: root.icon-only ? -icons.content-y : -list.content-y;
         scrolled(offset) => {if root.icon-only {icons.content-y = -offset;} else {list.content-y = -offset;} }
     }
     if root.loading: LoadingState { y: 118px; height: parent.height - 118px; width: parent.width; }
@@ -158,7 +171,7 @@ export component SharedDialog inherits GlassSurface {
     }
     VerticalLayout { padding: 24px; spacing: 16px;
         Text { text: root.title; font-size: 22px; font-weight: 600; color: Theme.ink; }
-        Text { text: root.message; wrap: word-wrap; color: Theme.ink; vertical-stretch: 1; }
+        Text { text: root.message; wrap: word-wrap; overflow: elide; color: Theme.ink; vertical-stretch: 1; }
         HorizontalLayout { alignment: end; spacing: 12px;
             cancel := GlassButton { visible: root.cancel-visible; label: "取消"; clicked => {root.dismissed();} }
             confirm := GlassButton { filled: true; label: root.confirm-label; clicked => {root.confirmed();} }

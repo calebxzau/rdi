@@ -5,14 +5,29 @@ Written 2026-11-05 for an agent with no prior context. This replaces M2-M4 in `M
 
 ## Current status (handoff)
 
-Updated 2026-11-06. **GU3 passed. U4 is handed to the next agent: do batch a (local modpacks) only, then stop at GU4a.**
+Updated 2026-11-07. **GU4a passed with owner approval on 2026-11-07. Batch b has not started.**
+
+- U4a results: `evidence/ui-port/u4a/gate-summary.md` (including "Owner review follow-up")
+  and `owner-checklist.md`. Native archive/folder import, persistent advanced options, local
+  offline and RDI title-screen launch, empty-pack/task flow, real console/native export pass
+  on Windows. Microsoft launch remains unverified because the account has no msid.
+- Owner review follow-up (2026-11-07), done by the reviewer: console/task panels centered,
+  options layout and title, content selection marks, Kotlin file-size units, missing-file
+  count/bullets/page warning. Rust 61+5+26 pass, 1 GPU test ignored; ui-logic 15 and
+  ui-service 18 pass; client-core 235 tests with the same 4 known failures.
+- Deferred by the owner at sign-off (visual differences, not blockers): fallback pack tiles
+  are grey letters without Compose's color and version badge; the empty-pack buttons have no
+  loader icons and the scanned-group header is not a pill with a count; the start-game dialog
+  has a large gap above 「正版登录」; Slint text is about one size smaller than Compose.
+- Owner-approved U4a scope clarification: directory action replaces the cut code
+  editor; migration/reinstall/sharing/log-pack export/removal wait for batch d.
 
 - GU1 passed 2026-11-05 (`evidence/ui-port/u1/gate-summary.md`, commit `c6f21e82`).
 - GU2 passed 2026-11-06 (`evidence/ui-port/u2/gate-summary.md`, commit `8a6fe6a9`), after the concurrency follow-up.
 - GU3 passed 2026-11-06 (`evidence/ui-port/u3/gate-summary.md`, including "Owner review follow-up"; commit `ce984283`). The owner checked IME and scale changes. Buttons now center their content and field labels sit above the outline.
 - Later gates are unchanged except for the new U4 order in section 7. The accepted Mac terrain problem is recorded in section 4.
 - `dev` has unpushed commits: `c6f21e82`, the owner's `a1646b01`, `4cbf217e`, `8a6fe6a9`, `636a1295`, `ce984283` and the U4 handoff commit. Do not push without approval.
-- Do not stage, commit or push. Report at GU4a; the reviewer commits after the owner's review. `client/ui` and `common` hold a lot of the owner's uncommitted work, some of it only CRLF flips; never overwrite it.
+- Do not stage, commit or push. Report at the gate; the reviewer commits after the owner's review. `client/ui` and `common` hold a lot of the owner's uncommitted work, some of it only CRLF flips; never overwrite it.
 
 ### U4 handoff instructions
 

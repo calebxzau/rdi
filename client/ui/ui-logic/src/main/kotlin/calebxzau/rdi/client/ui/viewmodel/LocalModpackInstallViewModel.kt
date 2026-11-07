@@ -2,7 +2,7 @@ package calebxzau.rdi.client.ui.viewmodel
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import calebxzau.rdi.common.logging.Loggers
+import io.github.oshai.kotlinlogging.KotlinLogging
 import calebxzhou.rdi.client.service.ContentResolutionUpdate
 import calebxzhou.rdi.client.service.LocalModpackCandidate
 import calebxzhou.rdi.client.service.LocalModpackInstallRequest
@@ -32,7 +32,7 @@ import kotlinx.coroutines.launch
 import java.nio.file.Files
 import java.nio.file.Path
 
-private val lgr by Loggers
+private val lgr = KotlinLogging.logger {}
 
 /** Minecraft versions and loaders a local pack can be created or imported for. */
 val localModpackRuntimes: List<Pair<McVersion, ModLoader>> =
@@ -82,6 +82,7 @@ class LocalModpackInstallViewModel(
     private val installer: LocalModpackInstaller,
     private val archiveReader: ModpackArchiveReader,
     private val contentResolver: ModpackArchiveContentResolutionSource,
+    private val scope: kotlinx.coroutines.CoroutineScope? = null,
 ) : ViewModel() {
     private val mutableState = MutableStateFlow(LocalModpackInstallState())
     private val eventChannel = Channel<LocalModpackInstallStarted>(Channel.BUFFERED)
@@ -98,7 +99,7 @@ class LocalModpackInstallViewModel(
 
     fun scanCandidates() {
         mutableState.update { it.copy(scanning = true, scanError = null) }
-        viewModelScope.launch {
+        (scope ?: viewModelScope).launch {
             scanner.scan().onSuccess { candidates ->
                 mutableState.update { it.copy(scanning = false, candidates = candidates) }
             }.onFailure { cause ->
@@ -131,7 +132,7 @@ class LocalModpackInstallViewModel(
     fun openDirectory(path: Path) {
         cancelArchiveLoad()
         mutableState.update { it.copy(directoryLoading = true, archiveError = null, pickedCandidates = emptyList()) }
-        viewModelScope.launch {
+        (scope ?: viewModelScope).launch {
             scanner.scanDirectory(path).onSuccess { candidates ->
                 when {
                     candidates.size == 1 -> {
@@ -196,7 +197,7 @@ class LocalModpackInstallViewModel(
         cancelArchiveLoad()
         val generation = archiveGeneration
         mutableState.update { it.copy(archiveLoading = true, archiveError = null, editor = null) }
-        archiveLoadJob = viewModelScope.launch {
+        archiveLoadJob = (scope ?: viewModelScope).launch {
             val metadata = archiveReader.readMetadata(path).getOrElse { cause ->
                 if (cause is CancellationException) throw cause
                 lgr.warn(cause) { "读取整合包元数据失败" }
@@ -311,7 +312,7 @@ class LocalModpackInstallViewModel(
         ).onSuccess { runId ->
             cancelArchiveLoad()
             mutableState.update { it.copy(editor = null) }
-            viewModelScope.launch { eventChannel.send(LocalModpackInstallStarted(runId)) }
+            (scope ?: viewModelScope).launch { eventChannel.send(LocalModpackInstallStarted(runId)) }
         }.onFailure { cause ->
             mutableState.update {
                 it.copy(editor = it.editor?.copy(submitting = false, error = cause.message ?: "无法开始安装"))

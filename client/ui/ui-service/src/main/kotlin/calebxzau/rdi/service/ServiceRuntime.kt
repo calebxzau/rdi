@@ -10,7 +10,7 @@ import calebxzhou.rdi.client.ui.McPlayStore
 
 /** The business runtime initialization previously owned by the Compose entry point. */
 internal class ServiceRuntime private constructor(
-    private val database: MinecraftInstallationDatabase,
+    val database: MinecraftInstallationDatabase,
 ) : AutoCloseable {
     override fun close() {
         playerInfoCache.close()
