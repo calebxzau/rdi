@@ -5,7 +5,7 @@ Written 2026-11-05 for an agent with no prior context. This replaces M2-M4 in `M
 
 ## Current status (handoff)
 
-Updated 2026-11-07. **GU4a passed with owner approval on 2026-11-07. Batch b has not started.**
+Updated 2026-11-07. **GU4a passed with owner approval on 2026-11-07 (commit `86d76515`). Next: batch b0, the login screen, handed to another agent. Read "Batch b0: login" below. Stop at GU4b0; do not start the rest of batch b.**
 
 - U4a results: `evidence/ui-port/u4a/gate-summary.md` (including "Owner review follow-up")
   and `owner-checklist.md`. Native archive/folder import, persistent advanced options, local
@@ -26,8 +26,61 @@ Updated 2026-11-07. **GU4a passed with owner approval on 2026-11-07. Batch b has
 - GU2 passed 2026-11-06 (`evidence/ui-port/u2/gate-summary.md`, commit `8a6fe6a9`), after the concurrency follow-up.
 - GU3 passed 2026-11-06 (`evidence/ui-port/u3/gate-summary.md`, including "Owner review follow-up"; commit `ce984283`). The owner checked IME and scale changes. Buttons now center their content and field labels sit above the outline.
 - Later gates are unchanged except for the new U4 order in section 7. The accepted Mac terrain problem is recorded in section 4.
-- `dev` has unpushed commits: `c6f21e82`, the owner's `a1646b01`, `4cbf217e`, `8a6fe6a9`, `636a1295`, `ce984283` and the U4 handoff commit. Do not push without approval.
+- `dev` has unpushed commits: `c6f21e82`, the owner's `a1646b01`, `4cbf217e`, `8a6fe6a9`, `636a1295`, `ce984283`, `45d9e9d3`, `86d76515` and the b0 handoff commit. Do not push without approval.
 - Do not stage, commit or push. Report at the gate; the reviewer commits after the owner's review. `client/ui` and `common` hold a lot of the owner's uncommitted work, some of it only CRLF flips; never overwrite it.
+
+### Batch b0: login (owner decision 2026-11-07)
+
+`LoginScreen.kt` (394 lines) was missing from every U4 batch. Until it exists the Slint
+launcher can only log in from `RDI_PROTO_USR`/`RDI_PROTO_PWD`, so nobody can use it without
+setting environment variables. The owner moved it ahead of the rest of batch b as **b0**, with
+its own gate **GU4b0**. The rest of batch b (register, reset password, settings, player info)
+is unchanged and must not start before the owner signs off GU4b0.
+
+Explain your design to the owner in Mandarin before writing code (screen, service methods and
+events, what you leave out), then build, then stop at GU4b0.
+
+Facts:
+- **Logic exists.** U2 moved login into `ui-logic` (`calebxzau/rdi/client/logic/LoginController.kt`,
+  blank check 「未填写完整」, single submission, error text from the server). `ui-service` already
+  has a `login` method; `Main.kt` rejects every other method before login (「请先登录」), so a
+  method the login screen needs before login (for example saved accounts) must be allowed there.
+- **Saved accounts** live in `LocalCredentials` (`client-core/.../auth/LocalCredentials.kt`):
+  `loginInfos` (qq, name, stored password, last login time), `lastLogged`, and
+  `autoLoginAccount` (the last account unless `autoLoginDisabled`). `PlayerService.login` saves
+  the account after a successful login. Compose prefills the last account and auto-logins.
+- **Rust today** logs in from `Config::credentials()` in `src/app.rs` (`fn login`) and shows the
+  failure as a menu error with 重试.
+
+Scope:
+- Login page matching `LoginScreen.kt`: 「RDID/QQ号」 and 「密码」 fields (masked, reveal toggle),
+  Enter submits, 「登录」 with a busy state, error dialog (「错误」 / 「明白」), the history
+  dropdown sorted by last login (「暂无历史账号」 when empty), 「注册」 and 「忘记密码」.
+- Prefill the last account and auto-login as Compose does. **Do not send stored passwords to
+  Rust**: let the service return saved accounts without passwords and log in a saved account by
+  its id, unless you find a reason this cannot work; then ask the owner.
+- 「注册」 and 「忘记密码」 call `stub` until their batch b screens exist. Compose's 「注册」 opens
+  a dialog with 「用微软MC正版号注册」 and 「用QQ邮箱注册」; port the dialog, with both choices on `stub`.
+- Keep `RDI_PROTO_USR`/`RDI_PROTO_PWD` as a development and automation override: when both are
+  set, log in with them and skip the page; if that login fails, show the page with the error.
+  Without them, start on the login page (or auto-login), never on a credentials error.
+- Navigation: the login page is the start screen before login; after success go to the menu.
+  Log out and account switching belong to the player-info screen (batch b), not b0.
+- Not in b0: register/reset/settings/player-info screens, Microsoft account binding, changes to
+  the stored credential format, Compose changes.
+
+### GU4b0 pass criteria
+
+1. Compose and Slint screenshots side by side at scales 1 and 2: empty, prefilled, history open,
+   history empty, submitting, error, register dialog. Checklist in `evidence/ui-port/u4b0/owner-checklist.md`.
+2. Service changes have `ui-service` tests (saved-account listing without passwords, login by
+   saved id, blank fields, server error); protocol docs and golden fixtures updated in both
+   languages. No stored password appears in protocol frames or logs.
+3. Real run on Windows through the release build: start without the environment variables,
+   log in by typing, then restart and confirm prefill/auto-login; a wrong password shows the error
+   and allows retry. Owner checks Chinese IME and caret in both fields.
+4. Rust tests, `cargo clippy --workspace --all-targets -- -D warnings` and the release build pass;
+   ui-logic and ui-service pass; `client-core:test` keeps 235 tests with the same 4 known failures.
 
 ### U4 handoff instructions
 
@@ -335,6 +388,7 @@ For each screen: move logic to `ui-logic`, expose it through the service, write 
 | Batch | Screens |
 |---|---|
 | **a. Local modpacks** (moved first by the owner, 2026-11-06) | `LocalModpackInstallScreen`, the menu's 整合包 tab from local disk (`LocalModpackManager`), `ModpackLocalAdvanceOptionScreen`, `LocalPlayDialog`, real console and task progress |
+| **b0. Login** (moved first by the owner, 2026-11-07) | `LoginScreen` |
 | **b. Account** | `RegisterScreen`, `ResetPasswordScreen`, `SettingScreen`, `PlayerInfoScreen` |
 | **c. Hosts (房间)** | `MenuScreen`, `HostInfoScreen` + `HostInfoPanes` (no file manager), `HostNewCreateScreen`, `HostMembersScreen`, `HostBackendScreen`, `HostWorldScreen`, `HostRollbackScreen`, `HostSaveImportScreen`, `McPlayScreen` |
 | **d. Modpacks** | `ModpackPlazaScreen`, `ModpackInfoScreen`, `ModpackVersionInfoScreen`, `ModpackVersionEditScreen`, `ModpackVersionBaseWorldManageScreen`, `ModpackUploadScreen`, `ModpackUploaderManageScreen` |
@@ -365,7 +419,7 @@ Packaging details get their own plan at this point. **Stop at GU5** before anyth
 | **GU1** | U1 | Criteria table, CI results, a build to test IME, window and list |
 | **GU2** | U2 | Real game launch, service failure behavior, memory and startup numbers |
 | **GU3** | U3 | Component gallery |
-| **GU4a-e** | U4 batches | Side-by-side screenshots, per-screen checklist |
+| **GU4a-e** (plus GU4b0) | U4 batches | Side-by-side screenshots, per-screen checklist |
 | **GU5** | U5 | Parity sign-off and the packaging plan |
 
 Keep summaries short: numbers, what was verified, what was not, and the decisions needed.
