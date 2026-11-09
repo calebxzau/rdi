@@ -84,6 +84,11 @@ impl Client {
         self.uid = result["uid"].as_str().context("登录未返回玩家身份")?.into();
         Ok(self)
     }
+    pub async fn login_saved(mut self, id: &str) -> Result<Self> {
+        let result = self.call("login.saved", json!({"id":id})).await?;
+        self.uid = result["uid"].as_str().context("登录未返回玩家身份")?.into();
+        Ok(self)
+    }
     pub fn take_events(&self) -> Vec<Value> {
         self.service.take_events().unwrap_or_else(|error| {
             tracing::warn!(%error, "读取游戏状态失败");

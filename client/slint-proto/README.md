@@ -18,11 +18,14 @@ $env:RDI_PROTO_PWD = '<password>'
 From WSL, wrap the same commands in `pwsh.exe -NoProfile -Command "..."`; don't build against `/mnt/c` with the
 WSL toolchain.
 
+Without both account variables, the launcher opens the login page and uses saved-account
+prefill/auto-login settings. Saved passwords stay in the Kotlin service.
+
 ### Environment
 
 | Variable | Meaning |
 |---|---|
-| `RDI_PROTO_USR`, `RDI_PROTO_PWD` | Account sent over framed stdio to Kotlin PlayerService.login (required; never commit them) |
+| `RDI_PROTO_USR`, `RDI_PROTO_PWD` | Account sent over framed stdio to Kotlin PlayerService.login (optional development override; never commit them) |
 | `RDI_PROTO_SERVER` | Optional Kotlin debug-server host override; otherwise use Kotlin launcher routing |
 | `RDI_SERVICE_COMMAND` | Development override: JSON array of executable and arguments, without shell evaluation |
 | `WGPU_BACKEND` | Overrides the forced DX12 backend on Windows (`vulkan`, `gl`), for comparisons only |

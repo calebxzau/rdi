@@ -6,6 +6,7 @@ export component TextField inherits Rectangle {
     in property <string> hint;
     in property <string> error;
     in property <bool> password;
+    in property <length> trailing-space: 0px;
     in-out property <bool> reveal;
     in-out property <string> text;
     in property <bool> preview-focus;
@@ -24,7 +25,7 @@ export component TextField inherits Rectangle {
         border-color: root.error != "" ? #ba3434 : edit.has-focus || root.preview-focus ? #446c49 : #777b77;
     }
     Text { x: 18px; y: 0px; text: root.label; color: root.error != "" ? #ba3434 : #446c49; font-size: 11px; }
-    edit := TextInput { x: 18px; y: root.top + 12px; width: parent.width - (root.password ? 68px : 36px); height: 24px;
+    edit := TextInput { x: 18px; y: root.top + 12px; width: parent.width - (root.password ? 68px : 36px) - root.trailing-space; height: 24px;
         text <=> root.text; font-size: 14px; color: root.enabled ? Theme.ink : #777b77;
         enabled: root.enabled; single-line: true; input-type: root.password && !root.reveal ? InputType.password : InputType.text;
         accepted => {root.accepted();} edited => {root.edited(self.text);}

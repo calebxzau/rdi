@@ -159,7 +159,8 @@ export component SharedDialog inherits GlassSurface {
     in property <bool> cancel-visible: true;
     callback confirmed();
     callback dismissed();
-    width: 480px; height: 240px; tint: #f3f4ecf2; background: #f3f4ec; border-radius: 24px;
+    // Size to the message like Compose AlertDialog; callers may still set an explicit height.
+    width: 480px; height: min(480px, max(160px, content.preferred-height)); tint: #f3f4ecf2; background: #f3f4ec; border-radius: 24px;
     out property <bool> contains-focus: confirm.focused || cancel.focused;
     public function focus-dialog() { confirm.focus(); }
     FocusScope {
@@ -169,7 +170,7 @@ export component SharedDialog inherits GlassSurface {
         if e.text == Key.Tab {if root.cancel-visible && confirm.focused {cancel.focus();} else {confirm.focus();} return accept;}
         return reject;
     }
-    VerticalLayout { padding: 24px; spacing: 16px;
+    content := VerticalLayout { padding: 24px; spacing: 16px;
         Text { text: root.title; font-size: 22px; font-weight: 600; color: Theme.ink; }
         Text { text: root.message; wrap: word-wrap; overflow: elide; color: Theme.ink; vertical-stretch: 1; }
         HorizontalLayout { alignment: end; spacing: 12px;

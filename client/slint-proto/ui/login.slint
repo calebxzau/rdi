@@ -1,0 +1,60 @@
+import { GlassSurface } from "surfaces.slint";
+import { TextField, PasswordField } from "fields.slint";
+import { CircleIconButton, GlassButton } from "glass_button.slint";
+import { Theme } from "theme.slint";
+import { ListView } from "std-widgets.slint";
+export struct LoginAccount { id: string, label: string }
+export component LoginScreen inherits GlassSurface {
+    in property <string> version;
+    in property <bool> busy;
+    in property <bool> enabled: true;
+    in property <[LoginAccount]> accounts;
+    in-out property <string> account;
+    in-out property <string> password;
+    in-out property <string> saved-id;
+    in-out property <bool> history;
+    callback submit();
+    callback select(string);
+    callback register();
+    callback forgot();
+    tint: #ffffffb0;
+    public function focus-account() { account-field.focus(); }
+    VerticalLayout { padding: 18px; spacing: 12px;
+        Rectangle { vertical-stretch: 1; }
+        Text { text: "RDi"; font-size: 24px; font-weight: 700; horizontal-alignment: center; color: Theme.ink; }
+        Rectangle { height: 8px; }
+        HorizontalLayout { alignment: center;
+            VerticalLayout { width: parent.width * 0.82; spacing: 12px;
+                account-box := Rectangle { height: 48px;
+                    account-field := TextField { x: 0px; y: 0px; width: parent.width; reserve-error: false; enabled: root.enabled && !root.busy; hint: "RDID/QQ号"; trailing-space: 40px;
+                        text <=> root.account; accepted => {root.submit();} edited(value) => {root.saved-id = "";}
+                    }
+                    CircleIconButton { x: parent.width - 44px; y: 6px; glyph: "\u{f0d7}"; accessible-label: "历史账号"; enabled: root.enabled && !root.busy; clicked => {root.history = !root.history;} }
+                }
+                PasswordField { enabled: root.enabled && !root.busy; label: ""; reserve-error: false; hint: root.saved-id != "" ? "••••••••（已保存）" : "密码";
+                    text <=> root.password; accepted => {root.submit();} edited(value) => {root.saved-id = "";}
+                }
+                HorizontalLayout { alignment: center; spacing: 8px;
+                    CircleIconButton { width: 80px; label: root.busy ? "登录中.." : "登录"; glyph: "\u{f090}"; filled: true; busy: root.busy; clicked => {root.history = false; root.submit();} }
+                    CircleIconButton { width: 80px; filled: true; label: "注册"; glyph: "\u{f234}"; enabled: root.enabled && !root.busy; clicked => {root.history = false; root.register();} }
+                }
+                HorizontalLayout { alignment: center;
+                    CircleIconButton { width: 112px; filled: true; label: "忘记密码"; glyph: "\u{f084}"; enabled: root.enabled && !root.busy; clicked => {root.forgot();} }
+                }
+            }
+        }
+        Rectangle { vertical-stretch: 1; }
+        Text { text: "v" + root.version; font-size: 12px; horizontal-alignment: center; color: Theme.ink; }
+    }
+    if root.history: Rectangle { x: 0px; y: 0px; width: root.width; height: root.height;
+        TouchArea { clicked => {root.history = false;} }
+        // Anchor below the account field like Compose's DropdownMenu instead of spanning and covering the password field.
+        Rectangle { x: account-box.absolute-position.x - root.absolute-position.x; y: account-box.absolute-position.y - root.absolute-position.y + account-box.height + 4px;
+            width: min(account-box.width, 280px); height: min(220px, max(44px, root.accounts.length * 44px)); background: #f0f5eaff; border-radius: 12px; border-width: 1px; border-color: #c4c8bc;
+            if root.accounts.length == 0: GlassButton { height: 44px; width: parent.width; label: "暂无历史账号"; clicked => {root.history = false;} }
+            ListView { visible: root.accounts.length > 0;
+                for account in root.accounts: GlassButton { height: 44px; label: account.label; clicked => {root.select(account.id); root.history = false;} }
+            }
+        }
+    }
+}

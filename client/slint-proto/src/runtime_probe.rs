@@ -11,7 +11,7 @@ pub struct Stats {
 pub fn heartbeat(ui: &AppWindow, stats: &Stats, elapsed: f64, active: bool, enabled: bool) {
     ui.window().with_winit_window(|w| {
         let pack_data = serde_json::json!({"pack_screen":ui.get_pack_screen(),"pack_rows":ui.get_modpacks().row_count(),"packs_loading":ui.get_packs_loading(),"packs_error":ui.get_packs_error().as_str(),"install_editor":ui.get_install_editor(),"install_can_submit":ui.get_install_can_submit(),"install_loading":ui.get_install_loading(),"install_error":ui.get_install_error().as_str(),"install_missing":ui.get_install_missing(),"install_contents":ui.get_install_contents().row_count(),"options_dirty":ui.get_options_dirty(),"options_error":ui.get_options_error().as_str(),"local_play":ui.get_local_play(),"play_error":ui.get_play_error().as_str(),"activity_rows":ui.get_activity_tasks().row_count(),"activity_message":ui.get_activity_message().as_str(),"activity_error":ui.get_activity_error().as_str(),"activity_fraction":ui.get_activity_fraction(),"activity_logs":ui.get_activity_logs().row_count(),"game_status":ui.get_game_status().as_str(),"action_error":ui.get_action_error().as_str(),"duplicate":!ui.get_duplicate_host().is_empty(),"selected_tab":ui.get_selected()});
-        let mut data = serde_json::json!({"content_scroll":ui.get_gallery_content_scroll(),"tile_scroll":ui.get_gallery_scroll(),"dialog_focused":ui.get_dialog_focused(),"password_revealed":ui.get_gallery_password_revealed(),"toast_visible":!ui.get_toast_message().is_empty(),"gallery":ui.get_gallery(),"gallery_page":ui.get_gallery_page(),"content_state":ui.get_gallery_content_state(),"content_rows":ui.get_gallery_items().row_count(),"task_rows":ui.get_gallery_tasks().row_count(),"log_rows":ui.get_gallery_logs().row_count(),"modal":ui.get_modal_open(),"game_running":ui.get_game_running(),"image_state":ui.get_gallery_image_state(),"can_back":ui.get_can_back(),"scene_frames":stats.scene_frames,"ui_frames":stats.ui_frames,"bound":stats.bound,"loading":stats.loading,"elapsed":elapsed,"active":active,"enabled":enabled,"focused":w.has_focus(),"minimized":w.is_minimized(),"visible":w.is_visible(),"width":w.inner_size().width,"height":w.inner_size().height,"scale":ui.window().scale_factor()});
+        let mut data = serde_json::json!({"login_visible":ui.get_login_visible(),"login_busy":ui.get_login_busy(),"login_saved":!ui.get_login_saved_id().is_empty(),"login_history":ui.get_login_history(),"content_scroll":ui.get_gallery_content_scroll(),"tile_scroll":ui.get_gallery_scroll(),"dialog_focused":ui.get_dialog_focused(),"password_revealed":ui.get_gallery_password_revealed(),"toast_visible":!ui.get_toast_message().is_empty(),"gallery":ui.get_gallery(),"gallery_page":ui.get_gallery_page(),"content_state":ui.get_gallery_content_state(),"content_rows":ui.get_gallery_items().row_count(),"task_rows":ui.get_gallery_tasks().row_count(),"log_rows":ui.get_gallery_logs().row_count(),"modal":ui.get_modal_open(),"game_running":ui.get_game_running(),"image_state":ui.get_gallery_image_state(),"can_back":ui.get_can_back(),"scene_frames":stats.scene_frames,"ui_frames":stats.ui_frames,"bound":stats.bound,"loading":stats.loading,"elapsed":elapsed,"active":active,"enabled":enabled,"focused":w.has_focus(),"minimized":w.is_minimized(),"visible":w.is_visible(),"width":w.inner_size().width,"height":w.inner_size().height,"scale":ui.window().scale_factor()});
         data.as_object_mut().unwrap().extend(pack_data.as_object().unwrap().clone());
         tracing::info!(data=%data,"Runtime probe");
     });
@@ -59,6 +59,19 @@ impl Control {
         }
         self.last = command.id;
         match command.action.as_str() {
+            "login-fixture" if ui.get_gallery_enabled() => {
+                ui.set_login_version("6.7.9".into());
+                ui.set_gallery(false);
+                ui.set_login_visible(true);
+                ui.set_login_busy(command.name.as_deref() == Some("submitting"));
+                ui.set_login_account(if command.name.as_deref() == Some("empty") { "" } else { "10001" }.into());
+                ui.set_login_password("".into());
+                ui.set_login_saved_id(if command.name.as_deref() == Some("empty") { "" } else { "fixture" }.into());
+                ui.set_login_history(matches!(command.name.as_deref(), Some("history" | "history-empty")));
+                ui.set_login_register(command.name.as_deref() == Some("register"));
+                ui.set_action_error(if command.name.as_deref() == Some("error") { "账号或密码错误" } else { "" }.into());
+                ui.set_login_accounts(slint::ModelRc::new(slint::VecModel::from(if command.name.as_deref() == Some("history-empty") { vec![] } else { vec![crate::LoginAccount { id: "fixture".into(), label: "测试玩家 (10001)".into() }] })));
+            }
             "pack-fixture" if ui.get_gallery_enabled() => ui.invoke_pack_proof(command.name.clone().unwrap_or_default().into(), command.text.clone().unwrap_or_default().into()),
             "shell-tasks" => ui.invoke_navigate("tasks".into()),
             "shell-console" => ui.invoke_navigate("console".into()),

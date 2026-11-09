@@ -126,6 +126,7 @@ pub struct App {
     packs: Vec<crate::packs::InstalledPack>,
     api: Option<Client>,
     running_processes: Vec<serde_json::Value>,
+    login_ui: Rc<RefCell<crate::login::LoginUi>>,
     pack_ui: Rc<RefCell<crate::packs::PackUi>>,
     heads: HeadCache,
     cache: lru::LruCache<String, CachedArt>,
@@ -165,6 +166,7 @@ impl App {
         ui.set_hosts(ModelRc::from(tiles[0].clone()));
         ui.set_modpacks(ModelRc::from(tiles[1].clone()));
         let pack_ui = crate::packs::PackUi::wire(ui, runtime.clone());
+        let login_ui = crate::login::LoginUi::wire(ui, runtime.clone(), config.server.clone());
         let app = Rc::new(RefCell::new(Self {
             ui: ui.as_weak(),
             runtime,
@@ -176,6 +178,7 @@ impl App {
             packs: vec![],
             api: None,
             pack_ui,
+            login_ui,
             running_processes: vec![],
             heads: HeadCache::default(),
             cache: lru::LruCache::new(NonZeroUsize::new(60).unwrap()),
@@ -382,6 +385,11 @@ impl App {
         std::mem::take(&mut self.crowd_skins)
     }
     fn login(&mut self) {
+        self.api = None;
+        self.pack_ui.borrow_mut().connect(None);
+        self.login_ui.borrow_mut().start();
+    }
+    fn load_menu(&mut self, api: Client) {
         self.epoch += 1;
         for (_, j) in self.jobs.drain() {
             j.abort();
@@ -426,15 +434,10 @@ impl App {
         }
         let tx = self.tx.clone();
         let epoch = self.epoch;
-        let base = self.config.server.clone();
         let heads = self.heads.clone();
         let running_processes = self.running_processes.clone();
         self.login_job = Some(self.runtime.spawn(async move {
             let result = async {
-                let (usr, pwd) = Config::credentials()?;
-                let api = Client::new(base)?.login(&usr, &pwd).await?;
-                drop(usr);
-                drop(pwd);
                 let uid = api.uid()?;
                 let player: PlayerInfo = api.get(&format!("/player/{uid}/info")).await?;
                 let mine = api.get("/host/my").await?;
@@ -648,6 +651,8 @@ impl App {
         }
     }
     pub fn tick(&mut self, dt: f32) {
+        let authenticated = self.login_ui.borrow_mut().tick();
+        if let Some(api) = authenticated { self.load_menu(api); }
         let Some(ui) = self.ui.upgrade() else {
             return;
         };

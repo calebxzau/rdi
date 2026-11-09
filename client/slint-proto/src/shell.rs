@@ -45,6 +45,14 @@ impl Shell {
                 let Some(ui) = s.ui.upgrade() else {
                     return;
                 };
+                if ui.get_login_visible() {
+                    if action == "back" {
+                        ui.set_login_register(false);
+                        ui.set_login_history(false);
+                        ui.set_action_error("".into());
+                    }
+                    return;
+                }
                 if ui.get_modal_open() {
                     if action == "back" {
                         if ui.get_local_play() { ui.invoke_pack_action("play.cancel".into(), "".into()); }
@@ -105,7 +113,7 @@ impl Shell {
         ui.set_can_back(self.navigation.can_back());
     }
     pub fn scene_frozen(&self, ui: &AppWindow) -> bool {
-        self.navigation.scene_frozen(ui.get_game_running()) || ui.get_activity_panel() != 0
+        ui.get_login_visible() || self.navigation.scene_frozen(ui.get_game_running()) || ui.get_activity_panel() != 0
     }
     pub fn tick(&mut self) {
         self._gallery.borrow_mut().tick();
@@ -157,7 +165,9 @@ pub fn frame(
         pills: vec![],
         panels: vec![],
     };
-    if ui.get_gallery() {
+    if ui.get_login_visible() {
+        f.panels.push(panel(ui.get_login_panel()));
+    } else if ui.get_gallery() {
         f.panels.extend(
             ui.get_glass_panels()
                 .iter()
