@@ -3,7 +3,6 @@ use anyhow::Result;
 use serde_json::{Value, json};
 use slint::{ComponentHandle, winit_030::WinitWindowAccessor};
 use std::{
-    collections::BTreeSet,
     sync::{Arc, OnceLock},
     time::{Duration, Instant},
 };
@@ -11,21 +10,28 @@ static SPEC: OnceLock<Arc<tokio::sync::OnceCell<Option<Value>>>> = OnceLock::new
 
 pub fn monitors(ui: &crate::AppWindow) -> Value {
     let mut displays = vec![];
-    let mut modes = BTreeSet::new();
+    let mut modes = vec![];
     ui.window().with_winit_window(|window| {
         for monitor in window.available_monitors() {
             displays.push(json!({"name":monitor.name().unwrap_or_default(),"width":0,"height":0}));
-            for mode in monitor.video_modes() {
-                modes.insert(format!(
-                    "{}x{}@{}",
-                    mode.size().width,
-                    mode.size().height,
-                    mode.refresh_rate_millihertz() as f64 / 1000.
-                ));
-            }
+            let size = monitor.size();
+            modes.push((size.width, size.height, monitor.refresh_rate_millihertz()));
         }
     });
-    json!({"display":displays,"videoMode":modes.into_iter().collect::<Vec<_>>()})
+    json!({"display":displays,"videoMode":current_modes(modes)})
+}
+/// Each monitor's current mode, like Kotlin's `getDisplayModes`. Not `video_modes()`, which lists
+/// every mode a monitor supports; the server keeps only the first ten of this list.
+fn current_modes(monitors: Vec<(u32, u32, Option<u32>)>) -> Vec<String> {
+    let mut modes = vec![];
+    for (width, height, millihertz) in monitors {
+        let hertz = millihertz.unwrap_or(0).saturating_add(500) / 1000;
+        let mode = format!("{width}x{height}@{hertz}");
+        if !modes.contains(&mode) {
+            modes.push(mode);
+        }
+    }
+    modes
 }
 pub async fn get(monitors: Value) -> Option<Value> {
     SPEC.get_or_init(|| Arc::new(tokio::sync::OnceCell::new()))
@@ -98,7 +104,7 @@ fn collect(monitors: Value) -> Result<Value> {
                 .collect::<Vec<_>>()
         );
     }
-    tracing::info!(empty_fields=%empty_fields(&spec).join(","), "硬件字段可用性");
+    tracing::info!(empty_fields=%empty_fields(&spec).join(","), video_modes=%spec["videoMode"], "硬件字段可用性");
     Ok(spec)
 }
 fn empty_fields(value: &Value) -> Vec<String> {
@@ -278,6 +284,19 @@ fn dxgi_memory() -> Result<Vec<(String, u64)>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn video_modes_are_each_monitors_current_mode() {
+        assert_eq!(
+            current_modes(vec![
+                (3840, 2160, Some(60_000)),
+                (2880, 1800, Some(120_000)),
+                (3840, 2160, Some(60_000)),
+                (1920, 1080, Some(59_940)),
+                (1280, 720, None),
+            ]),
+            ["3840x2160@60", "2880x1800@120", "1920x1080@60", "1280x720@0"]
+        );
+    }
     #[test]
     fn shared_fixture_has_every_required_field() {
         let v: Value =

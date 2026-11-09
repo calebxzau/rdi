@@ -217,7 +217,7 @@ No single crate covers these fields. Use `sysinfo` (0.40.1 when checked) as the 
 | `mems` | WMI `Win32_PhysicalMemory` (Capacity, SMBIOSMemoryType, Speed) | Empty, or one entry with the `sysinfo` total |
 | `disk` | WMI `Win32_DiskDrive` (name, Size, Model) | `sysinfo`, `model` empty |
 | `display` | WMI `root\wmi` `WmiMonitorID` (name), `WmiMonitorBasicDisplayParams` (size in cm) | `winit` name, size 0 |
-| `videoMode` | `winit` `video_modes()`, formatted `{width}x{height}@{refresh}`, distinct | Same |
+| `videoMode` | Each monitor's current `winit` size and refresh rate, formatted `{width}x{height}@{refresh}`, distinct, as Kotlin's `getDisplayModes`. Not `video_modes()`, which lists every supported mode; the server keeps only the first ten. | Same |
 
 Traps:
 
