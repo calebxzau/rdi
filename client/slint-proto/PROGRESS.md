@@ -318,3 +318,11 @@
   sample boundaries; no debug comparison or long-term stability claim.
 - See `evidence/ui-port/u3/gate-summary.md` and `owner-checklist.md`. Wait for GU3
   acceptance. No Kotlin/Gradle changes, staging, commits, pushes or U4 work.
+
+## 2026-11-07 — U4b0 login
+
+Implemented the login page and pre-login saved-account service methods. Saved
+passwords remain in Kotlin; Rust receives metadata and sends a saved ID. Real
+credentials use the existing login method. Registration/reset remain stubs.
+See evidence/ui-port/u4b0/gate-summary.md for checks and remaining owner review.
+Stopped at GU4b0; no later account screens or publishing.

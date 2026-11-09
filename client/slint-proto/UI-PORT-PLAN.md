@@ -5,7 +5,7 @@ Written 2026-11-05 for an agent with no prior context. This replaces M2-M4 in `M
 
 ## Current status (handoff)
 
-Updated 2026-11-07. **GU4a passed with owner approval on 2026-11-07 (commit `86d76515`). Next: batch b0, the login screen, handed to another agent. Read "Batch b0: login" below. Stop at GU4b0; do not start the rest of batch b.**
+Updated 2026-11-07. **GU4a passed with owner approval on 2026-11-07 (commit `86d76515`). Batch b0 login implementation is under GU4b0 validation/review; see `evidence/ui-port/u4b0/gate-summary.md`. Do not start the rest of batch b before owner sign-off.**
 
 - U4a results: `evidence/ui-port/u4a/gate-summary.md` (including "Owner review follow-up")
   and `owner-checklist.md`. Native archive/folder import, persistent advanced options, local
