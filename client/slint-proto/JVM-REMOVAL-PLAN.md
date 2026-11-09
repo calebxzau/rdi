@@ -68,7 +68,7 @@ Then send the owner a short summary in Mandarin covering decisions D1-D5 below a
 | # | Decision | Reason |
 |---|---|---|
 | D1 | Rust reads and writes `local_credentials.json`, including saved passwords. Saved passwords still never reach Slint properties: the UI keeps using a saved ID, and Rust looks up the password. | Reverses the GU4b0 rule "passwords stay in Kotlin", which cannot hold once Rust signs in. Keeps the part that still matters. |
-| D2 | Login sends a best-effort hardware spec collected in Rust. Fields Rust cannot get are empty. If collection fails or takes over 3s, login goes ahead without `spec` and logs a warning. | The server treats `spec` as optional, but without it no `AuthLog` row is written. OSHI has no Rust equivalent, so memory type and speed and display EDID data may be lost. |
+| D2 | Login sends a best-effort hardware spec collected in Rust. Fields Rust cannot get are empty. If collection fails or takes over 3s, login goes ahead without `spec` and logs a warning. | The server treats `spec` as optional, but without it no `AuthLog` row is written. Windows should stay close to what OSHI reports; macOS and Linux may lose memory, display size and video memory data. |
 | D3 | Rust uses the fixed primary server address until J5. | Today the service starts on the same default route and only changes it after a node refresh. See "Known gaps". |
 | D4 | The login page no longer starts the JVM. The service starts after sign-in succeeds. | Removes the wait for Java before the login page is usable, and is a first step toward J3. |
 | D5 | Protocol version becomes 2. New method `session.set`. `login`, `login.accounts`, `login.saved`, `data.get` and `hostList.*` are removed from the service. | Dead methods would otherwise hide mistakes. Rust and the service always ship together. |
@@ -205,7 +205,30 @@ display: [{ name, height, width }]
 videoMode: [string]
 ```
 
-Suggested sources: the `sysinfo` crate for OS, CPU, memory total and disks; the Windows registry (`windows-sys` is already a dependency) for the machine model; wgpu adapter info if cheap to obtain, otherwise an empty `gpus`. Use an empty string, 0 or an empty list for anything unavailable. Collect once on a blocking thread, with a 3s timeout, and reuse the result. Compress repeated spaces in the CPU name, as Kotlin does. Tell the owner at the gate which fields end up empty.
+No single crate covers these fields. Use `sysinfo` (0.40.1 when checked) as the base and `wmi` (0.18.4, Windows-only target dependency) for detail. `winit` and `windows` are already in the dependency tree; `wmi` accepts the locked `windows` 0.62. Pin exact versions.
+
+| Field | Windows | macOS and Linux |
+|---|---|---|
+| `model` | `sysinfo` `Product`, or WMI `Win32_ComputerSystem` (Manufacturer, Model) | `sysinfo` `Product`; may be empty |
+| `os` | `sysinfo` | `sysinfo` |
+| `cpu` | `sysinfo` | `sysinfo` |
+| `gpus` | Name from WMI `Win32_VideoController`, `vram` from DXGI `DedicatedVideoMemory` | Name from `wgpu`, `vram` 0 |
+| `mems` | WMI `Win32_PhysicalMemory` (Capacity, SMBIOSMemoryType, Speed) | Empty, or one entry with the `sysinfo` total |
+| `disk` | WMI `Win32_DiskDrive` (name, Size, Model) | `sysinfo`, `model` empty |
+| `display` | WMI `root\wmi` `WmiMonitorID` (name), `WmiMonitorBasicDisplayParams` (size in cm) | `winit` name, size 0 |
+| `videoMode` | `winit` `video_modes()`, formatted `{width}x{height}@{refresh}`, distinct | Same |
+
+Traps:
+
+- WMI `AdapterRAM` is 32-bit and tops out near 4GB, and `wgpu::AdapterInfo` has no memory field. Use DXGI for `vram`.
+- `sysinfo` reports CPU frequency in MHz and `HwSpec` wants Hz. It may also be the current rather than the rated frequency; if WMI `Win32_Processor.MaxClockSpeed` is available, prefer it on Windows.
+- `winit` monitor data must be read on the UI thread, through `ui.window().with_winit_window`. Capture it there, then merge it with the blocking-thread data.
+- `SMBIOSMemoryType` is a numeric code and `HwSpec.Memory.type` is text such as `DDR4`. Map the common codes and use an empty string for others. `speed` is in Hz.
+- The time a WMI query takes has not been measured. Measure it on the owner's machine and report it, because a query over the 3s limit means login goes out without `spec`.
+
+Do not use `heim`, `machine-info` or `edid-rs` (unmaintained), `hardware-query` (very low usage), or `nvml-wrapper` (NVIDIA only).
+
+Use an empty string, 0 or an empty list for anything unavailable. Collect once on a blocking thread, with a 3s timeout, and reuse the result. Compress repeated spaces in the CPU name, as Kotlin does. Tell the owner at the gate which fields end up empty, per platform you tested.
 
 ### Protocol change
 
