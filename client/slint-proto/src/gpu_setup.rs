@@ -27,6 +27,11 @@ impl Mode {
 /// `WGPU_BACKEND` still overrides it for comparisons, and leaves device creation to Slint.
 pub fn configuration(mode: Mode) -> WGPUConfiguration {
     let mut settings = WGPUSettings::default();
+    if cfg!(windows) {
+        // HWND swapchains are opaque; DirectComposition preserves the rounded window's alpha.
+        settings.backend_options.dx12.presentation_system =
+            wgpu::Dx12SwapchainKind::from_env().unwrap_or(wgpu::Dx12SwapchainKind::DxgiFromVisual);
+    }
     if !cfg!(windows) || std::env::var_os("WGPU_BACKEND").is_some() {
         return WGPUConfiguration::Automatic(settings);
     }

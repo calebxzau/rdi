@@ -179,6 +179,10 @@ export component AppWindow inherits Window {
     changed modal-open => { if root.modal-open {dialog.focus-dialog();} else {shell-focus.focus();} }
     changed logical-width => {root.scroll-changed();}
     forward-focus: shell-focus;
+    Rectangle {
+        x: 0px; y: 0px; width: root.width; height: root.height;
+        border-radius: root.window-maximized ? 0px : 24px;
+        clip: true;
     shell-focus := FocusScope { x: 0px; y: 0px; width: root.width; height: root.height;
         key-pressed(e) => {
             if e.text == Key.Escape {root.navigate("back"); return accept;}
@@ -346,5 +350,6 @@ export component AppWindow inherits Window {
     // A maximized window cannot be resized, and its edges belong to the title controls.
     if !root.window-maximized: ResizeHandles { x: 0px; y: 0px; width: parent.width; height: parent.height; start(edge) => { root.window-resize(edge); } }
 
+    }
     }
 }
