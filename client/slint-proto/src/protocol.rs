@@ -3,7 +3,7 @@ use anyhow::{Context, Result, ensure};
 use serde_json::Value;
 use std::io::{Read, Write};
 
-pub const VERSION: u32 = 1;
+pub const VERSION: u32 = 2;
 pub const MAX_FRAME: usize = 8 * 1024 * 1024;
 
 /// EOF is clean only between frames; a partial header or payload is an error.

@@ -34,7 +34,7 @@ class Protocol(input: InputStream, output: OutputStream) {
     }
 
     companion object {
-        const val VERSION = 1
+        const val VERSION = 2
         const val MAX_FRAME = 8 * 1024 * 1024
     }
 }

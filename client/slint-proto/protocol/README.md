@@ -1,4 +1,4 @@
-# Launcher service protocol v1
+# Launcher service protocol v2
 
 Status: U2/U3 accepted. U4a local-pack methods and snapshots are under validation.
 
@@ -10,7 +10,7 @@ and images are represented by paths or URLs, never by embedded bytes.
 `fixtures/messages.json` is the shared golden corpus read by Rust and Kotlin.
 The fixture credentials are inert examples, never a test account.
 
-The first request must be `handshake` with `params.protocolVersion = 1`.
+The first request must be `handshake` with `params.protocolVersion = 2`.
 A mismatching version receives `PROTOCOL_VERSION_MISMATCH` and a Chinese
 message. No business request may run before the handshake succeeds.
 
@@ -19,20 +19,15 @@ Responses carry the same `id` and exactly one of `result` or `error`.
 Errors carry `code` and a Chinese player-facing `message`. Events carry
 `event` and object `params`, with no `id`.
 
-Implemented U2 methods: `handshake`, `login`, `hostList.subscribe`,
-`hostList.refresh`, `hostList.loadMore`, `host.start`, `game.subscribe`,
-`game.stop`, `game.stopAll`, `game.restore`, `data.get`, and `shutdown`. `data.get` is a temporary allowlisted read adapter for the existing menu, player appearance and crowd; arbitrary API paths are rejected. Subscriptions emit the current snapshot first,
-then conflated full snapshots no more frequently than every 34ms. Host lists
-must be paged before approaching the frame limit. Terminal task events end
-their underlying subscription, including reconnecting SSE streams.
+Implemented methods: `handshake`, `session.set`, `host.start`, `game.subscribe`,
+`game.stop`, `game.stopAll`, `game.restore`, `shutdown`, and the U4a methods below.
+Login, saved accounts and server data requests run directly in Rust. The old
+`login`, `login.accounts`, `login.saved`, `data.get` and `hostList.*` methods are removed.
 
 The service must reserve original stdout before initializing logging or any
 business dependencies. All human output goes to a log, never protocol stdout.
 
-Room snapshots contain up to 100 entries with `page` and `totalLoaded`. Requests
-may select a nonnegative `page`. Game snapshots expose preparation, running,
-stop request and exit message without file or console payloads. A missing pack
-returns a Chinese error; installation UI remains in the U4 batch.
+Game snapshots expose preparation, running, stop request and exit messages.
 
 The Rust connection has a 30-second handshake timeout and a 60-second business
 request timeout. A disconnected generation fails its pending requests and is
@@ -108,21 +103,15 @@ sample conflated updates at34ms; detailed tasks include the terminal state befor
 ending. Rust serializes U4a UI commands and discards replies from disconnected
 generations. Mutations are never replayed after reconnecting.
 
-## U4b0 login
+## J1 session handover
 
-After handshake, `login.accounts`, `login.saved`, and `login` are allowed before
-sign-in. Other business methods still require login. No new events are introduced.
+After handshake, `session.set {account,jwt}` and `shutdown` are allowed before
+sign-in; all business methods require a successful session handover.
+`account` is the server RAccount object with `pwd` replaced by an empty string.
+The JWT and any decoding input are never logged. Invalid accounts or blank JWTs
+return `登录信息无效`; success returns `{uid}`. Protocol v1 is rejected.
 
-- `login.accounts {}` returns `accounts` sorted by descending `lastLoggedTime`,
-  each containing `id`, `account`, `name`, and `lastLoggedTime`; `version` supplies
-  the launcher version label. Optional `lastId`
-  selects the prefilled account; optional `autoLoginId` requests automatic login.
-  Empty history returns an empty array with neither ID. No password is returned.
-- `login.saved {id}` resolves credentials only inside Kotlin, then calls the same
-  LoginController/PlayerService path as `login {usr,pwd}`. Missing IDs fail with a
-  retryable Chinese message. Both login methods return `{loggedIn:true,uid}`.
-- Rust displays a saved-password hint, never a copy of the stored password.
-  Editing either field clears the saved selection. Password reveal applies only
-  to newly typed text. Request/response bodies and credentials are never logged.
-- Both development environment variables override history; failed login returns
-  to the page. Without both variables the launcher uses history/auto-login.
+Rust loads and atomically updates `local_credentials.json`, preserving unknown fields.
+Saved-account selection carries only an ID in Slint. Rust looks up the password
+again at submit time. Typed/environment login, retry and auto-login order remain unchanged.
+Shared fixtures `local_credentials.json` and `hwspec.json` are read by both languages.

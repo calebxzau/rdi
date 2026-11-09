@@ -1,3 +1,24 @@
+## 2026-11-09 J1: Rust login and server requests
+
+Owner approved D1-D5 before implementation. Rust owns compatible saved accounts,
+proxy-aware HTTP, optional bounded hardware collection and authenticated data reads.
+The login page starts no JVM; successful sign-in saves credentials then starts the
+v2 service with `session.set`. Old service login/data/host-list methods are removed,
+and LoginService source/tests are preserved under `DEL/j1-login-20261109/`.
+
+Windows tests: Rust61 renderer +5 library +35 app pass,1 existing GPU test ignored;
+Clippy passes. Kotlin ui-logic15 and ui-service20 pass. client-core237 has the same4
+baseline failures; the2 shared credential/hardware fixture tests pass. Compose
+compiles and ui-service:installDist succeeds. The combined Gradle command remains
+nonzero because of those baseline failures.
+
+GJ1 review fixes: Rust now accepts the bare `null` values Kotlin writes in `config.toml`,
+reqwest has `system-proxy` enabled, the non-Windows hardware code compiles against
+wgpu30, and a failed account write removes its temp file.
+
+GJ1 evidence and owner checks: `evidence/jvm-removal/j1/`. J2 is not started;
+GU4b0 IME/caret/visual sign-off remains separate. No staging, commit or push.
+
 # Progress
 
 ## 2026-11-06 (U4a, stopped at GU4a)

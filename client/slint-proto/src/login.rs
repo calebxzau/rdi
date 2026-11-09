@@ -1,5 +1,11 @@
-//! Login UI state. Stored passwords never leave the Kotlin service.
-use crate::{AppWindow, LoginAccount, api::Client, config::Config};
+//! Login UI state. Rust owns saved credentials; saved passwords never reach Slint.
+use crate::{
+    AppWindow, LoginAccount,
+    api::{Client, server::ServerApi},
+    config::Config,
+    credentials::Credentials,
+    hwspec,
+};
 use anyhow::Result;
 use serde::Deserialize;
 use slint::{ComponentHandle, ModelRc, VecModel};
@@ -18,10 +24,9 @@ struct Accounts {
     accounts: Vec<Account>,
     last_id: Option<String>,
     auto_login_id: Option<String>,
-    version: String,
 }
 enum Event {
-    Ready(Result<(Client, Accounts)>),
+    Ready(Result<Accounts>),
     Authenticated(Result<Client>),
 }
 pub struct LoginUi {
@@ -30,7 +35,7 @@ pub struct LoginUi {
     base: String,
     tx: mpsc::Sender<Event>,
     rx: mpsc::Receiver<Event>,
-    client: Option<Client>,
+
     accounts: Vec<Account>,
     model: Rc<VecModel<LoginAccount>>,
     busy: bool,
@@ -51,7 +56,7 @@ impl LoginUi {
             base,
             tx,
             rx,
-            client: None,
+
             accounts: vec![],
             model,
             busy: false,
@@ -76,7 +81,7 @@ impl LoginUi {
             return;
         }
         self.busy = true;
-        self.client = None;
+
         if let Some(ui) = self.ui.upgrade() {
             ui.set_login_visible(true);
             ui.set_login_busy(true);
@@ -84,16 +89,30 @@ impl LoginUi {
             ui.set_login_saved_id("".into());
         }
         let tx = self.tx.clone();
-        let base = self.base.clone();
         self.runtime.spawn(async move {
-            let result = async {
-                let client = tokio::task::spawn_blocking(move || Client::new(base)).await??;
-                let accounts = serde_json::from_value(
-                    client.call("login.accounts", serde_json::json!({})).await?,
-                )?;
-                Ok((client, accounts))
-            }
-            .await;
+            let result = tokio::task::spawn_blocking(|| {
+                let credentials = Credentials::load(&crate::credentials::file());
+                let entries = credentials.sorted();
+                let last_id = entries.first().map(|(id, _)| (*id).clone());
+                Ok(Accounts {
+                    accounts: entries
+                        .into_iter()
+                        .map(|(id, info)| Account {
+                            id: id.clone(),
+                            account: info.qq.clone(),
+                            name: info.name.clone().unwrap_or_else(|| "RDI玩家".into()),
+                        })
+                        .collect(),
+                    auto_login_id: if credentials.auto_login_disabled {
+                        None
+                    } else {
+                        last_id.clone()
+                    },
+                    last_id,
+                })
+            })
+            .await
+            .unwrap_or_else(|error| Err(error.into()));
             let _ = tx.send(Event::Ready(result));
         });
     }
@@ -116,10 +135,6 @@ impl LoginUi {
         let Some(ui) = self.ui.upgrade() else {
             return;
         };
-        let Some(client) = self.client.clone().filter(|c| !c.has_exited()) else {
-            self.start();
-            return;
-        };
         let saved = ui.get_login_saved_id().to_string();
         let account = ui.get_login_account().to_string();
         let password = ui.get_login_password().to_string();
@@ -130,12 +145,30 @@ impl LoginUi {
         self.busy = true;
         ui.set_login_busy(true);
         let tx = self.tx.clone();
+        let base = self.base.clone();
+        let monitors = hwspec::monitors(&ui);
         self.runtime.spawn(async move {
-            let result = if saved.is_empty() {
-                client.login(&account, &password).await
-            } else {
-                client.login_saved(&saved).await
-            };
+            let result = async {
+                let (account, password) = if saved.is_empty() {
+                    (account, password)
+                } else {
+                    tokio::task::spawn_blocking(move || {
+                        Credentials::saved(&crate::credentials::file(), &saved)
+                    })
+                    .await??
+                };
+                let mut server = ServerApi::new(base)?;
+                let session = server
+                    .login(&account, &password, hwspec::get(monitors).await)
+                    .await?;
+                let account = session.account.clone();
+                tokio::task::spawn_blocking(move || {
+                    Credentials::save_account(&crate::credentials::file(), &account)
+                })
+                .await??;
+                Client::connect(server, session).await
+            }
+            .await;
             let _ = tx.send(Event::Authenticated(result));
         });
     }
@@ -145,9 +178,8 @@ impl LoginUi {
             self.busy = false;
             ui.set_login_busy(false);
             match event {
-                Event::Ready(Ok((client, accounts))) => {
-                    ui.set_login_version(accounts.version.into());
-                    self.client = Some(client);
+                Event::Ready(Ok(accounts)) => {
+                    ui.set_login_version(env!("RDI_APP_VERSION").into());
                     self.model.set_vec(
                         accounts
                             .accounts
@@ -176,7 +208,7 @@ impl LoginUi {
                     ui.set_login_password("".into());
                     ui.set_login_saved_id("".into());
                     ui.set_login_visible(false);
-                    self.client = None;
+
                     self.authenticated = Some(client);
                 }
                 Event::Ready(Err(error)) | Event::Authenticated(Err(error)) => {
@@ -193,18 +225,20 @@ impl LoginUi {
 mod tests {
     use super::*;
     #[test]
-    fn saved_account_golden_response_is_usable_without_credentials() {
-        let frames: Vec<serde_json::Value> =
-            serde_json::from_str(include_str!("../protocol/fixtures/messages.json")).unwrap();
-        let response = frames
-            .iter()
-            .find(|f| f["id"] == 101 && f.get("result").is_some())
-            .unwrap();
-        let accounts: Accounts = serde_json::from_value(response["result"].clone()).unwrap();
-        assert_eq!(accounts.accounts.len(), 1);
-        assert_eq!(accounts.last_id.as_deref(), Some("saved-example"));
-        assert_eq!(accounts.auto_login_id, accounts.last_id);
-        assert!(!response.to_string().contains("pwd"));
-        assert!(!accounts.version.is_empty());
+    fn history_metadata_contains_no_passwords() {
+        let credentials: Credentials =
+            serde_json::from_str(include_str!("../protocol/fixtures/local_credentials.json"))
+                .unwrap();
+        let accounts = credentials
+            .sorted()
+            .into_iter()
+            .map(|(id, info)| Account {
+                id: id.clone(),
+                account: info.qq.clone(),
+                name: info.name.clone().unwrap_or_default(),
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(accounts[0].id, "0123456789abcdef01234567");
+        assert_eq!(accounts.len(), 2);
     }
 }

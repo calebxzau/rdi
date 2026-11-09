@@ -1,4 +1,5 @@
 use serde::Deserialize;
+fn default_playable() -> bool { true }
 #[derive(Clone, Debug, Default, Deserialize, PartialEq)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum HostStatus {
@@ -20,7 +21,7 @@ pub struct HostBrief {
     pub icon_url: Option<String>,
     #[serde(default)]
     pub owner_id: Option<String>,
-    #[serde(default)]
+    #[serde(default = "default_playable")]
     pub playable: bool,
     #[serde(default)]
     pub online_player_ids: Vec<String>,
@@ -62,11 +63,12 @@ mod tests {
     fn host_optional_and_unknown_status() {
         let h: HostBrief = serde_json::from_str(r#"{"_id":"abc","name":"房间","modpackName":"包","packVer":"1","version":2,"port":42,"status":"FUTURE"}"#).unwrap();
         assert_eq!(h.status, HostStatus::Other);
-        assert!(!h.playable);
+        assert!(h.playable);
         assert!(h.icon_url.is_none());
         let h: HostBrief =
             serde_json::from_str(r#"{"_id":"abc","name":"房间","modpackName":"包"}"#).unwrap();
         assert!(h.online_player_ids.is_empty());
+        assert!(h.playable);
     }
     #[test]
     fn samples() {

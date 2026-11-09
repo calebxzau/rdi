@@ -1,13 +1,11 @@
 pub mod model;
+pub mod server;
 use anyhow::{Context, Result, ensure};
 use rdi_slint_proto::service::Service;
 use serde::de::DeserializeOwned;
-use serde_json::{Value, json};
-use std::{
-    process::Command,
-    sync::Arc,
-    time::Duration,
-};
+use serde_json::Value;
+use server::{ServerApi, Session};
+use std::{process::Command, sync::Arc, time::Duration};
 // Keep the updater source unchanged; its modulo spelling is outside this port.
 #[allow(clippy::manual_is_multiple_of)]
 #[path = "../../../updater/src/java_discovery.rs"]
@@ -19,9 +17,14 @@ pub struct Client {
     /// Shared without a lock: concurrent calls wait only for their own replies.
     service: Arc<Service>,
     uid: String,
+    server: ServerApi,
 }
 impl Client {
-    pub fn new(base: String) -> Result<Self> {
+    pub async fn connect(server: ServerApi, session: Session) -> Result<Self> {
+        tokio::task::spawn_blocking(move || Self::connect_blocking(server, session)).await?
+    }
+    fn connect_blocking(server: ServerApi, session: Session) -> Result<Self> {
+        let uid = session.uid()?.to_owned();
         let mut command = if let Ok(value) = std::env::var("RDI_SERVICE_COMMAND") {
             let arguments: Vec<String> =
                 serde_json::from_str(&value).context("RDI_SERVICE_COMMAND必须是JSON参数数组")?;
@@ -44,9 +47,6 @@ impl Client {
             let lib = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
                 .join("../ui/ui-service/build/install/ui-service/lib/*");
             let mut command = Command::new(java);
-            if std::env::var_os("RDI_PROTO_SERVER").is_some() {
-                command.arg(format!("-Drdi.server.url={base}"));
-            }
             command
                 .arg("-Djava.awt.headless=true")
                 .arg("-cp")
@@ -57,18 +57,24 @@ impl Client {
         command
             .env_remove("RDI_PROTO_USR")
             .env_remove("RDI_PROTO_PWD");
-        command.current_dir(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../ui/run"));
+        let directory = crate::paths::data_dir();
+        std::fs::create_dir_all(&directory).context("创建启动器数据目录失败")?;
+        command.current_dir(&directory);
         let log = std::fs::OpenOptions::new()
             .create(true)
             .append(true)
-            .open("ui-service-stderr.log")?;
+            .open(directory.join("ui-service-stderr.log"))?;
         let service = Service::spawn(&mut command, log)?;
+        let result = service.request("session.set", session.params(), Duration::from_secs(60))?;
+        ensure!(
+            result["uid"].as_str() == Some(uid.as_str()),
+            "登录身份不一致"
+        );
         Ok(Self {
-            http: reqwest::Client::builder()
-                .timeout(Duration::from_secs(30))
-                .build()?,
+            http: server.http.clone(),
+            server,
             service: Arc::new(service),
-            uid: String::new(),
+            uid,
         })
     }
     pub async fn call(&self, method: &str, params: Value) -> Result<Value> {
@@ -78,16 +84,6 @@ impl Client {
             service.request(&method, params, Duration::from_secs(60))
         })
         .await?
-    }
-    pub async fn login(mut self, usr: &str, pwd: &str) -> Result<Self> {
-        let result = self.call("login", json!({"usr":usr,"pwd":pwd})).await?;
-        self.uid = result["uid"].as_str().context("登录未返回玩家身份")?.into();
-        Ok(self)
-    }
-    pub async fn login_saved(mut self, id: &str) -> Result<Self> {
-        let result = self.call("login.saved", json!({"id":id})).await?;
-        self.uid = result["uid"].as_str().context("登录未返回玩家身份")?.into();
-        Ok(self)
     }
     pub fn take_events(&self) -> Vec<Value> {
         self.service.take_events().unwrap_or_else(|error| {
@@ -106,7 +102,6 @@ impl Client {
         Ok(self.uid.clone())
     }
     pub async fn get<T: DeserializeOwned>(&self, path: &str) -> Result<T> {
-        serde_json::from_value(self.call("data.get", json!({"path":path})).await?)
-            .context("服务器数据格式不兼容")
+        self.server.get(path).await
     }
 }

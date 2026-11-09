@@ -67,7 +67,11 @@ impl Proof {
         ui.set_proof_busy(true); ui.set_proof_message("正在登录…".into());
         let (user,password,base,tx) = (user.to_owned(),password.to_owned(),self.base.clone(),self.tx.clone());
         self.login = Some(self.runtime.spawn(async move {
-            let result = async { Client::new(base)?.login(&user,&password).await }.await;
+            let result = async { let mut server = crate::api::server::ServerApi::new(base)?;
+                let session = server.login(&user,&password,None).await?;
+                let account=session.account.clone();
+                tokio::task::spawn_blocking(move ||crate::credentials::Credentials::save_account(&crate::credentials::file(),&account)).await??;
+                Client::connect(server,session).await }.await;
             if tx.send(Event::Login(result)).is_err() { tracing::debug!("U1 login receiver closed"); }
         }));
     }

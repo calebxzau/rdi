@@ -1,0 +1,1 @@
+{"model":"fixture","os":"Windows","cpu":{"name":"CPU","cores":4,"threads":8,"frequency":3200000000},"gpus":[{"name":"GPU","vram":8589934592}],"mems":[{"size":17179869184,"type":"DDR4","speed":3200000000}],"disk":[{"name":"disk0","size":1000000000000,"model":"SSD"}],"display":[{"name":"monitor","height":30,"width":53}],"videoMode":["1920x1080@60"]}

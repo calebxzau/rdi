@@ -1,0 +1,13 @@
+preferModMirror = true
+preferMcMirror = true
+maxMemory = 0
+pinyinName = false
+solidWindow = false
+
+[proxyConfig]
+enabled = true
+systemProxy = false
+host = "127.0.0.1"
+port = 10808
+usr = null
+pwd = null

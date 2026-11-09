@@ -15,6 +15,7 @@ New-Item -ItemType Directory -Force $run|Out-Null
 $java=(Get-Command java).Source
 $libs=(Resolve-Path '../ui/ui-service/build/install/ui-service/lib').Path+'/*'
 # Isolated service working data, using the real installed service and real login API.
+$env:RDI_DATA_DIR=$run
 $env:RDI_SERVICE_COMMAND=ConvertTo-Json -Compress -InputObject @($java,"-Duser.dir=$run",'-Djava.awt.headless=true','-cp',$libs,'calebxzau.rdi.service.MainKt')
 Remove-Item Env:RDI_PROTO_USR,Env:RDI_PROTO_PWD -ErrorAction SilentlyContinue
 $control=Join-Path $PWD "$out/control.json"
@@ -97,7 +98,7 @@ try {
  $checks|ConvertTo-Json|Set-Content "$out/checks.json"
 } finally {
  if($app){Stop-Prototype $app $handle}
- Remove-Item Env:RDI_PROTO_CONTROL,Env:RDI_SERVICE_COMMAND -ErrorAction SilentlyContinue
+ Remove-Item Env:RDI_PROTO_CONTROL,Env:RDI_SERVICE_COMMAND,Env:RDI_DATA_DIR -ErrorAction SilentlyContinue
  [Windows.Forms.Clipboard]::Clear()
  $secret=$null
 }

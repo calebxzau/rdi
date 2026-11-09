@@ -1,17 +1,10 @@
 package calebxzau.rdi.service
 
-import calebxzhou.rdi.client.auth.LocalCredentials
-import calebxzhou.rdi.client.service.PlayerService
 import calebxzhou.rdi.client.service.StartPlayResult
 import calebxzhou.rdi.client.service.startHostPlay
 import calebxzhou.rdi.client.ui.McPlayStore
 import calebxzhou.rdi.client.ui.screen.McPlayController
-import calebxzhou.rdi.client.net.server
-import calebxzhou.rdi.common.model.Host
 import kotlinx.coroutines.*
-import calebxzau.rdi.client.ui.viewmodel.HostListViewModel
-import calebxzau.rdi.client.ui.viewmodel.RdiHostListGateway
-import calebxzau.rdi.client.ui.viewmodel.HostListUiState
 import kotlinx.serialization.json.*
 import java.io.File
 import java.io.PrintStream
@@ -43,14 +36,7 @@ fun main() {
 private class ServiceSession(private val protocol: Protocol, private val runtime: ServiceRuntime) {
     private var handshake = false
     private var loggedIn = false
-    private var hostList: HostListViewModel? = null
-    private var hostPage = 0
-    private val login = LoginService(
-        LocalCredentials::read,
-        { account, password -> PlayerService.login(account, password).map { Unit } },
-        { calebxzhou.rdi.client.net.loggedAccount._id.toHexString() },
-        calebxzhou.rdi.client.Const.VERSION_NUMBER,
-    )
+    private val session = SessionService { calebxzhou.rdi.client.net.loggedAccount = it }
     private val controller = McPlayController(
         onDuplicate = { event("game.state", buildJsonObject { put("errorMessage", "该整合包已在运行") }) },
         beforeProcessStart = { args -> withContext(Dispatchers.IO) { DevelopmentCoreOverride.install(args).getOrThrow() } },
@@ -74,7 +60,7 @@ private class ServiceSession(private val protocol: Protocol, private val runtime
 
     private suspend fun handle(scope: CoroutineScope, method: String, params: JsonObject): JsonElement {
         check(handshake || method == "handshake") { "请先连接启动服务" }
-        check(loggedIn || method in setOf("handshake", "login", "login.accounts", "login.saved", "shutdown")) { "请先登录" }
+        check(loggedIn || method in setOf("handshake", "session.set", "shutdown")) { "请先登录" }
         if (method.substringBefore('.') in setOf("installedPacks", "installer", "packOptions", "packPlay", "tasks", "console")) {
             return (packs ?: PackService(RuntimePackServiceDependencies(runtime), scope, controller::startSession, ::event).also { packs = it }).handle(method, params)
         }
@@ -84,45 +70,10 @@ private class ServiceSession(private val protocol: Protocol, private val runtime
                 handshake = true
                 buildJsonObject { put("protocolVersion", Protocol.VERSION) }
             }
-            "login.accounts" -> login.accounts()
-            "login", "login.saved" -> {
-                val result = login.login(params, saved = method == "login.saved")
+            "session.set" -> {
+                val result = session.set(params).getOrThrow()
                 loggedIn = true
                 result
-            }
-            "hostList.subscribe", "hostList.refresh", "hostList.loadMore" -> {
-                val model = hostList ?: HostListViewModel(RdiHostListGateway(), useMockData = false, scope = scope).also { hostList = it }
-                hostPage = params["page"]?.jsonPrimitive?.int ?: 0
-                require(hostPage >= 0) { "房间页码无效" }
-                when (method) {
-                    "hostList.subscribe" -> {
-                        subscriptions.remove("hosts")?.cancel()
-                        event("hostList.state", hostState(model.uiState.value))
-                        subscriptions["hosts"] = scope.launch {
-                            model.uiState.collect {
-                                delay(34)
-                                event("hostList.state", hostState(model.uiState.value))
-                            }
-                        }
-                    }
-                    "hostList.refresh" -> model.refresh()
-                    "hostList.loadMore" -> model.loadMore()
-                }
-                hostState(model.uiState.value)
-            }
-            "data.get" -> {
-                val path = params["path"]?.jsonPrimitive?.content ?: error("请求路径无效")
-                require(path in setOf("/host/my", "/host/online-player-ids", "/player/unique-skin-list") ||
-                    Regex("/host/list/[0-9]{1,6}").matches(path) || Regex("/player/[a-fA-F0-9]{24}/info").matches(path)) { "不支持的数据请求" }
-                if (path == "/host/my" || path.startsWith("/host/list/")) {
-                    val response = server.makeRequest<List<Host.BriefVo>>(path.removePrefix("/"))
-                    check(response.ok) { response.msg }
-                    Json(calebxzhou.rdi.common.serdesJson) { encodeDefaults = true }.encodeToJsonElement(response.data.orEmpty())
-                } else {
-                    val response = server.makeRequest<JsonElement>(path.removePrefix("/"))
-                    check(response.ok) { response.msg }
-                    response.data ?: JsonNull
-                }
             }
             "host.start" -> {
                 // Slint supplies physical pixels; headless AWT cannot resolve monitor DPI.
@@ -184,23 +135,6 @@ private class ServiceSession(private val protocol: Protocol, private val runtime
 
     private fun event(name: String, state: JsonObject) {
         protocol.write(buildJsonObject { put("event", name); put("params", state) }).getOrThrow()
-    }
-
-    private fun hostState(state: HostListUiState) = buildJsonObject {
-        put("initialLoading", state.initialLoading)
-        put("loadingMore", state.loadingMore)
-        state.errorMessage?.let { put("errorMessage", it) }
-        // Bound each visible page; clients request pages, never an unbounded frame.
-        put("hosts", buildJsonArray {
-            state.hosts.drop(hostPage * 100).take(100).forEach { host -> add(buildJsonObject {
-                put("_id", host.target.id); put("name", host.name)
-                put("modpackName", host.modpackName); put("playable", host.playable)
-                put("status", host.status.name)
-                host.iconUrl?.let { put("iconUrl", it) }
-            }) }
-        })
-        put("totalLoaded", state.hosts.size)
-        put("page", hostPage)
     }
 
     private fun gameState() = buildJsonObject {

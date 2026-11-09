@@ -3,35 +3,13 @@
     "id": 1,
     "method": "handshake",
     "params": {
-      "protocolVersion": 1
+      "protocolVersion": 2
     }
   },
   {
     "id": 1,
     "result": {
-      "protocolVersion": 1
-    }
-  },
-  {
-    "id": 2,
-    "method": "login",
-    "params": {
-      "usr": "example",
-      "pwd": "example-only"
-    }
-  },
-  {
-    "id": 2,
-    "error": {
-      "code": "LOGIN_FAILED",
-      "message": "登录失败，请检查账号和密码"
-    }
-  },
-  {
-    "event": "hostList.state",
-    "params": {
-      "hosts": [],
-      "initialLoading": false
+      "protocolVersion": 2
     }
   },
   {
@@ -98,16 +76,6 @@
         }
       ]
     }
-  },
-  {
-    "id": 101,
-    "method": "installedPacks.subscribe",
-    "params": {}
-  },
-  {
-    "id": 102,
-    "method": "installer.open",
-    "params": {}
   },
   {
     "id": 103,
@@ -313,38 +281,22 @@
     }
   },
   {
-    "id": 101,
-    "method": "login.accounts",
-    "params": {}
-  },
-  {
-    "id": 101,
-    "result": {
-      "accounts": [
-        {
-          "id": "saved-example",
-          "account": "10001",
-          "name": "示例玩家",
-          "lastLoggedTime": 20
-        }
-      ],
-      "version": "6.7.9",
-      "lastId": "saved-example",
-      "autoLoginId": "saved-example"
-    }
-  },
-  {
-    "id": 102,
-    "method": "login.saved",
+    "id": 2,
+    "method": "session.set",
     "params": {
-      "id": "saved-example"
+      "account": {
+        "_id": "0123456789abcdef01234567",
+        "name": "测试玩家",
+        "qq": "10001",
+        "pwd": ""
+      },
+      "jwt": "fake-fixture-token"
     }
   },
   {
-    "id": 102,
+    "id": 2,
     "result": {
-      "loggedIn": true,
-      "uid": "saved-example"
+      "uid": "0123456789abcdef01234567"
     }
   }
 ]

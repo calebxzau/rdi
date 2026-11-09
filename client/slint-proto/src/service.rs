@@ -53,7 +53,7 @@ impl Connection {
                                 let _ = sender.send(Ok(message));
                             }
                         } else if let Some(event) = message.get("event").and_then(Value::as_str) {
-                            if !matches!(event, "hostList.state" | "game.state" | "installedPacks.state" | "installer.state" | "packOptions.state" | "packPlay.state" | "tasks.state" | "task.state" | "console.state") {
+                            if !matches!(event, "game.state" | "installedPacks.state" | "installer.state" | "packOptions.state" | "packPlay.state" | "tasks.state" | "task.state" | "console.state") {
                                 break "启动服务事件名称无效".into();
                             }
                             match reader_events.lock() {

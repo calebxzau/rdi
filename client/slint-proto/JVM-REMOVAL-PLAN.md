@@ -14,7 +14,7 @@ The Slint launcher currently runs a headless Kotlin process, `ui-service`, for a
 
 | Phase | Moves to Rust | Kotlin code today | Status |
 |---|---|---|---|
-| **J1** | Login and server requests | `LoginService`, `PlayerService.login`, `RServer`, `data.get` | **Specified below** |
+| **J1** | Login and server requests | `LoginService`, `PlayerService.login`, `RServer`, `data.get` | **Implemented; GJ1 review pending** |
 | J2 | Read-only local data: installed pack list, pack options | `installedPacks.*`, `packOptions.*`, `ModpackService.getLocalPackDirs` | Not designed |
 | J3 | Start the JVM on demand, only for install and game launch | `src/api/mod.rs` | Not designed |
 | J4 | Tasks, downloads, pack install | `tasks.*`, `installer.*`, `pack-proc`, `mod-catalog`, `mc-install` | Not designed |
@@ -161,6 +161,7 @@ Proxy policy, as a pure function of the parsed config so it can be unit tested:
 - `enabled`, not `systemProxy`, `host` non-blank and `port > 0`: `Proxy::all("http://host:port")`, with `basic_auth` if `usr` is non-blank.
 - `enabled`, not `systemProxy`, otherwise: `.no_proxy()`.
 - Unreadable or invalid `config.toml`: log a warning and use no proxy. **Do not rewrite the file.** Kotlin rewrites it; Rust only reads.
+- Kotlin writes absent optional values as a bare `null` (`usr = null`, `proxyConfig = null`), which is not valid TOML. Rust drops those lines before parsing; `protocol/fixtures/config_kotlin.toml` holds the exact format and is checked from both sides.
 
 The same client serves images, so `images.rs` picks up the policy with no further change. Add the `toml` crate for parsing.
 
@@ -341,4 +342,5 @@ Record these. Do not fix them in J1.
 
 ## 3. Status
 
-- 2026-11-09: order approved by the owner. J1 specified and handed off. No J1 code exists yet.
+- 2026-11-09: owner approved D1-D5. J1 implemented; Windows Rust/Kotlin validation and isolated release acceptance recorded in `evidence/jvm-removal/j1/gate-summary.md`. GJ1 awaits owner checklist/review. No J2 work started. Known routing, plaintext storage, token expiry and HTTP-cache gaps remain accepted and unchanged.
+- 2026-11-09: GJ1 review fixes applied and revalidated (`config.toml` null values, system proxy, non-Windows build, temp file cleanup). The owner confirmed joining a room, playable rooms and the system proxy, and directed the commit. Still open: Compose and Slint reading each other's accounts, and the hardware spec fields. J2 has not started.

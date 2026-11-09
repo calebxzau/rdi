@@ -47,17 +47,21 @@ class LocalCredentials {
     companion object {
         private val file = File(RDIClient.DIR, "local_credentials.json")
 
+        fun parse(text: String): LocalCredentials {
+            val data = serdesJson.decodeFromString<CredentialsData>(text)
+            return LocalCredentials().apply {
+                loginInfos = data.loginInfos
+                lastPlayHost = data.lastPlayHost
+                autoLoginDisabled = data.autoLoginDisabled
+            }
+        }
+
         fun read(): LocalCredentials = try {
             if (!file.exists()) {
                 file.createNewFile()
                 LocalCredentials().save()
             }
-            val data = serdesJson.decodeFromString<CredentialsData>(file.readText())
-            LocalCredentials().apply {
-                loginInfos = data.loginInfos
-                lastPlayHost = data.lastPlayHost
-                autoLoginDisabled = data.autoLoginDisabled
-            }
+            parse(file.readText())
         } catch (e: Exception) {
             e.printStackTrace()
             LocalCredentials()

@@ -19,14 +19,15 @@ From WSL, wrap the same commands in `pwsh.exe -NoProfile -Command "..."`; don't 
 WSL toolchain.
 
 Without both account variables, the launcher opens the login page and uses saved-account
-prefill/auto-login settings. Saved passwords stay in the Kotlin service.
+prefill/auto-login settings. Rust reads saved passwords from the Compose-compatible account file; they never reach Slint properties.
 
 ### Environment
 
 | Variable | Meaning |
 |---|---|
-| `RDI_PROTO_USR`, `RDI_PROTO_PWD` | Account sent over framed stdio to Kotlin PlayerService.login (optional development override; never commit them) |
-| `RDI_PROTO_SERVER` | Optional Kotlin debug-server host override; otherwise use Kotlin launcher routing |
+| `RDI_PROTO_USR`, `RDI_PROTO_PWD` | Account used by Rust for direct server login (optional development override; never commit them) |
+| `RDI_PROTO_SERVER` | Rust API base URL override; the Kotlin service still uses its default route until J5 |
+| `RDI_DATA_DIR` | Launcher data directory for both Rust and the Kotlin service; defaults to `client/ui/run`. Isolated scripts must set this alongside any `-Duser.dir` override |
 | `RDI_SERVICE_COMMAND` | Development override: JSON array of executable and arguments, without shell evaluation |
 | `WGPU_BACKEND` | Overrides the forced DX12 backend on Windows (`vulkan`, `gl`), for comparisons only |
 | `WGPU_DX12_COMPILER` | `fxc` or `dxc` overrides the default shader compiler (the `dxcompiler.dll` beside the exe, then FXC), for comparisons only |
@@ -64,7 +65,7 @@ prefill/auto-login settings. Saved passwords stay in the Kotlin service.
 - `src/gallery.rs`, `ui/gallery.slint` — deterministic component fixtures and
   interactive review. The title-bar console/tasks use real service data in U4a;
   gallery console/tasks intentionally retain their samples.
-- `src/api` — service-backed login, envelope handling, typed DTOs. `src/hosts.rs` — paging/merge/filter and grid constants.
+- `src/api` — direct Rust login/server requests, proxy policy, envelope handling and typed DTOs. `src/hosts.rs` — paging/merge/filter and grid constants.
 - `src/images.rs` — icon download/decode/resize, player heads. `src/app.rs` — state, jobs, Slint wiring.
 - `crates/rdi-renderer/src/glass` — wgpu pass run before Slint renders each frame. It draws the cover-cropped background and all
   glass into one texture that Slint shows behind the UI (`backdrop` in `app.slint`). WGSL ports:
