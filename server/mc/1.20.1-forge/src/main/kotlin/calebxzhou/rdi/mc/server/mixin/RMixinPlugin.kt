@@ -1,5 +1,7 @@
 package calebxzhou.rdi.mc.server.mixin
 
+import net.minecraftforge.api.distmarker.Dist
+import net.minecraftforge.fml.loading.FMLEnvironment
 import net.minecraftforge.fml.loading.LoadingModList
 import org.objectweb.asm.tree.ClassNode
 import org.spongepowered.asm.mixin.extensibility.IMixinConfigPlugin
@@ -7,8 +9,9 @@ import org.spongepowered.asm.mixin.extensibility.IMixinInfo
 
 class RMixinPlugin : IMixinConfigPlugin {
     override fun shouldApplyMixin(targetClassName: String, mixinClassName: String): Boolean {
-        if (mixinClassName == "calebxzhou.rdi.mc.server.mixin.mNightfallGroundSplit") {
-            return LoadingModList.get()?.mods?.any { it.modId == "efn" } == true
+        if (mixinClassName == "calebxzhou.rdi.mc.server.mixin.mNightfallVfxServer") {
+            return FMLEnvironment.dist == Dist.DEDICATED_SERVER &&
+                LoadingModList.get()?.mods?.any { it.modId == "efn" } == true
         }
         return true
     }

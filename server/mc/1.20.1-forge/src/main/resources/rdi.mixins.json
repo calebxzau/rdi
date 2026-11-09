@@ -9,7 +9,7 @@
   },
   "minVersion": "0.7",
   "mixins": [
-    "mNightfallGroundSplit",
+    "mNightfallVfxServer",
     "AChunkMap",
     "AClientboundMoveEntityPacket",
     "AClientboundRotateHeadPacket",
