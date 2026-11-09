@@ -66,6 +66,8 @@ pub struct Options {
     pub steve_only: bool,
     pub reflection_first: bool,
     pub probe_hold_ms: u64,
+    pub pacer_ms: u64,
+    pub frame_stats: bool,
 }
 impl Default for Options {
     fn default() -> Self {
@@ -92,6 +94,8 @@ impl Default for Options {
             steve_only: false,
             reflection_first: false,
             probe_hold_ms: 3000,
+            pacer_ms: super::perf::PACER_INTERVAL_MS,
+            frame_stats: false,
         }
     }
 }
@@ -116,9 +120,16 @@ impl Options {
             "--scene-post-create-only" => self.post_create_only = true,
             "--scene-steve-only" => self.steve_only = true,
             "--scene-player-reflection-first" => self.reflection_first = true,
+            "--frame-stats" => self.frame_stats = true,
             _ => {
                 if let Some(v) = arg.strip_prefix("--scene-probe-hold-ms=") {
                     self.probe_hold_ms = v.parse()?;
+                } else if let Some(v) = arg.strip_prefix("--scene-pacer-ms=") {
+                    self.pacer_ms = v.parse()?;
+                    anyhow::ensure!(
+                        (1..=16).contains(&self.pacer_ms),
+                        "Scene pacer must be 1 to 16ms"
+                    );
                 } else if let Some(v) = arg.strip_prefix("--scene-low-performance-ms=") {
                     self.low_performance_ms = v.parse()?;
                     anyhow::ensure!(
@@ -175,6 +186,14 @@ mod tests {
                 && o.skip_post.is_none()
         );
         assert_eq!(o.low_performance_ms, 45.);
+        assert_eq!(o.pacer_ms, 4);
+        assert!(!o.frame_stats);
+        assert!(o.parse("--frame-stats").unwrap() && o.frame_stats);
+        assert!(o.parse("--scene-pacer-ms=16").unwrap());
+        assert_eq!(o.pacer_ms, 16);
+        for value in ["0", "17", "x"] {
+            assert!(o.parse(&format!("--scene-pacer-ms={value}")).is_err());
+        }
         for value in ["0", "-1", "NaN", "inf"] {
             assert!(
                 o.parse(&format!("--scene-low-performance-ms={value}"))

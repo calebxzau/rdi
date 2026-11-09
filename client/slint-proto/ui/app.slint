@@ -154,6 +154,9 @@ export component AppWindow inherits Window {
     default-font-family: "OPPO Sans 4.0";
     /// Background and glass, rendered with wgpu before each frame (see glass/mod.rs).
     in property <image> backdrop;
+    /// The backdrop texture is redrawn in place, so its image never changes. Raising this tells
+    /// Slint the pixels did; otherwise the rounded window's cached layer keeps showing old ones.
+    in property <int> backdrop-revision;
     in property <[TileData]> hosts;
     in property <[TileData]> modpacks;
     in property <string> player-name: "未登录";
@@ -202,7 +205,7 @@ export component AppWindow inherits Window {
             if e.modifiers.alt && e.text == Key.LeftArrow {root.navigate("back"); return accept;}
             return reject;
         }
-    Image { width: parent.width; height: parent.height; source: root.backdrop; image-fit: fill; }
+    Image { width: parent.width; height: parent.height; source: root.backdrop-revision >= 0 ? root.backdrop : root.backdrop; image-fit: fill; }
     TitleBar { y: 0px; width: parent.width; player-name: root.player-name; head: root.player-head; action(a) => {root.window-action(a);} stub(s) => {root.stub(s);} can-back: root.can-back; gallery-enabled: root.gallery-enabled; navigate(s) => {root.navigate(s);} }
     menu := FocusScope { x: 0px; y: 40px; width: parent.width; height: parent.height - 40px; visible: !root.login-visible && !root.ui-proof && !root.gallery && root.pack-screen == 0; enabled: !root.modal-open && root.activity-panel == 0;
     tabs := GlassTabBar { x: (parent.width - self.width) / 2; y: 16px; tab-position: root.tab-position; selected: root.selected; select(t) => {root.select-tab(t);} press(i,on,x,y) => {root.pill-press(i,on,x,y);} }

@@ -115,6 +115,7 @@ fn main() -> anyhow::Result<()> {
     let mut renderer = None;
     let mut failed = false;
     let mut first = true;
+    let mut frame_pacing = scene::perf::FramePacing::default();
     ui.window()
         .set_rendering_notifier(move |stage, api| match stage {
             slint::RenderingState::RenderingSetup if no_glass => failed = true,
@@ -250,6 +251,13 @@ fn main() -> anyhow::Result<()> {
             slint::RenderingState::AfterRendering => {
                 if let Some(proof) = &render_proof { proof.borrow_mut().after_frame(scene_bound); }
                 render_stats.borrow_mut().ui_frames+=1;
+                if scene_options.frame_stats {
+                    if render_paused.load(Ordering::Relaxed) || ui_proof::scene_held(render_frozen.get(), scene_bound) {
+                        frame_pacing.reset();
+                    } else if let Some(s) = frame_pacing.frame(Instant::now()) {
+                        tracing::info!(count=s.count, p50_ms=s.p50_ms, p95_ms=s.p95_ms, p99_ms=s.p99_ms, max_ms=s.max_ms, over_25ms=s.over_25ms, over_30ms=s.over_30ms, "Frame pacing");
+                    }
+                }
                 if let Some(start) = scene_start.take() && start.send(()).is_err() {
                     tracing::error!("Scene worker disconnected before initialization");
                     render_enabled.store(false, Ordering::Relaxed);
@@ -287,6 +295,34 @@ fn main() -> anyhow::Result<()> {
     let timer_ui = ui.as_weak();
     let mut last_probe_redraw = Instant::now();
     let mut control = runtime_probe::Control::new();
+    let scene_active = {
+        let (enabled, paused, frozen, stats) = (scene_enabled.clone(), paused.clone(), timer_frozen.clone(), stats.clone());
+        Rc::new(move || {
+            enabled.load(Ordering::Relaxed) && !paused.load(Ordering::Relaxed)
+                && !ui_proof::scene_held(frozen.get(), stats.borrow().bound)
+        })
+    };
+    // Scene frames get their own short timer, which only runs while the scene animates.
+    // The 16ms timer below keeps driving UI logic, so a paused or background window stays idle.
+    let pacer = Rc::new(slint::Timer::default());
+    {
+        let (active, clock, ui) = (scene_active.clone(), clock.clone(), ui.as_weak());
+        pacer.start(
+            slint::TimerMode::Repeated,
+            Duration::from_millis(scene_options.pacer_ms),
+            move || {
+                if clock.borrow_mut().tick(Instant::now(), active())
+                    && let Some(ui) = ui.upgrade()
+                {
+                    // Set here, not while rendering, so it cannot schedule a second frame.
+                    ui.set_backdrop_revision(ui.get_backdrop_revision().wrapping_add(1) & i32::MAX);
+                    ui.window().request_redraw();
+                }
+            },
+        );
+        pacer.stop();
+    }
+    let timer_pacer = pacer.clone();
     timer.start(
         slint::TimerMode::Repeated,
         Duration::from_millis(16),
@@ -300,12 +336,12 @@ fn main() -> anyhow::Result<()> {
                 // Proof-only diagnostics retain their own freeze override. Production follows navigation/game state.
                 if !ui.get_ui_proof() { timer_frozen.set(shell.scene_frozen(&ui)); }
             }
-            let active = scene_enabled.load(Ordering::Relaxed) && !paused.load(Ordering::Relaxed)
-                && !ui_proof::scene_held(timer_frozen.get(), stats.borrow().bound);
-            if clock.borrow_mut().tick(now, active)
-                && let Some(ui) = timer_ui.upgrade()
-            {
-                ui.window().request_redraw();
+            let active = scene_active();
+            if active && !timer_pacer.running() {
+                timer_pacer.restart();
+            } else if !active {
+                timer_pacer.stop();
+                clock.borrow_mut().tick(now, false);
             }
             if scene_options.probe && last_probe_redraw.elapsed().as_secs() >= 1 {
                 if let Some(ui) = timer_ui.upgrade() {
@@ -329,6 +365,7 @@ fn main() -> anyhow::Result<()> {
         },
     );
     ui.run()?;
+    pacer.stop();
     timer.stop();
     drop(app);
     runtime.shutdown_timeout(Duration::from_secs(2));

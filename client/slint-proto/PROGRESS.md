@@ -1,3 +1,23 @@
+## 2026-11-09 Menu background stutter
+
+Owner reported the default-size window stuttered "like a slideshow" while a maximized one was
+smooth. Main cause, from `1698a00a` (rounded corners): a rounded clip makes Slint draw the window
+into a cached layer, and the backdrop texture is redrawn in place, so Slint saw no change and kept
+showing the old layer. Scene frames kept rendering at60fps, so internal numbers looked normal.
+`backdrop-revision` now rises with each released scene frame and invalidates the layer. Owner
+confirmed the default-size window is smooth. Displayed frames and the cost of the extra full-window
+pass were not measured.
+
+Separate, smaller cause: the16ms UI timer regularly reached the1/60s frame gate just too early, so
+that frame waited a whole extra tick. A4ms pacer now releases scene frames, only while the scene
+animates. Numbers below are for this pacer alone.
+
+Two30s rounds per case, frames over30ms and over25ms, old then new, in
+`evidence/frame-pacing/1794235244701` (logs local). 4K60Hz: over30 15,12 then1,0; over25 26,24
+then5,4. Laptop120Hz: over30 2,1 then1,6; over25 6,5 then1,9, so no proven gain there; one5s
+window had4 frames over30ms and a51ms maximum, cause unknown. CPU0.04-0.06 cores in every case;
+paused CPU was not measured. These runs predate the layer fix. Separate from J1, no commit yet.
+
 ## 2026-11-09 J1: Rust login and server requests
 
 Owner approved D1-D5 before implementation. Rust owns compatible saved accounts,

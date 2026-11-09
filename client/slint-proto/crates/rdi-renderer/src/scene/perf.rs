@@ -42,6 +42,55 @@ impl Monitor {
         average > self.threshold_ms
     }
 }
+/// How often the scene pacer asks [`Clock`] for a frame while the scene animates. The clock can
+/// only release a frame on a tick, so a tick close to its 1/60s gate (such as 16ms) regularly lands
+/// just before the deadline and turns one frame into two. A much shorter tick avoids that.
+pub const PACER_INTERVAL_MS: u64 = 4;
+/// Five-second summaries of the time between rendered frames, for `--frame-stats`.
+#[derive(Default)]
+pub struct FramePacing {
+    last: Option<Instant>,
+    window: Option<Instant>,
+    intervals: Vec<f64>,
+}
+pub struct PacingSummary {
+    pub count: usize,
+    pub p50_ms: f64,
+    pub p95_ms: f64,
+    pub p99_ms: f64,
+    pub max_ms: f64,
+    pub over_25ms: usize,
+    pub over_30ms: usize,
+}
+impl FramePacing {
+    pub fn reset(&mut self) {
+        *self = Self::default();
+    }
+    pub fn frame(&mut self, now: Instant) -> Option<PacingSummary> {
+        if let Some(last) = self.last {
+            self.intervals
+                .push(now.duration_since(last).as_secs_f64() * 1000.);
+        }
+        self.last = Some(now);
+        let window = *self.window.get_or_insert(now);
+        if now.duration_since(window) < Duration::from_secs(5) || self.intervals.is_empty() {
+            return None;
+        }
+        self.window = Some(now);
+        let mut values = std::mem::take(&mut self.intervals);
+        values.sort_by(f64::total_cmp);
+        let percentile = |q: f64| values[((values.len() - 1) as f64 * q) as usize];
+        Some(PacingSummary {
+            count: values.len(),
+            p50_ms: percentile(0.5),
+            p95_ms: percentile(0.95),
+            p99_ms: percentile(0.99),
+            max_ms: values[values.len() - 1],
+            over_25ms: values.iter().filter(|v| **v > 25.).count(),
+            over_30ms: values.iter().filter(|v| **v > 30.).count(),
+        })
+    }
+}
 /// One clock for timer pacing and animation. Inactive time never enters elapsed animation time.
 pub struct Clock {
     last: Option<Instant>,
@@ -128,6 +177,54 @@ mod tests {
             assert!(!monitor.sample(Duration::from_millis(1)));
         }
         assert!(monitor.sample(Duration::from_millis(1)));
+    }
+    /// Longest gap between released frames over ten seconds of evenly spaced ticks.
+    fn longest_release_gap(tick: Duration) -> (Duration, usize) {
+        let mut clock = Clock::new();
+        let start = Instant::now();
+        clock.deadline = start;
+        let (mut longest, mut released, mut last) = (Duration::ZERO, 0, start);
+        let mut now = start;
+        while now < start + Duration::from_secs(10) {
+            if clock.tick(now, true) {
+                longest = longest.max(now - last);
+                released += 1;
+                last = now;
+            }
+            now += tick;
+        }
+        (longest, released)
+    }
+    #[test]
+    fn pacer_tick_never_doubles_a_frame() {
+        let (longest, released) =
+            longest_release_gap(Duration::from_millis(PACER_INTERVAL_MS));
+        assert!(longest <= Duration::from_millis(21), "{longest:?}");
+        assert!((595..=605).contains(&released), "{released}");
+        // The tick this replaces: same frame rate, but it regularly waits a whole extra tick.
+        let (longest, released) = longest_release_gap(Duration::from_millis(16));
+        assert_eq!(longest, Duration::from_millis(32));
+        assert!((595..=605).contains(&released), "{released}");
+    }
+    #[test]
+    fn frame_pacing_reports_each_window_and_resets() {
+        let mut pacing = FramePacing::default();
+        let start = Instant::now();
+        let mut now = start;
+        assert!(pacing.frame(now).is_none());
+        let mut summary = None;
+        for i in 1..=330 {
+            now += Duration::from_millis(if i % 100 == 0 { 40 } else { 16 });
+            summary = summary.or(pacing.frame(now));
+        }
+        let summary = summary.expect("five seconds elapsed");
+        assert!(summary.count >= 300);
+        assert_eq!(summary.over_30ms, summary.over_25ms);
+        assert!(summary.over_30ms >= 3);
+        assert!((summary.max_ms - 40.).abs() < 0.001);
+        assert!((summary.p50_ms - 16.).abs() < 0.001);
+        pacing.reset();
+        assert!(pacing.frame(now + Duration::from_secs(60)).is_none());
     }
     #[test]
     fn paused_callbacks_never_advance_or_request_scene_frames() {

@@ -334,6 +334,18 @@ unloadable DXC cases. It reads the existing test account from the Debian WSL UNC
 environment variables, without writing or logging credentials. `tools/m1-compare.py` (Pillow/NumPy)
 compares repeated captures and writes local `evidence/m1/comparison.json`.
 
+## Menu frame pacing
+
+`--frame-stats` logs the time between rendered frames every five seconds while the scene animates.
+`--scene-pacer-ms=N` (1 to 16, default 4) sets how often the scene asks for a frame; 16 brings back
+the occasional double-length frame. `tools/menu-pacing.ps1` compares pacers on every display and
+reports long frames and CPU. It signs in with the test account in a temporary data directory, and
+takes the foreground for the whole run.
+
+These are UI callback intervals, not displayed frames, so they cannot show a stale picture: the
+rounded window's cached layer once froze the background while they still read 60fps. Compare the
+default size with a maximized window by eye as well.
+
 ## U1 UI risk check (GU1)
 
 Run `target/release/rdi-slint-proto.exe --ui-proof` for the login form, 1000-row virtualized room list,
