@@ -1,0 +1,26 @@
+import { Theme } from "theme.slint";
+// A colored window control dot. The icon shows only on hover or keyboard focus.
+export component WindowDotButton inherits Rectangle {
+    in property <color> dot-color;
+    in property <string> glyph;
+    in property <string> label;
+    out property <bool> hovered: touch.has-hover;
+    callback clicked();
+    accessible-role: button;
+    accessible-label: root.label;
+    forward-focus: focus;
+    // Keep a larger hit area than the dot, with no gaps between neighbours.
+    width: 28px; height: 40px;
+    Rectangle { x: (parent.width - self.width) / 2; y: (parent.height - self.height) / 2; width: 14px; height: 14px;
+        border-radius: self.width / 2;
+        background: touch.pressed ? root.dot-color.darker(0.2) : root.dot-color;
+        border-width: focus.has-focus ? 2px : 0px;
+        border-color: #446c49;
+        if touch.has-hover || focus.has-focus: Text { text: root.glyph; font-family: Theme.symbols; font-size: 10px; color: #000000b0; width: 100%; height: 100%; horizontal-alignment: center; vertical-alignment: center; }
+    }
+    focus := FocusScope { x: 0px; y: 0px; width: root.width; height: root.height;
+        key-pressed(e) => { if e.text == Key.Space || e.text == Key.Return { root.clicked(); return accept; } return reject; }
+    }
+    // A click does not take focus, so the icon does not stay on after the window is restored.
+    touch := TouchArea { mouse-cursor: pointer; clicked => { root.clicked(); } }
+}
