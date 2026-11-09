@@ -266,12 +266,8 @@ Do not silently swallow meaningful failures.
 
 ## 10. Line Endings
 
-Do not spend time normalizing CRLF/LF differences in general project files.
-
-Exceptions:
-
-* `Dockerfile` must use LF.
-* `*.sh` files must use LF.
+All text files use LF, except `*.bat` and `*.cmd`, which use CRLF.
+The root `.gitattributes` enforces this. Do not commit line-ending-only changes.
 
 ---
 
