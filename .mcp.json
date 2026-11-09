@@ -17,6 +17,10 @@
     "IJ_MCP_SERVER_PROJECT_PATH": "C:/Users/calebxzhou/Documents/coding/rdi5/server/dm-gateway"
   }
 
+    },
+    "slint-ui": {
+      "type": "http",
+      "url": "http://127.0.0.1:55566/mcp"
     }
   }
 }
