@@ -1,0 +1,9 @@
+[alias]
+preview-run = [
+    "run",
+    "--release",
+    "--features", "slint/live-preview,slint/mcp",
+    "--config", 'env.SLINT_LIVE_PREVIEW="1"',
+    "--config", 'env.SLINT_EMIT_DEBUG_INFO="1"',
+    "--config", 'env.SLINT_MCP_PORT="55566"',
+]
