@@ -1,6 +1,6 @@
 package calebxzau.rdi.service
 
-import calebxzau.rdi.client.logic.LoginController
+import calebxzhou.rdi.client.auth.LocalCredentials
 import calebxzhou.rdi.client.service.PlayerService
 import calebxzhou.rdi.client.service.StartPlayResult
 import calebxzhou.rdi.client.service.startHostPlay
@@ -45,7 +45,12 @@ private class ServiceSession(private val protocol: Protocol, private val runtime
     private var loggedIn = false
     private var hostList: HostListViewModel? = null
     private var hostPage = 0
-    private val login = LoginController { account, password -> PlayerService.login(account, password).map { Unit } }
+    private val login = LoginService(
+        LocalCredentials::read,
+        { account, password -> PlayerService.login(account, password).map { Unit } },
+        { calebxzhou.rdi.client.net.loggedAccount._id.toHexString() },
+        calebxzhou.rdi.client.Const.VERSION_NUMBER,
+    )
     private val controller = McPlayController(
         onDuplicate = { event("game.state", buildJsonObject { put("errorMessage", "该整合包已在运行") }) },
         beforeProcessStart = { args -> withContext(Dispatchers.IO) { DevelopmentCoreOverride.install(args).getOrThrow() } },
@@ -69,7 +74,7 @@ private class ServiceSession(private val protocol: Protocol, private val runtime
 
     private suspend fun handle(scope: CoroutineScope, method: String, params: JsonObject): JsonElement {
         check(handshake || method == "handshake") { "请先连接启动服务" }
-        check(loggedIn || method in setOf("handshake", "login", "shutdown")) { "请先登录" }
+        check(loggedIn || method in setOf("handshake", "login", "login.accounts", "login.saved", "shutdown")) { "请先登录" }
         if (method.substringBefore('.') in setOf("installedPacks", "installer", "packOptions", "packPlay", "tasks", "console")) {
             return (packs ?: PackService(RuntimePackServiceDependencies(runtime), scope, controller::startSession, ::event).also { packs = it }).handle(method, params)
         }
@@ -79,10 +84,11 @@ private class ServiceSession(private val protocol: Protocol, private val runtime
                 handshake = true
                 buildJsonObject { put("protocolVersion", Protocol.VERSION) }
             }
-            "login" -> {
-                login.login(params["usr"]?.jsonPrimitive?.content.orEmpty(), params["pwd"]?.jsonPrimitive?.content.orEmpty()).getOrThrow()
+            "login.accounts" -> login.accounts()
+            "login", "login.saved" -> {
+                val result = login.login(params, saved = method == "login.saved")
                 loggedIn = true
-                buildJsonObject { put("loggedIn", true); put("uid", calebxzhou.rdi.client.net.loggedAccount._id.toHexString()) }
+                result
             }
             "hostList.subscribe", "hostList.refresh", "hostList.loadMore" -> {
                 val model = hostList ?: HostListViewModel(RdiHostListGateway(), useMockData = false, scope = scope).also { hostList = it }

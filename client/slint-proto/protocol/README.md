@@ -107,3 +107,22 @@ All subscriptions are scoped to the service connection. Screen state subscriptio
 sample conflated updates at34ms; detailed tasks include the terminal state before
 ending. Rust serializes U4a UI commands and discards replies from disconnected
 generations. Mutations are never replayed after reconnecting.
+
+## U4b0 login
+
+After handshake, `login.accounts`, `login.saved`, and `login` are allowed before
+sign-in. Other business methods still require login. No new events are introduced.
+
+- `login.accounts {}` returns `accounts` sorted by descending `lastLoggedTime`,
+  each containing `id`, `account`, `name`, and `lastLoggedTime`; `version` supplies
+  the launcher version label. Optional `lastId`
+  selects the prefilled account; optional `autoLoginId` requests automatic login.
+  Empty history returns an empty array with neither ID. No password is returned.
+- `login.saved {id}` resolves credentials only inside Kotlin, then calls the same
+  LoginController/PlayerService path as `login {usr,pwd}`. Missing IDs fail with a
+  retryable Chinese message. Both login methods return `{loggedIn:true,uid}`.
+- Rust displays a saved-password hint, never a copy of the stored password.
+  Editing either field clears the saved selection. Password reveal applies only
+  to newly typed text. Request/response bodies and credentials are never logged.
+- Both development environment variables override history; failed login returns
+  to the page. Without both variables the launcher uses history/auto-login.

@@ -311,5 +311,40 @@
         "[INFO] 准备启动Minecraft"
       ]
     }
+  },
+  {
+    "id": 101,
+    "method": "login.accounts",
+    "params": {}
+  },
+  {
+    "id": 101,
+    "result": {
+      "accounts": [
+        {
+          "id": "saved-example",
+          "account": "10001",
+          "name": "示例玩家",
+          "lastLoggedTime": 20
+        }
+      ],
+      "version": "6.7.9",
+      "lastId": "saved-example",
+      "autoLoginId": "saved-example"
+    }
+  },
+  {
+    "id": 102,
+    "method": "login.saved",
+    "params": {
+      "id": "saved-example"
+    }
+  },
+  {
+    "id": 102,
+    "result": {
+      "loggedIn": true,
+      "uid": "saved-example"
+    }
   }
 ]
