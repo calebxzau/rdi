@@ -10,32 +10,8 @@ For example:
 - Prefer `host`（房间） over `Docker container`.
 - Do not expose backend orchestration or deployment details unless the user specifically needs them.
 
-you can use intellij MCP to check code errors if available
-
 ## 1. Agent Workflow
-
-### Before Changing Code
-
-Do not modify code immediately.
-
-Before making code changes:
-
-1. Inspect the relevant code and project instructions.
-2. Explain the proposed changes and provide a concrete implementation plan.
-3. Obtain the user's approval before implementing the plan.
-
-Approval covers implementation, necessary validation, and fixes within the
-approved scope. Do not ask again merely because validation finds an implementation
-error. Ask again only when the plan materially expands scope or changes behavior
-the user has already confirmed.
-
-
-### Project-Specific Instructions
-
-Before working inside a directory, check whether that directory or any relevant parent directory contains an `AGENTS.md`.
-
-Read and follow the applicable `AGENTS.md` instructions before modifying code.
-
+Before making code changes Explain the proposed changes and provide a concrete implementation plan.
 ---
 
 ## 2. File and Directory Safety
