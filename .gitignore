@@ -17,3 +17,5 @@ CODEREF/
 .trash
 .agents/
 *.salive
+__pycache__/
+*.~*~
