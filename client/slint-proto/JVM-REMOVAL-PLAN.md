@@ -23,6 +23,8 @@ The Slint launcher currently runs a headless Kotlin process, `ui-service`, for a
 
 J3 gives the first large memory gain: the service used about 250MiB working set in earlier measurements (GU3). Whether `mediaproc` and `anvilrw` are reachable from the Slint flow, and whether the local game proxy can reuse existing Rust code, is not yet checked. Answer both when designing J4 and J5.
 
+**J6 to-do: saved account storage (owner agreed 2026-11-09).** Keep `local_credentials.json` until the Compose launcher is retired, because Compose reads it and Kotlin rejects a `data.db` schema version above its own. After the switch, import it once: passwords go to the system credential store (Windows Credential Manager or DPAPI, macOS Keychain, Linux Secret Service), other account data goes to `data.db`. Rename the old file only after the import succeeds; if the import fails, keep the file and log the error.
+
 ### Relation to the UI port
 
 The UI port in `UI-PORT-PLAN.md` continues after J1. The owner's GU4b0 sign-off (IME, caret, visuals) is still pending and J1 does not replace it. The rest of batch b waits for both GU4b0 and GJ1. From J1 onward, a new screen that only talks to the server calls Rust directly and adds no new service method.
