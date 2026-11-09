@@ -1,3 +1,16 @@
+## 2026-11-10 Account menu and logout
+
+The avatar opens a menu with 个人信息, 衣柜 and 退出登录; the first two only log for now, because
+Slint has no such screens yet. Logout follows Compose: saved accounts are kept with
+`autoLoginDisabled` set, and the account's Microsoft sessions are cleared through the new
+`session.clear`. Rust then stops the service and returns to the login page, where nothing signs in
+by itself. Stopping the service force-stops the game and tasks, so logout is refused while either runs.
+
+Driven through the Slint MCP with `cargo preview-run` in an isolated data directory: open and close
+(Escape, click outside), 个人信息, logout state on disk, restart without signing in, saved account
+sign-in and a second logout all pass. 衣柜 was not clicked. The refusal while a game or task runs
+was not exercised.
+
 ## 2026-11-09 Menu background stutter
 
 Owner reported the default-size window stuttered "like a slideshow" while a maximized one was

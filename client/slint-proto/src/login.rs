@@ -7,23 +7,47 @@ use crate::{
     hwspec,
 };
 use anyhow::Result;
-use serde::Deserialize;
 use slint::{ComponentHandle, ModelRc, VecModel};
-use std::{cell::RefCell, rc::Rc, sync::mpsc};
+use std::{cell::RefCell, rc::Rc, sync::mpsc, time::Duration};
 
-#[derive(Clone, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Clone)]
 struct Account {
     id: String,
     account: String,
     name: String,
 }
-#[derive(Default, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Default)]
 struct Accounts {
     accounts: Vec<Account>,
     last_id: Option<String>,
     auto_login_id: Option<String>,
+    /// The player just logged out, so nothing may sign in by itself, even if saving that failed.
+    signed_out: bool,
+    notice: Option<String>,
+}
+impl Accounts {
+    fn of(credentials: &Credentials, signed_out: bool) -> Self {
+        let entries = credentials.sorted();
+        let last_id = entries.first().map(|(id, _)| (*id).clone());
+        Self {
+            accounts: entries
+                .into_iter()
+                .map(|(id, info)| Account {
+                    id: id.clone(),
+                    account: info.qq.clone(),
+                    name: info.name.clone().unwrap_or_else(|| "RDI玩家".into()),
+                })
+                .collect(),
+            auto_login_id: if credentials.auto_login_disabled || signed_out {
+                None
+            } else {
+                last_id.clone()
+            },
+            last_id,
+            signed_out,
+            notice: None,
+        }
+    }
 }
 enum Event {
     Ready(Result<Accounts>),
@@ -76,40 +100,55 @@ impl LoginUi {
         });
         state
     }
-    pub fn start(&mut self) {
-        if self.busy {
-            return;
-        }
+    fn show(&mut self) {
         self.busy = true;
-
         if let Some(ui) = self.ui.upgrade() {
             ui.set_login_visible(true);
             ui.set_login_busy(true);
             ui.set_login_password("".into());
             ui.set_login_saved_id("".into());
         }
+    }
+    pub fn start(&mut self) {
+        if self.busy {
+            return;
+        }
+        self.show();
         let tx = self.tx.clone();
         self.runtime.spawn(async move {
             let result = tokio::task::spawn_blocking(|| {
-                let credentials = Credentials::load(&crate::credentials::file());
-                let entries = credentials.sorted();
-                let last_id = entries.first().map(|(id, _)| (*id).clone());
-                Ok(Accounts {
-                    accounts: entries
-                        .into_iter()
-                        .map(|(id, info)| Account {
-                            id: id.clone(),
-                            account: info.qq.clone(),
-                            name: info.name.clone().unwrap_or_else(|| "RDI玩家".into()),
-                        })
-                        .collect(),
-                    auto_login_id: if credentials.auto_login_disabled {
-                        None
-                    } else {
-                        last_id.clone()
-                    },
-                    last_id,
-                })
+                Ok(Accounts::of(&Credentials::load(&crate::credentials::file()), false))
+            })
+            .await
+            .unwrap_or_else(|error| Err(error.into()));
+            let _ = tx.send(Event::Ready(result));
+        });
+    }
+    /// Stops the service first: it can still write to the saved accounts until it exits.
+    pub fn sign_out(&mut self, api: Client) {
+        self.show();
+        let tx = self.tx.clone();
+        self.runtime.spawn(async move {
+            match tokio::time::timeout(
+                Duration::from_secs(5),
+                api.call("session.clear", serde_json::json!({})),
+            )
+            .await
+            {
+                Ok(Ok(_)) => {}
+                Ok(Err(error)) => tracing::error!(error=%format!("{error:#}"), "清除正版会话失败"),
+                Err(error) => tracing::error!(%error, "清除正版会话超时"),
+            }
+            let result = tokio::task::spawn_blocking(move || {
+                drop(api);
+                let file = crate::credentials::file();
+                let notice = Credentials::disable_auto_login(&file).err().map(|error| {
+                    tracing::error!(error=%format!("{error:#}"), "保存退出状态失败");
+                    "保存退出状态失败，下次启动可能会自动登录".to_owned()
+                });
+                let mut accounts = Accounts::of(&Credentials::load(&file), true);
+                accounts.notice = notice;
+                Ok(accounts)
             })
             .await
             .unwrap_or_else(|error| Err(error.into()));
@@ -194,6 +233,12 @@ impl LoginUi {
                     if let Some(id) = accounts.last_id {
                         self.select(&id);
                     }
+                    if let Some(notice) = accounts.notice {
+                        ui.set_action_error(notice.into());
+                    }
+                    if accounts.signed_out {
+                        continue;
+                    }
                     if let Ok((account, password)) = Config::credentials() {
                         ui.set_login_account(account.into());
                         ui.set_login_password(password.into());
@@ -229,16 +274,21 @@ mod tests {
         let credentials: Credentials =
             serde_json::from_str(include_str!("../protocol/fixtures/local_credentials.json"))
                 .unwrap();
-        let accounts = credentials
-            .sorted()
-            .into_iter()
-            .map(|(id, info)| Account {
-                id: id.clone(),
-                account: info.qq.clone(),
-                name: info.name.clone().unwrap_or_default(),
-            })
-            .collect::<Vec<_>>();
+        let accounts = Accounts::of(&credentials, false).accounts;
         assert_eq!(accounts[0].id, "0123456789abcdef01234567");
         assert_eq!(accounts.len(), 2);
+    }
+    #[test]
+    fn logging_out_never_signs_in_by_itself() {
+        let mut credentials: Credentials =
+            serde_json::from_str(include_str!("../protocol/fixtures/local_credentials.json"))
+                .unwrap();
+        credentials.auto_login_disabled = false;
+        assert!(Accounts::of(&credentials, false).auto_login_id.is_some());
+        let signed_out = Accounts::of(&credentials, true);
+        assert!(signed_out.auto_login_id.is_none() && signed_out.signed_out);
+        assert_eq!(signed_out.last_id.as_deref(), Some("0123456789abcdef01234567"));
+        credentials.auto_login_disabled = true;
+        assert!(Accounts::of(&credentials, false).auto_login_id.is_none());
     }
 }

@@ -10,6 +10,8 @@ export component TitleBar inherits Rectangle {
     callback navigate(string);
     callback action(int);
     callback stub(string);
+    callback account();
+    out property <length> account-x: head.absolute-position.x;
     height: 40px;
     background: #ffffff45;
     TouchArea { pointer-event(e) => {if e.kind == PointerEventKind.down && e.button == PointerEventButton.left {root.action(0);}} double-clicked => {root.action(2);} }
@@ -30,7 +32,7 @@ export component TitleBar inherits Rectangle {
             GlassButton { width: 28px; height: 28px; circle: true; glyph: "\u{eb51}"; clicked => {root.stub("设置");} }
         }
         HorizontalLayout { padding-top: 2px; padding-bottom: 2px;
-            HeadButton { width: 116px; source: root.head; player-name: root.player-name; clicked => {root.stub("玩家信息");} }
+            head := HeadButton { width: 116px; source: root.head; player-name: root.player-name; clicked => {root.account();} }
         }
         HorizontalLayout { spacing: 0px;
             WindowDotButton { dot-color: #febc2e; glyph: "\u{f2d1}"; label: "最小化"; clicked => {root.action(1);} }

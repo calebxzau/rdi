@@ -113,6 +113,12 @@ impl Credentials {
         data.auto_login_disabled = false;
         write_atomic(path, &serde_json::to_vec(&data)?)
     }
+    /// Keeps the saved accounts, as Compose does on logout. A corrupt file stays untouched.
+    pub fn disable_auto_login(path: &Path) -> Result<()> {
+        let mut data = read(path)?;
+        data.auto_login_disabled = true;
+        write_atomic(path, &serde_json::to_vec(&data)?)
+    }
 }
 fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
     let parent = path.parent().context("历史账号目录无效")?;
@@ -202,6 +208,23 @@ mod tests {
                 .to_string()
                 .contains("历史账号已不存在")
         );
+    }
+    #[test]
+    fn disabling_auto_login_keeps_accounts_and_never_replaces_a_corrupt_file() {
+        let path = isolated();
+        fs::write(
+            &path,
+            include_str!("../protocol/fixtures/local_credentials.json"),
+        )
+        .unwrap();
+        Credentials::disable_auto_login(&path).unwrap();
+        let data = read(&path).unwrap();
+        assert!(data.auto_login_disabled);
+        assert_eq!(data.login_infos.len(), 2);
+        assert_eq!(data.extra["lastPlayHost"]["id"], "fake-room");
+        fs::write(&path, "broken").unwrap();
+        assert!(Credentials::disable_auto_login(&path).is_err());
+        assert_eq!(fs::read_to_string(&path).unwrap(), "broken");
     }
     #[test]
     fn failed_replace_leaves_no_temp_file() {

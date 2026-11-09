@@ -298,5 +298,14 @@
     "result": {
       "uid": "0123456789abcdef01234567"
     }
+  },
+  {
+    "id": 3,
+    "method": "session.clear",
+    "params": {}
+  },
+  {
+    "id": 3,
+    "result": {}
   }
 ]

@@ -19,7 +19,7 @@ Responses carry the same `id` and exactly one of `result` or `error`.
 Errors carry `code` and a Chinese player-facing `message`. Events carry
 `event` and object `params`, with no `id`.
 
-Implemented methods: `handshake`, `session.set`, `host.start`, `game.subscribe`,
+Implemented methods: `handshake`, `session.set`, `session.clear`, `host.start`, `game.subscribe`,
 `game.stop`, `game.stopAll`, `game.restore`, `shutdown`, and the U4a methods below.
 Login, saved accounts and server data requests run directly in Rust. The old
 `login`, `login.accounts`, `login.saved`, `data.get` and `hostList.*` methods are removed.
@@ -104,6 +104,10 @@ ending. Rust serializes U4a UI commands and discards replies from disconnected
 generations. Mutations are never replayed after reconnecting.
 
 ## J1 session handover
+
+`session.clear {}` is sent when the player logs out. It forgets the signed-in account's
+Microsoft sessions and ends the session, and Rust then stops the service. If forgetting
+the sessions fails, the session still ends and the call returns the error.
 
 After handshake, `session.set {account,jwt}` and `shutdown` are allowed before
 sign-in; all business methods require a successful session handover.

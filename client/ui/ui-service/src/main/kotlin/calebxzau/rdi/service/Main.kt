@@ -1,5 +1,7 @@
 package calebxzau.rdi.service
 
+import calebxzau.rdi.client.account.MsaSessionStore
+import calebxzhou.rdi.client.auth.AccountSessionStore
 import calebxzhou.rdi.client.service.StartPlayResult
 import calebxzhou.rdi.client.service.startHostPlay
 import calebxzhou.rdi.client.ui.McPlayStore
@@ -36,7 +38,7 @@ fun main() {
 private class ServiceSession(private val protocol: Protocol, private val runtime: ServiceRuntime) {
     private var handshake = false
     private var loggedIn = false
-    private val session = SessionService { calebxzhou.rdi.client.net.loggedAccount = it }
+    private val session = SessionService({ MsaSessionStore.shared.clear(it) }) { calebxzhou.rdi.client.net.loggedAccount = it }
     private val controller = McPlayController(
         onDuplicate = { event("game.state", buildJsonObject { put("errorMessage", "该整合包已在运行") }) },
         beforeProcessStart = { args -> withContext(Dispatchers.IO) { DevelopmentCoreOverride.install(args).getOrThrow() } },
@@ -74,6 +76,12 @@ private class ServiceSession(private val protocol: Protocol, private val runtime
                 val result = session.set(params).getOrThrow()
                 loggedIn = true
                 result
+            }
+            "session.clear" -> {
+                val result = session.clear(calebxzhou.rdi.client.net.loggedAccount._id.toHexString())
+                AccountSessionStore.logout()
+                loggedIn = false
+                result.getOrThrow()
             }
             "host.start" -> {
                 // Slint supplies physical pixels; headless AWT cannot resolve monitor DPI.

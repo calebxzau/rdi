@@ -10,6 +10,7 @@ import { SharedDialog, Toast, ContentRow, LogRow, TaskRow } from "shared.slint";
 import { Console, TaskProgress } from "activity.slint";
 import { TileData, Theme } from "theme.slint";
 import { TitleBar } from "title_bar.slint";
+import { AccountMenu } from "account_menu.slint";
 import { TileGrid } from "tile_grid.slint";
 import { GlassTabBar } from "glass_tab_bar.slint";
 import { GlassButton, CircleIconButton } from "glass_button.slint";
@@ -160,6 +161,8 @@ export component AppWindow inherits Window {
     in property <[TileData]> hosts;
     in property <[TileData]> modpacks;
     in property <string> player-name: "未登录";
+    in-out property <bool> account-menu;
+    callback logout();
     in property <image> player-head;
     in property <string> error;
     in property <string> page-error;
@@ -201,12 +204,13 @@ export component AppWindow inherits Window {
         clip: true;
     shell-focus := FocusScope { x: 0px; y: 0px; width: root.width; height: root.height;
         key-pressed(e) => {
+            if e.text == Key.Escape && root.account-menu {root.account-menu = false; return accept;}
             if e.text == Key.Escape {root.navigate("back"); return accept;}
             if e.modifiers.alt && e.text == Key.LeftArrow {root.navigate("back"); return accept;}
             return reject;
         }
     Image { width: parent.width; height: parent.height; source: root.backdrop-revision >= 0 ? root.backdrop : root.backdrop; image-fit: fill; }
-    TitleBar { y: 0px; width: parent.width; player-name: root.player-name; head: root.player-head; action(a) => {root.window-action(a);} stub(s) => {root.stub(s);} can-back: root.can-back; gallery-enabled: root.gallery-enabled; navigate(s) => {root.navigate(s);} }
+    title-bar := TitleBar { y: 0px; width: parent.width; player-name: root.player-name; head: root.player-head; account => {if !root.login-visible {root.account-menu = !root.account-menu;}} action(a) => {root.window-action(a);} stub(s) => {root.stub(s);} can-back: root.can-back; gallery-enabled: root.gallery-enabled; navigate(s) => {root.navigate(s);} }
     menu := FocusScope { x: 0px; y: 40px; width: parent.width; height: parent.height - 40px; visible: !root.login-visible && !root.ui-proof && !root.gallery && root.pack-screen == 0; enabled: !root.modal-open && root.activity-panel == 0;
     tabs := GlassTabBar { x: (parent.width - self.width) / 2; y: 16px; tab-position: root.tab-position; selected: root.selected; select(t) => {root.select-tab(t);} press(i,on,x,y) => {root.pill-press(i,on,x,y);} }
     Rectangle { y: root.grid-y * 1px - 40px; width: parent.width; height: 434px; clip: true;
@@ -316,6 +320,14 @@ export component AppWindow inherits Window {
         }
     }
 
+    if root.account-menu && !root.login-visible: AccountMenu {
+        x: 0px; y: 0px; width: parent.width; height: parent.height;
+        anchor-x: title-bar.account-x; anchor-y: 44px;
+        dismiss => {root.account-menu = false;}
+        player-info => {root.account-menu = false; root.stub("个人信息");}
+        wardrobe => {root.account-menu = false; root.stub("衣柜");}
+        logout => {root.account-menu = false; root.logout();}
+    }
     if root.modal-open: Rectangle { x: 0px; y: 0px; width: parent.width; height: parent.height; background: #0009; TouchArea {} }
     dialog := SharedDialog {
         width: min(480px, root.width - 48px);

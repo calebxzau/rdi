@@ -125,6 +125,8 @@ pub struct App {
     hosts: Hosts,
     packs: Vec<crate::packs::InstalledPack>,
     api: Option<Client>,
+    /// The signed-in session, also while the menu is still loading and `api` is empty.
+    session: Option<Client>,
     running_processes: Vec<serde_json::Value>,
     login_ui: Rc<RefCell<crate::login::LoginUi>>,
     pack_ui: Rc<RefCell<crate::packs::PackUi>>,
@@ -177,6 +179,7 @@ impl App {
             hosts: Hosts::default(),
             packs: vec![],
             api: None,
+            session: None,
             pack_ui,
             login_ui,
             running_processes: vec![],
@@ -352,6 +355,12 @@ impl App {
             }
         });
         ui.on_stub(|name| tracing::info!(action=%name,"Prototype action"));
+        let weak = Rc::downgrade(app);
+        ui.on_logout(move || {
+            if let Some(a) = weak.upgrade() {
+                a.borrow_mut().logout();
+            }
+        });
     }
     fn player_enabled(&self) -> bool {
         let c = &self.config;
@@ -386,10 +395,39 @@ impl App {
     }
     fn login(&mut self) {
         self.api = None;
+        self.session = None;
         self.pack_ui.borrow_mut().connect(None);
         self.login_ui.borrow_mut().start();
     }
-    fn load_menu(&mut self, api: Client) {
+    /// Stopping the service force-stops the game and tasks, so logging out waits for them.
+    fn logout(&mut self) {
+        let Some(ui) = self.ui.upgrade() else {
+            return;
+        };
+        if ui.get_game_running() || ui.get_tasks_running() {
+            ui.set_action_error("游戏或任务正在运行，结束后才能退出登录".into());
+            return;
+        }
+        let Some(session) = self.session.take() else {
+            return;
+        };
+        self.stop_jobs();
+        self.api = None;
+        self.hosts = Hosts::default();
+        self.packs.clear();
+        self.cache.clear();
+        self.running_processes.clear();
+        for model in &self.tiles {
+            model.clear();
+        }
+        ui.set_options_dirty(false);
+        ui.invoke_navigate("home".into());
+        self.pack_ui.borrow_mut().connect(None);
+        ui.set_player_name("未登录".into());
+        ui.set_player_head(self.fallback.clone());
+        self.login_ui.borrow_mut().sign_out(session);
+    }
+    fn stop_jobs(&mut self) {
         self.epoch += 1;
         for (_, j) in self.jobs.drain() {
             j.abort();
@@ -405,6 +443,10 @@ impl App {
                 j.abort();
             }
         }
+    }
+    fn load_menu(&mut self, api: Client) {
+        self.stop_jobs();
+        self.session = Some(api.clone());
         self.crowd_skins = Vec::new();
         self.player_appearance = if self.player_enabled() {
             match Appearance::steve() {
