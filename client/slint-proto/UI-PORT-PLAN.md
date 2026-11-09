@@ -7,6 +7,8 @@ Written 2026-11-05 for an agent with no prior context. This replaces M2-M4 in `M
 
 Updated 2026-11-07. **GU4a passed with owner approval on 2026-11-07 (commit `86d76515`). Batch b0 login implementation is under GU4b0 validation/review; see `evidence/ui-port/u4b0/gate-summary.md`. Do not start the rest of batch b before owner sign-off.**
 
+Updated 2026-11-09. **The owner decided to remove the launcher's JVM step by step. Phase J1 (login and server requests in Rust) comes first; see `JVM-REMOVAL-PLAN.md`. The rest of batch b also waits for gate GJ1. J1 replaces the b0 rule that stored passwords stay in Kotlin; they still never reach Slint.**
+
 - U4a results: `evidence/ui-port/u4a/gate-summary.md` (including "Owner review follow-up")
   and `owner-checklist.md`. Native archive/folder import, persistent advanced options, local
   offline and RDI title-screen launch, empty-pack/task flow, real console/native export pass
@@ -214,7 +216,7 @@ Port the launcher UI (`client/ui`, Kotlin + Compose) to Slint on the Rust + wgpu
 | Background | Keep the current golden valley with its default camera. No walking, object picking or world expansion. Those parts of the old plan (M2.1-M2.3, resolution and 30FPS A/B) are on hold. Only the menu screen animates the scene; other screens hold its last frame with the scene kept loaded, and the game running keeps it held too |
 | Order | U1 risk check first, then U2-U5 below |
 | Cut features | Not ported: code editor, quest viewer, host file manager |
-| Business logic | Stays in Kotlin, in a headless child process |
+| Business logic | Stays in Kotlin, in a headless child process. **Replaced 2026-11-09:** logic moves to Rust step by step; see `JVM-REMOVAL-PLAN.md` |
 | Communication | stdio, length-prefixed JSON, no port |
 | Mac testing | Try GitHub Actions `macos-15` headless first. See section 4 |
 | License | GPLv3 project; Slint's GPL option applies. DXC stays the default, with `LICENSE-LLVM.txt` shipped beside `dxcompiler.dll` |
