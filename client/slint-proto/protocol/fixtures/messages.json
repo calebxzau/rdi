@@ -99,21 +99,6 @@
     }
   },
   {
-    "id": 105,
-    "method": "packOptions.open",
-    "params": {
-      "versionId": "local_019a55b0-0000-7000-8000-000000000001"
-    }
-  },
-  {
-    "id": 106,
-    "method": "packOptions.action",
-    "params": {
-      "action": "save",
-      "returnAfterSave": true
-    }
-  },
-  {
     "id": 107,
     "method": "packPlay.open",
     "params": {
@@ -143,27 +128,6 @@
     "id": 110,
     "method": "console.subscribe",
     "params": {}
-  },
-  {
-    "event": "installedPacks.state",
-    "params": {
-      "loading": false,
-      "error": "",
-      "packs": [
-        {
-          "versionId": "local_019a55b0-0000-7000-8000-000000000001",
-          "name": "测试包",
-          "versionName": "1.21.1",
-          "local": true,
-          "mcVersion": "V211",
-          "modLoader": "neoforge",
-          "createdAt": 1,
-          "directory": "C:/RDI/mc/versions/local_019a55b0-0000-7000-8000-000000000001",
-          "icon": "",
-          "comment": ""
-        }
-      ]
-    }
   },
   {
     "event": "installer.state",

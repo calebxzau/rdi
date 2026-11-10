@@ -586,6 +586,29 @@ suspend fun ModpackService.getLocalPackDirs(): List<ModpackLocalDir> {
     return (remotePacks + scanLocalOnlyPacks(mcInstall.versionListDir)).sortedByDescending(ModpackLocalDir::createTime)
 }
 
+/**
+ * One installed pack by its version directory name, so starting it needs no full list.
+ * Only a direct child of the versions directory is accepted.
+ */
+suspend fun ModpackService.getLocalPackDir(versionId: String): Result<ModpackLocalDir> = try {
+    val root = mcInstall.versionListDir
+    val dir = root.listFiles()?.firstOrNull { it.isDirectory && it.name == versionId }
+        ?: throw IllegalStateException("找不到这个整合包，请刷新列表")
+    if (LocalModpackStore.isLocalVersionId(versionId)) {
+        Result.success(LocalModpackStore.read(dir).getOrThrow().toLocalDir(dir))
+    } else {
+        val ref = scanLocalPackRefs(root).firstOrNull { it.dir.name == versionId }
+            ?: throw IllegalStateException("找不到这个整合包，请刷新列表")
+        val vo = getBriefInfos(listOf(ref.modpackId)).getOrThrow().firstOrNull { it.id == ref.modpackId }
+            ?: throw IllegalStateException("这个整合包在服务器不存在")
+        Result.success(ModpackLocalDir(ref.dir, ref.verName, vo, localPackCreateTime(ref)))
+    }
+} catch (cancel: CancellationException) {
+    throw cancel
+} catch (cause: Exception) {
+    Result.failure(cause)
+}
+
 /** Packs imported without uploading; a directory with unreadable metadata is logged and skipped. */
 internal fun scanLocalOnlyPacks(versionsDir: File): List<ModpackLocalDir> =
     LocalModpackStore.scan(versionsDir).mapNotNull { (dir, info) ->

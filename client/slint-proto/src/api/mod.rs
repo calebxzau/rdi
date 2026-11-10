@@ -18,6 +18,8 @@ pub struct Client {
     service: Arc<Service>,
     uid: String,
     server: ServerApi,
+    /// The Java 25 the service runs on; Kotlin offered the same path as `globalJavaPath`.
+    pub java_path: String,
 }
 impl Client {
     pub async fn connect(server: ServerApi, session: Session) -> Result<Self> {
@@ -25,10 +27,13 @@ impl Client {
     }
     fn connect_blocking(server: ServerApi, session: Session) -> Result<Self> {
         let uid = session.uid()?.to_owned();
+        let java_path;
         let mut command = if let Ok(value) = std::env::var("RDI_SERVICE_COMMAND") {
             let arguments: Vec<String> =
                 serde_json::from_str(&value).context("RDI_SERVICE_COMMAND必须是JSON参数数组")?;
-            let mut command = Command::new(arguments.first().context("启动服务命令为空")?);
+            let program = arguments.first().context("启动服务命令为空")?;
+            java_path = program.clone();
+            let mut command = Command::new(program);
             command.args(&arguments[1..]);
             command
         } else {
@@ -46,6 +51,7 @@ impl Client {
                 .context("未找到Java25，请安装JDK25或设置RDI_SERVICE_COMMAND")?;
             let lib = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
                 .join("../ui/ui-service/build/install/ui-service/lib/*");
+            java_path = java.to_string_lossy().into_owned();
             let mut command = Command::new(java);
             command
                 .arg("-Djava.awt.headless=true")
@@ -75,6 +81,7 @@ impl Client {
             server,
             service: Arc::new(service),
             uid,
+            java_path,
         })
     }
     pub async fn call(&self, method: &str, params: Value) -> Result<Value> {
@@ -103,5 +110,8 @@ impl Client {
     }
     pub async fn get<T: DeserializeOwned>(&self, path: &str) -> Result<T> {
         self.server.get(path).await
+    }
+    pub async fn post<T: DeserializeOwned + Default>(&self, path: &str, body: &Value) -> Result<T> {
+        self.server.post(path, body).await
     }
 }

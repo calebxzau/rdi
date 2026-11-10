@@ -13,14 +13,18 @@ import kotlin.test.*
 
 class PackServiceTest {
     @Test
-    fun `installed list and folder action use the same selected pack and reject unknown ids`(): Unit = runBlocking {
+    fun `play looks the pack up on demand and moved methods are gone`(): Unit = runBlocking {
         val fixture = Fixture(this)
         fixture.service.use { service ->
-            val result = service.handle("installedPacks.subscribe", obj())
-            assertEquals(fixture.pack.versionId, result["packs"]!!.jsonArray.single().jsonObject.text("versionId"))
-            assertEquals(fixture.pack.dir.absolutePath, service.handle("installedPacks.directory", obj("versionId" to fixture.pack.versionId)).text("path"))
-            assertFailsWith<IllegalStateException> { service.handle("installedPacks.directory", obj("versionId" to "../outside")) }
-            assertEquals(false, fixture.events.last().second["loading"]!!.jsonPrimitive.boolean)
+            val state = service.handle("packPlay.open", obj("versionId" to fixture.pack.versionId))
+            assertEquals(fixture.pack.versionId, state.text("versionId"))
+            assertEquals(true, state["local"]!!.jsonPrimitive.boolean)
+            assertEquals(listOf(fixture.pack.versionId), fixture.lookups)
+            assertFailsWith<IllegalStateException> { service.handle("packPlay.open", obj("versionId" to "../outside")) }
+            service.handle("packPlay.cancel", obj())
+            for (method in listOf("installedPacks.subscribe", "installedPacks.directory", "packOptions.open", "packOptions.action")) {
+                assertFailsWith<IllegalStateException>(method) { service.handle(method, obj("versionId" to fixture.pack.versionId)) }
+            }
         }
     }
 
@@ -39,31 +43,6 @@ class PackServiceTest {
             delay(80)
             assertEquals(count, fixture.events.size)
             assertFailsWith<IllegalStateException> { service.handle("installer.install", obj()) }
-        }
-    }
-
-    @Test
-    fun `advanced settings save and reload through the service and preserve validation errors`(): Unit = runBlocking {
-        val fixture = Fixture(this)
-        fixture.service.use { service ->
-            service.handle("installedPacks.subscribe", obj())
-            service.handle("packOptions.open", obj("versionId" to fixture.pack.versionId))
-            withTimeout(3000) { while (fixture.optionModel!!.uiState.value.loading) delay(5) }
-            val draft = ModpackOptionDraft(customJvmParams = "-Dexample=true", forgeguardDisabled = true)
-            service.handle("packOptions.action", buildJsonObject { put("action", "update"); put("draft", Json.encodeToJsonElement(draft)) })
-            service.handle("packOptions.action", obj("action" to "save"))
-            withTimeout(3000) { while (fixture.optionModel!!.uiState.value.saving) delay(5) }
-            assertEquals("-Dexample=true", fixture.record?.customJvmParams)
-            assertEquals(true, fixture.record?.forgeguardDisabled)
-            service.handle("packOptions.open", obj("versionId" to fixture.pack.versionId))
-            withTimeout(3000) { while (fixture.optionModel!!.uiState.value.loading) delay(5) }
-            assertEquals(draft, fixture.optionModel!!.uiState.value.draft)
-            val invalid = draft.copy(jdwpEnabled = true, jdwpParam = "")
-            service.handle("packOptions.action", buildJsonObject { put("action", "update"); put("draft", Json.encodeToJsonElement(invalid)) })
-            service.handle("packOptions.action", obj("action" to "save"))
-            withTimeout(3000) { while (fixture.optionModel!!.uiState.value.saving) delay(5) }
-            assertTrue(fixture.optionModel!!.uiState.value.errorMessage!!.contains("JDWP"))
-            assertFalse(fixture.record!!.jdwpEnabled)
         }
     }
 
@@ -136,10 +115,13 @@ class PackServiceTest {
         val pack = ModpackLocalDir(root.resolve("local_${info.id}").toFile(), "1.21.1", null, 1, info)
         val events = mutableListOf<Pair<String, JsonObject>>()
         var submitted: Task2? = null
-        var record: ModpackLaunchOptionsRecord? = null
-        var optionModel: ModpackOptionViewModel? = null
+        val lookups = mutableListOf<String>()
         val service = PackService(this, scope, { _, _ -> error("No game should start in this test") }) { name, state -> events += name to state }
-        override suspend fun loadPacks() = listOf(pack)
+        override suspend fun findPack(versionId: String): Result<ModpackLocalDir> {
+            lookups += versionId
+            return if (versionId == pack.versionId) Result.success(pack)
+            else Result.failure(IllegalStateException("找不到这个整合包，请刷新列表"))
+        }
         override fun installer(scope: CoroutineScope) = LocalModpackInstallViewModel(
             LocalModpackScanner(object : MinecraftInstallationStore {
                 override suspend fun list() = Result.success(emptyList<MinecraftInstallationRecord>())
@@ -157,17 +139,6 @@ class PackServiceTest {
             }),
             ModpackArchiveContentResolutionSource { _, _ -> flowOf(ContentResolutionUpdate.Complete) }, scope,
         )
-        override fun options(versionId: String, scope: CoroutineScope) = ModpackOptionViewModel(versionId,
-            object : ModpackLaunchOptionsStore {
-                override suspend fun find(versionId: String) = Result.success(record)
-                override suspend fun upsert(record: ModpackLaunchOptionsRecord): Result<Unit> { this@Fixture.record = record; return Result.success(Unit) }
-                override suspend fun delete(versionId: String): Result<Unit> { record = null; return Result.success(Unit) }
-                override fun close() {}
-            }, object : ModpackOptionRuntime {
-                override fun getTotalPhysicalMemoryMb() = 16384
-                override fun validateJdkPath(rawPath: String) = Result.success(rawPath)
-                override fun validateMaxMemory(maxMemoryText: String, totalMemoryMb: Int) = runCatching { maxMemoryText.toInt() }
-            }, scope).also { optionModel = it }
     }
 
     private fun obj(vararg pairs: Pair<String, Any>) = buildJsonObject {

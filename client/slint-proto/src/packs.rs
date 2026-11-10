@@ -1,14 +1,17 @@
-//! U4a UI adapters. Pack rules, account credentials and installation stay in Kotlin.
+//! U4a UI adapters. Import, tasks and play stay in Kotlin; since J2 the installed pack list
+//! (`local_packs`) and pack options (`pack_options`) are read and written here.
 use crate::{
     AppWindow, CandidateRow, ContentRow, LogRow, OptionDraft, TaskRow, api::Client, images,
+    local_packs::{self, PackList},
+    pack_options::{self, Draft},
 };
 use anyhow::{Context, Result};
-use serde::Deserialize;
 use serde_json::{Value, json};
 use slint::{ComponentHandle, Model, VecModel};
 use std::{
     cell::RefCell,
-    collections::{HashSet, VecDeque},
+    collections::{HashMap, HashSet, VecDeque},
+    path::PathBuf,
     rc::Rc,
     sync::mpsc,
 };
@@ -36,18 +39,12 @@ fn options_title(id: &str, name: &str, version: &str) -> String {
         .join(" ");
     if title.is_empty() { id.to_string() } else { title }
 }
-#[derive(Clone, Debug, Deserialize)]
-pub struct InstalledPack {
-    #[serde(rename = "versionId")]
-    pub id: String,
-    pub name: String,
-    pub icon: Option<String>,
-    #[serde(rename = "versionName")]
-    pub version: String,
-    pub local: bool,
-}
+pub use crate::local_packs::InstalledPack;
 enum Reply {
     Service(u64, String, Result<Value>),
+    Packs(u64, PackList),
+    OptionsLoaded(u64, Result<pack_options::Loaded>),
+    OptionsSaved(u64, Draft, bool, Result<()>),
     Pick(u64, String, Result<Option<String>>),
     Image(u64, String, Result<image::RgbaImage>),
 }
@@ -67,8 +64,12 @@ pub struct PackUi {
     images: std::collections::HashMap<String, slint::Image>,
     pending_images: HashSet<String>,
     failed_images: HashSet<String>,
-    options_pending: usize,
     global_java_path: String,
+    packs_generation: u64,
+    loaded_packs: Option<Vec<InstalledPack>>,
+    pack_dirs: HashMap<String, PathBuf>,
+    refreshed_run: String,
+    options: OptionsState,
     java_was_enabled: bool,
     candidates: Rc<VecModel<CandidateRow>>,
     picked: Rc<VecModel<CandidateRow>>,
@@ -120,8 +121,12 @@ impl PackUi {
             images: Default::default(),
             pending_images: Default::default(),
             failed_images: Default::default(),
-            options_pending: 0,
             global_java_path: String::new(),
+            packs_generation: 0,
+            loaded_packs: None,
+            pack_dirs: Default::default(),
+            refreshed_run: String::new(),
+            options: OptionsState::default(),
             java_was_enabled: false,
             candidates,
             picked,
@@ -160,6 +165,7 @@ impl PackUi {
                     ui.set_options_title(options_title("", "测试整合包", "1.21.1").into());
                 }
                 match serde_json::from_str::<Value>(value.as_str()) {
+                    Ok(value) if topic == "packOptions.state" => state.borrow_mut().options_proof(&value),
                     Ok(value) => state.borrow_mut().event(topic.as_str(), &value),
                     Err(error) => tracing::error!(%error,"截图样例数据无效"),
                 }
@@ -171,8 +177,12 @@ impl PackUi {
         self.generation += 1;
         self.busy = false;
         self.queue.clear();
+        self.global_java_path = api.as_ref().map(|a| a.java_path.clone()).unwrap_or_default();
         self.api = api;
-        self.options_pending = 0;
+        // A list still loading for the previous session must not reach the next one.
+        self.packs_generation += 1;
+        self.loaded_packs = None;
+        self.pack_dirs.clear();
         self.installer = Value::Null;
         self.last_device_uri.clear();
         self.pending_images.clear();
@@ -187,21 +197,14 @@ impl PackUi {
             self.picked.clear();
             if self.api.is_some() {
                 self.call("tasks.subscribe", json!({}));
-                self.call("installedPacks.subscribe", json!({}));
+                self.refresh_packs();
                 if ui.get_pack_screen() == 1 {
                     self.call("installer.open", json!({}));
-                }
-                if ui.get_pack_screen() == 2 {
-                    ui.set_options_enabled(false);
-                    ui.set_options_error("启动服务已重新连接，请返回后重新打开设置".into());
                 }
             }
         }
     }
     fn call(&mut self, method: &str, params: Value) {
-        if method == "packOptions.action" {
-            self.options_pending += 1;
-        }
         self.queue.push_back((method.into(), params));
         self.pump();
     }
@@ -252,6 +255,61 @@ impl PackUi {
             );
         }
     }
+    /// The app takes each finished list; `None` until the next refresh completes.
+    pub fn take_packs(&mut self) -> Option<Vec<InstalledPack>> {
+        self.loaded_packs.take()
+    }
+    fn refresh_packs(&mut self) {
+        let Some(api) = self.api.clone() else {
+            return;
+        };
+        self.packs_generation += 1;
+        if let Some(ui) = self.ui.upgrade() {
+            ui.set_packs_loading(true);
+            ui.set_packs_error("".into());
+        }
+        let tx = self.tx.clone();
+        let generation = self.packs_generation;
+        self.runtime.spawn(async move {
+            let list = local_packs::load(&api).await;
+            let _ = tx.send(Reply::Packs(generation, list));
+        });
+    }
+    /// Kotlin refreshed the list when a watched task ended; refresh once per run.
+    fn refresh_after_task(&mut self) {
+        let run_id = text(&self.task, "runId");
+        if self.task["terminal"] == true && !run_id.is_empty() && run_id != self.refreshed_run {
+            self.refreshed_run = run_id.into();
+            self.refresh_packs();
+        }
+    }
+    fn open_options(&mut self, ui: &AppWindow) {
+        let version_id = ui.get_pack_selected_id().to_string();
+        self.options = OptionsState { generation: self.options.generation + 1, ..Default::default() };
+        // Like Kotlin's loading snapshot: defaults, not the previous pack's values.
+        ui.set_options_draft(to_ui(&Draft::default()));
+        self.render_options(ui);
+        ui.set_options_error("".into());
+        let tx = self.tx.clone();
+        let generation = self.options.generation;
+        self.runtime.spawn(async move {
+            let result = tokio::task::spawn_blocking(move || {
+                pack_options::load(&pack_options::database_path(), &version_id)
+            })
+            .await
+            .context("读取整合包设置失败")
+            .and_then(|r| r);
+            let _ = tx.send(Reply::OptionsLoaded(generation, result));
+        });
+    }
+    fn render_options(&self, ui: &AppWindow) {
+        let o = &self.options;
+        ui.set_options_loading(o.saved.is_none() && !o.failed);
+        ui.set_options_enabled(o.saved.is_some() && !o.failed && !o.saving);
+        ui.set_options_total_memory(o.total_memory_mb);
+        ui.set_options_dirty(o.saved.as_ref().is_some_and(|saved| *saved != from_ui(&ui.get_options_draft())));
+    }
+    /// Kotlin `updateDraft`: a new draft clears the error and recomputes dirty.
     fn options_update(&mut self, ui: &AppWindow) {
         let mut d = ui.get_options_draft();
         if d.java_custom_enabled && !self.java_was_enabled && d.java_path.is_empty() {
@@ -259,11 +317,31 @@ impl PackUi {
             ui.set_options_draft(d.clone());
         }
         self.java_was_enabled = d.java_custom_enabled;
-        self.call("packOptions.action",json!({"action":"update","draft":{
-            "javaCustomEnabled":d.java_custom_enabled,"javaPath":d.java_path.as_str(),
-            "memoryCustomEnabled":d.memory_custom_enabled,"maxMemoryText":d.max_memory_text.as_str(),
-            "jdwpEnabled":d.jdwp_enabled,"jdwpParam":d.jdwp_param.as_str(),"customJvmParams":d.custom_jvm_params.as_str(),"forgeguardDisabled":d.forgeguard_disabled}}));
-        ui.set_options_dirty(true);
+        ui.set_options_error("".into());
+        self.render_options(ui);
+    }
+    fn save_options(&mut self, ui: &AppWindow, back: bool) {
+        let o = &self.options;
+        if o.saved.is_none() || o.failed || o.saving {
+            return;
+        }
+        self.options.saving = true;
+        self.render_options(ui);
+        let draft = from_ui(&ui.get_options_draft());
+        let version_id = ui.get_pack_selected_id().to_string();
+        let total = self.options.total_memory_mb;
+        let tx = self.tx.clone();
+        let generation = self.options.generation;
+        self.runtime.spawn(async move {
+            let saved = draft.clone();
+            let result = tokio::task::spawn_blocking(move || {
+                pack_options::save(&pack_options::database_path(), &version_id, &draft, total)
+            })
+            .await
+            .context("保存整合包设置失败")
+            .and_then(|r| r);
+            let _ = tx.send(Reply::OptionsSaved(generation, saved, back, result));
+        });
     }
     pub fn action(&mut self, action: &str, value: &str) {
         let Some(ui) = self.ui.upgrade() else {
@@ -312,42 +390,40 @@ impl PackUi {
                 let command = a.trim_start_matches("installer.");
                 self.call("installer.action",json!({"action":command,"value":value,"index":value.parse::<usize>().unwrap_or(0)}));
             }
-            "packs.refresh" => self.call("installedPacks.refresh", json!({})),
+            "packs.refresh" => self.refresh_packs(),
             "menu" => {
                 ui.set_pack_menu(false);
                 match value {
                     "0" => self.begin_play(),
                     "1" => {
-                        ui.set_options_loading(true);
+                        self.open_options(&ui);
                         self.navigate("options");
-                        self.call(
-                            "packOptions.open",
-                            json!({"versionId":ui.get_pack_selected_id().as_str()}),
-                        );
                     }
-                    "2" => self.call(
-                        "installedPacks.directory",
-                        json!({"versionId":ui.get_pack_selected_id().as_str()}),
-                    ),
+                    "2" => match self.pack_dirs.get(ui.get_pack_selected_id().as_str()) {
+                        Some(path) => self.open_directory(&path.to_string_lossy()),
+                        None => ui.set_action_error("找不到这个整合包，请刷新列表".into()),
+                    },
                     "3" => ui.invoke_stub("整合包详情".into()),
                     "4" => ui.invoke_stub("整合包内容".into()),
                     _ => {}
                 }
             }
             "options.update" => self.options_update(&ui),
-            "options.reset" => self.call("packOptions.action", json!({"action":"reset"})),
+            "options.reset" => {
+                ui.set_options_draft(to_ui(&Draft::default()));
+                self.options_update(&ui);
+            }
             "options.save" | "options.saveBack" => {
                 self.options_update(&ui);
-                self.call(
-                    "packOptions.action",
-                    json!({"action":"save","returnAfterSave":action.ends_with("saveBack")}),
-                );
+                self.save_options(&ui, action.ends_with("saveBack"));
             }
             "options.discard" => {
                 ui.set_options_dirty(false);
                 self.navigate("back");
             }
-            "options.close" => self.call("packOptions.action", json!({"action":"close"})),
+            "options.close" => {
+                self.options = OptionsState { generation: self.options.generation + 1, ..Default::default() };
+            }
             "play.nickname" => {
                 ui.set_play_nonstandard_name(!standard_name(value));
             }
@@ -467,9 +543,52 @@ impl PackUi {
     pub fn tick(&mut self) {
         while let Ok(reply) = self.rx.try_recv() {
             match reply {
+                Reply::Packs(g, list) if g == self.packs_generation => {
+                    if let Some(ui) = self.ui.upgrade() {
+                        ui.set_packs_loading(false);
+                        ui.set_packs_error(list.error.as_str().into());
+                    }
+                    self.pack_dirs = list.packs.iter().map(|p| (p.id.clone(), p.directory.clone())).collect();
+                    self.loaded_packs = Some(list.packs);
+                }
+                Reply::OptionsLoaded(g, result) if g == self.options.generation => {
+                    let Some(ui) = self.ui.upgrade() else { continue };
+                    match result {
+                        Ok(loaded) => {
+                            self.java_was_enabled = loaded.draft.java_custom_enabled;
+                            self.options.total_memory_mb = loaded.total_memory_mb;
+                            ui.set_options_draft(to_ui(&loaded.draft));
+                            self.options.saved = Some(loaded.draft);
+                        }
+                        Err(error) => {
+                            tracing::warn!(error = %format!("{error:#}"), "读取整合包设置失败");
+                            self.options.failed = true;
+                            ui.set_options_error(format!("读取整合包设置失败：{}", root_message(&error)).into());
+                        }
+                    }
+                    self.render_options(&ui);
+                }
+                Reply::OptionsSaved(g, draft, back, result) if g == self.options.generation => {
+                    let Some(ui) = self.ui.upgrade() else { continue };
+                    self.options.saving = false;
+                    match result {
+                        Ok(()) => {
+                            self.options.saved = Some(draft);
+                            self.render_options(&ui);
+                            if back {
+                                ui.set_options_dirty(false);
+                                self.navigate("back");
+                            }
+                        }
+                        Err(error) => {
+                            tracing::warn!(error = %format!("{error:#}"), "保存整合包设置失败");
+                            ui.set_options_error(format!("保存整合包设置失败：{}", root_message(&error)).into());
+                            self.render_options(&ui);
+                        }
+                    }
+                }
                 Reply::Service(g,method,result) if g==self.generation=>{
                     self.busy=false;
-                    if method=="packOptions.action" {self.options_pending=self.options_pending.saturating_sub(1);}
                     match result {
                         Ok(v)=>match method.as_str() {
                             "installer.open"=>self.installer(&v),
@@ -479,14 +598,11 @@ impl PackUi {
                                 self.navigate("tasks");
                             }
                             "installer.install"=>self.installer(&v),
-                            "packOptions.open"=>self.options(&v),
-                            "packOptions.action" if self.options_pending==0 && v.get("draft").is_some()=>self.options(&v),
                             "packPlay.open"=>{
                                 self.play(&v);
                                 if v["local"]==false{self.action("play.start","");}
                             }
-                            "installedPacks.directory"=>{if let Some(path)=v["path"].as_str(){self.open_directory(path);}}
-                            "tasks.watch"=>{self.task=v;self.render_task();}
+                            "tasks.watch"=>{self.task=v;self.render_task();self.refresh_after_task();}
                             _=>{}
                         },
                         Err(error)=>if let Some(ui)=self.ui.upgrade(){
@@ -542,17 +658,11 @@ impl PackUi {
     pub fn event(&mut self, topic: &str, v: &Value) {
         match topic {
             "installer.state" => self.installer(v),
-            "packOptions.state" if self.options_pending == 0 => self.options(v),
             "packPlay.state" => self.play(v),
-            "installedPacks.state" => {
-                if let Some(ui) = self.ui.upgrade() {
-                    ui.set_packs_loading(v["loading"] == true);
-                    ui.set_packs_error(text(v, "error").into());
-                }
-            }
             "task.state" => {
                 self.task = v.clone();
                 self.render_task();
+                self.refresh_after_task();
             }
             "tasks.state" => {
                 if let Some(ui) = self.ui.upgrade() {
@@ -759,12 +869,12 @@ impl PackUi {
             }
         }
     }
-    fn options(&mut self, v: &Value) {
+    /// Screenshot fixtures only (`tools/u4a-visuals.ps1`); real options come from `pack_options`.
+    fn options_proof(&mut self, v: &Value) {
         let Some(ui) = self.ui.upgrade() else {
             return;
         };
         let d = &v["draft"];
-        self.global_java_path = text(v, "globalJavaPath").into();
         self.java_was_enabled = d["javaCustomEnabled"] == true;
         ui.set_options_loading(v["loading"] == true);
         ui.set_options_enabled(
@@ -871,6 +981,44 @@ impl PackUi {
                 .collect(),
         );
     }
+}
+#[derive(Default)]
+struct OptionsState {
+    /// Bumped on open and close, so a late reply for another pack is dropped.
+    generation: u64,
+    /// The last loaded or saved draft; `None` while loading.
+    saved: Option<Draft>,
+    failed: bool,
+    saving: bool,
+    total_memory_mb: i32,
+}
+fn to_ui(d: &Draft) -> OptionDraft {
+    OptionDraft {
+        java_custom_enabled: d.java_custom_enabled,
+        java_path: d.java_path.as_str().into(),
+        memory_custom_enabled: d.memory_custom_enabled,
+        max_memory_text: d.max_memory_text.as_str().into(),
+        jdwp_enabled: d.jdwp_enabled,
+        jdwp_param: d.jdwp_param.as_str().into(),
+        custom_jvm_params: d.custom_jvm_params.as_str().into(),
+        forgeguard_disabled: d.forgeguard_disabled,
+    }
+}
+fn from_ui(d: &OptionDraft) -> Draft {
+    Draft {
+        java_custom_enabled: d.java_custom_enabled,
+        java_path: d.java_path.to_string(),
+        memory_custom_enabled: d.memory_custom_enabled,
+        max_memory_text: d.max_memory_text.to_string(),
+        jdwp_enabled: d.jdwp_enabled,
+        jdwp_param: d.jdwp_param.to_string(),
+        custom_jvm_params: d.custom_jvm_params.to_string(),
+        forgeguard_disabled: d.forgeguard_disabled,
+    }
+}
+/// Kotlin showed `cause.message`: the innermost reason, without the context chain.
+fn root_message(error: &anyhow::Error) -> String {
+    error.root_cause().to_string()
 }
 fn text<'a>(v: &'a Value, key: &str) -> &'a str {
     v[key].as_str().unwrap_or("")

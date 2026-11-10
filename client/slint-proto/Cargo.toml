@@ -32,6 +32,12 @@ tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 
 toml = "=0.9.12"
 sysinfo = "=0.40.1"
+# Compiles SQLite from source, so data.db needs no system library (J2 D2).
+rusqlite = { version = "=0.41.1", features = ["bundled"] }
+
+# Load fontconfig at run time, so cross-compiling for Linux needs no pkg-config or sysroot.
+[target.'cfg(target_os = "linux")'.dependencies]
+fontique = { version = "=0.11.1", features = ["fontconfig-dlopen"] }
 
 [target.'cfg(windows)'.dependencies]
 wmi = "=0.18.4"

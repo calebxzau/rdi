@@ -23,10 +23,7 @@ internal class PackService(
     private val logger = KotlinLogging.logger {}
     private var installerScope: CoroutineScope? = null
     private var installer: LocalModpackInstallViewModel? = null
-    private var optionScope: CoroutineScope? = null
-    private var options: ModpackOptionViewModel? = null
     private val subscriptions = mutableMapOf<String, Job>()
-    private var packs = emptyList<ModpackLocalDir>()
     private var playJob: Job? = null
     private var pendingPlay: McPlayArgs? = null
     private var playGeneration = 0L
@@ -46,25 +43,14 @@ internal class PackService(
         replace(topic) { flow.sample(34).collect { emit(topic, encode(it)) } }
     }
 
-    private suspend fun loadPacks(): JsonObject {
-        packs = withContext(Dispatchers.IO) { dependencies.loadPacks() }
-        return buildJsonObject { put("loading", false); put("error", ""); put("packs", buildJsonArray { packs.forEach { add(packSnapshot(it)) } }) }
-    }
-
-    private fun selected(params: JsonObject): ModpackLocalDir =
-        packs.firstOrNull { it.versionId == params.text("versionId") } ?: error("找不到这个整合包，请刷新列表")
+    /** The list lives in Rust since J2, so the pack to play is looked up on demand. */
+    private suspend fun selected(params: JsonObject): ModpackLocalDir =
+        withContext(Dispatchers.IO) { dependencies.findPack(params.text("versionId")) }.getOrElse { cause ->
+            logger.warn(cause) { "查找整合包${params.text("versionId")}失败" }
+            throw cause
+        }
 
     suspend fun handle(method: String, params: JsonObject): JsonObject = when (method) {
-        "installedPacks.subscribe", "installedPacks.refresh" -> {
-            emit("installedPacks.state", buildJsonObject { put("loading", true); put("error", "") })
-            try { loadPacks().also { emit("installedPacks.state", it) } }
-            catch (cause: CancellationException) { throw cause }
-            catch (cause: Exception) {
-                logger.warn(cause) { "读取已安装整合包失败" }
-                buildJsonObject { put("loading", false); put("error", cause.message ?: "读取整合包失败"); put("packs", JsonArray(emptyList())) }.also { emit("installedPacks.state", it) }
-            }
-        }
-        "installedPacks.directory" -> buildJsonObject { put("path", selected(params).dir.absolutePath) }
         "installer.open" -> {
             installerScope?.cancel()
             val owned = CoroutineScope(scope.coroutineContext + SupervisorJob(scope.coroutineContext[Job]))
@@ -118,28 +104,6 @@ internal class PackService(
                 else -> error("不支持的导入操作")
             }
             installerSnapshot(model.state.value)
-        }
-        "packOptions.open" -> {
-            val pack = selected(params)
-            optionScope?.cancel()
-            val owned = CoroutineScope(scope.coroutineContext + SupervisorJob(scope.coroutineContext[Job]))
-            optionScope = owned
-            val model = dependencies.options(pack.versionId, owned)
-            options = model
-            snapshots("packOptions.state", model.uiState, ::optionsSnapshot)
-            optionsSnapshot(model.uiState.value)
-        }
-        "packOptions.action" -> {
-            val model = checkNotNull(options) { "请先打开整合包设置" }
-            when (params.text("action")) {
-                "update" -> model.updateDraft(Json.decodeFromJsonElement(params["draft"] ?: error("缺少设置内容")))
-                "reset" -> model.resetDefaults()
-                "save" -> model.save(params["returnAfterSave"]?.jsonPrimitive?.boolean ?: false)
-                "clearCompleted" -> model.clearCompletedAction()
-                "close" -> { optionScope?.cancel(); options = null; subscriptions.remove("packOptions.state")?.cancel() }
-                else -> error("不支持的设置操作")
-            }
-            optionsSnapshot(model.uiState.value)
         }
         "packPlay.open" -> {
             val pack = selected(params)
@@ -218,12 +182,8 @@ internal class PackService(
                     delay(34)
                     val latest = task.state.value
                     emit("task.state", taskSnapshot(entry, latest))
-                    if (latest.status.isTerminal) {
-                        try { emit("installedPacks.state", loadPacks()) }
-                        catch (cause: CancellationException) { throw cause }
-                        catch (cause: Exception) { logger.warn(cause) { "任务结束后刷新整合包失败" } }
-                        cancel()
-                    }
+                    // Rust refreshes the pack list itself when it sees the terminal snapshot.
+                    if (latest.status.isTerminal) cancel()
                 }
             }
             taskSnapshot(entry, task.state.value)
@@ -244,7 +204,7 @@ internal class PackService(
     }
 
     override fun close() {
-        installerScope?.cancel(); optionScope?.cancel(); playJob?.cancel()
+        installerScope?.cancel(); playJob?.cancel()
         subscriptions.values.forEach(Job::cancel)
         dependencies.close()
     }

@@ -5,18 +5,10 @@ import calebxzhou.rdi.common.model.*
 import calebxzau.rdi.client.ui.viewmodel.*
 import kotlinx.serialization.json.*
 
-private val snapshotJson = Json { encodeDefaults = true }
 private fun ModLoader.launcherLabel(): String = when (this) {
     ModLoader.forge -> "Forge"
     ModLoader.neoforge -> "NeoForge"
     ModLoader.Fabric -> "Fabric"
-}
-
-internal fun packSnapshot(pack: ModpackLocalDir) = buildJsonObject {
-    put("versionId", pack.versionId); put("name", pack.name); put("versionName", pack.verName)
-    put("local", pack.isLocal); put("mcVersion", pack.mcVersion.name); put("modLoader", pack.modLoader.name)
-    put("createdAt", pack.createTime); put("directory", pack.dir.absolutePath)
-    put("icon", pack.iconUrl.orEmpty()); put("comment", pack.comment.orEmpty())
 }
 
 internal fun installerSnapshot(state: LocalModpackInstallState): JsonObject = buildJsonObject {
@@ -84,14 +76,6 @@ internal fun boundedConsoleLines(lines: List<String>, byteLimit: Int = 1_000_000
         if (result.size >= 5000) break
     }
     return result.toList()
-}
-
-internal fun optionsSnapshot(state: ModpackOptionUiState) = buildJsonObject {
-    put("loading", state.loading); put("loadFailed", state.loadFailed); put("saving", state.saving)
-    put("dirty", state.dirty); put("totalMemoryMb", state.totalMemoryMb); put("error", state.errorMessage.orEmpty())
-    put("globalJavaPath", calebxzhou.rdi.common.util.javaExePath.takeIf { Runtime.version().feature() == 25 }.orEmpty())
-    put("navigateBack", state.completedAction == ModpackOptionAction.NAVIGATE_BACK)
-    put("draft", snapshotJson.encodeToJsonElement(state.draft))
 }
 
 /** Stable task paths let the UI expand groups without copying task execution logic. */

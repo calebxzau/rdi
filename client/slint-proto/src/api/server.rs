@@ -187,6 +187,24 @@ impl ServerApi {
         };
         serde_json::from_value(data).map_err(|_| anyhow::anyhow!("服务器数据格式不兼容"))
     }
+    /// A JSON POST whose `data` may be absent, as Kotlin `response.data.orEmpty()` allows.
+    pub async fn post<T: DeserializeOwned + Default>(&self, path: &str, body: &Value) -> Result<T> {
+        let jwt = self.jwt.as_deref().context("请先登录")?;
+        let envelope = self
+            .send(
+                self.http
+                    .post(format!("{}{path}", self.base))
+                    .bearer_auth(jwt)
+                    .json(body),
+                path,
+            )
+            .await?;
+        match envelope.get("data").filter(|v| !v.is_null()) {
+            Some(data) => serde_json::from_value(data.clone())
+                .map_err(|_| anyhow::anyhow!("服务器数据格式不兼容")),
+            None => Ok(T::default()),
+        }
+    }
 }
 fn connection_error(error: reqwest::Error) -> anyhow::Error {
     tracing::warn!(error = %error.without_url(), "服务器连接失败");

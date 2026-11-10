@@ -15,7 +15,7 @@ The Slint launcher currently runs a headless Kotlin process, `ui-service`, for a
 | Phase | Moves to Rust | Kotlin code today | Status |
 |---|---|---|---|
 | **J1** | Login and server requests | `LoginService`, `PlayerService.login`, `RServer`, `data.get` | **Implemented; GJ1 review pending** |
-| J2 | Read-only local data: installed pack list, pack options | `installedPacks.*`, `packOptions.*`, `ModpackService.getLocalPackDirs` | Not designed |
+| J2 | Read-only local data: installed pack list, pack options | `installedPacks.*`, `packOptions.*`, `ModpackService.getLocalPackDirs` | **Done; GJ2 passed 2026-11-10** |
 | J3 | Start the JVM on demand, only for install and game launch | `src/api/mod.rs` | Not designed |
 | J4 | Tasks, downloads, pack install | `tasks.*`, `installer.*`, `pack-proc`, `mod-catalog`, `mc-install` | Not designed |
 | J5 | Game launch, local game proxy, Microsoft login, node routing | `mclaunch`, `host.start`, `game.*`, `packPlay.*`, `NodeRefreshCoordinator` | Not designed |
@@ -340,7 +340,58 @@ Record these. Do not fix them in J1.
 - tracing logs contain ANSI codes around `data=`. Strip them before matching with a regex in scripts.
 - The root `.gitignore` has `**/bin/`. Check `git add -n` if you add anything under a `bin` directory.
 
-## 3. Status
+## 3. Phase J2: installed packs and pack options
+
+Designed 2026-11-10. The owner approved decisions D1-D4 below as recommended.
+
+### Goal
+
+Rust lists installed packs, opens a pack's directory, and reads and saves pack options itself. The service still starts at sign-in (J3 changes that), so the player sees no speed or memory gain yet. J2 removes the reason the 整合包 tab needs the service.
+
+### Out of scope
+
+- Import (`installer.*`), tasks, play (`packPlay.*`), console. They stay in Kotlin until J4/J5.
+- Creating or migrating `data.db`. Kotlin keeps owning the schema until J6.
+- Compose launcher behavior.
+
+### Decisions (approved 2026-11-10)
+
+- **D1** The whole options page moves, including save, although the phase table said read-only.
+- **D2** SQLite through `rusqlite` with the `bundled` feature. It compiles SQLite from C, so it adds a second C build to the macOS cross-check that `aws-lc-sys` already blocks.
+- **D3** If `POST modpack/infos` fails, local-only packs still show and the tab shows 读取整合包信息失败 with refresh. Kotlin today logs the error and silently hides every RDI pack. RDI packs the server no longer knows are skipped with a log line, as today.
+- **D4** Rust never creates or migrates `data.db`. If the file is missing, `application_id` is not `0x524449`, or `user_version` is not 5, the options page shows an error and saving is disabled.
+
+### Code facts
+
+- Kotlin list: `ModpackService.getLocalPackDirs` (`client-core/.../ModpackService.kt`), `scanLocalPackRefs` (`^([0-9a-fA-F]{24})_(.+)$`), `LocalModpackStore.scan` (`local_*` minus `.installing`, metadata in `rdi-local-pack.json`), `localPackCreateTime` (creation time, else last modified), sorted newest first. The versions directory is `<data dir>/mc/versions`.
+- Snapshot fields the UI already reads: `PackSnapshots.kt` `packSnapshot`. `mcVersion` and `modLoader` are Kotlin enum names.
+- Options: `ModpackOptionViewModel` (draft, `buildRecord`, defaults, `DEFAULT_JDWP_PARAM`), `ModpackLaunchOptions.sq`, `SettingsService.validateMemory`, `validateJdkExecutablePath` and `resolveJavaExecutable` (`PlatformUtils.kt`), `parseModpackJvmParams` (`ModpackJvmArgs.kt`). Game launch rereads the row through `ModpackLaunchOptionsService.loadSnapshot`, so a Rust save is used at the next start.
+- `globalJavaPath` is the Java 25 runtime the service runs on. Rust finds the same path through `java_discovery`.
+- `PackService.selected()` looks packs up in the list that `installedPacks.*` loaded. Without that call `packPlay.open` fails with 找不到这个整合包.
+- `tasks.watch` emits `installedPacks.state` when a task ends.
+- `data.db` is opened by Slint, `ui-service` and possibly Compose at once. Kotlin uses the default rollback journal.
+
+### Design
+
+1. `src/local_packs.rs`: scan, `modpack/infos` through the J1 client, merge, sort, and the same JSON shape as `packSnapshot`. Opening a directory uses the path already in the list.
+2. `src/pack_options.rs`: open `data.db` per operation with `busy_timeout`, check D4, read, upsert or delete the row exactly as `buildRecord` decides, and port every validation message unchanged. JDK validation runs `java -XshowSettings:properties -version` off the UI thread.
+3. `src/packs.rs`: stop calling `installedPacks.*`, `packOptions.*`; refresh the list on a terminal `task.state` and after `installer.install` returns a run.
+4. Kotlin `ui-service`: `selected()` finds the pack by `versionId` on demand; remove `installedPacks.*` and `packOptions.*` handlers and their tests; stop the list emission in `tasks.watch`. Update `protocol/fixtures/messages.json`.
+
+### Validation and gate GJ2
+
+- Shared fixtures checked from both sides: JVM parameter cases, memory cases, a versions directory with RDI, local, `.installing` and broken entries.
+- `data.db` both ways: a Kotlin test writes rows that Rust reads, and a row Rust writes passes `loadSnapshot`.
+- `ui-service` tests for the on-demand lookup.
+- Release run with isolated `RDI_DATA_DIR`: list matches Compose; save maximum memory, start a game and confirm `-Xmx`; Compose shows options saved by Slint and the reverse; list refreshes after an install; D3 and D4 errors appear when forced.
+- Write `evidence/jvm-removal/j2/gate-summary.md` and `owner-checklist.md`, then stop. Do not start J3.
+
+## 4. Status
 
 - 2026-11-09: owner approved D1-D5. J1 implemented; Windows Rust/Kotlin validation and isolated release acceptance recorded in `evidence/jvm-removal/j1/gate-summary.md`. GJ1 awaits owner checklist/review. No J2 work started. Known routing, plaintext storage, token expiry and HTTP-cache gaps remain accepted and unchanged.
 - 2026-11-09: GJ1 review fixes applied and revalidated (`config.toml` null values, system proxy, non-Windows build, temp file cleanup). The owner confirmed joining a room, playable rooms and the system proxy, and directed the commit. Still open: Compose and Slint reading each other's accounts, and the hardware spec fields. J2 has not started.
+- 2026-11-10: J2 designed (section 3); owner approved D1-D4 as recommended. Implementation not started.
+- 2026-11-10: owner confirmed Compose and Slint read each other's saved accounts. GJ1 has no open checks.
+- 2026-11-10: J2 implemented. `ui-service` tests 24/24, Rust 51+5, clippy clean, zigbuild checks for macOS and Linux pass (Linux needed `fontique` `fontconfig-dlopen`). The `packOptions.state` fixture stays in `messages.json` as screenshot data only. Live run pending; see `evidence/jvm-removal/j2/gate-summary.md`.
+- 2026-11-10: isolated live run through the slint-ui MCP passed (list, options save and reload, D4, refresh after install, auto sign-in). Found and fixed: tile updates arriving while the window was inactive were dropped (`App::tick`, `refresh_pending`). Owner checks: `evidence/jvm-removal/j2/owner-checklist.md`.
+- 2026-11-10: owner confirmed every GJ2 check (list matches Compose, `-Xmx8192M` in game, options shared both ways, 目录, background refresh) and directed the commit. J3 has not started.

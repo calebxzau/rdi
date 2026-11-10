@@ -63,7 +63,7 @@ private class ServiceSession(private val protocol: Protocol, private val runtime
     private suspend fun handle(scope: CoroutineScope, method: String, params: JsonObject): JsonElement {
         check(handshake || method == "handshake") { "请先连接启动服务" }
         check(loggedIn || method in setOf("handshake", "session.set", "shutdown")) { "请先登录" }
-        if (method.substringBefore('.') in setOf("installedPacks", "installer", "packOptions", "packPlay", "tasks", "console")) {
+        if (method.substringBefore('.') in setOf("installer", "packPlay", "tasks", "console")) {
             return (packs ?: PackService(RuntimePackServiceDependencies(runtime), scope, controller::startSession, ::event).also { packs = it }).handle(method, params)
         }
         return when (method) {

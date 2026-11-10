@@ -142,6 +142,7 @@ pub struct App {
     crowd_skins: Vec<(String, Skin)>,
     epoch: u64,
     paused: Arc<AtomicBool>,
+    refresh_pending: bool,
     fallback: slint::Image,
     /// Kept for the app's lifetime and updated row by row: replacing a model recreates every tile,
     /// and femtovg then uploads every icon again (in-memory images have no shared texture cache).
@@ -195,6 +196,7 @@ impl App {
             crowd_skins: Vec::new(),
             epoch: 0,
             paused,
+            refresh_pending: false,
             fallback,
             tiles,
             interactions: [Interaction::new(), Interaction::new()],
@@ -705,16 +707,14 @@ impl App {
         }
         self.pack_ui.borrow_mut().tick();
         let mut dirty = false;
+        if let Some(packs) = self.pack_ui.borrow_mut().take_packs() {
+            self.packs = packs;
+            dirty = true;
+        }
         if let Some(api) = &self.api {
             for event in api.take_events() {
                 let topic = event["event"].as_str().unwrap_or("");
                 self.pack_ui.borrow_mut().event(topic, &event["params"]);
-                if topic == "installedPacks.state" && let Some(packs) = event["params"].get("packs") {
-                    match serde_json::from_value(packs.clone()) {
-                        Ok(packs) => { self.packs = packs; dirty = true; }
-                        Err(error) => ui.set_packs_error(format!("读取整合包列表失败：{error}").into()),
-                    }
-                }
                 if event["event"] == "game.state" {
                     let state = &event["params"];
                     if let Some(error) = state["errorMessage"].as_str() {
@@ -877,15 +877,18 @@ impl App {
                 _ => {}
             }
         }
+        // A list or tile change that arrives while the window is in the background is kept
+        // until it is active again, instead of being dropped.
+        self.refresh_pending |= dirty;
         if self.paused.load(Ordering::Relaxed) {
             return;
         }
         let scale = ui.window().scale_factor();
         if scale != self.last_scale {
             self.last_scale = scale;
-            dirty = true;
+            self.refresh_pending = true;
         }
-        if dirty {
+        if std::mem::take(&mut self.refresh_pending) {
             self.refresh();
         }
         let mut animated = false;

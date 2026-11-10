@@ -6,6 +6,8 @@ mod paths;
 mod credentials;
 mod hwspec;
 mod packs;
+mod local_packs;
+mod pack_options;
 mod config;
 mod navigation;
 mod shell;

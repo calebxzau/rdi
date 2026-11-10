@@ -53,7 +53,7 @@ impl Connection {
                                 let _ = sender.send(Ok(message));
                             }
                         } else if let Some(event) = message.get("event").and_then(Value::as_str) {
-                            if !matches!(event, "game.state" | "installedPacks.state" | "installer.state" | "packOptions.state" | "packPlay.state" | "tasks.state" | "task.state" | "console.state") {
+                            if !matches!(event, "game.state" | "installer.state" | "packPlay.state" | "tasks.state" | "task.state" | "console.state") {
                                 break "启动服务事件名称无效".into();
                             }
                             match reader_events.lock() {
@@ -310,7 +310,7 @@ mod tests {
     fn u4_snapshots_are_allowed_and_conflated_by_topic() {
         let (connection, mut reader, mut writer) = connect();
         let fake = thread::spawn(move || {
-            for topic in ["installedPacks.state", "installer.state", "packOptions.state", "packPlay.state", "tasks.state", "task.state", "console.state"] {
+            for topic in ["installer.state", "packPlay.state", "tasks.state", "task.state", "console.state"] {
                 for revision in 0..2 {
                     protocol::write_frame(&mut writer, &json!({"event":topic,"params":{"revision":revision}})).unwrap();
                 }
@@ -320,7 +320,7 @@ mod tests {
         });
         connection.request("barrier", json!({}), Duration::from_secs(5)).unwrap();
         let events = connection.events.lock().unwrap();
-        assert_eq!(events.len(), 7);
+        assert_eq!(events.len(), 5);
         assert!(events.values().all(|event| event["params"]["revision"] == 1));
         fake.join().unwrap();
     }

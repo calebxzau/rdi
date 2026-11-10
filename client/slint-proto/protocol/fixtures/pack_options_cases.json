@@ -1,0 +1,220 @@
+{
+  "_comment": "J2: checked by Rust pack_options.rs and Kotlin PackOptionsParityTest; the validated JDK path is passed through unchanged; total memory for records is 16384MB.",
+  "records": [
+    {
+      "name": "defaults delete the row",
+      "draft": {},
+      "record": null
+    },
+    {
+      "name": "blank disabled JDWP is no override",
+      "draft": {
+        "jdwpParam": "   "
+      },
+      "record": null
+    },
+    {
+      "name": "changed disabled JDWP is kept",
+      "draft": {
+        "jdwpParam": " address=*:5006 "
+      },
+      "record": {
+        "javaPath": null,
+        "maxMemoryMb": null,
+        "jdwpEnabled": false,
+        "jdwpParam": "address=*:5006",
+        "customJvmParams": "",
+        "forgeguardDisabled": false
+      }
+    },
+    {
+      "name": "enabled JDWP needs a value",
+      "draft": {
+        "jdwpEnabled": true,
+        "jdwpParam": " "
+      },
+      "error": "请输入JDWP参数"
+    },
+    {
+      "name": "JDWP has no line breaks",
+      "draft": {
+        "jdwpEnabled": true,
+        "jdwpParam": "a\nb"
+      },
+      "error": "JDWP参数不能包含换行"
+    },
+    {
+      "name": "JDWP without the agent prefix",
+      "draft": {
+        "jdwpEnabled": true,
+        "jdwpParam": "-agentlib:jdwp=a"
+      },
+      "error": "JDWP参数只填写等号右侧内容"
+    },
+    {
+      "name": "enabled JDWP",
+      "draft": {
+        "jdwpEnabled": true
+      },
+      "record": {
+        "javaPath": null,
+        "maxMemoryMb": null,
+        "jdwpEnabled": true,
+        "jdwpParam": "transport=dt_socket,server=y,suspend=y,address=*:5005",
+        "customJvmParams": "",
+        "forgeguardDisabled": false
+      }
+    },
+    {
+      "name": "JVM parameters are one per line",
+      "draft": {
+        "customJvmParams": " -Da=1\r\n  \r-Db=2 \n"
+      },
+      "record": {
+        "javaPath": null,
+        "maxMemoryMb": null,
+        "jdwpEnabled": false,
+        "jdwpParam": "transport=dt_socket,server=y,suspend=y,address=*:5005",
+        "customJvmParams": "-Da=1\n-Db=2",
+        "forgeguardDisabled": false
+      }
+    },
+    {
+      "name": "JVM parameters start with a dash",
+      "draft": {
+        "customJvmParams": "Dfoo"
+      },
+      "error": "自定义JVM参数必须以-开头：Dfoo"
+    },
+    {
+      "name": "reserved JVM parameters",
+      "draft": {
+        "customJvmParams": "-Xmx4G"
+      },
+      "error": "该JVM参数由RDI设置管理：-Xmx4G"
+    },
+    {
+      "name": "reserved RDI property",
+      "draft": {
+        "customJvmParams": "-Drdi.play=x"
+      },
+      "error": "该JVM参数由RDI设置管理：-Drdi.play=x"
+    },
+    {
+      "name": "launch structure is fixed",
+      "draft": {
+        "customJvmParams": "-jar"
+      },
+      "error": "xtra jvm param不能修改游戏启动结构：-jar"
+    },
+    {
+      "name": "custom memory",
+      "draft": {
+        "memoryCustomEnabled": true,
+        "maxMemoryText": " 8192 "
+      },
+      "record": {
+        "javaPath": null,
+        "maxMemoryMb": 8192,
+        "jdwpEnabled": false,
+        "jdwpParam": "transport=dt_socket,server=y,suspend=y,address=*:5005",
+        "customJvmParams": "",
+        "forgeguardDisabled": false
+      }
+    },
+    {
+      "name": "custom memory needs a value",
+      "draft": {
+        "memoryCustomEnabled": true,
+        "maxMemoryText": ""
+      },
+      "error": "自定义最大内存必须大于4096MB"
+    },
+    {
+      "name": "custom memory below total",
+      "draft": {
+        "memoryCustomEnabled": true,
+        "maxMemoryText": "20000"
+      },
+      "error": "最大内存必须小于总内存 16384MB"
+    },
+    {
+      "name": "disabled memory text is ignored",
+      "draft": {
+        "maxMemoryText": "abc"
+      },
+      "record": null
+    },
+    {
+      "name": "custom Java is trimmed before validation",
+      "draft": {
+        "javaCustomEnabled": true,
+        "javaPath": "  C:/jdk  "
+      },
+      "record": {
+        "javaPath": "C:/jdk",
+        "maxMemoryMb": null,
+        "jdwpEnabled": false,
+        "jdwpParam": "transport=dt_socket,server=y,suspend=y,address=*:5005",
+        "customJvmParams": "",
+        "forgeguardDisabled": false
+      }
+    },
+    {
+      "name": "forgeguard off",
+      "draft": {
+        "forgeguardDisabled": true
+      },
+      "record": {
+        "javaPath": null,
+        "maxMemoryMb": null,
+        "jdwpEnabled": false,
+        "jdwpParam": "transport=dt_socket,server=y,suspend=y,address=*:5005",
+        "customJvmParams": "",
+        "forgeguardDisabled": true
+      }
+    }
+  ],
+  "memory": [
+    {
+      "text": "",
+      "total": 16384,
+      "error": "自定义最大内存必须大于4096MB"
+    },
+    {
+      "text": "abc",
+      "total": 16384,
+      "error": "最大内存格式不正确"
+    },
+    {
+      "text": "0",
+      "total": 16384,
+      "error": "自定义最大内存必须大于4096MB"
+    },
+    {
+      "text": "4096",
+      "total": 16384,
+      "error": "最大内存必须大于4096MB"
+    },
+    {
+      "text": "16384",
+      "total": 16384,
+      "error": "最大内存必须小于总内存 16384MB"
+    },
+    {
+      "text": " 8192 ",
+      "total": 16384,
+      "value": 8192
+    },
+    {
+      "text": "8192",
+      "total": 0,
+      "value": 8192
+    },
+    {
+      "text": "+5000",
+      "total": 16384,
+      "value": 5000
+    }
+  ]
+}
