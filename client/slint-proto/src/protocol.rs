@@ -3,7 +3,7 @@ use anyhow::{Context, Result, ensure};
 use serde_json::Value;
 use std::io::{Read, Write};
 
-pub const VERSION: u32 = 2;
+pub const VERSION: u32 = 3;
 pub const MAX_FRAME: usize = 8 * 1024 * 1024;
 
 /// EOF is clean only between frames; a partial header or payload is an error.
@@ -50,6 +50,7 @@ mod tests {
     fn shared_golden_frames_round_trip() {
         let fixtures: Vec<Value> =
             serde_json::from_str(include_str!("../protocol/fixtures/messages.json")).unwrap();
+        assert_eq!(fixtures[0]["params"]["protocolVersion"], VERSION);
         let mut bytes = Vec::new();
         for value in &fixtures {
             write_frame(&mut bytes, value).unwrap();

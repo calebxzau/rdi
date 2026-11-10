@@ -6,13 +6,8 @@ import kotlinx.serialization.json.*
 
 /** Decode errors are sanitized: serializers can include the original secret-bearing input. */
 internal class SessionService(
-    private val clearMsa: suspend (String) -> Result<Unit> = { Result.success(Unit) },
     private val assign: (RAccount) -> Unit,
 ) {
-    /** Forgets the account's Microsoft sessions, as the Compose launcher does on logout. */
-    suspend fun clear(accountId: String): Result<JsonObject> =
-        clearMsa(accountId).map { buildJsonObject {} }
-
     fun set(params: JsonObject): Result<JsonObject> = runCatching {
         val account = try {
             val jwt = params["jwt"]?.jsonPrimitive?.content?.takeIf { it.isNotBlank() }

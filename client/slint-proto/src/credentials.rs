@@ -120,7 +120,7 @@ impl Credentials {
         write_atomic(path, &serde_json::to_vec(&data)?)
     }
 }
-fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
+pub(crate) fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
     let parent = path.parent().context("历史账号目录无效")?;
     fs::create_dir_all(parent).context("创建账号目录失败")?;
     static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);

@@ -32,13 +32,16 @@ class PackServiceTest {
     fun `installer returns a task id and closing it stops future snapshots`(): Unit = runBlocking {
         val fixture = Fixture(this)
         fixture.service.use { service ->
+            assertTrue(service.isIdle())
             service.handle("installer.open", obj())
+            assertFalse(service.isIdle())
             service.handle("installer.action", obj("action" to "create", "index" to 0))
             service.handle("installer.action", obj("action" to "name", "value" to "测试整合包"))
             val result = service.handle("installer.install", obj())
             assertEquals("test-run", result.text("runId"))
             assertNotNull(fixture.submitted)
             service.handle("installer.close", obj())
+            assertTrue(service.isIdle())
             val count = fixture.events.size
             delay(80)
             assertEquals(count, fixture.events.size)

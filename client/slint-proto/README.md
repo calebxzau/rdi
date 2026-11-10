@@ -370,14 +370,16 @@ U1 replaces the old M2 work; walking, picking, world expansion and resolution/FP
 
 Build `:ui-service:installDist` from `client/ui` with the Windows wrapper before
 running the Rust UI. The default command discovers JDK25 using the updater's
-candidate search and launches `calebxzau.rdi.service.MainKt` with the development
+candidate search and, on first play/import/task/console action, launches `calebxzau.rdi.service.MainKt` with the development
 service classpath. It uses `client/ui/run` as its data directory. The updater is
 unchanged. Shipping paths and cross-platform packaging are U5 work.
 
 `RDI_SERVICE_COMMAND` accepts a JSON argument array; e.g. an absolute Java path,
 `-cp`, a classpath, and the main class. Credentials are sent in the login request,
 not passed on the child environment or command line. Images still download on
-the Rust side. API requests run through the Kotlin service.
+the Rust side. Login, API requests, installed packs and options run in Rust.
+The child stops after 60 idle seconds with no active game/task or related screen.
+See protocol v3 for lifecycle and recovery.
 
 The protocol is documented in `protocol/README.md`. `tools/service-client.py`
 is an interactive framed JSON client. `tools/u2-service-smoke.ps1` checks the

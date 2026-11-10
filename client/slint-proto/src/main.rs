@@ -4,6 +4,7 @@ mod app;
 mod login;
 mod paths;
 mod credentials;
+mod msa_sessions;
 mod hwspec;
 mod packs;
 mod local_packs;

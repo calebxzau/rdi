@@ -1,11 +1,11 @@
 pub mod model;
 pub mod server;
 use anyhow::{Context, Result, ensure};
-use rdi_slint_proto::service::Service;
+use rdi_slint_proto::{lazy_service::LazyService, service::Service};
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 use server::{ServerApi, Session};
-use std::{process::Command, sync::Arc, time::Duration};
+use std::{process::Command, sync::Arc};
 // Keep the updater source unchanged; its modulo spelling is outside this port.
 #[allow(clippy::manual_is_multiple_of)]
 #[path = "../../../updater/src/java_discovery.rs"]
@@ -14,8 +14,7 @@ mod java_discovery;
 #[derive(Clone)]
 pub struct Client {
     pub http: reqwest::Client,
-    /// Shared without a lock: concurrent calls wait only for their own replies.
-    service: Arc<Service>,
+    service: Arc<LazyService>,
     uid: String,
     server: ServerApi,
     /// The Java 25 the service runs on; Kotlin offered the same path as `globalJavaPath`.
@@ -27,54 +26,37 @@ impl Client {
     }
     fn connect_blocking(server: ServerApi, session: Session) -> Result<Self> {
         let uid = session.uid()?.to_owned();
-        let java_path;
-        let mut command = if let Ok(value) = std::env::var("RDI_SERVICE_COMMAND") {
-            let arguments: Vec<String> =
-                serde_json::from_str(&value).context("RDI_SERVICE_COMMAND必须是JSON参数数组")?;
-            let program = arguments.first().context("启动服务命令为空")?;
-            java_path = program.clone();
-            let mut command = Command::new(program);
-            command.args(&arguments[1..]);
-            command
-        } else {
-            let java = java_discovery::candidate_paths()
-                .into_iter()
-                .find(|path| {
-                    Command::new(path)
-                        .arg("-version")
-                        .output()
-                        .is_ok_and(|output| {
-                            output.status.success()
-                                && String::from_utf8_lossy(&output.stderr).contains("version \"25")
-                        })
+        // Discovery is useful for options, but an unavailable runtime cannot block sign-in.
+        let command = Self::command();
+        let java_path = command
+            .as_ref()
+            .map(|args| args[0].clone())
+            .unwrap_or_default();
+        let command = command.map_err(|error| format!("{error:#}"));
+        let service = LazyService::new(
+            move || {
+                let args = command
+                    .as_ref()
+                    .map_err(|error| anyhow::anyhow!(error.clone()))?;
+                let mut command = Command::new(&args[0]);
+                command
+                    .args(&args[1..])
+                    .env_remove("RDI_PROTO_USR")
+                    .env_remove("RDI_PROTO_PWD");
+                let directory = crate::paths::data_dir();
+                std::fs::create_dir_all(&directory).context("创建启动器数据目录失败")?;
+                command.current_dir(&directory);
+                let log = std::fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(directory.join("ui-service-stderr.log"))?;
+                Service::spawn(&mut command, log).map_err(|error| {
+                    tracing::error!(error=%format!("{error:#}"), "启动准备失败");
+                    anyhow::anyhow!("无法准备游玩，请检查启动器安装")
                 })
-                .context("未找到Java25，请安装JDK25或设置RDI_SERVICE_COMMAND")?;
-            let lib = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-                .join("../ui/ui-service/build/install/ui-service/lib/*");
-            java_path = java.to_string_lossy().into_owned();
-            let mut command = Command::new(java);
-            command
-                .arg("-Djava.awt.headless=true")
-                .arg("-cp")
-                .arg(lib)
-                .arg("calebxzau.rdi.service.MainKt");
-            command
-        };
-        command
-            .env_remove("RDI_PROTO_USR")
-            .env_remove("RDI_PROTO_PWD");
-        let directory = crate::paths::data_dir();
-        std::fs::create_dir_all(&directory).context("创建启动器数据目录失败")?;
-        command.current_dir(&directory);
-        let log = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(directory.join("ui-service-stderr.log"))?;
-        let service = Service::spawn(&mut command, log)?;
-        let result = service.request("session.set", session.params(), Duration::from_secs(60))?;
-        ensure!(
-            result["uid"].as_str() == Some(uid.as_str()),
-            "登录身份不一致"
+            },
+            session.params(),
+            uid.clone(),
         );
         Ok(Self {
             http: server.http.clone(),
@@ -84,13 +66,39 @@ impl Client {
             java_path,
         })
     }
+    fn command() -> Result<Vec<String>> {
+        if let Ok(value) = std::env::var("RDI_SERVICE_COMMAND") {
+            let arguments: Vec<String> = serde_json::from_str(&value)
+                .map_err(|_| anyhow::anyhow!("启动配置无效，请检查启动器安装"))?;
+            ensure!(!arguments.is_empty(), "启动配置为空，请检查启动器安装");
+            return Ok(arguments);
+        }
+        let java = java_discovery::candidate_paths()
+            .into_iter()
+            .find(|path| {
+                Command::new(path)
+                    .arg("-version")
+                    .output()
+                    .is_ok_and(|output| {
+                        output.status.success()
+                            && String::from_utf8_lossy(&output.stderr).contains("version \"25")
+                    })
+            })
+            .context("无法准备游玩，请检查启动器安装")?;
+        let lib = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../ui/ui-service/build/install/ui-service/lib/*");
+        Ok(vec![
+            java.to_string_lossy().into_owned(),
+            "-Djava.awt.headless=true".into(),
+            "-cp".into(),
+            lib.to_string_lossy().into_owned(),
+            "calebxzau.rdi.service.MainKt".into(),
+        ])
+    }
     pub async fn call(&self, method: &str, params: Value) -> Result<Value> {
         let service = self.service.clone();
         let method = method.to_owned();
-        tokio::task::spawn_blocking(move || {
-            service.request(&method, params, Duration::from_secs(60))
-        })
-        .await?
+        tokio::task::spawn_blocking(move || service.request(&method, params)).await?
     }
     pub fn take_events(&self) -> Vec<Value> {
         self.service.take_events().unwrap_or_else(|error| {
@@ -98,11 +106,24 @@ impl Client {
             vec![]
         })
     }
-    pub fn has_exited(&self) -> bool {
-        self.service.has_exited().unwrap_or_else(|error| {
-            tracing::warn!(%error, "检查启动服务失败");
-            true
+    pub fn take_unexpected_exit(&self) -> bool {
+        self.service.take_unexpected_exit().unwrap_or_else(|error| {
+            tracing::warn!(%error, "检查启动准备失败");
+            false
         })
+    }
+    pub fn update_processes(&self, processes: Vec<Value>) {
+        self.service.update_processes(processes);
+    }
+    pub fn stop_immediately(&self) {
+        self.service.stop_immediately();
+    }
+    pub fn idle_due(&self, eligible: bool) -> bool {
+        self.service.idle_due(eligible)
+    }
+    pub async fn stop_if_idle(&self) -> Result<bool> {
+        let service = self.service.clone();
+        tokio::task::spawn_blocking(move || service.stop_if_idle()).await?
     }
     pub fn uid(&self) -> Result<String> {
         ensure!(!self.uid.is_empty(), "请先登录");

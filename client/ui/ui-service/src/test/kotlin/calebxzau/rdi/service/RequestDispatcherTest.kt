@@ -112,7 +112,7 @@ class RequestDispatcherTest {
                 started.complete(Unit)
                 try { awaitCancellation() } finally { cancelled = true }
             }
-            named(method)
+            buildJsonObject { put("stopped", true) }
         }
         val service = launch { harness.dispatcher.run() }
         harness.request(1, "slow")
@@ -124,6 +124,18 @@ class RequestDispatcherTest {
         assertTrue(cancelled)
         harness.closeOutput()
         assertNull(harness.reply(), "a cancelled request must not be answered")
+    }
+
+    @Test
+    fun refusedIdleShutdownKeepsReading(): Unit = runBlocking {
+        val harness = Harness { _, _ -> buildJsonObject { put("stopped", false) } }
+        val service = launch { harness.dispatcher.run() }
+        harness.request(1, "shutdown")
+        assertEquals(1, checkNotNull(harness.reply()).id())
+        harness.request(2, "other")
+        assertEquals(2, checkNotNull(harness.reply()).id())
+        harness.closeInput()
+        service.join()
     }
 
     @Test

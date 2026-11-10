@@ -3,13 +3,13 @@
     "id": 1,
     "method": "handshake",
     "params": {
-      "protocolVersion": 2
+      "protocolVersion": 3
     }
   },
   {
     "id": 1,
     "result": {
-      "protocolVersion": 2
+      "protocolVersion": 3
     }
   },
   {
@@ -264,12 +264,22 @@
     }
   },
   {
-    "id": 3,
-    "method": "session.clear",
-    "params": {}
+    "id": 301,
+    "method": "shutdown",
+    "params": {
+      "ifIdle": true
+    }
   },
   {
-    "id": 3,
-    "result": {}
+    "id": 301,
+    "result": {
+      "stopped": false
+    }
+  },
+  {
+    "id": 302,
+    "result": {
+      "stopped": true
+    }
   }
 ]

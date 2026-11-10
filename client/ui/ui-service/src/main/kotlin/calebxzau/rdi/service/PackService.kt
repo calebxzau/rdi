@@ -50,6 +50,8 @@ internal class PackService(
             throw cause
         }
 
+    fun isIdle(): Boolean = installer == null && playJob?.isActive != true && pendingPlay == null
+
     suspend fun handle(method: String, params: JsonObject): JsonObject = when (method) {
         "installer.open" -> {
             installerScope?.cancel()

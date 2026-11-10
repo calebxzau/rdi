@@ -8,7 +8,7 @@ use crate::{
 };
 use anyhow::Result;
 use slint::{ComponentHandle, ModelRc, VecModel};
-use std::{cell::RefCell, rc::Rc, sync::mpsc, time::Duration};
+use std::{cell::RefCell, rc::Rc, sync::mpsc};
 
 #[derive(Clone)]
 struct Account {
@@ -117,7 +117,10 @@ impl LoginUi {
         let tx = self.tx.clone();
         self.runtime.spawn(async move {
             let result = tokio::task::spawn_blocking(|| {
-                Ok(Accounts::of(&Credentials::load(&crate::credentials::file()), false))
+                Ok(Accounts::of(
+                    &Credentials::load(&crate::credentials::file()),
+                    false,
+                ))
             })
             .await
             .unwrap_or_else(|error| Err(error.into()));
@@ -129,17 +132,21 @@ impl LoginUi {
         self.show();
         let tx = self.tx.clone();
         self.runtime.spawn(async move {
-            match tokio::time::timeout(
-                Duration::from_secs(5),
-                api.call("session.clear", serde_json::json!({})),
-            )
-            .await
-            {
-                Ok(Ok(_)) => {}
-                Ok(Err(error)) => tracing::error!(error=%format!("{error:#}"), "清除正版会话失败"),
-                Err(error) => tracing::error!(%error, "清除正版会话超时"),
-            }
             let result = tokio::task::spawn_blocking(move || {
+                api.stop_immediately();
+                let clear_notice = api
+                    .uid()
+                    .and_then(|uid| {
+                        crate::msa_sessions::clear(
+                            &crate::paths::data_dir().join("msa_sessions.json"),
+                            &uid,
+                        )
+                    })
+                    .err()
+                    .map(|error| {
+                        tracing::error!(error=%format!("{error:#}"), "清除正版会话失败");
+                        "清除正版登录状态失败，请稍后重试".to_owned()
+                    });
                 drop(api);
                 let file = crate::credentials::file();
                 let notice = Credentials::disable_auto_login(&file).err().map(|error| {
@@ -147,7 +154,7 @@ impl LoginUi {
                     "保存退出状态失败，下次启动可能会自动登录".to_owned()
                 });
                 let mut accounts = Accounts::of(&Credentials::load(&file), true);
-                accounts.notice = notice;
+                accounts.notice = clear_notice.or(notice);
                 Ok(accounts)
             })
             .await
@@ -287,7 +294,10 @@ mod tests {
         assert!(Accounts::of(&credentials, false).auto_login_id.is_some());
         let signed_out = Accounts::of(&credentials, true);
         assert!(signed_out.auto_login_id.is_none() && signed_out.signed_out);
-        assert_eq!(signed_out.last_id.as_deref(), Some("0123456789abcdef01234567"));
+        assert_eq!(
+            signed_out.last_id.as_deref(),
+            Some("0123456789abcdef01234567")
+        );
         credentials.auto_login_disabled = true;
         assert!(Accounts::of(&credentials, false).auto_login_id.is_none());
     }

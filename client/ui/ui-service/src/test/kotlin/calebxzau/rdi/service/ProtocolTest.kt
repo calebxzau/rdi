@@ -6,6 +6,8 @@ import java.io.File
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.int
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
@@ -17,6 +19,7 @@ class ProtocolTest {
         val fixtures = Json.parseToJsonElement(
             File("../slint-proto/protocol/fixtures/messages.json").readText()
         ).jsonArray.map { it.jsonObject }
+        assertEquals(Protocol.VERSION, fixtures.first()["params"]!!.jsonObject["protocolVersion"]!!.jsonPrimitive.int)
         val output = ByteArrayOutputStream()
         val writer = Protocol(ByteArrayInputStream(byteArrayOf()), output)
         fixtures.forEach { writer.write(it).getOrThrow() }

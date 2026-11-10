@@ -1,4 +1,4 @@
-# Launcher service protocol v2
+# Launcher service protocol v3
 
 Status: U2/U3 accepted. U4a local-pack methods and snapshots are under validation.
 
@@ -10,7 +10,7 @@ and images are represented by paths or URLs, never by embedded bytes.
 `fixtures/messages.json` is the shared golden corpus read by Rust and Kotlin.
 The fixture credentials are inert examples, never a test account.
 
-The first request must be `handshake` with `params.protocolVersion = 2`.
+The first request must be `handshake` with `params.protocolVersion = 3`.
 A mismatching version receives `PROTOCOL_VERSION_MISMATCH` and a Chinese
 message. No business request may run before the handshake succeeds.
 
@@ -19,7 +19,7 @@ Responses carry the same `id` and exactly one of `result` or `error`.
 Errors carry `code` and a Chinese player-facing `message`. Events carry
 `event` and object `params`, with no `id`.
 
-Implemented methods: `handshake`, `session.set`, `session.clear`, `host.start`, `game.subscribe`,
+Implemented methods: `handshake`, `session.set`, `host.start`, `game.subscribe`,
 `game.stop`, `game.stopAll`, `game.restore`, `shutdown`, and the U4a methods below.
 Login, saved accounts and server data requests run directly in Rust. The old
 `login`, `login.accounts`, `login.saved`, `data.get` and `hostList.*` methods are removed.
@@ -31,8 +31,13 @@ Game snapshots expose preparation, running, stop request and exit messages.
 
 The Rust connection has a 30-second handshake timeout and a 60-second business
 request timeout. A disconnected generation fails its pending requests and is
-never replayed. The menu detects process exit, shows a Chinese reconnect message,
-and starts a fresh service with a new login. State notifications are conflated
+never replayed. Login/menu browsing starts no process. First use shares one start:
+handshake, `session.set` with identity check, `game.restore` if live records exist,
+`game.subscribe`, `tasks.subscribe`, then the caller's request. Failed starts leave
+it stopped for the next action. Unexpected exits show a dismissible error without
+signing out. Live game records trigger immediate restart and recovery; otherwise
+it remains stopped until first use. Import/task/console screens return to the pack
+list after a crash and queued mutations are discarded. State notifications are conflated
 by topic. EOF stops game sessions, closes subscriptions, and exits the JVM so
 network library threads cannot hold it open. Closing the UI with a running game
 requires confirmation, matching Compose's termination behavior.
@@ -52,12 +57,9 @@ dismissible error dialog and do not trigger reauthentication.
 
 ## U4a local packs
 
-- `installedPacks.subscribe` / `installedPacks.refresh`: read the same installed
-  RDI and local packs as Compose, in descending installation-time order. Emit
-  `installedPacks.state` with loading/error/packs. `versionId` identifies a pack;
-  paths supplied by the UI cannot select an arbitrary installed pack.
-- `installedPacks.directory {versionId}` returns its path for the Rust UI to
-  open in the system file manager. `/modpack/search` is no longer allowlisted.
+Installed packs, directories and options are owned by Rust since J2.
+`installedPacks.*` and `packOptions.*` service methods are removed.
+
 - `installer.open`: create a screen-owned Kotlin view model and emit
   `installer.state` snapshots. `installer.close` cancels that screen's scan,
   preview, resolution and subscription; a submitted task continues in the background.
@@ -72,12 +74,6 @@ dismissible error dialog and do not trigger reauthentication.
 - `installer.install {missingFilesConfirmed}` returns `{runId}` when submitted,
   otherwise the screen snapshot with confirmation or validation error. Optional
   files start unchecked. Missing-file confirmation is never inferred by the UI.
-- `packOptions.open {versionId}` emits `packOptions.state` with loading,
-  loadFailed, saving, dirty, totalMemoryMb, error, navigateBack and a draft.
-  `packOptions.action` accepts `update {draft}`, `reset`,
-  `save {returnAfterSave}`, `clearCompleted` and `close`.
-  Draft snapshots encode defaults and include globalJavaPath for the existing
-  custom-JDK toggle's initial value.
 - `packPlay.open {versionId}` returns non-secret account-choice defaults.
   `packPlay.start` takes versionId, mode (`Offline`/`Online`), nickname,
   windowWidth/windowHeight in physical pixels, and allowDuplicateVersion.
@@ -105,15 +101,25 @@ generations. Mutations are never replayed after reconnecting.
 
 ## J1 session handover
 
-`session.clear {}` is sent when the player logs out. It forgets the signed-in account's
-Microsoft sessions and ends the session, and Rust then stops the service. If forgetting
-the sessions fails, the session still ends and the call returns the error.
+`shutdown {ifIdle:true}` is an inline proposal. Kotlin returns `{stopped:true}` and
+ends the loop only when no game is preparing/alive, no unfinished task exists,
+and no installer, active play job or pending play exists. Otherwise it returns
+`{stopped:false}` and keeps reading. Missing/false `ifIdle` stops unconditionally.
+Rust proposes after 60 continuous idle seconds, with all related screens/dialogs
+closed and no queued/in-flight request. The timer runs while inactive/minimized.
+Requests arriving after a proposal wait for its answer and start a new generation
+if accepted. Idle stops show no error; finished tasks and console logs are lost.
+
+Logout stops the process and removes that account from `msa_sessions.json` in Rust
+without starting a process. Missing file/account is a no-op. Other accounts and
+unknown top-level fields survive. Damaged files stay untouched with an error.
+Compose keeps its existing store.
 
 After handshake, `session.set {account,jwt}` and `shutdown` are allowed before
 sign-in; all business methods require a successful session handover.
 `account` is the server RAccount object with `pwd` replaced by an empty string.
 The JWT and any decoding input are never logged. Invalid accounts or blank JWTs
-return `登录信息无效`; success returns `{uid}`. Protocol v1 is rejected.
+return `登录信息无效`; success returns `{uid}`. Earlier versions are rejected.
 
 Rust loads and atomically updates `local_credentials.json`, preserving unknown fields.
 Saved-account selection carries only an ID in Slint. Rust looks up the password

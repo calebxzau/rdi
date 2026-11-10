@@ -380,3 +380,10 @@ passwords remain in Kotlin; Rust receives metadata and sends a saved ID. Real
 credentials use the existing login method. Registration/reset remain stubs.
 See evidence/ui-port/u4b0/gate-summary.md for checks and remaining owner review.
 Stopped at GU4b0; no later account screens or publishing.
+
+
+## 2026-11-10 J3
+
+On-demand process lifecycle, protocol v3 and Rust logout session cleanup implemented.
+GJ3 automated/live validation and owner checks: `evidence/jvm-removal/j3/`.
+No J4 work or commit.

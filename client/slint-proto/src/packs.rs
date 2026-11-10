@@ -1,7 +1,9 @@
 //! U4a UI adapters. Import, tasks and play stay in Kotlin; since J2 the installed pack list
 //! (`local_packs`) and pack options (`pack_options`) are read and written here.
 use crate::{
-    AppWindow, CandidateRow, ContentRow, LogRow, OptionDraft, TaskRow, api::Client, images,
+    AppWindow, CandidateRow, ContentRow, LogRow, OptionDraft, TaskRow,
+    api::Client,
+    images,
     local_packs::{self, PackList},
     pack_options::{self, Draft},
 };
@@ -37,7 +39,11 @@ fn options_title(id: &str, name: &str, version: &str) -> String {
         .filter(|s| !s.trim().is_empty())
         .collect::<Vec<_>>()
         .join(" ");
-    if title.is_empty() { id.to_string() } else { title }
+    if title.is_empty() {
+        id.to_string()
+    } else {
+        title
+    }
 }
 pub use crate::local_packs::InstalledPack;
 enum Reply {
@@ -58,6 +64,8 @@ pub struct PackUi {
     queue: VecDeque<(String, Value)>,
     busy: bool,
     installer: Value,
+    /// An `installer.open` is queued or in flight, so a close must still follow it.
+    installer_opening: bool,
     contents: Vec<Value>,
     visible_keys: Vec<String>,
     filter: (String, i32, bool),
@@ -115,6 +123,7 @@ impl PackUi {
             queue: VecDeque::new(),
             busy: false,
             installer: Value::Null,
+            installer_opening: false,
             contents: vec![],
             visible_keys: vec![],
             filter: (String::new(), 0, false),
@@ -165,7 +174,9 @@ impl PackUi {
                     ui.set_options_title(options_title("", "测试整合包", "1.21.1").into());
                 }
                 match serde_json::from_str::<Value>(value.as_str()) {
-                    Ok(value) if topic == "packOptions.state" => state.borrow_mut().options_proof(&value),
+                    Ok(value) if topic == "packOptions.state" => {
+                        state.borrow_mut().options_proof(&value)
+                    }
                     Ok(value) => state.borrow_mut().event(topic.as_str(), &value),
                     Err(error) => tracing::error!(%error,"截图样例数据无效"),
                 }
@@ -177,13 +188,17 @@ impl PackUi {
         self.generation += 1;
         self.busy = false;
         self.queue.clear();
-        self.global_java_path = api.as_ref().map(|a| a.java_path.clone()).unwrap_or_default();
+        self.global_java_path = api
+            .as_ref()
+            .map(|a| a.java_path.clone())
+            .unwrap_or_default();
         self.api = api;
         // A list still loading for the previous session must not reach the next one.
         self.packs_generation += 1;
         self.loaded_packs = None;
         self.pack_dirs.clear();
         self.installer = Value::Null;
+        self.installer_opening = false;
         self.last_device_uri.clear();
         self.pending_images.clear();
         self.failed_images.clear();
@@ -196,7 +211,6 @@ impl PackUi {
             ui.set_tasks_running(false);
             self.picked.clear();
             if self.api.is_some() {
-                self.call("tasks.subscribe", json!({}));
                 self.refresh_packs();
                 if ui.get_pack_screen() == 1 {
                     self.call("installer.open", json!({}));
@@ -204,7 +218,44 @@ impl PackUi {
             }
         }
     }
+    pub fn service_idle(&self) -> bool {
+        !self.busy && self.queue.is_empty()
+    }
+    pub fn service_lost(&mut self) {
+        // Never replay commands queued for a lost generation.
+        self.generation += 1;
+        self.queue.clear();
+        self.busy = false;
+        self.installer = Value::Null;
+        self.installer_opening = false;
+        self.task = Value::Null;
+        self.last_device_uri.clear();
+        self.task_list.clear();
+        self.tasks.clear();
+        self.logs.clear();
+        self.sessions.clear();
+        if let Some(ui) = self.ui.upgrade() {
+            // The options page and the menu need no process; only its own screens are left.
+            let leave = ui.get_pack_screen() == 1 || ui.get_activity_panel() != 0;
+            ui.set_local_play(false);
+            ui.set_play_busy(false);
+            ui.set_install_scanning(false);
+            ui.set_install_editor(false);
+            ui.set_activity_panel(0);
+            ui.set_action_error("".into());
+            ui.set_duplicate_host("".into());
+            ui.set_install_missing(false);
+            ui.set_pack_menu(false);
+            self.picked.clear();
+            if leave {
+                ui.set_discard_options(false);
+                self.navigate("packs");
+            }
+            ui.set_tasks_running(false);
+        }
+    }
     fn call(&mut self, method: &str, params: Value) {
+        self.installer_opening |= method == "installer.open";
         self.queue.push_back((method.into(), params));
         self.pump();
     }
@@ -249,6 +300,8 @@ impl PackUi {
             ui.set_pack_menu(false);
             ui.set_play_error("".into());
             ui.set_play_device_uri("".into());
+            ui.set_local_play(true);
+            ui.set_play_busy(true);
             self.call(
                 "packPlay.open",
                 json!({"versionId":ui.get_pack_selected_id().as_str()}),
@@ -264,6 +317,7 @@ impl PackUi {
             return;
         };
         self.packs_generation += 1;
+        tracing::info!(generation=self.packs_generation,"整合包列表刷新");
         if let Some(ui) = self.ui.upgrade() {
             ui.set_packs_loading(true);
             ui.set_packs_error("".into());
@@ -285,7 +339,10 @@ impl PackUi {
     }
     fn open_options(&mut self, ui: &AppWindow) {
         let version_id = ui.get_pack_selected_id().to_string();
-        self.options = OptionsState { generation: self.options.generation + 1, ..Default::default() };
+        self.options = OptionsState {
+            generation: self.options.generation + 1,
+            ..Default::default()
+        };
         // Like Kotlin's loading snapshot: defaults, not the previous pack's values.
         ui.set_options_draft(to_ui(&Draft::default()));
         self.render_options(ui);
@@ -307,7 +364,11 @@ impl PackUi {
         ui.set_options_loading(o.saved.is_none() && !o.failed);
         ui.set_options_enabled(o.saved.is_some() && !o.failed && !o.saving);
         ui.set_options_total_memory(o.total_memory_mb);
-        ui.set_options_dirty(o.saved.as_ref().is_some_and(|saved| *saved != from_ui(&ui.get_options_draft())));
+        ui.set_options_dirty(
+            o.saved
+                .as_ref()
+                .is_some_and(|saved| *saved != from_ui(&ui.get_options_draft())),
+        );
     }
     /// Kotlin `updateDraft`: a new draft clears the error and recomputes dirty.
     fn options_update(&mut self, ui: &AppWindow) {
@@ -352,7 +413,9 @@ impl PackUi {
                 ui.set_install_scanning(true);
                 self.call("installer.open", json!({}));
             }
-            "installer.close" => self.call("installer.close", json!({})),
+            "installer.close" if self.installer.is_null() && !self.installer_opening => {}
+            "installer.close" => { self.installer = Value::Null; self.call("installer.close", json!({})); }
+            "installer.dismissError" if self.installer.is_null() => {}
             "installer.pickArchive" | "installer.pickDirectory" | "options.pickJdk" => {
                 self.pick(action)
             }
@@ -422,7 +485,10 @@ impl PackUi {
                 self.navigate("back");
             }
             "options.close" => {
-                self.options = OptionsState { generation: self.options.generation + 1, ..Default::default() };
+                self.options = OptionsState {
+                    generation: self.options.generation + 1,
+                    ..Default::default()
+                };
             }
             "play.nickname" => {
                 ui.set_play_nonstandard_name(!standard_name(value));
@@ -430,6 +496,7 @@ impl PackUi {
             "play.browser" => self.open_url(value),
             "play.cancel" => {
                 ui.set_local_play(false);
+                ui.set_play_busy(false);
                 self.call("packPlay.cancel", json!({}));
             }
             "play.start" | "play.duplicate" => {
@@ -544,6 +611,7 @@ impl PackUi {
         while let Ok(reply) = self.rx.try_recv() {
             match reply {
                 Reply::Packs(g, list) if g == self.packs_generation => {
+                    tracing::info!(generation=g,count=list.packs.len(),"整合包列表已读取");
                     if let Some(ui) = self.ui.upgrade() {
                         ui.set_packs_loading(false);
                         ui.set_packs_error(list.error.as_str().into());
@@ -589,6 +657,7 @@ impl PackUi {
                 }
                 Reply::Service(g,method,result) if g==self.generation=>{
                     self.busy=false;
+                    if method == "installer.open" { self.installer_opening = false; }
                     match result {
                         Ok(v)=>match method.as_str() {
                             "installer.open"=>self.installer(&v),
@@ -602,13 +671,18 @@ impl PackUi {
                                 self.play(&v);
                                 if v["local"]==false{self.action("play.start","");}
                             }
+                            "installer.close"=>self.installer=Value::Null,
                             "tasks.watch"=>{self.task=v;self.render_task();self.refresh_after_task();}
                             _=>{}
                         },
                         Err(error)=>if let Some(ui)=self.ui.upgrade(){
+                            self.queue.clear();
+                            self.installer_opening = false;
                             ui.set_action_error(format!("{error:#}").into());
                             if method.starts_with("installer"){ui.set_install_can_submit(self.installer["editor"]["canSubmit"]==true);}
                             ui.set_play_busy(false);
+                            if method == "installer.open" { ui.set_install_scanning(false); }
+                            if method == "packPlay.open" { ui.set_local_play(false); }
                         }
                     }
                     self.pump();
@@ -750,7 +824,10 @@ impl PackUi {
         ui.set_install_comment(text(e, "comment").into());
         ui.set_install_icon(text(e, "iconUrl").into());
         ui.set_install_missing(e["confirmMissingFiles"] == true);
-        let missing: Vec<_> = array(e, "missingFiles").iter().filter_map(Value::as_str).collect();
+        let missing: Vec<_> = array(e, "missingFiles")
+            .iter()
+            .filter_map(Value::as_str)
+            .collect();
         ui.set_install_missing_count(missing.len() as i32);
         ui.set_install_missing_text(format!("这些文件的作者不允许第三方下载，或者在CurseForge上找不到。继续导入将不包含它们，你可以之后自己放进整合包文件夹。\n{}",missing.iter().map(|name| format!("· {name}")).collect::<Vec<_>>().join("\n")).into());
         let candidates = |key| {
@@ -1059,7 +1136,10 @@ mod tests {
 
     #[test]
     fn options_title_joins_names_like_compose() {
-        assert_eq!(options_title("v1", "测试整合包", "1.21.1"), "测试整合包 1.21.1");
+        assert_eq!(
+            options_title("v1", "测试整合包", "1.21.1"),
+            "测试整合包 1.21.1"
+        );
         assert_eq!(options_title("v1", "测试整合包", " "), "测试整合包");
         assert_eq!(options_title("v1", "", ""), "v1");
     }

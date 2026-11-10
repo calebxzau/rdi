@@ -46,6 +46,7 @@ struct CachedArt {
 enum Event {
     Loaded(u64, Result<Loaded>),
     Started(Result<serde_json::Value>),
+    IdleStopped(Result<bool>),
     Appearance(u64, Result<Appearance>),
     CrowdSkin(u64, String, Skin),
     Page(u64, Result<Vec<HostBrief>>),
@@ -128,6 +129,7 @@ pub struct App {
     /// The signed-in session, also while the menu is still loading and `api` is empty.
     session: Option<Client>,
     running_processes: Vec<serde_json::Value>,
+    idle_pending: bool,
     login_ui: Rc<RefCell<crate::login::LoginUi>>,
     pack_ui: Rc<RefCell<crate::packs::PackUi>>,
     heads: HeadCache,
@@ -184,6 +186,7 @@ impl App {
             pack_ui,
             login_ui,
             running_processes: vec![],
+            idle_pending: false,
             heads: HeadCache::default(),
             cache: lru::LruCache::new(NonZeroUsize::new(60).unwrap()),
             jobs: HashMap::new(),
@@ -206,7 +209,11 @@ impl App {
             last_scale: 0.0,
         }));
         Self::wire(&app, ui);
-        if !app.borrow().config.ui_proof && !app.borrow().config.gallery { app.borrow_mut().login(); } else { ui.set_loading(false); }
+        if !app.borrow().config.ui_proof && !app.borrow().config.gallery {
+            app.borrow_mut().login();
+        } else {
+            ui.set_loading(false);
+        }
         Ok(app)
     }
     fn wire(app: &Rc<RefCell<Self>>, ui: &AppWindow) {
@@ -310,6 +317,7 @@ impl App {
                 } else if tab == 0 && !right {
                     let a = a.borrow();
                     if let Some(api) = a.api.clone() {
+                        if let Some(ui) = a.ui.upgrade() { ui.set_loading(true); ui.set_game_status("正在准备".into()); }
                         let id = entry.id.clone();
                         let size = a.ui.upgrade().map(|ui| ui.window().size()).unwrap_or(slint::PhysicalSize::new(1280, 720));
                         let tx = a.tx.clone();
@@ -347,6 +355,8 @@ impl App {
                         app.pack_ui.borrow_mut().action("play.duplicate", "");
                         return;
                     }
+                    ui.set_loading(true);
+                    ui.set_game_status("正在准备".into());
                     let size = ui.window().size();
                     let tx = app.tx.clone();
                     app.runtime.spawn(async move {
@@ -406,7 +416,12 @@ impl App {
         let Some(ui) = self.ui.upgrade() else {
             return;
         };
-        if ui.get_game_running() || ui.get_tasks_running() {
+        if ui.get_game_running()
+            || ui.get_tasks_running()
+            || ui.get_play_busy()
+            || ui.get_loading()
+            || !self.pack_ui.borrow().service_idle()
+        {
             ui.set_action_error("游戏或任务正在运行，结束后才能退出登录".into());
             return;
         }
@@ -414,6 +429,7 @@ impl App {
             return;
         };
         self.stop_jobs();
+        self.idle_pending = false;
         self.api = None;
         self.hosts = Hosts::default();
         self.packs.clear();
@@ -479,7 +495,7 @@ impl App {
         let tx = self.tx.clone();
         let epoch = self.epoch;
         let heads = self.heads.clone();
-        let running_processes = self.running_processes.clone();
+        api.update_processes(self.running_processes.clone());
         self.login_job = Some(self.runtime.spawn(async move {
             let result = async {
                 let uid = api.uid()?;
@@ -487,10 +503,6 @@ impl App {
                 let mine = api.get("/host/my").await?;
                 let page = api.get("/host/list/0").await?;
                 let packs = Vec::new();
-                if !running_processes.is_empty() {
-                    api.call("game.restore", serde_json::json!({"sessions":running_processes})).await?;
-                }
-                api.call("game.subscribe", serde_json::json!({})).await?;
                 let head = match heads.get(&api, &uid).await {
                     Ok(h) => h,
                     Err(e) => {
@@ -544,7 +556,11 @@ impl App {
                 .map(|m| Entry {
                     id: m.id.clone(),
                     name: m.name.clone(),
-                    detail: format!("{} · {}", if m.local { "本地导入" } else { "RDI" }, m.version),
+                    detail: format!(
+                        "{} · {}",
+                        if m.local { "本地导入" } else { "RDI" },
+                        m.version
+                    ),
                     url: m.icon.clone(),
                     owner: None,
                     heads: vec![],
@@ -696,14 +712,28 @@ impl App {
     }
     pub fn tick(&mut self, dt: f32) {
         let authenticated = self.login_ui.borrow_mut().tick();
-        if let Some(api) = authenticated { self.load_menu(api); }
+        if let Some(api) = authenticated {
+            self.load_menu(api);
+        }
         let Some(ui) = self.ui.upgrade() else {
             return;
         };
-        if self.api.as_ref().is_some_and(Client::has_exited) {
-            self.login();
-            ui.set_error("启动服务意外退出，正在重新连接".into());
-            return;
+        if self.api.as_ref().is_some_and(Client::take_unexpected_exit) {
+            self.pack_ui.borrow_mut().service_lost();
+            // Navigate first; the shell blocks navigation while an error dialog is open.
+            let weak = self.ui.clone();
+            let _ = weak.upgrade_in_event_loop(|ui| ui.set_action_error("启动服务意外退出".into()));
+            if self.running_processes.is_empty() {
+                ui.set_game_running(false);
+                ui.set_game_status("".into());
+                ui.set_tasks_running(false);
+            } else if let Some(api) = self.api.clone() {
+                let tx = self.tx.clone();
+                self.runtime.spawn(async move {
+                    let result = api.call("game.subscribe", serde_json::json!({})).await;
+                    let _ = tx.send(Event::Started(result));
+                });
+            }
         }
         self.pack_ui.borrow_mut().tick();
         let mut dirty = false;
@@ -721,14 +751,34 @@ impl App {
                         ui.set_action_error(error.into());
                         continue;
                     }
-                    ui.set_game_running(state["running"].as_bool().unwrap_or(false));
+                    ui.set_game_running(
+                        state["running"] == true
+                            || state["sessions"].as_array().is_some_and(|sessions| {
+                                sessions.iter().any(|s| s["preparing"] == true)
+                            }),
+                    );
                     if let Some(sessions) = state["sessions"].as_array() {
-                        self.running_processes = sessions.iter().filter_map(|session| session.get("process").cloned()).collect();
-                        let status = sessions.iter().map(|session| {
-                            let title = session["title"].as_str().unwrap_or("游戏");
-                            let status = if session["preparing"] == true { "启动中" } else if session["running"] == true { "运行中" } else { session["exitMessage"].as_str().unwrap_or("已结束") };
-                            format!("{title}：{status}")
-                        }).collect::<Vec<_>>().join("；");
+                        self.running_processes = sessions
+                            .iter()
+                            .filter(|s| s["running"] == true || s["preparing"] == true)
+                            .filter_map(|session| session.get("process").cloned())
+                            .collect();
+                        api.update_processes(self.running_processes.clone());
+                        let status = sessions
+                            .iter()
+                            .map(|session| {
+                                let title = session["title"].as_str().unwrap_or("游戏");
+                                let status = if session["preparing"] == true {
+                                    "启动中"
+                                } else if session["running"] == true {
+                                    "运行中"
+                                } else {
+                                    session["exitMessage"].as_str().unwrap_or("已结束")
+                                };
+                                format!("{title}：{status}")
+                            })
+                            .collect::<Vec<_>>()
+                            .join("；");
                         ui.set_game_status(status.into());
                     }
                 }
@@ -736,17 +786,29 @@ impl App {
         }
         while let Ok(event) = self.rx.try_recv() {
             match event {
+                Event::IdleStopped(result) => {
+                    self.idle_pending = false;
+                    if let Err(error) = result {
+                        tracing::warn!(%error, "空闲准备结束失败");
+                    }
+                }
                 Event::Started(result) => {
+                    ui.set_loading(false);
+                    if !ui.get_game_running() {
+                        ui.set_game_status("".into());
+                    }
                     if let Some(ui) = self.ui.upgrade() {
                         match result {
                             Ok(value) if value["duplicateVersion"] == true => {
-                                ui.set_duplicate_host(value["hostId"].as_str().unwrap_or("").into());
+                                ui.set_duplicate_host(
+                                    value["hostId"].as_str().unwrap_or("").into(),
+                                );
                             }
-                            Ok(_) => {},
+                            Ok(_) => {}
                             Err(error) => ui.set_action_error(format!("{error:#}").into()),
                         }
                     }
-                },
+                }
                 Event::Loaded(epoch, result) if epoch == self.epoch => {
                     self.login_job = None;
                     ui.set_loading(false);
@@ -877,6 +939,26 @@ impl App {
                 _ => {}
             }
         }
+        // Lifecycle work must run even while the window is inactive or minimized.
+        if !self.idle_pending
+            && let Some(api) = &self.api
+        {
+            let eligible = !ui.get_game_running()
+                && !ui.get_tasks_running()
+                && ui.get_pack_screen() != 1
+                && ui.get_activity_panel() == 0
+                && !ui.get_local_play()
+                && !ui.get_play_busy()
+                && self.pack_ui.borrow().service_idle();
+            if api.idle_due(eligible) {
+                self.idle_pending = true;
+                let api = api.clone();
+                let tx = self.tx.clone();
+                self.runtime.spawn(async move {
+                    let _ = tx.send(Event::IdleStopped(api.stop_if_idle().await));
+                });
+            }
+        }
         // A list or tile change that arrives while the window is in the background is kept
         // until it is active again, instead of being dropped.
         self.refresh_pending |= dirty;
@@ -918,7 +1000,13 @@ impl App {
         }
     }
     pub fn frame(&self, ui: &AppWindow) -> glass::Frame {
-        crate::shell::frame(ui, &self.interactions, &self.pills, &self.pivots, self.selected)
+        crate::shell::frame(
+            ui,
+            &self.interactions,
+            &self.pills,
+            &self.pivots,
+            self.selected,
+        )
     }
 }
 /// Updates `model` to `rows`, touching only rows that changed so unchanged tiles keep their textures.
@@ -937,6 +1025,9 @@ fn sync_rows(model: &VecModel<TileData>, rows: Vec<TileData>) {
 }
 impl Drop for App {
     fn drop(&mut self) {
+        if let Some(api) = &self.session {
+            api.stop_immediately();
+        }
         for job in self.jobs.values() {
             job.abort();
         }

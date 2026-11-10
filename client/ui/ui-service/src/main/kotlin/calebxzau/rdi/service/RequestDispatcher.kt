@@ -21,7 +21,7 @@ import kotlinx.serialization.json.put
  * Handlers inherit the caller's dispatcher. Under `runBlocking` they all resume on one
  * thread, so session state needs no locks as long as handlers only leave that thread
  * through `withContext`. Handshake and shutdown run inline: nothing after a handshake
- * is read before it completes, and shutdown cancels the requests still in flight
+ * is read before it completes, and an accepted shutdown cancels requests still in flight
  * without answering them (the client sees the stream end instead).
  *
  * A failed write means the protocol stream is gone; it fails [run] instead of being
@@ -43,8 +43,7 @@ internal class RequestDispatcher(
                 }
                 val method = (request["method"] as? JsonPrimitive)?.takeIf { it.isString }?.content
                 if (method == null || method in INLINE_METHODS) {
-                    respond(id, method, request)
-                    if (method == SHUTDOWN) break
+                    if (respond(id, method, request) && method == SHUTDOWN) break
                 } else {
                     launch { respond(id, method, request) }
                 }
@@ -54,7 +53,7 @@ internal class RequestDispatcher(
         }
     }
 
-    private suspend fun respond(id: Long, method: String?, request: JsonObject) {
+    private suspend fun respond(id: Long, method: String?, request: JsonObject): Boolean {
         val reply = try {
             checkNotNull(method) { "请求缺少方法" }
             val params = when (val value = request["params"]) {
@@ -77,6 +76,7 @@ internal class RequestDispatcher(
             }
         }
         protocol.write(reply).getOrThrow()
+        return (reply["result"] as? JsonObject)?.get("stopped") == JsonPrimitive(true)
     }
 
     companion object {

@@ -53,7 +53,15 @@ impl Connection {
                                 let _ = sender.send(Ok(message));
                             }
                         } else if let Some(event) = message.get("event").and_then(Value::as_str) {
-                            if !matches!(event, "game.state" | "installer.state" | "packPlay.state" | "tasks.state" | "task.state" | "console.state") {
+                            if !matches!(
+                                event,
+                                "game.state"
+                                    | "installer.state"
+                                    | "packPlay.state"
+                                    | "tasks.state"
+                                    | "task.state"
+                                    | "console.state"
+                            ) {
                                 break "启动服务事件名称无效".into();
                             }
                             match reader_events.lock() {
@@ -175,11 +183,24 @@ impl Connection {
 
 /// Share it with `Arc`; it needs no outer lock.
 pub struct Service {
-    child: Mutex<Child>,
+    child: Mutex<Option<Child>>,
     connection: Connection,
 }
 
 impl Service {
+    #[cfg(test)]
+    pub(crate) fn fake(
+        output: impl Read + Send + 'static,
+        input: impl Write + Send + 'static,
+    ) -> Result<Self> {
+        let service = Self {
+            child: Mutex::new(None),
+            connection: Connection::start(output, input),
+        };
+        service.connection.handshake()?;
+        Ok(service)
+    }
+
     /// The caller chooses Java and the classpath, or supplies the development command.
     /// stderr is a file, never a pipe that can fill and block the service.
     pub fn spawn(command: &mut Command, log: File) -> Result<Self> {
@@ -193,11 +214,36 @@ impl Service {
         let output = child.stdout.take().context("启动服务输出不可用")?;
         // Built before the handshake so a failed handshake still stops the child in Drop.
         let service = Self {
-            child: Mutex::new(child),
+            child: Mutex::new(Some(child)),
             connection: Connection::start(output, input),
         };
         service.connection.handshake()?;
         Ok(service)
+    }
+
+    /// Ends this generation even when pending callers still hold an Arc.
+    pub fn terminate(&self) {
+        self.connection.close_input();
+        if let Ok(mut child) = self.child.lock()
+            && let Some(child) = child.as_mut()
+        {
+            for _ in 0..40 {
+                match child.try_wait() {
+                    Ok(Some(_)) => return,
+                    Ok(None) => thread::sleep(Duration::from_millis(50)),
+                    Err(error) => {
+                        tracing::warn!(%error, "检查启动准备结束失败");
+                        break;
+                    }
+                }
+            }
+            if let Err(error) = child.kill() {
+                tracing::warn!(%error, "结束启动准备失败");
+            }
+            if let Err(error) = child.wait() {
+                tracing::warn!(%error, "等待启动准备结束失败");
+            }
+        }
     }
 
     pub fn request(&self, method: &str, params: Value, timeout: Duration) -> Result<Value> {
@@ -210,12 +256,17 @@ impl Service {
     }
 
     pub fn has_exited(&self) -> Result<bool> {
-        self.child
+        let mut child = self
+            .child
             .lock()
-            .map_err(|_| anyhow::anyhow!("启动服务进程锁损坏"))?
-            .try_wait()
-            .map(|status| status.is_some())
-            .context("检查启动服务失败")
+            .map_err(|_| anyhow::anyhow!("启动服务进程锁损坏"))?;
+        match child.as_mut() {
+            Some(child) => child
+                .try_wait()
+                .map(|status| status.is_some())
+                .context("检查启动服务失败"),
+            None => Ok(!self.connection.connected.load(Ordering::Acquire)),
+        }
     }
 }
 
@@ -225,6 +276,9 @@ impl Drop for Service {
         let child = match self.child.get_mut() {
             Ok(child) => child,
             Err(poisoned) => poisoned.into_inner(),
+        };
+        let Some(child) = child.as_mut() else {
+            return;
         };
         for _ in 0..40 {
             match child.try_wait() {
@@ -268,12 +322,18 @@ mod tests {
             let slow = protocol::read_frame(&mut service_reader).unwrap().unwrap();
             let fast = protocol::read_frame(&mut service_reader).unwrap().unwrap();
             assert_eq!(slow["method"], "slow");
-            protocol::write_frame(&mut service_writer, &json!({"id": fast["id"], "result": {"name": "fast"}}))
-                .unwrap();
+            protocol::write_frame(
+                &mut service_writer,
+                &json!({"id": fast["id"], "result": {"name": "fast"}}),
+            )
+            .unwrap();
             // The slow reply waits until the fast caller has its answer.
             fast_done_rx.recv_timeout(Duration::from_secs(5)).unwrap();
-            protocol::write_frame(&mut service_writer, &json!({"id": slow["id"], "result": {"name": "slow"}}))
-                .unwrap();
+            protocol::write_frame(
+                &mut service_writer,
+                &json!({"id": slow["id"], "result": {"name": "slow"}}),
+            )
+            .unwrap();
         });
         let slow = {
             let connection = connection.clone();
@@ -310,18 +370,34 @@ mod tests {
     fn u4_snapshots_are_allowed_and_conflated_by_topic() {
         let (connection, mut reader, mut writer) = connect();
         let fake = thread::spawn(move || {
-            for topic in ["installer.state", "packPlay.state", "tasks.state", "task.state", "console.state"] {
+            for topic in [
+                "installer.state",
+                "packPlay.state",
+                "tasks.state",
+                "task.state",
+                "console.state",
+            ] {
                 for revision in 0..2 {
-                    protocol::write_frame(&mut writer, &json!({"event":topic,"params":{"revision":revision}})).unwrap();
+                    protocol::write_frame(
+                        &mut writer,
+                        &json!({"event":topic,"params":{"revision":revision}}),
+                    )
+                    .unwrap();
                 }
             }
             let barrier = protocol::read_frame(&mut reader).unwrap().unwrap();
             protocol::write_frame(&mut writer, &json!({"id":barrier["id"],"result":{}})).unwrap();
         });
-        connection.request("barrier", json!({}), Duration::from_secs(5)).unwrap();
+        connection
+            .request("barrier", json!({}), Duration::from_secs(5))
+            .unwrap();
         let events = connection.events.lock().unwrap();
         assert_eq!(events.len(), 5);
-        assert!(events.values().all(|event| event["params"]["revision"] == 1));
+        assert!(
+            events
+                .values()
+                .all(|event| event["params"]["revision"] == 1)
+        );
         fake.join().unwrap();
     }
 }

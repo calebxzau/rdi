@@ -1,0 +1,7 @@
+{
+  "accounts": {
+    "fake-account-a": {"fake-profile-a": "{\"fake\":\"session-a\"}"},
+    "fake-account-b": {"fake-profile-b": "{\"fake\":\"session-b\"}"}
+  },
+  "future": 7
+}

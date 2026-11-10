@@ -19,16 +19,6 @@ class SessionServiceTest {
     }
 
     @Test
-    fun clearForgetsTheAccountsMicrosoftSessionsAndReportsFailure(): Unit = runBlocking {
-        var cleared: String? = null
-        val service = SessionService({ cleared = it; Result.success(Unit) }) { fail("must not assign") }
-        assertEquals(buildJsonObject {}, service.clear("fake-account").getOrThrow())
-        assertEquals("fake-account", cleared)
-        val failing = SessionService({ Result.failure(IllegalStateException("fake failure")) }) { fail("must not assign") }
-        assertEquals("fake failure", failing.clear("fake-account").exceptionOrNull()?.message)
-    }
-
-    @Test
     fun invalidSessionNeverIncludesOriginalInputOrCause() {
         for (params in listOf(
             buildJsonObject { put("jwt", " ") },

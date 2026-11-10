@@ -16,7 +16,7 @@ The Slint launcher currently runs a headless Kotlin process, `ui-service`, for a
 |---|---|---|---|
 | **J1** | Login and server requests | `LoginService`, `PlayerService.login`, `RServer`, `data.get` | **Implemented; GJ1 review pending** |
 | J2 | Read-only local data: installed pack list, pack options | `installedPacks.*`, `packOptions.*`, `ModpackService.getLocalPackDirs` | **Done; GJ2 passed 2026-11-10** |
-| J3 | Start the JVM on demand, only for install and game launch | `src/api/mod.rs` | Not designed |
+| J3 | Start the JVM on demand, only for install and game launch | `src/api/mod.rs` | **Done; owner accepted GJ3 2026-11-10** |
 | J4 | Tasks, downloads, pack install | `tasks.*`, `installer.*`, `pack-proc`, `mod-catalog`, `mc-install` | Not designed |
 | J5 | Game launch, local game proxy, Microsoft login, node routing | `mclaunch`, `host.start`, `game.*`, `packPlay.*`, `NodeRefreshCoordinator` | Not designed |
 | J6 | Remove `ui-service`, package and switch | Updater and release manifests | Not designed |
@@ -395,3 +395,29 @@ Rust lists installed packs, opens a pack's directory, and reads and saves pack o
 - 2026-11-10: J2 implemented. `ui-service` tests 24/24, Rust 51+5, clippy clean, zigbuild checks for macOS and Linux pass (Linux needed `fontique` `fontconfig-dlopen`). The `packOptions.state` fixture stays in `messages.json` as screenshot data only. Live run pending; see `evidence/jvm-removal/j2/gate-summary.md`.
 - 2026-11-10: isolated live run through the slint-ui MCP passed (list, options save and reload, D4, refresh after install, auto sign-in). Found and fixed: tile updates arriving while the window was inactive were dropped (`App::tick`, `refresh_pending`). Owner checks: `evidence/jvm-removal/j2/owner-checklist.md`.
 - 2026-11-10: owner confirmed every GJ2 check (list matches Compose, `-Xmx8192M` in game, options shared both ways, 目录, background refresh) and directed the commit. J3 has not started.
+
+
+## Phase J3: on-demand launcher process
+
+Owner approved D1-D4 on 2026-11-10; implementation authorized via `/tmp/jvm-removal-j3-plan.md`.
+Login/menu, installed packs and pack options run without a launcher JVM. First use
+shares one process start, session identity check and restore/game/tasks prelude.
+Failed requests are never replayed. A crash shows a dismissible error and returns
+import/task/console screens to packs; live game records trigger immediate recovery.
+
+- D1: 60 continuous idle seconds; Rust proposes, Kotlin checks games/preparation,
+  unfinished tasks, installer, play job and pending play inline before accepting.
+  Inactive/minimized windows keep ticking. Startup above5s is reported at GJ3.
+- D2: finished task history/console logs disappear on stop. Import/task/console
+  screens and the play dialog prevent the timer from starting.
+- D3: Rust stops the child and clears only the account's `msa_sessions.json` entry
+  at logout. Preserve unknown fields/other accounts; invalid files stay untouched.
+  Compose is unchanged. `session.clear` is removed.
+- D4: protocol v3 with conditional shutdown replies `{stopped:true/false}`.
+
+Validation and measurements: `evidence/jvm-removal/j3/gate-summary.md`.
+Owner acceptance: `evidence/jvm-removal/j3/owner-checklist.md`.
+Stop at GJ3 for owner review. Do not commit or start J4.
+
+- 2026-11-10: J3 implemented; automated checks pass, isolated MCP validation done; real-game/online/minimized checks pending. Stop at GJ3 owner review.
+- 2026-11-10: review fixed two cases in `src/packs.rs` (close after a pending `installer.open`; a crash leaves only the import, task and console screens). Owner accepted GJ3, including the 正在加载… wait on a room click, and directed the commit. The real-game items on the owner checklist are not recorded as run. J4 design starts next.

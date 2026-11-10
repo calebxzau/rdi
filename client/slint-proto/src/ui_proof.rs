@@ -71,6 +71,7 @@ impl Proof {
                 let session = server.login(&user,&password,None).await?;
                 let account=session.account.clone();
                 tokio::task::spawn_blocking(move ||crate::credentials::Credentials::save_account(&crate::credentials::file(),&account)).await??;
+                // J3: authentication creates a lazy client; proof menus need no child process.
                 Client::connect(server,session).await }.await;
             if tx.send(Event::Login(result)).is_err() { tracing::debug!("U1 login receiver closed"); }
         }));
