@@ -387,3 +387,10 @@ Stopped at GU4b0; no later account screens or publishing.
 On-demand process lifecycle, protocol v3 and Rust logout session cleanup implemented.
 GJ3 automated/live validation and owner checks: `evidence/jvm-removal/j3/`.
 No J4 work or commit.
+
+## 2026-11-10 J4a
+
+Implemented Rust tasks, scanner, empty/folder import and archive bridge choice(a).
+Protocol v4 adds task cancellation and mixed task timestamps. Shared fixtures are
+checked by Kotlin and Rust. Validation details: `evidence/jvm-removal/j4a/`.
+GJ4a passed 2026-11-10 after review fixes; some owner checks moved to GJ4b.

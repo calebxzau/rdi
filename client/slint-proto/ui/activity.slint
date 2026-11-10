@@ -44,11 +44,14 @@ export component TaskProgress inherits Rectangle {
     in property <string> error;
     in property <float> fraction: -1;
     in property <[TaskRow]> rows;
+    in property <bool> can-cancel;
+    callback cancel();
     callback toggle(int);
     callback hidden();
     background: #fafcf4e8; border-radius: 24px;
-    Text { x: 20px; y: 16px; width: parent.width - 170px; text: root.title; overflow: elide; font-size: 20px; font-weight: 600; color: Theme.ink; }
+    Text { x: 20px; y: 16px; width: parent.width - (root.can-cancel ? 210px : 170px); text: root.title; overflow: elide; font-size: 20px; font-weight: 600; color: Theme.ink; }
     GlassButton { x: parent.width - 144px; y: 12px; width: 124px; label: "隐藏到后台"; glyph: "\u{f00d}"; clicked => {root.hidden();} }
+    if root.can-cancel: CircleIconButton { x: parent.width - 188px; y: 12px; glyph: "\u{f04d}"; accessible-label: "取消任务"; clicked => {root.cancel();} }
     Rectangle { x: 20px; y: 60px; width: parent.width - 40px; height: 4px; background: #dce5d4;
         Rectangle { x: 0px; y: 0px; height: parent.height; width: parent.width * clamp(root.fraction,0,1); background: #446c49; }
     }

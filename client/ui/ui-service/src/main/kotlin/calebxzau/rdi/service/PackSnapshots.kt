@@ -80,6 +80,7 @@ internal fun boundedConsoleLines(lines: List<String>, byteLimit: Int = 1_000_000
 
 /** Stable task paths let the UI expand groups without copying task execution logic. */
 internal fun taskSnapshot(entry: Task2Entry, snapshot: Task2Snapshot = entry.snapshot) = buildJsonObject {
+    put("createdAt", entry.createdAt)
     put("runId", entry.runId); put("title", entry.task.title); put("message", snapshot.currentMessage)
     put("fraction", snapshot.currentFraction ?: -1f); put("error", snapshot.errorMessage.orEmpty())
     put("terminal", snapshot.status.isTerminal); put("status", snapshot.status.ordinal)

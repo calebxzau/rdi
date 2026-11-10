@@ -11,6 +11,8 @@ edition = "2024"
 allocation-probe = ["rdi-renderer/allocation-probe"]
 
 [dependencies]
+uuid = { version = "=1.29.0", features = ["v7"] }
+
 rdi-renderer = { path = "crates/rdi-renderer" }
 glam = "=0.34.1"
 half = "=2.7.1"
@@ -43,6 +45,7 @@ fontique = { version = "=0.11.1", features = ["fontconfig-dlopen"] }
 wmi = "=0.18.4"
 windows = { version = "=0.62.2", features = ["Win32_Graphics_Dxgi", "Win32_Graphics_Dxgi_Common"] }
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Registry"] }
+
 
 [dev-dependencies]
 naga = { version = "30.0.1", features = ["wgsl-in"] }

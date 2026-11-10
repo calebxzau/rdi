@@ -417,7 +417,7 @@ impl App {
             return;
         };
         if ui.get_game_running()
-            || ui.get_tasks_running()
+            || self.pack_ui.borrow().has_running_tasks()
             || ui.get_play_busy()
             || ui.get_loading()
             || !self.pack_ui.borrow().service_idle()
@@ -710,6 +710,9 @@ impl App {
             self.jobs.insert(key, job);
         }
     }
+    pub fn shutdown_tasks(&self) {
+        self.pack_ui.borrow().shutdown_tasks();
+    }
     pub fn tick(&mut self, dt: f32) {
         let authenticated = self.login_ui.borrow_mut().tick();
         if let Some(api) = authenticated {
@@ -726,7 +729,7 @@ impl App {
             if self.running_processes.is_empty() {
                 ui.set_game_running(false);
                 ui.set_game_status("".into());
-                ui.set_tasks_running(false);
+                // Rust task state survives a service crash.
             } else if let Some(api) = self.api.clone() {
                 let tx = self.tx.clone();
                 self.runtime.spawn(async move {
@@ -944,9 +947,7 @@ impl App {
             && let Some(api) = &self.api
         {
             let eligible = !ui.get_game_running()
-                && !ui.get_tasks_running()
-                && ui.get_pack_screen() != 1
-                && ui.get_activity_panel() == 0
+                && self.pack_ui.borrow().service_screens_idle()
                 && !ui.get_local_play()
                 && !ui.get_play_busy()
                 && self.pack_ui.borrow().service_idle();

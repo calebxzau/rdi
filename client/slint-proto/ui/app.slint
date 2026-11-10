@@ -78,6 +78,7 @@ export component AppWindow inherits Window {
     in property <bool> play-nonstandard-name;
     in-out property <string> play-nickname;
     in-out property <bool> play-online;
+    in property <bool> activity-can-cancel;
     in property <[TaskRow]> activity-tasks;
     in property <[LogRow]> activity-logs;
     in property <[CandidateRow]> activity-task-list;
@@ -311,9 +312,13 @@ export component AppWindow inherits Window {
             background: #fafcf4f2; border-radius: 24px;
             TouchArea {}
             if task-panel.has-list: ListView { x: 12px; y: 16px; width: 220px; height: parent.height - 32px;
-                for task in root.activity-task-list: GlassButton { height: 44px; label: task.name; clicked => {root.pack-action("tasks.watch",task.detail);} }
+                for task in root.activity-task-list: Rectangle { height: 44px;
+                    GlassButton { width: task.collapsed ? parent.width - 40px : parent.width; height: 44px; label: task.name; clicked => {root.pack-action("tasks.watch",task.detail);} }
+                    if task.collapsed: CircleIconButton { x: parent.width - 36px; y: 4px; glyph: "\u{f04d}"; accessible-label: "取消任务"; clicked => {root.pack-action("tasks.cancel",task.detail);} }
+                }
             }
             TaskProgress { x: task-panel.has-list ? 236px : 0px; y: 0px; width: parent.width - self.x; height: parent.height; background: transparent;
+                can-cancel: root.activity-can-cancel; cancel => {root.pack-action("tasks.cancel", "");}
                 title: root.activity-title; message: root.activity-message; error: root.activity-error; fraction: root.activity-fraction; rows: root.activity-tasks;
                 toggle(i) => {root.pack-action("tasks.toggle",i);} hidden => {root.activity-panel = 0;}
             }

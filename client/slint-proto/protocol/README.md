@@ -1,4 +1,4 @@
-# Launcher service protocol v3
+# Launcher service protocol v4
 
 Status: U2/U3 accepted. U4a local-pack methods and snapshots are under validation.
 
@@ -10,7 +10,7 @@ and images are represented by paths or URLs, never by embedded bytes.
 `fixtures/messages.json` is the shared golden corpus read by Rust and Kotlin.
 The fixture credentials are inert examples, never a test account.
 
-The first request must be `handshake` with `params.protocolVersion = 3`.
+The first request must be `handshake` with `params.protocolVersion = 4`.
 A mismatching version receives `PROTOCOL_VERSION_MISMATCH` and a Chinese
 message. No business request may run before the handshake succeeds.
 
@@ -125,3 +125,15 @@ Rust loads and atomically updates `local_credentials.json`, preserving unknown f
 Saved-account selection carries only an ID in Slint. Rust looks up the password
 again at submit time. Typed/environment login, retry and auto-login order remain unchanged.
 Shared fixtures `local_credentials.json` and `hwspec.json` are read by both languages.
+
+## J4a Rust import and mixed tasks
+
+Rust owns folder scanning, empty/folder imports and their launcher-lifetime task
+history. Opening import or tasks starts no process. Only archive editing/import
+uses the existing installer methods (bridge choice a in J4-PLAN.md).
+`tasks.cancel {runId}` cancels a Kotlin-owned task; Rust-owned IDs stay local.
+Task snapshots add `createdAt` in epoch milliseconds for mixed newest-first order;
+Kotlin IDs are not time-ordered. The task screen includes cancel controls for
+unfinished tasks. Rust history survives an idle service stop or crash.
+Import and task screens no longer block idle stopping, except while the archive
+bridge owns a Kotlin editor. Logout also refuses active Rust tasks.

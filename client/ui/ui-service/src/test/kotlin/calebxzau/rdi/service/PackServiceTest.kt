@@ -102,6 +102,33 @@ class PackServiceTest {
     }
 
     @Test
+    fun `shared task snapshot agrees with Rust tree shape`() {
+        val expected = Json.parseToJsonElement(java.io.File("../slint-proto/protocol/fixtures/j4a.json").readText()).jsonObject["taskSnapshot"]
+        val task = Task2.Group("安装", listOf(Task2.Leaf("文件", id = "file") {}), defaultExpanded = false, id = "root")
+        val state = Task2Snapshot(currentMessage = "复制中", currentFraction = .4f, status = Task2Status.RUNNING,
+            progressByPath = mapOf("root" to Task2Progress("复制中", .4f), "root / file#0" to Task2Progress("复制中", .4f)))
+        assertEquals(expected, taskSnapshot(Task2Entry("run", task, snapshot = state, createdAt = 1)))
+    }
+
+    @Test
+    fun `cancel method cancels the selected Kotlin task`(): Unit = runBlocking {
+        val fixture = Fixture(this)
+        val started = CompletableDeferred<Unit>()
+        val cleaned = CompletableDeferred<Unit>()
+        val runId = ClientTaskManager.submit(Task2.Leaf("归档导入") {
+            started.complete(Unit)
+            try { awaitCancellation() } finally { cleaned.complete(Unit) }
+        })
+        fixture.service.use { service ->
+            withTimeout(3000) { started.await() }
+            service.handle("tasks.cancel", obj("runId" to runId))
+            withTimeout(3000) { cleaned.await() }
+            assertEquals(Task2Status.CANCELLED, ClientTaskManager.controller(runId)!!.state.value.status)
+            assertFailsWith<IllegalArgumentException> { service.handle("tasks.cancel", obj("runId" to "missing")) }
+        }
+    }
+
+    @Test
     fun `console snapshots fit within the frame even with heavily escaped lines`() {
         val lines = List(5000) { "\u0001".repeat(4096) }
         val bounded = boundedConsoleLines(lines)

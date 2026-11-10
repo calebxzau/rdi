@@ -7,6 +7,8 @@ mod credentials;
 mod msa_sessions;
 mod hwspec;
 mod packs;
+mod tasks;
+mod import;
 mod local_packs;
 mod pack_options;
 mod config;
@@ -370,6 +372,7 @@ fn main() -> anyhow::Result<()> {
     ui.run()?;
     pacer.stop();
     timer.stop();
+    app.borrow().shutdown_tasks();
     drop(app);
     runtime.shutdown_timeout(Duration::from_secs(2));
     Ok(())

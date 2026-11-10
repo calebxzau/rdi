@@ -17,7 +17,7 @@ The Slint launcher currently runs a headless Kotlin process, `ui-service`, for a
 | **J1** | Login and server requests | `LoginService`, `PlayerService.login`, `RServer`, `data.get` | **Implemented; GJ1 review pending** |
 | J2 | Read-only local data: installed pack list, pack options | `installedPacks.*`, `packOptions.*`, `ModpackService.getLocalPackDirs` | **Done; GJ2 passed 2026-11-10** |
 | J3 | Start the JVM on demand, only for install and game launch | `src/api/mod.rs` | **Done; owner accepted GJ3 2026-11-10** |
-| J4 | Tasks, downloads, pack install | `tasks.*`, `installer.*`, `pack-proc`, `mod-catalog`, `mc-install` | Not designed |
+| J4 | Tasks, downloads, local pack import | `tasks.*`, `installer.*`, `mod-catalog`, `client-store` | Design approved 2026-11-10; handoff `J4-PLAN.md`; GJ4a passed 2026-11-10; J4b next |
 | J5 | Game launch, local game proxy, Microsoft login, node routing | `mclaunch`, `host.start`, `game.*`, `packPlay.*`, `NodeRefreshCoordinator` | Not designed |
 | J6 | Remove `ui-service`, package and switch | Updater and release manifests | Not designed |
 
@@ -421,3 +421,101 @@ Stop at GJ3 for owner review. Do not commit or start J4.
 
 - 2026-11-10: J3 implemented; automated checks pass, isolated MCP validation done; real-game/online/minimized checks pending. Stop at GJ3 owner review.
 - 2026-11-10: review fixed two cases in `src/packs.rs` (close after a pending `installer.open`; a crash leaves only the import, task and console screens). Owner accepted GJ3, including the 正在加载… wait on a room click, and directed the commit. The real-game items on the owner checklist are not recorded as run. J4 design starts next.
+
+
+## Phase J4: tasks and local pack import
+
+Drafted and approved 2026-11-10. Not implemented. The implementation handoff is
+`J4-PLAN.md`; where the two differ, the owner's answers below and `J4-PLAN.md` win.
+
+### What J4 is
+
+After J3 the service starts for four things: the import screen, the task screen,
+play, and the console. J4 moves the first two to Rust. After J4 the JVM starts
+only for play and the console, which are J5.
+
+What the Slint launcher reaches today, and so what J4 has to replace:
+
+| Kotlin | Lines | Role |
+|---|---|---|
+| `Task2Manager` through `ClientTaskManager` | small | Task list, progress tree, run ids |
+| `LocalModpackScanner` | 170 | Finds packs of other launchers from the Minecraft folders recorded in `data.db` |
+| `LocalModpackInstallViewModel` | 419 | Import screen state: candidates, editor, archive preview, optional files |
+| `ModpackArchive.kt` | 998 | Reads CurseForge and Modrinth pack archives, validates paths and URLs |
+| `ModpackArchiveContentResolver` | 148 | Names and icons for the archive's mods |
+| `LocalModpackInstaller` | 329 | Empty pack, copy of a game folder, or archive: staging folder, then one move |
+| `mod-catalog` | 3204, a small part used | `getFiles`, `getMods`, `matchFiles`, `resolveDownload`, mirror preference, Chinese names from `mod_catalog.db` |
+| `ClientContentStore` | 1206, a part used | Download cache in `<data dir>/dlc`, files named by digest, linked into the pack |
+| `FileDownloader` | common/net | Five attempts, several sources, ranged download in 1MiB pieces |
+
+Corrections to the overview row, found while reading the code:
+
+- `mc-install` is not part of this. Import only calls `writeMinecraftOptions`.
+  Installing Minecraft and the loader happens when a game starts, so it belongs to J5.
+- `pack-proc` is not reached by the Slint import.
+- Installing an RDI pack is not in the Slint launcher at all: a room whose pack is
+  missing answers 请先在Compose启动器中安装该整合包. See D1.
+- Kotlin also submits two startup tasks, the old-cache migration and the download
+  cache cleanup. Only Compose runs them; J4 does not port them.
+
+### Design
+
+1. **Tasks in Rust.** A small task manager holds the task list for the launcher's
+   lifetime and produces the same `tasks.state` and `task.state` shapes the UI
+   adapter in `src/packs.rs` already reads. Import tasks are single leaves with a
+   message and a fraction. Task history then survives a service stop, which removes
+   half of J3's D2; console logs are still lost until J5.
+2. **Import screen state in Rust.** A Rust state machine replaces the view model and
+   produces the same `installer.state` shape, so the Slint files and most of
+   `packs.rs` stay as they are. The `installer.*` calls become direct function calls.
+3. **Scanner.** Reads the recorded Minecraft folders from `data.db`, read only, as J2
+   does for pack options. A missing or foreign database gives an empty list, not an
+   error. Loader detection follows `detectLocalModLoader`, checked by shared fixtures.
+4. **Installer.** Same staging folder, same exclusion lists, same 20GB limit, same
+   `rdi-local-pack.json`, same unique-name rule, one final move. A cancelled or failed
+   task leaves no folder behind.
+5. **Archives.** `zip` crate, with the same fallback for Chinese file names as
+   `openChineseZip`. Every path and URL check in `ModpackArchive.kt` is ported with
+   its Chinese message. Rejection cases come from shared fixtures read by both sides.
+6. **Catalog, the part that import uses.** CurseForge files and projects by id,
+   Modrinth files by SHA-1, embedded jars by fingerprint, download resolution, the
+   mirror preference from `config.toml` with fallback to the origin. Chinese names
+   come from `mod_catalog.db`, opened read only.
+7. **Download cache.** Same folder and file names as Kotlin, so a file downloaded by
+   either launcher is reused by the other. Digest check before commit, temp file plus
+   rename, hard link into the pack with copy as fallback.
+8. **Service.** `installer.*`, `tasks.*` and the installer part of the idle check
+   leave `ui-service`. Protocol version 4. The idle rule loses the import and task
+   screens; a running Rust task no longer keeps the JVM alive.
+9. **Logout.** Still refused while a task runs, now decided from the Rust task list.
+
+### Owner decisions, 2026-11-10
+
+| | Question | Decision |
+|---|---|---|
+| D1 | Scope | Only what Slint reaches today. RDI pack install is a later phase, written in Rust from the start. |
+| D2 | Gates | Two: **J4a** tasks, scanner, empty pack and game folder copy, no network. **J4b** downloader, download cache, catalog, archives. |
+| D3 | `mod-catalog` | Port all of it, not only what import uses. This replaces design item 6. |
+| D4 | `mod_catalog.db` | In development read it from `client/ui/mod-catalog/src/main/resources`; shipping is J6. Without it, platform names are shown. |
+| D5 | Download cache | Shared with Compose, same folder and format. |
+| D6 | Downloader | Port the ranged, parallel download. |
+| D7 | Cancel | Add a cancel button to the task screen. |
+
+### Risks
+
+- The archive reader is where a mistake can write outside the pack folder. Path
+  checks are ported one to one and tested with hostile archives from shared fixtures.
+- Two launchers writing one cache at the same time have no lock between processes,
+  today as well. Temp file plus rename keeps each file whole.
+- A machine that never ran Compose has no `data.db`, so the scanner finds nothing.
+  Picking an archive or a folder still works. Creating the database is J6.
+- The CurseForge key is in the Kotlin source as bytes; Rust needs the same key.
+
+### Validation
+
+Shared fixtures for scanner manifests, archive previews and rejections, catalog
+answers and installer results, read by Kotlin and Rust. Rust tests, clippy, release
+build, cross-checks for macOS and Linux, `ui-service` tests. Live run through the
+slint-ui MCP with an isolated data directory: no Java child during any import; empty
+pack, folder copy, one CurseForge and one Modrinth archive; a pack imported by Rust
+starts in game; Compose lists it and reuses the cache.

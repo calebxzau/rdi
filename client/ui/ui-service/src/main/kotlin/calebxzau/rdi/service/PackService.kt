@@ -175,6 +175,12 @@ internal class PackService(
             } }
             buildJsonObject {}
         }
+        "tasks.cancel" -> {
+            val runId = params.text("runId")
+            requireNotNull(ClientTaskManager.entry(runId)) { "找不到这个任务" }
+            ClientTaskManager.cancel(runId)
+            buildJsonObject { put("accepted", true) }
+        }
         "tasks.watch" -> {
             val runId = params.text("runId")
             val entry = ClientTaskManager.entry(runId) ?: error("找不到这个任务")

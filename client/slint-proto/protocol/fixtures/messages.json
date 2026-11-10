@@ -3,13 +3,13 @@
     "id": 1,
     "method": "handshake",
     "params": {
-      "protocolVersion": 3
+      "protocolVersion": 4
     }
   },
   {
     "id": 1,
     "result": {
-      "protocolVersion": 3
+      "protocolVersion": 4
     }
   },
   {
@@ -280,6 +280,13 @@
     "id": 302,
     "result": {
       "stopped": true
+    }
+  },
+  {
+    "id": 401,
+    "method": "tasks.cancel",
+    "params": {
+      "runId": "019a55b0-0000-7000-8000-000000000001"
     }
   }
 ]

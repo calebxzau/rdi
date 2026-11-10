@@ -433,3 +433,10 @@ warm-up. Keep the monitor on, desktop unlocked and application foreground.
 
 See `evidence/ui-port/u3/gate-summary.md` and `evidence/ui-port/u3/owner-checklist.md` for results and
 remaining owner checks. Stop at GU3 until the owner accepts the gallery.
+
+## J4a local imports
+
+Empty packs, folder import, recorded-folder scans and tasks run in Rust. Archive
+imports retain the Kotlin bridge until GJ4b. Protocol v4 adds tasks.cancel and
+createdAt for mixed task ordering. Validation and owner checks are recorded in
+`evidence/jvm-removal/j4a/`; GJ4a passed 2026-11-10.
