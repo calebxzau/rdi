@@ -90,6 +90,7 @@ object HostContainerService {
         val totalArg = mutableListOf<String>().apply {
 
             this.add("-XX:+UseCompactObjectHeaders")
+            this.add("-XX:-UseBASE64Intrinsics")
 
             this.add("-Xmx8G")
             if (modpack.supportsForgeguard(modpack.modloader)) {

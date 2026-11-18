@@ -478,7 +478,7 @@ if [ "$DEBUG" = true ] && [ -n "${RDI_DEBUG_URL:-}" ]; then
 fi
 
 eval "set -- $USER_JVM_ARGS"
-set -- -Dfile.encoding=UTF-8 "$@" -Drdi.debug="$DEBUG"
+set -- -Dfile.encoding=UTF-8 "$@" -XX:-UseBASE64Intrinsics -Drdi.debug="$DEBUG"
 if [ "$NO_UPDATE" = true ]; then set -- "$@" -Drdi.noUpdate=true; fi
 if [ "$SOLID_WINDOW" = true ]; then set -- "$@" -Drdi.window.transparent=false; fi
 if [ "$USE_HTTP" = true ]; then set -- "$@" -Drdi.noHttps=true; fi

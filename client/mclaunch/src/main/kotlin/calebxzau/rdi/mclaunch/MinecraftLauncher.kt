@@ -28,6 +28,8 @@ import java.util.LinkedHashSet
 import java.util.zip.ZipFile
 import kotlin.concurrent.thread
 
+private const val JAVA4SHELL_MITIGATION = "-XX:-UseBASE64Intrinsics"
+
 private val utf8LoggingJvmArgs = listOf(
     "-Dfile.encoding=UTF-8",
     "-Dsun.stdout.encoding=UTF-8",
@@ -376,6 +378,7 @@ class MinecraftLauncher(
         if (environment.debug && LibraryOsArch.detectHostOs().isWindows) {
             processedJvmArgs += "-Djavax.net.ssl.trustStoreType=Windows-ROOT"
         }
+        processedJvmArgs += JAVA4SHELL_MITIGATION
 
         val mainClass = loaderManifest.mainClass ?: error("缺少启动主类")
         val command = buildList {
@@ -403,6 +406,7 @@ class MinecraftLauncher(
         val hostOs = LibraryOsArch.detectHostOs()
         val command = buildList {
             add(resolveJava25Path())
+            add(JAVA4SHELL_MITIGATION)
             add("-Xmx6G")
             add("-Xms6G")
             addAll(utf8LoggingJvmArgs)

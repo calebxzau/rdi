@@ -1273,6 +1273,7 @@ fn start_client(
     for argument in &options.jvm_arguments {
         command.arg(argument);
     }
+    command.arg("-XX:-UseBASE64Intrinsics");
     command.arg(format!("-Drdi.debug={}", options.debug));
     if options.no_update {
         command.arg("-Drdi.noUpdate=true");
