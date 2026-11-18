@@ -46,7 +46,7 @@ internal suspend fun refreshNodeSettings(
 //frp节点不会显示原ip
 private suspend fun detectPublicIpv4() = withContext(Dispatchers.IO) {
     val ipv4 = httpRequest {
-        url("https://ip.3322.net/")
+        url("http://ip.3322.net/")
         method = HttpMethod.Get
     }.bodyAsText().trim()
     require(ipv4Regex.matches(ipv4)) { "无效IPv4: $ipv4" }

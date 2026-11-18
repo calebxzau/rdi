@@ -271,7 +271,7 @@ fn get_public_ipv4() -> Option<String> {
     let result = (|| -> Result<String> {
         let client = http::Client::with_timeout(Duration::from_secs(5));
         let text = client
-            .get("https://ip.3322.net/")
+            .get("http://ip.3322.net/")
             .send()?
             .error_for_status()?
             .text()?
