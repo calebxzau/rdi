@@ -4,10 +4,9 @@ use crate::api::{
 };
 use anyhow::{Context, Result};
 use image::{DynamicImage, RgbaImage, imageops::FilterType};
-use rdi_slint_proto::scene::{
-    crowd_sim::MAX_PLAYERS,
-    player::{Appearance, Skin, normalize},
-};
+use rdi_slint_proto::scene::player::{Appearance, Skin, normalize};
+#[cfg(test)]
+use rdi_slint_proto::scene::crowd_sim::MAX_PLAYERS;
 use std::{
     collections::HashMap,
     io::Cursor,
@@ -149,11 +148,11 @@ pub async fn background_appearance(
 }
 const CROWD_DOWNLOADS: usize = 4;
 const CROWD_TIMEOUT: Duration = Duration::from_secs(15);
-fn crowd_urls(urls: Vec<String>) -> Vec<String> {
-    let mut unique: Vec<String> = Vec::with_capacity(urls.len().min(MAX_PLAYERS));
+fn crowd_urls(urls: Vec<String>, limit: usize) -> Vec<String> {
+    let mut unique: Vec<String> = Vec::with_capacity(urls.len().min(limit));
     for url in urls {
         let url = url.trim();
-        if unique.len() < MAX_PLAYERS && !url.is_empty() && !unique.iter().any(|u| u == url) {
+        if unique.len() < limit && !url.is_empty() && !unique.iter().any(|u| u == url) {
             unique.push(url.to_owned());
         }
     }
@@ -170,14 +169,14 @@ async fn crowd_skin(http: &reqwest::Client, url: &str) -> Result<Skin> {
     tokio::task::spawn_blocking(move || Skin::new(decode(&bytes)?.to_rgba8(), None)).await?
 }
 /// Publishes each skin as it finishes. Failures only leave Steve or the skins that already arrived.
-pub async fn background_crowd(api: &Client, mut publish: impl FnMut(String, Skin)) {
+pub async fn background_crowd(api: &Client, limit: usize, mut publish: impl FnMut(String, Skin)) {
     let urls = match tokio::time::timeout(
         CROWD_TIMEOUT,
         api.get::<Vec<String>>("/player/unique-skin-list"),
     )
     .await
     {
-        Ok(Ok(urls)) => crowd_urls(urls),
+        Ok(Ok(urls)) => crowd_urls(urls, limit),
         Ok(Err(error)) => {
             tracing::warn!(error=%format!("{error:#}"),"Crowd skin list failed; using Steve");
             return;
@@ -354,11 +353,13 @@ mod tests {
             "".into(),
             "  ".into(),
             "https://a/2".into(),
-        ]);
+        ], MAX_PLAYERS);
         assert_eq!(urls, ["https://a/1", "https://a/2"]);
-        let many = crowd_urls((0..80).map(|i| format!("https://a/{i}")).collect());
+        let many = crowd_urls((0..80).map(|i| format!("https://a/{i}")).collect(), MAX_PLAYERS);
         assert_eq!(many.len(), MAX_PLAYERS);
         assert_eq!(many[49], "https://a/49");
+        let all = crowd_urls((0..137).map(|i| format!("https://a/{i}")).collect(), usize::MAX);
+        assert_eq!(all.len(), 137);
     }
     #[tokio::test]
     async fn crowd_skin_decodes_and_reports_http_failure() {

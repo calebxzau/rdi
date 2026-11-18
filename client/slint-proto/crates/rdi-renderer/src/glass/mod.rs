@@ -180,9 +180,12 @@ impl Renderer {
         &self.device
     }
     pub fn new(device: wgpu::Device, queue: wgpu::Queue, metrics: GridMetrics) -> Result<Self> {
-        validated(&device.clone(), || Self::create(device, queue, metrics))
+        Self::with_background_color(device, queue, metrics, None)
     }
-    fn create(device: wgpu::Device, queue: wgpu::Queue, metrics: GridMetrics) -> Result<Self> {
+    pub fn with_background_color(device: wgpu::Device, queue: wgpu::Queue, metrics: GridMetrics, color: Option<[u8; 4]>) -> Result<Self> {
+        validated(&device.clone(), || Self::create(device, queue, metrics, color))
+    }
+    fn create(device: wgpu::Device, queue: wgpu::Queue, metrics: GridMetrics, color: Option<[u8; 4]>) -> Result<Self> {
         let info = device.adapter_info();
         tracing::info!(backend = ?info.backend, adapter = %info.name, driver = %info.driver_info, "wgpu setup");
         let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -284,9 +287,11 @@ impl Renderer {
             ..Default::default()
         });
         let started = Instant::now();
-        let image = image::load_from_memory(include_bytes!("../../../../assets/bg.png"))
-            .context("背景图片解码失败")?
-            .to_rgba8();
+        let image = match color {
+            Some(color) => image::RgbaImage::from_pixel(1, 1, image::Rgba(color)),
+            None => image::load_from_memory(include_bytes!("../../../../assets/bg.png"))
+                .context("背景图片解码失败")?.to_rgba8(),
+        };
         tracing::info!(
             decode_ms = started.elapsed().as_secs_f64() * 1000.0,
             "Background image decoded"

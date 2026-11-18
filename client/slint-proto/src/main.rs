@@ -16,6 +16,7 @@ mod navigation;
 mod shell;
 mod gallery;
 use rdi_renderer::glass;
+use rdi_renderer::background;
 mod gpu_setup;
 mod hosts;
 mod images;
@@ -94,6 +95,7 @@ fn main() -> anyhow::Result<()> {
     let render_proof = proof.clone();
     let timer_proof = proof.clone();
     let scene_options = config.scene;
+    let background_kind = config.background;
     scene::diagnostics::enable(scene_options.probe);
     let mut last_snapshot = Instant::now();
     let mut scene_live_start = None;
@@ -131,7 +133,7 @@ fn main() -> anyhow::Result<()> {
                         elapsed_ms = started.elapsed().as_millis(),
                         "Startup stage"
                     );
-                    match glass::Renderer::new(device.clone(), queue.clone(), hosts::grid_metrics()) {
+                    match glass::Renderer::with_background_color(device.clone(), queue.clone(), hosts::grid_metrics(), background_kind.fallback_color()) {
                         Ok(r) => {
                             tracing::info!(
                                 stage = "glass-ready",
@@ -143,7 +145,7 @@ fn main() -> anyhow::Result<()> {
                             if render_enabled.load(Ordering::Relaxed) {
                                 let (start, wait) = std::sync::mpsc::sync_channel(1);
                                 scene_start = Some(start);
-                                match scene::loader::spawn(device.clone(), queue.clone(), wait, scene_options) {
+                                match background::spawn(device.clone(), queue.clone(), wait, background_kind, scene_options) {
                                     Ok(loader) => {scene_loader = Some(loader);render_stats.borrow_mut().loading=true;},
                                     Err(error) => { tracing::error!(error=%format!("{error:#}"), "Scene worker failed to start"); render_enabled.store(false, Ordering::Relaxed); }
                                 }
@@ -200,15 +202,19 @@ fn main() -> anyhow::Result<()> {
                         let result=(|| {
                             if let Some(appearance)=appearance { scene.set_player_appearance(appearance)?; }
                             for (id,skin) in crowd_skins { scene.set_crowd_skin(&id,skin)?; }
-                            scene.render(scene::FrameInput::at(render_clock.borrow().elapsed()))
+                            scene.render(render_clock.borrow().elapsed(), frame.width.max(0) as u32, frame.height.max(0) as u32, frame.scale)
                         })();
                         match result {
-                            Ok(rendered) => {
+                            Ok((rendered, resized)) => {
                                 changed = rendered;
                                 if rendered {render_stats.borrow_mut().scene_frames+=1;}
-                                if rendered && !scene_bound {
-                                    r.set_scene(Some(scene.output())); scene_bound = true; scene_live_start = Some(Instant::now());
-                                    tracing::info!(elapsed_ms=started.elapsed().as_millis(), "First live scene frame");
+                                if rendered && (!scene_bound || resized) {
+                                    r.set_scene(Some(scene.output()));
+                                    if !scene_bound {
+                                        scene_live_start = Some(Instant::now());
+                                        tracing::info!(elapsed_ms=started.elapsed().as_millis(), "First live scene frame");
+                                    }
+                                    scene_bound = true;
                                 }
                             }
                             Err(error) => {

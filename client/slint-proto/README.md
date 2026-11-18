@@ -42,6 +42,7 @@ prefill/auto-login settings. Rust reads saved passwords from the Compose-compati
 | `--solid-window` | Opaque window instead of a transparent one |
 | `--scale <f>` | Override the DPI scale factor (0.5–4) |
 | `--renderer <name>` | Slint renderer, default `femtovg-wgpu` (DX12 on Windows); `software` runs without glass, for memory comparison only |
+| `--background parade\|valley` | Background scene, default `parade`: milk-white (`#F7F3E8`) with all available distinct player skins walking left to right along the bottom; `valley` keeps the mountain scene |
 | `--no-scene` | Keep the static background (paired memory/startup comparison) |
 | `--gpu-setup=manual\|automatic` | Who creates the GPU device: the app (default) or Slint, for startup comparison |
 | `--no-glass` | Skip the glass/background pass, to measure the renderer with real content only |
@@ -79,6 +80,11 @@ prefill/auto-login settings. Rust reads saved passwords from the Compose-compati
   final tonemap/saturation. Includes the account player with idle arm/head/cape motion in both
   main/reflection passes; crowd remains P4b. The worker starts after the first static
   frame; output remains1280×720, with no runtime CPU readback or per-frame target allocation.
+- `crates/rdi-renderer/src/parade.rs` — a separate, window-sized background with a single looping queue,
+  shared classic/slim/legacy meshes. It uses the existing `/player/unique-skin-list` response
+  (currently capped at50distinct skins by the server). Players are84logical pixels tall,112pixels
+  apart and walk at28pixels/second, with their feet8pixels above the bottom. It uses the existing
+  inactive/menu pause and GPU completion policy. Its startup/error fallback is the same milk-white.
 - Mesh generation preserves placements, seeds, colors, UVs, AO and sway constants. It rounds only emitted
   positions to1/16, validates non-zero/same-sign part offsets, part extents, face area/winding, and
   uploads one mesh shared by the shadow bake and main pass. The24B local fixed-point packer stays strict.

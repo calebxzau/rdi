@@ -832,8 +832,13 @@ impl App {
                                 let api = data.api.clone();
                                 let tx = self.tx.clone();
                                 let epoch = self.epoch;
+                                let limit = if self.config.background == rdi_renderer::background::Kind::Parade {
+                                    usize::MAX
+                                } else {
+                                    rdi_renderer::scene::crowd_sim::MAX_PLAYERS
+                                };
                                 self.crowd_job = Some(self.runtime.spawn(async move {
-                                    images::background_crowd(&api, |id, skin| {
+                                    images::background_crowd(&api, limit, |id, skin| {
                                         let _ = tx.send(Event::CrowdSkin(epoch, id, skin));
                                     })
                                     .await;
