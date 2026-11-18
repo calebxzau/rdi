@@ -220,6 +220,7 @@ object ModrinthService {
         index.files.forEach { entry ->
             val path = normalizeManifestPath(entry.path)
             val type = manifestContentType(path) ?: return@forEach
+            val downloadUrls = entry.downloads.map(::normalizeManifestDownloadUrl)
             if (type != ContentType.Mod && entry.env?.client == ModrinthModpackIndex.EnvSide.unsupported) return@forEach
             if (type == ContentType.Mod && isFabricPack && entry.env?.let { env ->
                     env.client == ModrinthModpackIndex.EnvSide.unsupported &&
@@ -235,11 +236,11 @@ object ModrinthService {
                 if (type == ContentType.Mod) {
                     val catalogSide = project.toModSide()
                     val side = if (isFabricPack) entry.env.toFabricManifestSide() ?: catalogSide else catalogSide
-                    mods += Mod("mr", mrVersion.projectId, slug, mrVersion.id, sha1, side, entry.downloads)
+                    mods += Mod("mr", mrVersion.projectId, slug, mrVersion.id, sha1, side, downloadUrls)
                 } else {
                     appendExtra(extrasByPath, Content(ContentPlatform.Modrinth, type, mrVersion.projectId, mrVersion.id,
                         slug, sha1, path, ContentSide.Client,
-                        entry.env?.client != ModrinthModpackIndex.EnvSide.optional, entry.downloads).validateClientExtra())
+                        entry.env?.client != ModrinthModpackIndex.EnvSide.optional, downloadUrls).validateClientExtra())
                 }
                 return@forEach
             }
@@ -255,14 +256,22 @@ object ModrinthService {
                 ?: Mod.Side.UNKNOWN
             if (type == ContentType.Mod) {
                 val resolvedSide = if (isFabricPack) entry.env.toFabricManifestSide() ?: side else side
-                mods += Mod("cf", project.id.toString(), slug, file.id.toString(), file.fileFingerprint.toString(), resolvedSide, entry.downloads)
+                mods += Mod("cf", project.id.toString(), slug, file.id.toString(), file.fileFingerprint.toString(), resolvedSide, downloadUrls)
             } else {
                 appendExtra(extrasByPath, Content(ContentPlatform.CurseForge, type, project.id.toString(), file.id.toString(), slug,
                     file.fileFingerprint.toString(), path, ContentSide.Client,
-                    entry.env?.client != ModrinthModpackIndex.EnvSide.optional, entry.downloads).validateClientExtra())
+                    entry.env?.client != ModrinthModpackIndex.EnvSide.optional, downloadUrls).validateClientExtra())
             }
         }
         return ManifestResolution(mods, extrasByPath.values.toList().validateAndMergeClientExtras())
+    }
+
+    private fun normalizeManifestDownloadUrl(rawUrl: String): String {
+        val url = rawUrl.trim()
+        val parts = Regex("^(https?://[^/?#]+)([^?#]*)(.*)$", RegexOption.IGNORE_CASE)
+            .matchEntire(url) ?: return url
+        // Encode only literal path spaces; preserve existing escapes, authority, query and fragment.
+        return parts.groupValues[1] + parts.groupValues[2].replace(" ", "%20") + parts.groupValues[3]
     }
 
     private fun appendExtra(target: MutableMap<String, Content>, content: Content) {

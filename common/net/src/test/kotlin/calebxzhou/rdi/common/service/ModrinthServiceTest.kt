@@ -106,6 +106,69 @@ class ModrinthServiceTest {
     }
 
     @Test
+    fun `manifest resolver encodes path spaces for mods and client extras`() {
+        val rawUrl = "https://mediafilez.forgecdn.net/files/3593/685/Chocapic13 V6 Medium.zip"
+        val expectedUrl = "https://mediafilez.forgecdn.net/files/3593/685/Chocapic13%20V6%20Medium.zip"
+        val sha1 = "a".repeat(40)
+        val result = ModrinthService.resolveManifestEntries(
+            index(
+                entry("mods/a.jar", sha1, download = rawUrl),
+                entry("shaderpacks/Chocapic13 V6 Medium.zip", sha1, download = rawUrl),
+                entry("resourcepacks/a.zip", sha1, download = rawUrl),
+            ),
+            mapOf(sha1 to version("v1", "p1", sha1)),
+            mapOf("p1" to project("p1", "pack-project")),
+            loader = ModLoader.neoforge,
+        )
+
+        assertEquals(listOf(expectedUrl), result.mods.single().downloadUrls)
+        assertEquals(2, result.clientExtras.size)
+        result.clientExtras.forEach { assertEquals(listOf(expectedUrl), it.downloadUrls) }
+        assertEquals("shaderpacks/Chocapic13 V6 Medium.zip", result.clientExtras.first().path)
+    }
+
+    @Test
+    fun `manifest resolver preserves existing escapes plus query and fragment`() {
+        val urls = listOf(
+            "https://cdn.example/pack%20name%2b%2B%25.zip?token=a%20b+c#part%20one",
+            "https://cdn.example/pack%20name extra.zip?token=a%20b+c#part%20one",
+        )
+        urls.forEach { url ->
+            val result = resolveShaderDownload(url)
+            assertEquals(listOf(url.replace(" extra", "%20extra")), result.downloadUrls)
+            // Importing an already normalized URL must not double-encode it.
+            assertEquals(result.downloadUrls, resolveShaderDownload(result.downloadUrls.single()).downloadUrls)
+        }
+    }
+
+    @Test
+    fun `manifest resolver still rejects invalid client extra urls`() {
+        listOf(
+            "file:///tmp/pack name.zip",
+            "ftp://cdn.example/pack name.zip",
+            "https:///pack name.zip",
+            "https://bad host/pack name.zip",
+            "https://cdn.example/pack%ZZ name.zip",
+            "https://cdn.example/pack name.zip?token=bad value",
+            "https://cdn.example/pack name.zip#bad fragment",
+            "https://cdn.example/pack\tname.zip",
+        ).forEach { url ->
+            val error = assertFailsWith<IllegalArgumentException>(url) { resolveShaderDownload(url) }
+            assertContains(error.message.orEmpty(), "客户端额外内容下载地址无效")
+        }
+    }
+
+    private fun resolveShaderDownload(url: String): calebxzau.rdi.common.model.Content {
+        val sha1 = "a".repeat(40)
+        return ModrinthService.resolveManifestEntries(
+            index(entry("shaderpacks/a.zip", sha1, download = url)),
+            mapOf(sha1 to version("v1", "p1", sha1)),
+            mapOf("p1" to project("p1", "pack-project")),
+            loader = ModLoader.neoforge,
+        ).clientExtras.single()
+    }
+
+    @Test
     fun `cf fallback keeps exact path and rejects sha1 mismatch`() {
         val sha1 = "c".repeat(40)
         val entry = entry("resourcepacks/explicit.zip", sha1, download = "https://cdn.example/files/1/002/file.zip")
@@ -137,6 +200,28 @@ class ModrinthServiceTest {
                 loader = ModLoader.neoforge,
             )
         }
+    }
+
+    @Test
+    fun `cf fallback encodes path spaces without double encoding`() {
+        val sha1 = "c".repeat(40)
+        val entry = entry("shaderpacks/Chocapic13 V6 Medium.zip", sha1,
+            download = "https://mediafilez.forgecdn.net/files/3593/685/Chocapic13%20V6 Medium.zip")
+        val file = CurseForgeFile(
+            id = 3593685,
+            modId = 7,
+            fileFingerprint = 123L,
+            hashes = listOf(CurseForgeFileHash(sha1, 1)),
+        )
+        val cfProject = CurseForgeModInfo(id = 7, name = "CF Pack", slug = "cf-pack", classId = 6552)
+        val result = ModrinthService.resolveManifestEntries(
+            index(entry), emptyMap(), emptyMap(),
+            mapOf((entry to entry.path) to (file to cfProject)),
+            loader = ModLoader.neoforge,
+        )
+
+        assertEquals(listOf("https://mediafilez.forgecdn.net/files/3593/685/Chocapic13%20V6%20Medium.zip"),
+            result.clientExtras.single().downloadUrls)
     }
 
     @Test
