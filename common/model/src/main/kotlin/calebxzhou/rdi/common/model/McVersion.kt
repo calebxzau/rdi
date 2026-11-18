@@ -36,9 +36,9 @@ enum class McVersion(
         mapOf(
             ModLoader.forge to ModLoader.Version(
                 ModLoader.forge,
-                "1.20.1-forge-47.4.20",
-                "https://maven.minecraftforge.net/net/minecraftforge/forge/1.20.1-47.4.20/forge-1.20.1-47.4.20-installer.jar",
-                "237c5a17d941bfe793ff5780a4f330914d2c9f57"
+                "1.20.1-forge-47.4.29",
+                "https://maven.minecraftforge.net/net/minecraftforge/forge/1.20.1-47.4.29/forge-1.20.1-47.4.29-installer.jar",
+                "5061de68499474cc8eeeede3d794afb063dd3e6d"
             )
         )
     ),

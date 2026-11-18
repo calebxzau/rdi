@@ -27,7 +27,7 @@ class ClientLoaderRuntimeTest {
             runtime.profileUrl,
         )
         assertFalse(McVersion.V201.supportLoader(ModLoader.Fabric))
-        assertEquals("1.20.1-forge-47.4.20", ClientLoaderRuntime.resolve(McVersion.V201, ModLoader.forge).profileId)
+        assertEquals("1.20.1-forge-47.4.29", ClientLoaderRuntime.resolve(McVersion.V201, ModLoader.forge).profileId)
         assertTrue(runCatching { ClientLoaderRuntime.resolve(McVersion.V211, ModLoader.Fabric) }.isFailure)
     }
 
@@ -41,7 +41,7 @@ class ClientLoaderRuntimeTest {
             val forgeManifest = fabricManifest.copy(
                 id = forge.profileId,
                 mainClass = "net.minecraftforge.client.loading.ClientModLoader",
-                libraries = listOf(MojangLibrary("net.minecraftforge:forge:1.20.1-47.4.20", url = "https://maven.fabricmc.net/")),
+                libraries = listOf(MojangLibrary("net.minecraftforge:forge:1.20.1-47.4.29", url = "https://maven.fabricmc.net/")),
             )
             fabric.manifestFile(root).apply { parentFile.mkdirs(); writeText(serdesJson.encodeToString(fabricManifest)) }
             forge.manifestFile(root).apply { parentFile.mkdirs(); writeText(serdesJson.encodeToString(forgeManifest)) }
