@@ -18,20 +18,20 @@ export component TextField inherits Rectangle {
     callback accepted();
     callback edited(string);
     forward-focus: edit;
-    height: root.top + 48px + (root.reserve-error || root.error != "" ? 20px : 0px);
-    Rectangle { x: 0px; y: root.top; width: parent.width; height: 48px; border-radius: 24px;
+    height: root.top + outline.height + (root.reserve-error || root.error != "" ? 20px : 0px);
+    outline := Rectangle { x: 0px; y: root.top; width: parent.width; height: 40px; border-radius: self.height / 2;
         background: root.enabled ? #ffffffb8 : #e2e4df80;
         border-width: edit.has-focus || root.preview-focus ? 2px : 1px;
         border-color: root.error != "" ? #ba3434 : edit.has-focus || root.preview-focus ? #446c49 : #777b77;
     }
     Text { x: 18px; y: 0px; text: root.label; color: root.error != "" ? #ba3434 : #446c49; font-size: 11px; }
-    edit := TextInput { x: 18px; y: root.top + 12px; width: parent.width - (root.password ? 68px : 36px) - root.trailing-space; height: 24px;
-        text <=> root.text; font-size: 14px; color: root.enabled ? Theme.ink : #777b77;
+    edit := TextInput { x: 18px; y: outline.y; width: parent.width - (root.password ? 68px : 36px) - root.trailing-space; height: outline.height;
+        text <=> root.text; font-size: 14px; color: root.enabled ? Theme.ink : #777b77; vertical-alignment: center;
         enabled: root.enabled; single-line: true; input-type: root.password && !root.reveal ? InputType.password : InputType.text;
         accepted => {root.accepted();} edited => {root.edited(self.text);}
     }
-    if root.text == "": Text { x: 18px; y: root.top + 12px; width: parent.width - 36px; height: 24px; text: root.hint; color: #777b77; font-size: 14px; }
-    if root.password: CircleIconButton { enabled: root.enabled; x: parent.width - 46px; y: root.top + 6px; width: 36px; glyph: root.reveal ? "\u{f070}" : "\u{f06e}"; accessible-label: root.reveal ? "隐藏密码" : "显示密码"; clicked => { root.reveal = !root.reveal; } }
-    Text { x: 18px; y: root.top + 51px; width: parent.width - 36px; text: root.error; overflow: elide; color: #ba3434; font-size: 12px; }
+    if root.text == "": Text { x: edit.x; y: edit.y; width: edit.width; height: edit.height; text: root.hint; color: #777b77; font-size: 14px; vertical-alignment: center; }
+    if root.password: CircleIconButton { enabled: root.enabled; x: parent.width - 46px; y: outline.y + (outline.height - self.height) / 2; width: 36px; glyph: root.reveal ? "\u{f070}" : "\u{f06e}"; accessible-label: root.reveal ? "隐藏密码" : "显示密码"; clicked => { root.reveal = !root.reveal; } }
+    Text { x: 18px; y: outline.y + outline.height + 3px; width: parent.width - 36px; text: root.error; overflow: elide; color: #ba3434; font-size: 12px; }
 }
 export component PasswordField inherits TextField { password: true; label: "密码"; }

@@ -110,13 +110,13 @@ export component ContentGrid inherits Rectangle {
     callback filter(string,int,bool);
     callback retry();
     callback selected(int);
-    HorizontalLayout { x: 0px; y: 0px; width: parent.width; height: 64px; spacing: 8px;
-        TextField { width: parent.width - 250px; reserve-error: false; label: "搜索"; hint: "搜索Mod、资源包和光影"; text <=> root.query; edited(q) => {root.filter(q,root.kind,root.descending);} }
+    HorizontalLayout { x: 0px; y: 0px; width: parent.width; height: search-field.height; spacing: 8px;
+        search-field := TextField { width: parent.width - 250px; reserve-error: false; label: "搜索"; hint: "搜索Mod、资源包和光影"; text <=> root.query; edited(q) => {root.filter(q,root.kind,root.descending);} }
         // Center on the outline, which sits below the field label.
-        VerticalLayout { alignment: end; padding-bottom: 6px;
+        VerticalLayout { alignment: end; padding-bottom: 2px;
             GlassButton { width: 90px; label: root.descending ? "名称↓" : "名称↑"; clicked => {root.descending = !root.descending; root.filter(root.query,root.kind,root.descending);} }
         }
-        VerticalLayout { alignment: end; padding-bottom: 6px;
+        VerticalLayout { alignment: end; padding-bottom: 2px;
             GlassButton { width: 90px; label: root.icon-only ? "列表" : "图标"; clicked => {root.icon-only = !root.icon-only;} }
         }
     }
