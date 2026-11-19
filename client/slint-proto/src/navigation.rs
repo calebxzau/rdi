@@ -4,6 +4,7 @@ pub enum Screen {
     #[default]
     Menu,
     Gallery,
+    Wardrobe,
     LocalModpackInstall,
     ModpackLocalAdvanceOption,
 }

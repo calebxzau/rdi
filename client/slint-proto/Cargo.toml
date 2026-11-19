@@ -20,7 +20,7 @@ bytemuck = { version = "=1.25.2", features = ["derive"] }
 pollster = "=0.4.0"
 slint = { version = "=1.18.1", default-features = false, features = ["std", "compat-1-18", "backend-winit", "renderer-femtovg-wgpu", "renderer-software", "unstable-wgpu-30", "unstable-winit-030"] }
 tokio = { version = "1.54.1", features = ["rt-multi-thread", "macros", "time", "sync", "net", "io-util"] }
-reqwest = { version = "0.13.5", default-features = false, features = ["rustls", "json", "gzip", "deflate", "system-proxy"] }
+reqwest = { version = "0.13.5", default-features = false, features = ["rustls", "json", "query", "gzip", "deflate", "system-proxy"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
 base64 = "0.23.1"

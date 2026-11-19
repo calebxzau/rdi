@@ -15,6 +15,7 @@ mod config;
 mod navigation;
 mod shell;
 mod gallery;
+mod wardrobe;
 use rdi_renderer::glass;
 use rdi_renderer::background;
 mod gpu_setup;

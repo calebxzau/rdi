@@ -18,6 +18,7 @@ pub struct Shell {
     menu_started: bool,
     toast_since: Rc<Cell<Option<Instant>>>,
     _gallery: Rc<RefCell<crate::gallery::Gallery>>,
+    wardrobe: Rc<RefCell<crate::wardrobe::Wardrobe>>,
 }
 impl Shell {
     pub fn new(
@@ -35,7 +36,8 @@ impl Shell {
             navigation,
             menu_started: !gallery,
             toast_since: Rc::new(Cell::new(None)),
-            _gallery: crate::gallery::Gallery::wire(ui, runtime),
+            _gallery: crate::gallery::Gallery::wire(ui, runtime.clone()),
+            wardrobe: crate::wardrobe::Wardrobe::wire(ui, runtime),
         }));
         state.borrow().sync(ui);
         let weak = Rc::downgrade(&state);
@@ -84,6 +86,10 @@ impl Shell {
                         ui.set_activity_panel(0);
                     }
                     "gallery" if ui.get_gallery_enabled() => s.navigation.push(Screen::Gallery),
+                    "wardrobe" => {
+                        s.navigation.push(Screen::Wardrobe);
+                        s.wardrobe.borrow_mut().open(&ui);
+                    }
                     "console" => { ui.set_activity_panel(1); ui.invoke_pack_action("console.subscribe".into(), "".into()); }
                     "tasks" => { ui.set_activity_panel(2); ui.invoke_pack_action("tasks.subscribe".into(), "".into()); }
                     _ => {
@@ -109,6 +115,7 @@ impl Shell {
     }
     fn sync(&self, ui: &AppWindow) {
         ui.set_gallery(self.navigation.current() == Screen::Gallery);
+        ui.set_wardrobe_visible(self.navigation.current() == Screen::Wardrobe);
         ui.set_pack_screen(match self.navigation.current() { Screen::LocalModpackInstall => 1, Screen::ModpackLocalAdvanceOption => 2, _ => 0 });
         ui.set_can_back(self.navigation.can_back());
     }
@@ -117,6 +124,7 @@ impl Shell {
     }
     pub fn tick(&mut self) {
         self._gallery.borrow_mut().tick();
+        self.wardrobe.borrow_mut().tick();
         if self
             .toast_since
             .get()
@@ -191,7 +199,7 @@ pub fn frame(
                 press_scale: ui.get_gallery_press_scale(),
             });
         }
-    } else if ui.get_pack_screen() == 0 {
+    } else if ui.get_pack_screen() == 0 && !ui.get_wardrobe_visible() {
         if !ui.get_loading() && ui.get_error().is_empty() {
             for (tab, shape) in ui.get_menu_grids().iter().enumerate() {
                 let i = &interactions[tab];
