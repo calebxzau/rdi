@@ -207,7 +207,7 @@ export component AppWindow inherits Window {
     changed modal-open => { if root.modal-open {dialog.focus-dialog();} else if root.login-visible {login-view.focus-account();} else {shell-focus.focus();} }
     changed logical-width => {root.scroll-changed();}
     forward-focus: shell-focus;
-    Rectangle {
+    window-content := Rectangle {
         x: 0px; y: 0px; width: root.width; height: root.height;
         border-radius: root.window-maximized ? 0px : 24px;
         clip: true;
@@ -420,5 +420,11 @@ export component AppWindow inherits Window {
     if !root.window-maximized: ResizeHandles { x: 0px; y: 0px; width: parent.width; height: parent.height; start(edge) => { root.window-resize(edge); } }
 
     }
+    }
+    if !root.window-maximized: window-outline := Rectangle {
+        x: 0px; y: 0px; width: root.width; height: root.height;
+        border-radius: window-content.border-radius;
+        border-width: 1px;
+        border-color: #8b8980;
     }
 }
