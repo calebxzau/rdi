@@ -3,13 +3,13 @@ component AccountMenuItem inherits Rectangle {
     in property <string> glyph;
     in property <string> label;
     callback clicked();
-    height: 44px;
+    height: 36px;
     accessible-role: button;
     accessible-label: root.label;
     accessible-action-default => {root.clicked();}
-    Rectangle { x: 6px; y: 2px; width: parent.width - 12px; height: parent.height - 4px; border-radius: 12px; background: touch.has-hover ? #0000000f : transparent; }
-    Text { x: 18px; width: 24px; height: parent.height; text: root.glyph; font-family: Theme.symbols; font-size: 18px; color: Theme.ink; horizontal-alignment: center; vertical-alignment: center; }
-    Text { x: 54px; width: parent.width - 66px; height: parent.height; text: root.label; font-size: 14px; color: Theme.ink; vertical-alignment: center; }
+    Rectangle { x: 4px; y: 2px; width: parent.width - 8px; height: parent.height - 4px; border-radius: 8px; background: touch.has-hover ? #0000000f : transparent; }
+    Text { x: 12px; width: 24px; height: parent.height; text: root.glyph; font-family: Theme.symbols; font-size: 18px; color: Theme.ink; horizontal-alignment: center; vertical-alignment: center; }
+    Text { x: 44px; width: parent.width - self.x - 12px; height: parent.height; text: root.label; font-size: 14px; color: Theme.ink; vertical-alignment: center; }
     touch := TouchArea { mouse-cursor: pointer; clicked => {root.clicked();} }
 }
 /// Covers the window so that a click outside the panel closes it.
@@ -22,13 +22,16 @@ export component AccountMenu inherits Rectangle {
     callback logout();
     TouchArea { clicked => {root.dismiss();} }
     Rectangle {
-        width: 168px; height: 148px;
+        width: 124px; height: 120px;
         x: max(8px, min(root.anchor-x, root.width - self.width - 8px)); y: root.anchor-y;
-        border-radius: 20px; background: #eef1f5;
-        drop-shadow-blur: 16px; drop-shadow-offset-y: 4px; drop-shadow-color: #0000003d;
+        border-radius: 12px; background: #eef1f5;
+        drop-shadow-blur: 10px; drop-shadow-offset-y: 3px; drop-shadow-color: #00000026;
         TouchArea {}
-        AccountMenuItem { y: 8px; width: parent.width; glyph: "\u{f449}"; label: "个人信息"; clicked => {root.player-info();} }
-        AccountMenuItem { y: 52px; width: parent.width; glyph: "\u{ee1c}"; label: "衣柜"; clicked => {root.wardrobe();} }
-        AccountMenuItem { y: 96px; width: parent.width; glyph: "\u{f2f5}"; label: "退出登录"; clicked => {root.logout();} }
+        VerticalLayout {
+            padding-top: 6px; padding-bottom: 6px;
+            AccountMenuItem { glyph: "\u{f449}"; label: "个人信息"; clicked => {root.player-info();} }
+            AccountMenuItem { glyph: "\u{ee1c}"; label: "衣柜"; clicked => {root.wardrobe();} }
+            AccountMenuItem { glyph: "\u{f2f5}"; label: "退出登录"; clicked => {root.logout();} }
+        }
     }
 }
