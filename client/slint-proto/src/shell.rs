@@ -85,6 +85,7 @@ impl Shell {
                         s.navigation.home();
                         ui.set_activity_panel(0);
                     }
+                    "host-list" if s.navigation.current() == Screen::Menu => s.navigation.push(Screen::HostList),
                     "gallery" if ui.get_gallery_enabled() => s.navigation.push(Screen::Gallery),
                     "wardrobe" => {
                         s.navigation.push(Screen::Wardrobe);
@@ -115,6 +116,7 @@ impl Shell {
     }
     fn sync(&self, ui: &AppWindow) {
         ui.set_gallery(self.navigation.current() == Screen::Gallery);
+        ui.set_host_list_visible(self.navigation.current() == Screen::HostList);
         ui.set_wardrobe_visible(self.navigation.current() == Screen::Wardrobe);
         ui.set_pack_screen(match self.navigation.current() { Screen::LocalModpackInstall => 1, Screen::ModpackLocalAdvanceOption => 2, _ => 0 });
         ui.set_can_back(self.navigation.can_back());
@@ -157,8 +159,8 @@ fn panel(s: GlassShape) -> glass::Panel {
 pub fn frame(
     ui: &AppWindow,
     interactions: &[Interaction; 2],
-    pills: &[crate::anim::Spring; 7],
-    pivots: &[[f32; 2]; 7],
+    pills: &[crate::anim::Spring; 6],
+    pivots: &[[f32; 2]; 6],
     selected: usize,
 ) -> glass::Frame {
     if ui.get_ui_proof() {
@@ -190,6 +192,10 @@ pub fn frame(
                 clip: rect(&shape),
                 x: shape.x,
                 y: shape.y,
+                row_pitch: crate::hosts::PITCH,
+                tile_size: crate::hosts::TILE,
+                columns: None,
+                row_offsets: [0.0; 2],
                 scroll: ui.get_gallery_scroll(),
                 count: ui.get_gallery_tiles().row_count(),
                 opacity: 1.,
@@ -199,7 +205,7 @@ pub fn frame(
                 press_scale: ui.get_gallery_press_scale(),
             });
         }
-    } else if ui.get_pack_screen() == 0 && !ui.get_wardrobe_visible() {
+    } else if ui.get_pack_screen() == 0 && !ui.get_wardrobe_visible() && !ui.get_host_list_visible() {
         if !ui.get_loading() && ui.get_error().is_empty() {
             for (tab, shape) in ui.get_menu_grids().iter().enumerate() {
                 let i = &interactions[tab];
@@ -207,6 +213,25 @@ pub fn frame(
                     clip: rect(&shape),
                     x: shape.x,
                     y: shape.y,
+                    row_pitch: if tab == 0 {
+                        ui.get_menu_grid_row_pitch()
+                    } else {
+                        crate::hosts::PITCH
+                    },
+                    tile_size: if tab == 0 {
+                        ui.get_menu_grid_tile_size()
+                    } else {
+                        crate::hosts::TILE
+                    },
+                    columns: Some(ui.get_menu_grid_columns().max(1) as usize),
+                    row_offsets: [
+                        ui.get_menu_grid_row_offset(),
+                        if tab == 0 {
+                            ui.get_host_grid_last_row_offset()
+                        } else {
+                            ui.get_pack_grid_last_row_offset()
+                        },
+                    ],
                     scroll: if tab == 0 {
                         ui.get_host_scroll()
                     } else {
@@ -229,8 +254,8 @@ pub fn frame(
             let spring = match index {
                 0 => None,
                 1 => Some(selected),
-                2..=3 if selected == 0 => Some(index),
-                4..=6 if selected == 1 => Some(index),
+                2 if selected == 0 => Some(index),
+                3..=5 if selected == 1 => Some(index),
                 _ => continue,
             };
             f.pills.push(glass::Pill {

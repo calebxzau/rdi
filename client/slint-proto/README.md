@@ -12,7 +12,7 @@ cd ..\slint-proto
 cargo build --release
 $env:RDI_PROTO_USR = '<account>'
 $env:RDI_PROTO_PWD = '<password>'
-.\target\release\rdi-slint-proto.exe --show-others
+.\target\release\rdi-slint-proto.exe
 ```
 
 From WSL, wrap the same commands in `pwsh.exe -NoProfile -Command "..."`; don't build against `/mnt/c` with the
@@ -37,8 +37,7 @@ prefill/auto-login settings. Rust reads saved passwords from the Compose-compati
 | Flag | Meaning |
 |---|---|
 | `--gallery` | Start the U3 shared-component gallery without an account; Home opens the real menu if credentials are supplied |
-| `--show-others` | Start with 显示其他房间 on |
-| `--all-playable` | Treat every host as playable (mimics the special account override; no dimming) |
+| `--show-others`, `--all-playable` | Legacy flags accepted for benchmark script compatibility. Open 房间列表 from the title bar to browse all rooms. |
 | `--solid-window` | Opaque window instead of a transparent one |
 | `--scale <f>` | Override the DPI scale factor (0.5–4) |
 | `--renderer <name>` | Slint renderer, default `femtovg-wgpu` (DX12 on Windows); `software` runs without glass, for memory comparison only |

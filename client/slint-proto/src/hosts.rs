@@ -20,31 +20,34 @@ impl Hosts {
     pub fn page(&mut self, values: Vec<HostBrief>) {
         self.ended = values.is_empty();
         self.next_page += 1;
-        self.merge(values);
+        // The legacy paginated endpoint returns the rooms outside /host/my.
+        for mut host in values {
+            host.playable = false;
+            self.items.entry(host.id.clone()).or_insert(host);
+        }
     }
-    pub fn shown(&self, others: bool, all: bool) -> Vec<HostBrief> {
+    pub fn shown(&self, include_other_rooms: bool) -> Vec<&HostBrief> {
         let mut v: Vec<_> = self
             .items
             .values()
             .rev()
-            .filter(|h| others || all || h.playable)
-            .cloned()
+            .filter(|h| include_other_rooms || h.playable)
             .collect();
-        v.sort_by_key(|h| !(all || h.playable));
+        v.sort_by_key(|h| !h.playable);
         v
     }
 }
-pub fn cell(index: usize) -> (usize, usize) {
-    (index / ROWS, index % ROWS)
-}
-pub fn columns(scroll: f32, width: f32, count: usize, margin: usize) -> std::ops::Range<usize> {
-    let total = count.div_ceil(ROWS);
-    let first = (((-scroll - PADDING).max(0.0) / PITCH).floor() as usize)
-        .saturating_sub(margin)
-        .min(total);
-    let last =
-        ((((-scroll + width - PADDING).max(0.0) / PITCH).floor() as usize) + 1 + margin).min(total);
-    first..last.max(first)
+pub fn visible_rows(
+    scroll: f32,
+    height: f32,
+    pitch: f32,
+    count: usize,
+) -> std::ops::Range<usize> {
+    let max_offset = (count as f32 * pitch + 2.0 * PADDING - height).max(0.0);
+    let top = (-scroll).clamp(0.0, max_offset) - PADDING;
+    let first = (top / pitch).floor().max(0.0) as usize;
+    let end = ((top + height) / pitch).ceil().max(0.0) as usize;
+    first.min(count)..end.min(count)
 }
 pub fn grid_metrics() -> rdi_renderer::glass::GridMetrics {
     rdi_renderer::glass::GridMetrics {
@@ -69,20 +72,20 @@ mod tests {
     fn merging_order_filter_and_end() {
         let mut h = Hosts::default();
         h.merge(vec![host("01", true), host("03", false), host("02", true)]);
-        h.page(vec![host("02", true)]);
-        let ids = |v: Vec<HostBrief>| v.into_iter().map(|h| h.id).collect::<Vec<_>>();
-        assert_eq!(ids(h.shown(true, false)), ["02", "01", "03"]);
-        assert_eq!(ids(h.shown(false, false)), ["02", "01"]);
-        assert_eq!(ids(h.shown(false, true)), ["03", "02", "01"]);
+        h.page(vec![host("02", false), host("04", true)]);
+        let ids = |v: Vec<&HostBrief>| v.into_iter().map(|h| h.id.clone()).collect::<Vec<_>>();
+        assert_eq!(ids(h.shown(true)), ["02", "01", "04", "03"]);
+        assert_eq!(ids(h.shown(false)), ["02", "01"]);
+        assert_eq!(h.next_page, 1);
         assert!(!h.ended);
         h.page(vec![]);
         assert!(h.ended);
     }
     #[test]
-    fn grid_bounds() {
-        assert_eq!(cell(4), (1, 1));
-        assert_eq!(columns(0.0, 1280.0, 100, 0), 0..10);
-        assert_eq!(columns(-1380.0, 500.0, 100, 2), 7..16);
-        assert_eq!(columns(0.0, 1280.0, 0, 2), 0..0);
+    fn visible_rows_follow_vertical_scroll_and_clamp_after_resize() {
+        assert_eq!(visible_rows(0.0, 434.0, PITCH, 10), 0..4);
+        assert_eq!(visible_rows(-154.0, 292.0, PITCH, 10), 1..4);
+        assert_eq!(visible_rows(-1380.0, 292.0, PITCH, 3), 1..3);
+        assert_eq!(visible_rows(0.0, 434.0, PITCH, 0), 0..0);
     }
 }

@@ -4,6 +4,7 @@ pub enum Screen {
     #[default]
     Menu,
     Gallery,
+    HostList,
     Wardrobe,
     LocalModpackInstall,
     ModpackLocalAdvanceOption,
@@ -66,8 +67,12 @@ mod tests {
     }
 
     #[test]
-    fn local_pack_screens_hold_scene_and_return_to_menu() {
-        for screen in [Screen::LocalModpackInstall, Screen::ModpackLocalAdvanceOption] {
+    fn submenu_screens_hold_scene_and_return_to_menu() {
+        for screen in [
+            Screen::HostList,
+            Screen::LocalModpackInstall,
+            Screen::ModpackLocalAdvanceOption,
+        ] {
             let mut navigation = Navigation::default();
             navigation.push(screen);
             assert!(navigation.can_back());

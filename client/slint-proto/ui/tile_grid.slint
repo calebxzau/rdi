@@ -1,14 +1,33 @@
 import { GlassShape } from "surfaces.slint";
-import { TileData } from "theme.slint";
+import { TileData, Theme } from "theme.slint";
 import { HostTile } from "host_tile.slint";
 export component TileGrid inherits Rectangle {
     out property <GlassShape> shape: { x: root.absolute-position.x / 1px, y: root.absolute-position.y / 1px, w: root.width / 1px, h: root.height / 1px, radius: 22, alpha: root.fade, tint: transparent };
-    out property <length> scroll-extent: flick.content-width;
+    out property <length> scroll-extent: root.row-major
+        ? max(root.height, root.row-count * root.row-pitch + 32px)
+        : max(root.width, ceil(root.tiles.length / 3) * Theme.pitch - (Theme.pitch - Theme.tile) + 32px);
     in property <[TileData]> tiles;
     in-out property <length> scroll: 0px;
     in property <int> pressed: -1;
     in property <float> press-scale: 1;
     in property <float> fade: 1;
+    in property <bool> captions;
+    in property <bool> row-major;
+    out property <int> columns: max(1, floor((root.width - 32px + Theme.pitch - Theme.tile) / Theme.pitch));
+    private property <int> row-count: ceil(root.tiles.length / root.columns);
+    out property <length> row-offset: root.center-offset(root.columns);
+    out property <length> last-row-offset: root.center-offset(root.tiles.length - (root.row-count - 1) * root.columns);
+    pure function center-offset(count: int) -> length {
+        return (root.width - (count - 1) * Theme.pitch - Theme.tile) / 2 - 16px;
+    }
+    private property <length> min-scroll: (root.row-major ? root.height : root.width) - root.scroll-extent;
+    changed min-scroll => { if root.row-major {root.scroll = clamp(root.scroll, root.min-scroll, 0px);} }
+    changed scroll => {root.moved();}
+    property <length> caption-gap: 8px;
+    property <length> caption-height: 14px;
+    property <length> row-gap: 14px;
+    out property <length> row-pitch: root.captions ? (root.height - 32px) / 3 : Theme.pitch;
+    out property <length> tile-size: root.captions ? min(Theme.tile, root.row-pitch - root.caption-gap - root.caption-height - root.row-gap) : Theme.tile;
     callback hover(int,bool);
     callback press(int,bool);
     callback action(int,bool);
@@ -17,20 +36,35 @@ export component TileGrid inherits Rectangle {
     height: 434px;
     TouchArea {
       scroll-event(e) => {
-        root.scroll = clamp(root.scroll + (e.delta-x != 0px ? e.delta-x : e.delta-y), min(0px, root.width - max(root.width, ceil(root.tiles.length / 3) * 138px + 20px)), 0px);
-        root.moved(); return accept;
+        root.scroll = clamp(root.scroll + (root.row-major || e.delta-x == 0px ? e.delta-y : e.delta-x), root.min-scroll, 0px);
+        return accept;
       }
-    flick := Flickable {
-        width: parent.width; height: parent.height;
-        interactive: false;
-        content-width: max(self.width, ceil(root.tiles.length / 3) * 138px - 12px + 32px);
-        content-height: self.height;
-        content-x <=> root.scroll;
-        for tile[i] in root.tiles: HostTile {
-            x: 16px + floor(i / 3) * 138px; y: 16px + mod(i,3) * 138px;
-            visible: self.x + 126px + root.scroll > -276px && self.x + root.scroll < root.width + 276px;
-            tile: tile; scale: root.pressed == i ? root.press-scale : 1; fade: root.fade;
-            hover(on) => {root.hover(i,on);} press(on) => {root.press(i,on);} action(right) => {root.action(i,right);}
+    Rectangle {
+        x: root.row-major ? 0px : root.scroll;
+        y: root.row-major ? root.scroll : 0px;
+        width: root.row-major ? root.width : root.scroll-extent;
+        height: root.row-major ? root.scroll-extent : root.height;
+        for tile[i] in root.tiles: Rectangle {
+            private property <int> tile-row: root.row-major ? floor(i / root.columns) : mod(i, 3);
+            private property <int> tile-column: root.row-major ? mod(i, root.columns) : floor(i / 3);
+            private property <length> offset: root.row-major
+                ? (self.tile-row == root.row-count - 1 ? root.last-row-offset : root.row-offset) : 0px;
+            x: 16px + self.offset + self.tile-column * Theme.pitch;
+            y: 16px + self.tile-row * root.row-pitch;
+            width: Theme.tile; height: root.row-pitch;
+            visible: root.row-major
+                ? self.y + self.height + root.scroll > 0px && self.y + root.scroll < root.height
+                : self.x + self.width + root.scroll > -276px && self.x + root.scroll < root.width + 276px;
+            HostTile {
+                x: (parent.width - self.width) / 2; y: 0px; width: root.tile-size; height: self.width;
+                tile: tile; scale: root.pressed == i ? root.press-scale : 1; fade: root.fade;
+                hover(on) => {root.hover(i,on);} press(on) => {root.press(i,on);} action(right) => {root.action(i,right);}
+            }
+            if root.captions: Text {
+                x: 0px; y: root.tile-size + root.caption-gap; width: parent.width; height: root.caption-height;
+                text: tile.name; overflow: elide; horizontal-alignment: center; vertical-alignment: center;
+                color: Theme.ink.with-alpha(root.fade); font-size: 13px; font-weight: 600;
+            }
         }
     }
     }

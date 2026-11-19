@@ -29,6 +29,8 @@ struct Params {
     edge_shadow_sigma: f32,
     edge_shadow_alpha: f32,
     opacity: f32,
+    columns: f32,
+    row_offsets: vec2f,
 }
 
 @group(0) @binding(0) var<uniform> params: Params;
@@ -39,23 +41,30 @@ fn blurred_edge(d: f32, sigma: f32) -> f32 {
 
 // 按行列间距取模得到当前格，只需检查当前格及右、下、右下三个邻格；投影用logistic近似高斯模糊后的边缘
 fn shade(coord: vec2f) -> vec4f {
-    let cell0 = floor((coord - params.origin) / params.pitch);
+    let row_major = params.columns > 0.0;
+    let last_row = ceil(params.count / max(1.0, params.columns)) - 1.0;
+    let row0 = floor((coord.y - params.origin.y) / params.pitch.y);
     var glass = vec4f(0.0);
     var glass_coverage = 0.0;
     var ambient = 0.0;
     var edge = 0.0;
     for (var i = 0; i < 4; i++) {
         let fi = f32(i);
-        let cell = cell0 + vec2f(fi % 2.0, floor(fi * 0.5));
-        let index = cell.x * params.rows + cell.y;
-        if (cell.x < 0.0 || cell.y < 0.0 || cell.y >= params.rows || index >= params.count) {
+        let row = row0 + floor(fi * 0.5);
+        let offset = select(params.row_offsets.x, params.row_offsets.y, row_major && row == last_row);
+        let row_origin = params.origin + vec2f(offset, 0.0);
+        let column = floor((coord.x - row_origin.x) / params.pitch.x) + fi % 2.0;
+        let cell = vec2f(column, row);
+        let index = select(cell.x * params.rows + cell.y, cell.y * params.columns + cell.x, row_major);
+        let outside_grid = select(cell.y >= params.rows, cell.x >= params.columns, row_major);
+        if (cell.x < 0.0 || cell.y < 0.0 || outside_grid || index >= params.count) {
             continue;
         }
         let scale = select(1.0, params.press_scale, index == params.press_index);
         let hover = select(0.0, params.hover_progress, index == params.hover_index);
         let half_size = params.tile_size * 0.5 * scale;
         let r = min(params.corner_radius * scale, min(half_size.x, half_size.y));
-        let p = coord - (params.origin + cell * params.pitch + params.tile_size * 0.5);
+        let p = coord - (row_origin + cell * params.pitch + params.tile_size * 0.5);
         let d = sd_rounded_rect(p, half_size, r);
         let lift = mix(params.shadow_offset_y.x, params.shadow_offset_y.y, hover);
         let sigma = mix(params.shadow_sigma.x, params.shadow_sigma.y, hover);

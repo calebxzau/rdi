@@ -23,6 +23,12 @@ pub struct Grid {
     pub clip: [f32; 4],
     pub y: f32,
     pub x: f32,
+    pub row_pitch: f32,
+    pub tile_size: f32,
+    /// A column count selects row-major layout with vertical scrolling.
+    pub columns: Option<usize>,
+    /// Horizontal offsets for full rows and the last row, in logical pixels.
+    pub row_offsets: [f32; 2],
     pub scroll: f32,
     pub count: usize,
     pub opacity: f32,
@@ -811,15 +817,20 @@ fn grid_params(
 ) {
     let s = f.scale;
     let t = uniforms::tile(s);
+    let [scroll_x, scroll_y] = if grid.columns.is_some() {
+        [0.0, grid.scroll]
+    } else {
+        [grid.scroll, 0.0]
+    };
     w.vec4([1.0, 1.0, 1.0, 0.2]) // tint
         .vec4([1.0, 1.0, 1.0, 0.7]) // hairline
         .vec4(transform)
         .vec2([
-            (metrics.padding + grid.scroll + grid.x) * s,
-            (grid.y + metrics.padding) * s,
+            (metrics.padding + scroll_x + grid.x + (metrics.tile - grid.tile_size) * 0.5) * s,
+            (grid.y + metrics.padding + scroll_y) * s,
         ]) // origin
-        .vec2([metrics.pitch * s; 2])
-        .vec2([metrics.tile * s; 2])
+        .vec2([metrics.pitch * s, grid.row_pitch * s])
+        .vec2([grid.tile_size * s; 2])
         .vec2(t.light)
         .vec2(t.shadow)
         .vec2([3.0 * s, 6.0 * s]) // shadow_offset_y
@@ -840,7 +851,9 @@ fn grid_params(
         .f32(0.18) // shadow_alpha
         .f32(t.edge)
         .f32(0.16) // edge_shadow_alpha
-        .f32(grid.opacity);
+        .f32(grid.opacity)
+        .f32(grid.columns.unwrap_or(0) as f32)
+        .vec2(grid.row_offsets.map(|offset| offset * s));
 }
 fn pill_params(w: &mut UniformWriter, f: &Frame, transform: [f32; 4], g: &PillGeometry) {
     let s = f.scale;
@@ -1005,6 +1018,10 @@ mod tests {
             clip: [0.,y,1280.,434.],
             y,
             x: 0.0,
+            row_pitch: 138.0,
+            tile_size: 126.0,
+            columns: None,
+            row_offsets: [0.0; 2],
             scroll: 37.0,
             count: 24,
             opacity: 1.0,
@@ -1096,6 +1113,10 @@ mod tests {
             clip: [0.,163.,1280.,434.],
             y: 163.0,
             x: 0.0,
+            row_pitch: 138.0,
+            tile_size: 126.0,
+            columns: Some(9),
+            row_offsets: [17.0, 569.0],
             scroll: 0.0,
             count: 10,
             opacity: 1.0,

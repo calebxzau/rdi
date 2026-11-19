@@ -6,20 +6,21 @@ export component HostTile inherits Rectangle {
     /// Tab-switch fade, multiplied into every leaf like the dimming (see the comment below).
     in property <float> fade: 1;
     property <float> alpha: (root.tile.dimmed ? 0.45 : 1) * root.fade;
+    property <float> icon-scale: root.width / 126px * root.scale;
     callback hover(bool);
     callback press(bool);
     callback action(bool);
     width: 126px; height: 126px;
-    Rectangle { x: (parent.width - self.width) / 2; y: self.x; width: 126px * root.scale; height: self.width;
+    Rectangle { x: (parent.width - self.width) / 2; y: self.x; width: root.width * root.scale; height: self.width;
         // No rounded `clip` and no `opacity` on containers: on femtovg both render through an offscreen
         // layer per tile, which costs ~150MB with wgpu. Icons arrive with rounded corners baked in
         // (images.rs) and the dimming alpha is applied to each leaf.
-        Rectangle { x: 9px * root.scale; y: self.x; width: 108px * root.scale; height: self.width;
+        Rectangle { x: 9px * root.icon-scale; y: self.x; width: 108px * root.icon-scale; height: self.width;
             if root.tile.has-icon: Image { width: parent.width; height: parent.height; source: root.tile.icon; image-fit: cover; opacity: root.alpha; }
-            if !root.tile.has-icon: Rectangle { width: parent.width; height: parent.height; border-radius: 13px * root.scale; background: #e2e4ed.with-alpha(root.alpha); }
-            if !root.tile.has-icon: Text { width: parent.width; height: parent.height; text: root.tile.initial; color: #51597b.with-alpha(root.alpha); font-size: 36px; horizontal-alignment: center; vertical-alignment: center; }
-            for head[i] in root.tile.heads: PlayerHead { x: (-3px + mod(i,5) * 20px) * root.scale; y: (-3px + floor(i/5) * 20px) * root.scale; width: 18px * root.scale; height: self.width; source: head; alpha: root.alpha; }
-            if root.tile.has-owner: PlayerHead { x: parent.width - self.width + 3px * root.scale; y: parent.height - self.height + 3px * root.scale; width: 27px * root.scale; height: self.width; source: root.tile.owner; alpha: root.alpha; }
+            if !root.tile.has-icon: Rectangle { width: parent.width; height: parent.height; border-radius: 13px * root.icon-scale; background: #e2e4ed.with-alpha(root.alpha); }
+            if !root.tile.has-icon: Text { width: parent.width; height: parent.height; text: root.tile.initial; color: #51597b.with-alpha(root.alpha); font-size: 36px * root.icon-scale; horizontal-alignment: center; vertical-alignment: center; }
+            for head[i] in root.tile.heads: PlayerHead { x: (-3px + mod(i,5) * 20px) * root.icon-scale; y: (-3px + floor(i/5) * 20px) * root.icon-scale; width: 18px * root.icon-scale; height: self.width; source: head; alpha: root.alpha; }
+            if root.tile.has-owner: PlayerHead { x: parent.width - self.width + 3px * root.icon-scale; y: parent.height - self.height + 3px * root.icon-scale; width: 27px * root.icon-scale; height: self.width; source: root.tile.owner; alpha: root.alpha; }
         }
         if root.tile.status > 0: Rectangle { x: parent.width - 19px; y: 3px; width: 16px; height: 16px; border-radius: 8px; background: (root.tile.status == 1 ? #3ddc84 : #ffc107).with-alpha(0.25 * root.fade);
             Rectangle { x: 3px; y: 3px; width: 10px; height: 10px; border-radius: 5px; background: #faf8ff.with-alpha(root.fade);

@@ -1,5 +1,5 @@
 use crate::{
-    AppWindow, TileData,
+    AppWindow, HostListRow, TileData,
     anim::Spring,
     api::{Client, model::*},
     config::Config,
@@ -28,7 +28,6 @@ struct Loaded {
     player: PlayerInfo,
     head: image::RgbaImage,
     mine: Vec<HostBrief>,
-    page: Vec<HostBrief>,
     packs: Vec<crate::packs::InstalledPack>,
 }
 struct Art {
@@ -77,7 +76,6 @@ struct Entry {
     url: Option<String>,
     owner: Option<String>,
     heads: Vec<String>,
-    dimmed: bool,
     status: i32,
 }
 impl Entry {
@@ -112,7 +110,7 @@ impl Entry {
             owner,
             has_owner: self.owner.is_some(),
             heads,
-            dimmed: self.dimmed,
+            dimmed: false,
             status: self.status,
         }
     }
@@ -150,10 +148,9 @@ pub struct App {
     /// and femtovg then uploads every icon again (in-memory images have no shared texture cache).
     tiles: [Rc<VecModel<TileData>>; 2],
     pub interactions: [Interaction; 2],
-    pills: [Spring; 7],
-    pivots: [[f32; 2]; 7],
+    pills: [Spring; 6],
+    pivots: [[f32; 2]; 6],
     selected: usize,
-    show_others: bool,
     last_scale: f32,
 }
 impl App {
@@ -166,7 +163,6 @@ impl App {
         let (tx, rx) = mpsc::channel();
         let fallback = images::to_slint(&images::steve()?);
         ui.set_player_head(fallback.clone());
-        ui.set_show_others(config.show_others);
         let tiles = [Rc::new(VecModel::default()), Rc::new(VecModel::default())];
         ui.set_hosts(ModelRc::from(tiles[0].clone()));
         ui.set_modpacks(ModelRc::from(tiles[1].clone()));
@@ -177,7 +173,6 @@ impl App {
             runtime,
             tx,
             rx,
-            show_others: config.show_others,
             config,
             hosts: Hosts::default(),
             packs: vec![],
@@ -203,8 +198,8 @@ impl App {
             fallback,
             tiles,
             interactions: [Interaction::new(), Interaction::new()],
-            pills: [Spring::default(); 7],
-            pivots: [[0.0; 2]; 7],
+            pills: [Spring::default(); 6],
+            pivots: [[0.0; 2]; 6],
             selected: 0,
             last_scale: 0.0,
         }));
@@ -245,15 +240,17 @@ impl App {
             }
         });
         let weak = Rc::downgrade(app);
-        ui.on_toggle_others(move || {
+        ui.on_load_host_page(move || {
+            if let Some(a) = weak.upgrade()
+                && let Ok(mut a) = a.try_borrow_mut()
+            {
+                a.load_page();
+            }
+        });
+        let weak = Rc::downgrade(app);
+        ui.on_play_host(move |id| {
             if let Some(a) = weak.upgrade() {
-                let mut a = a.borrow_mut();
-                a.show_others = !a.show_others;
-                if let Some(ui) = a.ui.upgrade() {
-                    ui.set_show_others(a.show_others);
-                    ui.set_host_scroll(0.0);
-                }
-                a.refresh();
+                a.borrow().play_host(id.as_str());
             }
         });
         let weak = Rc::downgrade(app);
@@ -262,6 +259,10 @@ impl App {
                 && let Ok(mut a) = a.try_borrow_mut()
             {
                 a.refresh();
+                if let Some(ui) = a.ui.upgrade() {
+                    ui.set_backdrop_revision(ui.get_backdrop_revision().wrapping_add(1) & i32::MAX);
+                    ui.window().request_redraw();
+                }
             }
         });
         let weak = Rc::downgrade(app);
@@ -315,17 +316,7 @@ impl App {
                     let version = a.borrow().pack_version(&entry.id);
                     a.borrow().pack_ui.borrow_mut().open_pack(&entry.id, &entry.name, &version, right);
                 } else if tab == 0 && !right {
-                    let a = a.borrow();
-                    if let Some(api) = a.api.clone() {
-                        if let Some(ui) = a.ui.upgrade() { ui.set_loading(true); ui.set_game_status("正在准备".into()); }
-                        let id = entry.id.clone();
-                        let size = a.ui.upgrade().map(|ui| ui.window().size()).unwrap_or(slint::PhysicalSize::new(1280, 720));
-                        let tx = a.tx.clone();
-                        a.runtime.spawn(async move {
-                            let result = api.call("host.start", serde_json::json!({"hostId":id,"windowWidth":size.width,"windowHeight":size.height})).await;
-                            let _ = tx.send(Event::Started(result));
-                        });
-                    }
+                    a.borrow().play_host(&entry.id);
                 } else if let Some(ui) = a.borrow().ui.upgrade() {
                     ui.invoke_stub(if tab == 0 { "房间详情".into() } else { "整合包详情".into() });
                 }
@@ -432,6 +423,9 @@ impl App {
         self.idle_pending = false;
         self.api = None;
         self.hosts = Hosts::default();
+        ui.set_all_hosts(ModelRc::default());
+        ui.set_page_error("".into());
+        ui.set_loading_more(false);
         self.packs.clear();
         self.cache.clear();
         self.running_processes.clear();
@@ -489,6 +483,7 @@ impl App {
         ui.set_error("".into());
         ui.set_page_error("".into());
         ui.set_loading_more(false);
+        ui.set_all_hosts(ModelRc::default());
         for model in &self.tiles {
             model.clear();
         }
@@ -501,7 +496,6 @@ impl App {
                 let uid = api.uid()?;
                 let player: PlayerInfo = api.get(&format!("/player/{uid}/info")).await?;
                 let mine = api.get("/host/my").await?;
-                let page = api.get("/host/list/0").await?;
                 let packs = Vec::new();
                 let head = match heads.get(&api, &uid).await {
                     Ok(h) => h,
@@ -515,7 +509,6 @@ impl App {
                     player,
                     head,
                     mine,
-                    page,
                     packs,
                 })
             }
@@ -533,8 +526,9 @@ impl App {
     fn entries(&self, tab: usize) -> Vec<Entry> {
         if tab == 0 {
             self.hosts
-                .shown(self.show_others, self.config.all_playable)
+                .shown(false)
                 .into_iter()
+                .cloned()
                 .map(|h| Entry {
                     id: h.id,
                     name: h.name,
@@ -542,7 +536,6 @@ impl App {
                     url: h.icon_url,
                     owner: h.owner_id,
                     heads: h.online_player_ids,
-                    dimmed: !(h.playable || self.config.all_playable),
                     status: match h.status {
                         HostStatus::Playable => 1,
                         HostStatus::Started => 2,
@@ -564,11 +557,51 @@ impl App {
                     url: m.icon.clone(),
                     owner: None,
                     heads: vec![],
-                    dimmed: false,
                     status: 0,
                 })
                 .collect()
         }
+    }
+    fn play_host(&self, id: &str) {
+        let (Some(api), Some(ui)) = (self.api.clone(), self.ui.upgrade()) else {
+            return;
+        };
+        if ui.get_loading() || !self.hosts.items.get(id).is_some_and(|host| host.playable) {
+            return;
+        }
+        ui.set_loading(true);
+        ui.set_game_status("正在准备".into());
+        let size = ui.window().size();
+        let id = id.to_owned();
+        let tx = self.tx.clone();
+        self.runtime.spawn(async move {
+            let result = api
+                .call(
+                    "host.start",
+                    serde_json::json!({
+                        "hostId": id,
+                        "windowWidth": size.width,
+                        "windowHeight": size.height,
+                    }),
+                )
+                .await;
+            let _ = tx.send(Event::Started(result));
+        });
+    }
+    fn sync_host_list(&self, ui: &AppWindow) {
+        let rows = self
+            .hosts
+            .shown(true)
+            .into_iter()
+            .map(|host| HostListRow {
+                id: host.id.as_str().into(),
+                name: host.name.as_str().into(),
+                modpack: host.modpack_name.as_str().into(),
+                online_count: host.online_player_ids.len() as i32,
+                playable: host.playable,
+            })
+            .collect::<Vec<_>>();
+        ui.set_all_hosts(ModelRc::new(VecModel::from(rows)));
     }
     fn load_page(&mut self) {
         if self.hosts.ended || self.page_job.is_some() {
@@ -580,7 +613,7 @@ impl App {
         let Some(ui) = self.ui.upgrade() else {
             return;
         };
-        if !ui.get_page_error().is_empty() {
+        if !ui.get_host_list_visible() || !ui.get_page_error().is_empty() {
             return;
         }
         ui.set_loading_more(true);
@@ -601,20 +634,27 @@ impl App {
         let size = (108.0 * ui.window().scale_factor()).ceil().max(1.0) as u32;
         let mut wanted = HashSet::new();
         let mut pending = vec![];
-        for tab in 0..2 {
+        let grids = ui.get_menu_grids();
+        let columns = ui.get_menu_grid_columns().max(1) as usize;
+        for (tab, shape) in grids.iter().enumerate() {
             let entries = self.entries(tab);
             let scroll = if tab == 0 {
                 ui.get_host_scroll()
             } else {
                 ui.get_modpack_scroll()
             };
-            let columns = hosts::columns(scroll, ui.get_logical_width(), entries.len(), 2);
+            let pitch = if tab == 0 {
+                ui.get_menu_grid_row_pitch()
+            } else {
+                hosts::PITCH
+            };
+            let rows = hosts::visible_rows(scroll, shape.h, pitch, entries.len().div_ceil(columns));
             let model: Vec<_> = entries
                 .iter()
                 .enumerate()
                 .map(|(index, e)| {
                     let key = e.key(size);
-                    let visible = columns.contains(&hosts::cell(index).0)
+                    let visible = rows.contains(&(index / columns))
                         && (self.selected == tab
                             || (ui.get_tab_position() > 0.0 && ui.get_tab_position() < 1.0));
                     let art = if visible {
@@ -631,9 +671,6 @@ impl App {
                 })
                 .collect();
             sync_rows(&self.tiles[tab], model);
-            if tab == 0 && self.selected == 0 && columns.end * 3 + 6 >= entries.len() {
-                self.load_page();
-            }
         }
         self.jobs.retain(|key, job| {
             if wanted.contains(key) {
@@ -847,10 +884,13 @@ impl App {
                             ui.set_player_name(data.player.name.into());
                             ui.set_player_head(images::to_slint(&data.head));
                             self.hosts.merge(data.mine);
-                            self.hosts.page(data.page);
                             self.packs = data.packs;
                             self.api = Some(data.api.clone());
                             self.pack_ui.borrow_mut().connect(Some(data.api.clone()));
+                            self.sync_host_list(&ui);
+                            if ui.get_host_list_near_end() {
+                                self.load_page();
+                            }
                             tracing::info!(
                                 hosts = self.hosts.items.len(),
                                 modpacks = self.packs.len(),
@@ -912,7 +952,10 @@ impl App {
                                 ended = self.hosts.ended,
                                 "Host page merged"
                             );
-                            dirty = true;
+                            self.sync_host_list(&ui);
+                            if ui.get_host_list_near_end() {
+                                self.load_page();
+                            }
                         }
                         Err(error) => {
                             tracing::error!(error=?error,"Host page failed");
