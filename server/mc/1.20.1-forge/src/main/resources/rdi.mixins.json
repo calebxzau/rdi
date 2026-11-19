@@ -19,6 +19,7 @@
     "AServerEntity",
     "AServerLevel",
     "mAttributeDedup",
+    "mFallbackResourceManager",
     "mHandshakeDiagnostics",
     "mIdleGate",
     "mNetworkRegistryDiagnostics",
