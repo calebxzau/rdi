@@ -28,15 +28,19 @@ fn rotate_y(v: vec3f) -> vec3f {
         let arm = id <= 3u;
         let side = select(1., -1., id == 2u || id == 4u);
         let pivot = vec3f(side*select(1.9, pose.w, arm), select(12., 22., arm), 0.);
-        let pitch = select(-pose.z, pose.z, id == 2u || id == 5u);
+        let swing = pose.z * select(1., 0.8, arm);
+        let pitch = select(-swing, swing, id == 2u || id == 5u);
         local = rotate_x(local - pivot, pitch) + pivot;
         direction = rotate_x(direction, pitch);
     }
-    local = rotate_y(local);
+    // Tilt forward around the hips, then turn toward the direction of travel.
+    let hips = vec3f(0., 12., 0.);
+    let lean = 0.17;
+    local = rotate_y(rotate_x(local - hips, lean) + hips);
     let pixel = vec2f(pose.x + local.x*2.625, pose.y - local.y*2.625);
     // Plain RGBA output, matching the glass renderer. Larger z is nearer the viewer.
     let clip = vec4f(pixel/params.viewport.xy*vec2f(2., -2.) + vec2f(-1., 1.), 0.5 - local.z/100., 1.);
-    return Out(clip, uv, rotate_y(direction));
+    return Out(clip, uv, rotate_y(rotate_x(direction, lean)));
 }
 @fragment fn fs(v: Out) -> @location(0) vec4f {
     let texel = textureSample(skin, nearest_sampler, v.uv/64.);

@@ -15,9 +15,12 @@ use wgpu::util::DeviceExt;
 pub const COLOR: [u8; 4] = [247, 243, 232, 255];
 const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 const SOURCE: &str = include_str!("parade.wgsl");
-const SPACING: f64 = 112.;
-const SPEED: f64 = 28.;
+const SPACING: f64 = 56.;
+const SPEED: f64 = 100.;
 const MARGIN: f64 = 40.;
+const RUN_CYCLE_RADIANS_PER_SECOND: f64 = 11.5;
+const RUN_LEG_SWING_RADIANS: f32 = 0.9;
+const RUN_BOB_PIXELS: f32 = 4.;
 
 /// Each identity occurs once per circuit. Extra empty slots keep small rosters from repeating
 /// simultaneously; long rosters continue offscreen until every member has passed.
@@ -410,14 +413,14 @@ impl Renderer {
                 if x < -MARGIN as f32 || x > logical_width + MARGIN as f32 {
                     continue;
                 }
-                let stride = ((seconds * 4.5 + index as f64 * 0.7)
+                let swing = (seconds * RUN_CYCLE_RADIANS_PER_SECOND + index as f64 * 0.7)
                     .rem_euclid(std::f64::consts::TAU)
-                    .sin()
-                    * 0.55) as f32;
+                    .sin() as f32;
+                let bob = RUN_BOB_PIXELS * (1. - swing * swing);
                 self.poses.push([
                     x,
-                    logical_height - 8.,
-                    stride,
+                    logical_height - 8. - bob,
+                    swing * RUN_LEG_SWING_RADIANS,
                     if member.variant & 1 != 0 { 5.5 } else { 6. },
                 ]);
                 self.visible.push(index);
