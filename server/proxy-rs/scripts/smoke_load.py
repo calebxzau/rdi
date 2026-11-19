@@ -904,7 +904,7 @@ def run(args: argparse.Namespace) -> dict[str, object]:
     check(args.max_rss_mb > 0, "--max-rss-mb must be positive")
     favicon = args.favicon
     if favicon is None:
-        favicon = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../proxy/favicon.png"))
+        favicon = os.path.abspath(os.path.join(os.path.dirname(__file__), "../favicon.png"))
     backend = MockBackend()
     master: Optional[MockMaster] = None
     proxy: Optional[ProxyProcess] = None

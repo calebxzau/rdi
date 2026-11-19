@@ -252,7 +252,7 @@ cargo test --release -- --ignored   # common/session-resume-rs：64MiB随机故�
 
 # server/proxy-rs，加上恢复负载
 python3 scripts/smoke_load.py --binary target/release/rdi-proxy-rs --connections 20 \
-  --seconds 12 --resume-seconds 120 --favicon ../proxy/favicon.png \
+  --seconds 12 --resume-seconds 120 \
   --local-proxy ../../client/local-proxy-rs/target/release/rdi-local-proxy-cli \
   --fault-relay ../../common/session-resume-rs/target/release/examples/fault_relay
 ```

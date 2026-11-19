@@ -1,6 +1,6 @@
 # RDI Rust房间代理
 
-`server/proxy`的独立Rust实现，面向约20人并发、进程常驻内存低于100MB的部署目标。内存预算是验证目标，不是硬性内存限制。设计与兼容边界见[PLAN.md](PLAN.md)。
+RDI的Rust房间代理，面向约20人并发、进程常驻内存低于100MB的部署目标。内存预算是验证目标，不是硬性内存限制。设计与兼容边界见[PLAN.md](PLAN.md)。
 
 ## 构建与启动
 
@@ -11,7 +11,7 @@ cargo build --release --locked
 ./target/release/rdi-proxy-rs --master http://127.0.0.1:65231
 ```
 
-Windows使用`target\release\rdi-proxy-rs.exe`。与原代理同时测试时，使用不同监听端口：
+Windows使用`target\release\rdi-proxy-rs.exe`。并行测试多个代理实例时，为各实例指定不同监听端口：
 
 ```sh
 ./target/release/rdi-proxy-rs --listen 127.0.0.1:65232 --master http://127.0.0.1:65231
@@ -40,11 +40,7 @@ Windows使用`target\release\rdi-proxy-rs.exe`。与原代理同时测试时，�
 
 调试模式仅在握手请求端口为25565时直连`--backend-host:25565`。其他端口仍查询master。通常部署不需要开启调试模式。
 
-favicon是可选文件，只在启动时读取一次，最大64KiB。可以复用原代理的图片：
-
-```sh
-./target/release/rdi-proxy-rs --favicon ../proxy/favicon.png
-```
+favicon是可选文件，只在启动时读取一次，最大64KiB。本目录包含`favicon.png`，从其他工作目录启动时可以通过`--favicon`指定图片路径。
 
 日志输出到进程标准流，适合由运行它的服务管理器收集；没有内置按天归档的文件日志。停止进程时会关闭现有玩家连接。
 

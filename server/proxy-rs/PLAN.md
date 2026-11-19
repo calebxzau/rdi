@@ -4,7 +4,7 @@
 
 ## 范围与兼容性
 
-- 新增独立Cargo项目；保留`server/proxy`，master和客户端不需要更换协议。
+- 迁移到独立Cargo项目，master和客户端不需要更换协议。
 - Minecraft握手中携带的端口仍然决定房间，向master查询`GET /host/route?port=...`。
 - 只有`PLAYABLE`房间可以连接；保留原代理的中文状态提示、登录断开包、状态查询和ping回应。
 - 完整转发原始握手，包含Forge的NUL分隔扩展；不改写服务器地址、协议版本或请求端口。
@@ -39,10 +39,8 @@
 - 独立审查兼容性、输入边界、取消和断线时的资源回收。
 - 真实Minecraft客户端、Mod握手和生产部署由后续运行验证；合成TCP测试不替代这些检查。
 
-## 当前实现的参考
+## 实现参考
 
-- `../proxy/src/main/kotlin/calebxzhou/rdi/prox/DynamicProxyFrontendHandler.kt`
-- `../proxy/src/main/kotlin/calebxzhou/rdi/prox/ProxyRouteResolver.kt`
-- `../proxy/src/main/kotlin/calebxzhou/rdi/prox/ProxyFlowControl.kt`
+- Kotlin实现以迁移前的源码为准，可用 `git show 1f8096d1^:server/proxy/src/main/kotlin/calebxzhou/rdi/prox/DynamicProxyFrontendHandler.kt` 查看。同一目录包含 `ProxyRouteResolver.kt` 和 `ProxyFlowControl.kt`。
 - `../../common/model/src/main/kotlin/calebxzhou/rdi/common/model/ProxyHostRoute.kt`
 - `../../common/model/src/main/kotlin/calebxzhou/rdi/common/model/HostStatus.kt`

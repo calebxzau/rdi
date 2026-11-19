@@ -82,9 +82,9 @@ Technologies include:
 * MongoDB
 * Host orchestration
 
-### `server/proxy/`
+### `server/proxy-rs/`
 
-Proxy service.
+Rust game proxy service. Build and test with Cargo from this directory.
 
 ### Standard Source Layout
 
@@ -365,10 +365,6 @@ Prefer focused unit tests for:
 * Business rules
 
 Avoid network-dependent tests unless external dependencies are mocked.
-
-Some `server/proxy` test tasks may currently be disabled in Gradle.
-
-When adding or maintaining tests there, verify whether the relevant test task needs to be enabled.
 
 ---
 

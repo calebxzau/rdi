@@ -139,7 +139,6 @@ jobs:
           python3 scripts/smoke_load.py
           --binary target/release/rdi-proxy-rs
           --connections 20 --seconds 12 --resume-seconds 120 --max-rss-mb 100
-          --favicon ../proxy/favicon.png
           --local-proxy ../../client/local-proxy-rs/target/release/rdi-local-proxy-cli
           --fault-relay ../../common/session-resume-rs/target/release/examples/fault_relay
       - name: Probe for a graphical session
