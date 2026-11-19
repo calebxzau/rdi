@@ -1,0 +1,20 @@
+[
+  {
+    "label": "Slint Preview",
+    "command": "cargo",
+    "args": ["preview-run"],
+    "cwd": "$ZED_WORKTREE_ROOT/client/slint-proto"
+  },
+  {
+    "label": "UI Compose Run",
+    "command": ".\\gradlew.bat",
+    "args": ["run"],
+    "cwd": "$ZED_WORKTREE_ROOT/client/ui"
+  },
+  {
+    "label": "Master Run",
+    "command": ".\\gradlew.bat",
+    "args": ["run"],
+    "cwd": "$ZED_WORKTREE_ROOT/server/master"
+  }
+]
