@@ -3,6 +3,8 @@ use super::{diagnostics, terrain::hash01, textures};
 use anyhow::Result;
 use glam::Vec3;
 
+pub const BLANK_COVER: [u8; 4] = [0; 4];
+
 #[derive(Clone, Copy, Debug)]
 pub struct Coordinates {
     pub position: [f64; 3],
@@ -207,9 +209,7 @@ impl Clouds {
         frame_layout: &wgpu::BindGroupLayout,
         samples: u32,
     ) -> Result<Self> {
-        let mut image=image::load_from_memory(include_bytes!("../../../../../bg-renderer/src/main/resources/assets/minecraft/textures/environment/clouds.png"))?.to_rgba8();
-        thin_cover(&mut image, 0.45);
-        let view = textures::upload_image(device, queue, image, "scene clouds SRGB", true, false);
+        let view = textures::solid(device, queue, BLANK_COVER, "scene blank clouds SRGB", true);
         let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("scene clouds"),
             entries: &[

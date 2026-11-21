@@ -13,7 +13,6 @@ pub struct Config {
     /// Skip the glass underlay, to measure the renderer with real content but nothing of ours.
     pub no_glass: bool,
     pub no_scene: bool,
-    pub background: rdi_renderer::background::Kind,
     pub gpu_setup: crate::gpu_setup::Mode,
     pub scene: rdi_slint_proto::scene::diagnostics::Options,
     pub scale: Option<f32>,
@@ -32,7 +31,6 @@ impl Config {
             renderer: "femtovg-wgpu".into(),
             no_glass: false,
             no_scene: false,
-            background: Default::default(),
             gpu_setup: crate::gpu_setup::Mode::Manual,
             scene: Default::default(),
             scale: None,
@@ -53,7 +51,10 @@ impl Config {
                 "--solid-window" => c.solid = true,
                 "--no-glass" => c.no_glass = true,
                 "--no-scene" => c.no_scene = true,
-                "--background" => c.background = rdi_renderer::background::Kind::parse(&args.next().context("--background需要背景名称")?)?,
+                "--background" => {
+                    let name = args.next().context("--background需要背景名称")?;
+                    anyhow::ensure!(name == "parade", "启动器仅支持parade背景：{name}");
+                }
                 "--renderer" => c.renderer = args.next().context("--renderer需要渲染器名称")?,
                 "--scale" => {
                     let s: f32 = args.next().context("--scale需要数值")?.parse()?;

@@ -41,19 +41,16 @@ prefill/auto-login settings. Rust reads saved passwords from the Compose-compati
 | `--solid-window` | Opaque window instead of a transparent one |
 | `--scale <f>` | Override the DPI scale factor (0.5–4) |
 | `--renderer <name>` | Slint renderer, default `femtovg-wgpu` (DX12 on Windows); `software` runs without glass, for memory comparison only |
-| `--background parade\|valley` | Background scene, default `parade`: milk-white (`#F7F3E8`) with all available distinct player skins walking left to right along the bottom; `valley` keeps the mountain scene |
-| `--no-scene` | Keep the static background (paired memory/startup comparison) |
+| `--background parade` | Milk-white (`#F7F3E8`) with players currently online in rooms running along the bottom. Default background. |
+| `--no-scene` | Use the plain window color with glass effects (paired memory/startup comparison) |
 | `--gpu-setup=manual\|automatic` | Who creates the GPU device: the app (default) or Slint, for startup comparison |
 | `--no-glass` | Skip the glass/background pass, to measure the renderer with real content only |
 | `--log <filter>` | `tracing` filter, default `info` (e.g. `info,rdi_slint_proto=debug`) |
 
 ## Assets
 
-- `assets/bg.png` is converted once from the Compose launcher's static background:
-  ```powershell
-  C:\Users\calebxzhou\Documents\ffmpeg\bin\ffmpeg.exe -i ..\ui\assets\src\main\resources\assets\bg.avif assets\bg.png
-  ```
-- Fonts, the Steve skin and the logo are referenced from `client/ui/assets` by relative path, not copied.
+- `assets/` contains the launcher resources, fonts, and bundled player skin.
+- The glass renderer starts with a plain window color and uses the selected scene once it is ready.
 
 ## Layout
 
@@ -306,7 +303,7 @@ p5-matched-*.png and gate-summary.md. **P5 complete, stopped for owner review; n
 
 ## P4b hill crowd
 
-Plan: `P4B-PLAN.md`. The crowd is on by default: up to 50 skins from `/player/unique-skin-list`, with Steve as the stand-in. `--no-crowd` (alias `--scene-p4a-only`) skips its resources and requests. In `scene_preview`, use `--crowd=N`, `--crowd-skins=<dir>` and `--dump-crowd`.
+Historical valley renderer plan: `P4B-PLAN.md`. The launcher runs the parade scene. The retained `scene_preview` example accepts `--crowd=N`, `--crowd-skins=<dir>` and `--dump-crowd`.
 
 Reproduce from this directory on Windows, with the test account only in the process environment for the last two scripts:
 

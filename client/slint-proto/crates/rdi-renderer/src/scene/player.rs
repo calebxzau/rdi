@@ -3,8 +3,7 @@ use super::{diagnostics, player_geometry as geometry};
 use anyhow::{Context, Result};
 use image::RgbaImage;
 pub const SOURCE: &str = concat!(include_str!("common.wgsl"), include_str!("player.wgsl"));
-pub const STEVE: &[u8] =
-    include_bytes!("../../../../../ui/assets/src/main/resources/assets/skins/steve.png");
+pub const STEVE: &[u8] = include_bytes!("../../../../assets/skins/steve.png");
 pub struct Skin {
     pub pixels: RgbaImage,
     pub slim: bool,

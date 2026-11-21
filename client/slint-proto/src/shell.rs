@@ -172,8 +172,8 @@ fn panel(s: GlassShape) -> glass::Panel {
 pub fn frame(
     ui: &AppWindow,
     interactions: &[Interaction; 2],
-    pills: &[crate::anim::Spring; 6],
-    pivots: &[[f32; 2]; 6],
+    pills: &[crate::anim::Spring; 5],
+    pivots: &[[f32; 2]; 5],
     selected: usize,
 ) -> glass::Frame {
     if ui.get_ui_proof() {
@@ -261,8 +261,7 @@ pub fn frame(
             let spring = match index {
                 0 => None,
                 1 => Some(selected),
-                2 if selected == 0 => Some(index),
-                3..=5 if selected == 1 => Some(index),
+                2..=4 => Some(index),
                 _ => continue,
             };
             f.pills.push(glass::Pill {

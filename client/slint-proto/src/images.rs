@@ -5,8 +5,6 @@ use crate::api::{
 use anyhow::{Context, Result};
 use image::{DynamicImage, RgbaImage, imageops::FilterType};
 use rdi_slint_proto::scene::player::{Appearance, Skin, normalize};
-#[cfg(test)]
-use rdi_slint_proto::scene::crowd_sim::MAX_PLAYERS;
 use std::{
     collections::HashMap,
     io::Cursor,
@@ -36,12 +34,7 @@ pub fn head(skin: &RgbaImage) -> Result<RgbaImage> {
     Ok(face)
 }
 pub fn steve() -> Result<RgbaImage> {
-    head(
-        &decode(include_bytes!(
-            "../../ui/assets/src/main/resources/assets/skins/steve.png"
-        ))?
-        .to_rgba8(),
-    )
+    head(&decode(include_bytes!("../assets/skins/steve.png"))?.to_rgba8())
 }
 pub fn to_slint(image: &RgbaImage) -> slint::Image {
     slint::Image::from_rgba8(
@@ -148,69 +141,82 @@ pub async fn background_appearance(
 }
 const CROWD_DOWNLOADS: usize = 4;
 const CROWD_TIMEOUT: Duration = Duration::from_secs(15);
-fn crowd_urls(urls: Vec<String>, limit: usize) -> Vec<String> {
-    let mut unique: Vec<String> = Vec::with_capacity(urls.len().min(limit));
-    for url in urls {
-        let url = url.trim();
-        if unique.len() < limit && !url.is_empty() && !unique.iter().any(|u| u == url) {
-            unique.push(url.to_owned());
-        }
-    }
-    unique
-}
 /// The timeout starts after the host permit, so a long queue cannot fail a skin that never started.
-async fn crowd_skin(http: &reqwest::Client, url: &str) -> Result<Skin> {
+async fn crowd_skin(http: &reqwest::Client, url: &str, slim: Option<bool>) -> Result<Skin> {
     let bytes = {
         let _permit = host_limit(url).acquire_owned().await?;
         tokio::time::timeout(CROWD_TIMEOUT, fetch(http, url))
             .await
             .context("皮肤下载超时")??
     };
-    tokio::task::spawn_blocking(move || Skin::new(decode(&bytes)?.to_rgba8(), None)).await?
+    tokio::task::spawn_blocking(move || Skin::new(decode(&bytes)?.to_rgba8(), slim)).await?
 }
-/// Publishes each skin as it finishes. Failures only leave Steve or the skins that already arrived.
-pub async fn background_crowd(api: &Client, limit: usize, mut publish: impl FnMut(String, Skin)) {
-    let urls = match tokio::time::timeout(
-        CROWD_TIMEOUT,
-        api.get::<Vec<String>>("/player/unique-skin-list"),
-    )
-    .await
-    {
-        Ok(Ok(urls)) => crowd_urls(urls, limit),
-        Ok(Err(error)) => {
-            tracing::warn!(error=%format!("{error:#}"),"Crowd skin list failed; using Steve");
-            return;
+pub async fn online_crowd(
+    api: &Client,
+    ids: Vec<String>,
+    mut publish: impl FnMut(String, Option<Skin>),
+) {
+    #[derive(serde::Deserialize)]
+    struct OnlinePlayer {
+        id: String,
+        cloth: Option<Cloth>,
+    }
+
+    let mut skins = Vec::new();
+    // Keep each GET query short even when many rooms are active.
+    for batch in ids.chunks(100) {
+        let query = [("ids", batch.join("\n"))];
+        let players = match api.get_query::<Vec<OnlinePlayer>>("/player/infos", &query).await {
+            Ok(players) => players,
+            Err(error) => {
+                tracing::warn!(?error, players = batch.len(), "Online player lookup failed");
+                continue;
+            }
+        };
+        let mut clothes: HashMap<_, _> = players.into_iter().map(|p| (p.id, p.cloth)).collect();
+        for id in batch {
+            let cloth = clothes.remove(id).flatten();
+            if let Some(cloth) = cloth
+                && let Some(url) = cloth.skin.as_deref().map(str::trim).filter(|url| !url.is_empty())
+            {
+                skins.push((id.clone(), url.to_owned(), cloth.is_slim));
+            } else {
+                publish(id.clone(), None);
+            }
         }
-        Err(error) => {
-            tracing::warn!(%error,"Crowd skin list timed out; using Steve");
-            return;
-        }
-    };
-    tracing::info!(skins = urls.len(), "Crowd skin list loaded");
+    }
+    load_crowd_skins(&api.http, skins, |id, skin| publish(id, Some(skin))).await;
+}
+
+async fn load_crowd_skins(
+    http: &reqwest::Client,
+    skins: impl IntoIterator<Item = (String, String, Option<bool>)>,
+    mut publish: impl FnMut(String, Skin),
+) {
     let downloads = Arc::new(Semaphore::new(CROWD_DOWNLOADS));
     let mut tasks = tokio::task::JoinSet::new();
-    for url in urls {
-        let http = api.http.clone();
+    for (id, url, slim) in skins {
+        let http = http.clone();
         let downloads = downloads.clone();
         tasks.spawn(async move {
             let result = async {
                 let _permit = downloads.acquire_owned().await?;
-                crowd_skin(&http, &url).await
+                crowd_skin(&http, &url, slim).await
             }
             .await;
-            (url, result)
+            (id, result)
         });
     }
     let (mut loaded, mut failed) = (0, 0);
     while let Some(finished) = tasks.join_next().await {
         match finished {
-            Ok((url, Ok(skin))) => {
+            Ok((id, Ok(skin))) => {
                 loaded += 1;
-                publish(url, skin);
+                publish(id, skin);
             }
-            Ok((url, Err(error))) => {
+            Ok((id, Err(error))) => {
                 failed += 1;
-                tracing::warn!(%url,error=%format!("{error:#}"),"Crowd skipped a skin");
+                tracing::warn!(%id,error=%format!("{error:#}"),"Crowd skipped a skin");
             }
             Err(error) => {
                 failed += 1;
@@ -345,22 +351,6 @@ mod tests {
         assert!(!failed.skin.slim && failed.cape.is_none());
         assert_eq!(failed.skin.pixels, missing.skin.pixels);
     }
-    #[test]
-    fn crowd_urls_are_trimmed_unique_and_capped() {
-        let urls = crowd_urls(vec![
-            " https://a/1 ".into(),
-            "https://a/1".into(),
-            "".into(),
-            "  ".into(),
-            "https://a/2".into(),
-        ], MAX_PLAYERS);
-        assert_eq!(urls, ["https://a/1", "https://a/2"]);
-        let many = crowd_urls((0..80).map(|i| format!("https://a/{i}")).collect(), MAX_PLAYERS);
-        assert_eq!(many.len(), MAX_PLAYERS);
-        assert_eq!(many[49], "https://a/49");
-        let all = crowd_urls((0..137).map(|i| format!("https://a/{i}")).collect(), usize::MAX);
-        assert_eq!(all.len(), 137);
-    }
     #[tokio::test]
     async fn crowd_skin_decodes_and_reports_http_failure() {
         use std::io::{Read, Write};
@@ -385,10 +375,10 @@ mod tests {
             }
         });
         let http = reqwest::Client::new();
-        let skin = crowd_skin(&http, &format!("{url}/hd-legacy")).await.unwrap();
+        let skin = crowd_skin(&http, &format!("{url}/hd-legacy"), None).await.unwrap();
         assert_eq!(skin.pixels.dimensions(), (64, 32));
         assert!(!skin.slim);
-        assert!(crowd_skin(&http, &format!("{url}/missing")).await.is_err());
+        assert!(crowd_skin(&http, &format!("{url}/missing"), None).await.is_err());
         mock.join().unwrap();
     }
     #[test]

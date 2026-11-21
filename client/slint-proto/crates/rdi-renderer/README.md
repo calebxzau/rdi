@@ -1,7 +1,7 @@
 # rdi-renderer
 
 UI-independent wgpu 30.0.1 scene and glass library. It does not create a window or depend on Slint.
-Assets remain at their original repository locations; build from the repository checkout.
+The valley generates its material textures in code. The bundled Steve skin lives in Slint's assets directory.
 
 - `gpu::create(&GpuSettings, Option<&Path>) -> anyhow::Result<GpuContext>` selects an adapter and
   tries the requested compiler with FXC fallback. Settings and the DXC path belong to the caller.

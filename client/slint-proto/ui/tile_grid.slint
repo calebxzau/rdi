@@ -4,7 +4,7 @@ import { HostTile } from "host_tile.slint";
 export component TileGrid inherits Rectangle {
     out property <GlassShape> shape: { x: root.absolute-position.x / 1px, y: root.absolute-position.y / 1px, w: root.width / 1px, h: root.height / 1px, radius: 22, alpha: root.fade, tint: transparent };
     out property <length> scroll-extent: root.row-major
-        ? max(root.height, root.row-count * root.row-pitch + 32px)
+        ? max(root.height, root.content-height)
         : max(root.width, ceil(root.tiles.length / 3) * Theme.pitch - (Theme.pitch - Theme.tile) + 32px);
     in property <[TileData]> tiles;
     in-out property <length> scroll: 0px;
@@ -13,8 +13,13 @@ export component TileGrid inherits Rectangle {
     in property <float> fade: 1;
     in property <bool> captions;
     in property <bool> row-major;
+    in property <length> viewport-height: 434px;
     out property <int> columns: max(1, floor((root.width - 32px + Theme.pitch - Theme.tile) / Theme.pitch));
     private property <int> row-count: ceil(root.tiles.length / root.columns);
+    out property <length> content-height: 32px + (root.row-count > 0
+        ? (root.row-count - 1) * root.row-pitch + root.tile-size
+            + (root.captions ? root.caption-gap + root.caption-height : 0px)
+        : 0px);
     out property <length> row-offset: root.center-offset(root.columns);
     out property <length> last-row-offset: root.center-offset(root.tiles.length - (root.row-count - 1) * root.columns);
     pure function center-offset(count: int) -> length {
@@ -26,14 +31,14 @@ export component TileGrid inherits Rectangle {
     property <length> caption-gap: 8px;
     property <length> caption-height: 14px;
     property <length> row-gap: 14px;
-    out property <length> row-pitch: root.captions ? (root.height - 32px) / 3 : Theme.pitch;
+    out property <length> row-pitch: root.captions ? (root.viewport-height - 32px) / 3 : Theme.pitch;
     out property <length> tile-size: root.captions ? min(Theme.tile, root.row-pitch - root.caption-gap - root.caption-height - root.row-gap) : Theme.tile;
     callback hover(int,bool);
     callback press(int,bool);
     callback action(int,bool);
     callback moved();
     clip: true;
-    height: 434px;
+    height: root.viewport-height;
     TouchArea {
       scroll-event(e) => {
         root.scroll = clamp(root.scroll + (root.row-major || e.delta-x == 0px ? e.delta-y : e.delta-x), root.min-scroll, 0px);

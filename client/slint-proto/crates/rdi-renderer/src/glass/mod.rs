@@ -9,7 +9,7 @@ pub struct GridMetrics {
     pub rows: usize,
     pub height: f32,
 }
-use anyhow::{Context, Result, bail};
+use anyhow::{Result, bail};
 use std::{
     future::Future,
     num::NonZeroU64,
@@ -292,24 +292,15 @@ impl Renderer {
             min_filter: wgpu::FilterMode::Linear,
             ..Default::default()
         });
-        let started = Instant::now();
-        let image = match color {
-            Some(color) => image::RgbaImage::from_pixel(1, 1, image::Rgba(color)),
-            None => image::load_from_memory(include_bytes!("../../../../assets/bg.png"))
-                .context("背景图片解码失败")?.to_rgba8(),
-        };
-        tracing::info!(
-            decode_ms = started.elapsed().as_secs_f64() * 1000.0,
-            "Background image decoded"
-        );
-        let (w, h) = image.dimensions();
+        let color = color.unwrap_or(crate::parade::COLOR);
+        let size = [1, 1];
         let background = Bound::new(
             &device,
             &layout,
             &sampler,
             &uniforms,
             slot,
-            [w, h],
+            size,
             wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
         );
         queue.write_texture(
@@ -319,13 +310,13 @@ impl Renderer {
                 origin: wgpu::Origin3d::ZERO,
                 aspect: wgpu::TextureAspect::All,
             },
-            image.as_raw(),
+            &color,
             wgpu::TexelCopyBufferLayout {
                 offset: 0,
-                bytes_per_row: Some(4 * w),
-                rows_per_image: Some(h),
+                bytes_per_row: Some(4),
+                rows_per_image: Some(1),
             },
-            extent([w, h]),
+            extent(size),
         );
         Ok(Self {
             metrics,
@@ -337,7 +328,7 @@ impl Renderer {
             uniforms,
             slot,
             background,
-            image_size: [w as f32, h as f32],
+            image_size: size.map(|dimension| dimension as f32),
             live_background: None,
             cache: None,
         })

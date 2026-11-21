@@ -220,9 +220,8 @@ fn main() -> Result<()> {
                 directory.join(format!("clouds-{t:.1}.bin")),
                 bytemuck::cast_slice(&scene::clouds::mesh(coordinates)),
             )?;
-            let mut clouds=image::load_from_memory(include_bytes!("../../../../bg-renderer/src/main/resources/assets/minecraft/textures/environment/clouds.png"))?.to_rgba8();
-            scene::clouds::thin_cover(&mut clouds, 0.45);
-            std::fs::write(directory.join("cloud-cover.rgba"), clouds.as_raw())?;
+            let cover = scene::clouds::BLANK_COVER.repeat(256 * 256);
+            std::fs::write(directory.join("cloud-cover.rgba"), cover)?;
         }
     }
     capture_shadow(&device, &queue, renderer.shadow_texture(), &directory)?;

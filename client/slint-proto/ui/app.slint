@@ -1,5 +1,5 @@
-import "../../ui/assets/fonts/src/main/resources/assets/fonts/1oppo.ttf";
-import "../../ui/assets/fonts/src/main/resources/assets/fonts/symbolsnerdfont.ttf";
+import "../assets/fonts/1oppo.ttf";
+import "../assets/fonts/symbolsnerdfont.ttf";
 import { LoginScreen, LoginAccount } from "login.slint";
 import { LocalModpackInstall, ModpackLocalAdvanceOption, LocalPlay, CandidateRow, OptionDraft } from "packs.slint";
 import { GlassSurface } from "surfaces.slint";
@@ -25,6 +25,8 @@ export { LoginAccount, CandidateRow, OptionDraft, TileData, NameInitial, ProofRo
 component MenuTileGrid inherits TileGrid {
     row-major: true;
     captions: true;
+    height: min(self.viewport-height, self.content-height);
+    y: (self.viewport-height - self.height) / 2;
 }
 
 export component AppWindow inherits Window {
@@ -170,7 +172,9 @@ export component AppWindow inherits Window {
     out property <bool> gallery-password-revealed: gallery-view.password-revealed;
     out property <bool> modal-open: root.login-register || root.action-error != "" || root.duplicate-host != "" || root.confirm-exit || root.gallery-dialog || root.local-play || root.pack-menu || root.discard-options || root.install-missing || root.picked-candidates.length > 0;
     out property <[GlassShape]> menu-grids: [host-grid.shape, pack-grid.shape];
-    out property <[GlassShape]> menu-pills: [tabs.shape, tabs.selected-shape, create.shape, plaza.shape, install.shape, import-pack.shape];
+    out property <[GlassShape]> menu-pills: root.selected == 1
+        ? [tabs.shape, tabs.selected-shape, plaza.shape, install.shape, import-pack.shape]
+        : [tabs.shape, tabs.selected-shape];
     out property <[GlassShape]> glass-panels: [gallery-view.surfaces[0], gallery-view.surfaces[1], dialog.shape];
     in-out property <string> action-error;
     in-out property <string> duplicate-host;
@@ -216,7 +220,6 @@ export component AppWindow inherits Window {
     in property <string> page-error;
     in property <bool> loading: true;
     in property <bool> loading-more;
-    in property <int> online-count;
     in property <int> selected: 0;
     in-out property <length> host-scroll: 0px;
     in-out property <length> modpack-scroll: 0px;
@@ -230,7 +233,7 @@ export component AppWindow inherits Window {
     out property <float> logical-height: self.height / 1px;
     property <length> room-grid-top: 116px;
     property <length> room-grid-space: self.height - root.room-grid-top - 86px;
-    property <length> menu-grid-height: min(476px, root.room-grid-space);
+    out property <length> menu-grid-height: min(476px, root.room-grid-space);
     out property <float> grid-y: (root.room-grid-top + (root.room-grid-space - root.menu-grid-height) / 2) / 1px;
     out property <int> menu-grid-columns: host-grid.columns;
     out property <float> menu-grid-row-offset: host-grid.row-offset / 1px;
@@ -268,18 +271,23 @@ export component AppWindow inherits Window {
     Image { width: parent.width; height: parent.height; source: root.backdrop-revision >= 0 ? root.backdrop : root.backdrop; image-fit: fill; }
     title-bar := TitleBar { y: 0px; width: parent.width; player-name: root.player-name; head: root.player-head; account => {if !root.login-visible {root.account-menu = !root.account-menu;}} action(a) => {root.window-action(a);} stub(s) => {root.stub(s);} can-back: root.can-back; host-list-visible: root.host-list-visible; gallery-enabled: root.gallery-enabled; navigate(s) => {root.navigate(s);} }
     menu := FocusScope { x: 0px; y: 40px; width: parent.width; height: parent.height - 40px; visible: !root.login-visible && !root.ui-proof && !root.gallery && root.pack-screen == 0 && !root.wardrobe-visible && !root.host-list-visible; enabled: !root.modal-open && root.activity-panel == 0;
-    tabs := GlassTabBar { x: (parent.width - self.width) / 2; y: 16px; tab-position: root.tab-position; selected: root.selected; select(t) => {root.select-tab(t);} press(i,on,x,y) => {root.pill-press(i,on,x,y);} }
+    tabs := GlassTabBar {
+        x: (parent.width - self.width) / 2; y: 16px; tab-position: root.tab-position; selected: root.selected;
+        select(t) => {root.select-tab(t);}
+        create-room => {root.stub("创建房间");}
+        press(i,on,x,y) => {root.pill-press(i,on,x,y);}
+    }
     Rectangle { y: root.grid-y * 1px - 40px; width: parent.width; height: root.menu-grid-height; clip: true;
         // Tile leaves fade individually to avoid an offscreen layer for each grid.
         host-grid := MenuTileGrid {
-            x: -root.tab-position * parent.width; width: parent.width; height: parent.height;
+            x: -root.tab-position * parent.width; width: parent.width; viewport-height: parent.height;
             visible: !root.loading && root.error == "" && root.tab-position < 1;
             tiles: root.hosts; scroll <=> root.host-scroll; fade: 1 - root.tab-position;
             pressed: root.host-pressed; press-scale: root.host-scale;
             hover(i,on) => {root.tile-hover(0,i,on);} press(i,on) => {root.tile-press(0,i,on);} action(i,r) => {root.tile-action(0,i,r);} moved => {root.scroll-changed();}
         }
         pack-grid := MenuTileGrid {
-            x: (1 - root.tab-position) * parent.width; width: parent.width; height: parent.height;
+            x: (1 - root.tab-position) * parent.width; width: parent.width; viewport-height: parent.height;
             visible: !root.loading && !root.packs-loading && root.packs-error == "" && root.error == "" && root.tab-position > 0;
             tiles: root.modpacks; scroll <=> root.modpack-scroll; fade: root.tab-position;
             pressed: root.modpack-pressed; press-scale: root.modpack-scale;
@@ -295,15 +303,11 @@ export component AppWindow inherits Window {
             GlassButton { width: 120px; label: "重试"; glyph: "\u{f021}"; clicked => {root.retry();} }
         }
     }
-    HorizontalLayout { visible: root.selected == 0; x: (parent.width - 128px) / 2; y: parent.height - 60px; width: 128px; height: 36px;
-        create := GlassButton { width: 128px; label: "创建房间"; glyph: "\u{f067}"; clicked => {root.stub("创建房间");} press(on,x,y) => {root.pill-press(2,on,x,y);} }
-    }
     HorizontalLayout { visible: root.selected == 1; x: (parent.width - 484px) / 2; y: parent.height - 60px; width: 484px; height: 36px; spacing: 12px;
-        plaza := GlassButton { width: 128px; label: "整合广场"; glyph: "\u{f19d5}"; clicked => {root.navigate("plaza");} press(on,x,y) => {root.pill-press(3,on,x,y);} }
-        install := GlassButton { width: 176px; label: "整合包本地安装"; glyph: "\u{eaef}"; clicked => {root.navigate("install");} press(on,x,y) => {root.pill-press(4,on,x,y);} }
-        import-pack := GlassButton { width: 156px; label: "导入rdipack2"; glyph: "\u{f019}"; clicked => {root.stub("导入rdipack2");} press(on,x,y) => {root.pill-press(5,on,x,y);} }
+        plaza := GlassButton { width: 128px; label: "整合广场"; glyph: "\u{f19d5}"; clicked => {root.navigate("plaza");} press(on,x,y) => {root.pill-press(2,on,x,y);} }
+        install := GlassButton { width: 176px; label: "整合包本地安装"; glyph: "\u{eaef}"; clicked => {root.navigate("install");} press(on,x,y) => {root.pill-press(3,on,x,y);} }
+        import-pack := GlassButton { width: 156px; label: "导入rdipack2"; glyph: "\u{f019}"; clicked => {root.stub("导入rdipack2");} press(on,x,y) => {root.pill-press(4,on,x,y);} }
     }
-    Text { x: 16px; y: parent.height - 34px; text: "在线玩家" + root.online-count; color: #30353c; font-size: 12px; }
     }
     login-view := LoginScreen { visible: root.login-visible; enabled: !root.modal-open;
         x: (root.width - self.width) / 2; y: 40px + (root.height - 40px - self.height) / 2;

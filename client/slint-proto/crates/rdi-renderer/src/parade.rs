@@ -6,6 +6,7 @@ use crate::scene::{
 };
 use anyhow::{Context, Result};
 use std::{
+    collections::HashMap,
     ops::Range,
     sync::mpsc,
     time::{Duration, Instant},
@@ -32,6 +33,10 @@ fn queue_x(index: usize, count: usize, width: f64, seconds: f64) -> f32 {
 
 struct Member {
     id: String,
+    skin: SkinBinding,
+}
+#[derive(Clone)]
+struct SkinBinding {
     group: wgpu::BindGroup,
     variant: usize,
 }
@@ -95,7 +100,7 @@ pub struct Renderer {
     poses: Vec<[f32; 4]>,
     visible: Vec<usize>,
     members: Vec<Member>,
-    fallback: bool,
+    fallback_skin: SkinBinding,
     targets: Option<Targets>,
     complete_tx: mpsc::Sender<Duration>,
     complete_rx: mpsc::Receiver<Duration>,
@@ -237,7 +242,15 @@ impl Renderer {
         });
         let instances = Self::instance_buffer(&device, 16);
         let (complete_tx, complete_rx) = mpsc::channel();
-        let mut renderer = Self {
+        let fallback_skin = Self::upload(&device, &queue, &skins, &sampler, Appearance::steve()?.skin)?;
+        let mut members = Vec::new();
+        if options.no_crowd || options.steve_only {
+            members.push(Member {
+                id: "builtin:account".into(),
+                skin: fallback_skin.clone(),
+            });
+        }
+        Ok(Self {
             device,
             queue,
             pipeline,
@@ -251,8 +264,8 @@ impl Renderer {
             capacity: 16,
             poses: Vec::new(),
             visible: Vec::new(),
-            members: Vec::new(),
-            fallback: true,
+            members,
+            fallback_skin,
             targets: None,
             complete_tx,
             complete_rx,
@@ -261,9 +274,7 @@ impl Renderer {
             monitor: perf::Monitor::with_threshold(options.low_performance_ms),
             options,
             frames: 0,
-        };
-        renderer.upload("builtin:steve", Appearance::steve()?.skin)?;
-        Ok(renderer)
+        })
     }
     fn instance_buffer(device: &wgpu::Device, capacity: usize) -> wgpu::Buffer {
         device.create_buffer(&wgpu::BufferDescriptor {
@@ -273,13 +284,19 @@ impl Renderer {
             mapped_at_creation: false,
         })
     }
-    fn upload(&mut self, id: &str, skin: Skin) -> Result<()> {
+    fn upload(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        skins: &wgpu::BindGroupLayout,
+        sampler: &wgpu::Sampler,
+        skin: Skin,
+    ) -> Result<SkinBinding> {
         let (width, height) = skin.pixels.dimensions();
         anyhow::ensure!(
             width == 64 && (height == 32 || height == 64),
             "Parade skin must be normalized"
         );
-        let texture = self.device.create_texture(&wgpu::TextureDescriptor {
+        let texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("parade skin"),
             size: wgpu::Extent3d {
                 width: 64,
@@ -293,7 +310,7 @@ impl Renderer {
             usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
             view_formats: &[],
         });
-        self.queue.write_texture(
+        queue.write_texture(
             texture.as_image_copy(),
             skin.pixels.as_raw(),
             wgpu::TexelCopyBufferLayout {
@@ -307,9 +324,9 @@ impl Renderer {
                 depth_or_array_layers: 1,
             },
         );
-        let group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+        let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("parade skin"),
-            layout: &self.skins,
+            layout: skins,
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
@@ -319,35 +336,44 @@ impl Renderer {
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
-                    resource: wgpu::BindingResource::Sampler(&self.sampler),
+                    resource: wgpu::BindingResource::Sampler(sampler),
                 },
             ],
         });
-        self.members.push(Member {
-            id: id.into(),
+        Ok(SkinBinding {
             group,
             variant: skin.slim as usize + (height == 32) as usize * 2,
-        });
-        Ok(())
-    }
-    pub fn set_crowd_skin(&mut self, id: &str, skin: Skin) -> Result<()> {
-        if self.options.no_crowd || self.members.iter().any(|m| m.id == id) {
-            return Ok(());
-        }
-        scene::checked(&self.device.clone(), || {
-            if self.fallback {
-                self.members.clear();
-                self.fallback = false;
-            }
-            self.upload(id, skin)
         })
     }
-    pub fn set_player_appearance(&mut self, appearance: Appearance) -> Result<()> {
-        if self.fallback {
-            scene::checked(&self.device.clone(), || {
-                self.members.clear();
-                self.upload("builtin:account", appearance.skin)
+    pub fn set_online_players(&mut self, ids: Vec<String>) {
+        if self.options.no_crowd || self.options.steve_only {
+            return;
+        }
+        let mut retained: HashMap<_, _> = std::mem::take(&mut self.members)
+            .into_iter()
+            .map(|member| (member.id, member.skin))
+            .collect();
+        self.members = ids
+            .into_iter()
+            .map(|id| {
+                let skin = retained
+                    .remove(&id)
+                    .unwrap_or_else(|| self.fallback_skin.clone());
+                Member { id, skin }
+            })
+            .collect();
+    }
+    pub fn set_crowd_skin(&mut self, id: &str, skin: Skin) -> Result<()> {
+        if let Some(member) = self.members.iter_mut().find(|member| member.id == id) {
+            member.skin = scene::checked(&self.device, || {
+                Self::upload(&self.device, &self.queue, &self.skins, &self.sampler, skin)
             })?;
+        }
+        Ok(())
+    }
+    pub fn set_player_appearance(&mut self, appearance: Appearance) -> Result<()> {
+        if self.options.no_crowd {
+            self.set_crowd_skin("builtin:account", appearance.skin)?;
         }
         Ok(())
     }
@@ -419,7 +445,7 @@ impl Renderer {
                 if x < -MARGIN as f32 || x > logical_width + MARGIN as f32 {
                     continue;
                 }
-                let arm_pivot_x = if member.variant & 1 != 0 { 5.5 } else { 6. };
+                let arm_pivot_x = if member.skin.variant & 1 != 0 { 5.5 } else { 6. };
                 self.poses.push([x, y, stride, arm_pivot_x]);
                 self.visible.push(index);
             }
@@ -470,10 +496,10 @@ impl Renderer {
                 pass.set_vertex_buffer(0, self.vertices.slice(..));
                 pass.set_vertex_buffer(1, self.instances.slice(..));
                 for (instance, &index) in self.visible.iter().enumerate() {
-                    let member = &self.members[index];
-                    pass.set_bind_group(1, &member.group, &[]);
+                    let skin = &self.members[index].skin;
+                    pass.set_bind_group(1, &skin.group, &[]);
                     pass.draw(
-                        self.meshes[member.variant].clone(),
+                        self.meshes[skin.variant].clone(),
                         instance as u32..instance as u32 + 1,
                     );
                 }

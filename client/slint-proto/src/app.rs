@@ -47,7 +47,8 @@ enum Event {
     Started(Result<serde_json::Value>),
     IdleStopped(Result<bool>),
     Appearance(u64, Result<Appearance>),
-    CrowdSkin(u64, String, Skin),
+    CrowdSkin(u64, String, Option<Skin>),
+    OnlineSkinsFinished(u64),
     Page(u64, Result<Vec<HostBrief>>),
     Online(u64, Result<Vec<String>>),
     Art(u64, String, Art),
@@ -81,6 +82,41 @@ struct ArtSource {
     url: Option<String>,
     owner: Option<String>,
     heads: Vec<String>,
+}
+#[derive(Default)]
+struct OnlineCrowd {
+    ids: Vec<String>,
+    checked_skins: HashSet<String>,
+    changed: bool,
+}
+impl OnlineCrowd {
+    fn update(&mut self, mut ids: Vec<String>) -> bool {
+        ids.sort_unstable();
+        ids.dedup();
+        if self.ids == ids {
+            return false;
+        }
+        self.checked_skins.retain(|id| ids.binary_search(id).is_ok());
+        self.ids = ids;
+        self.changed = true;
+        true
+    }
+    fn take_roster(&mut self) -> Option<Vec<String>> {
+        std::mem::take(&mut self.changed).then(|| self.ids.clone())
+    }
+    fn record_skin(&mut self, id: &str) -> bool {
+        self.ids
+            .binary_search_by(|online| online.as_str().cmp(id))
+            .is_ok()
+            && self.checked_skins.insert(id.to_owned())
+    }
+    fn unchecked_ids(&self) -> Vec<String> {
+        self.ids
+            .iter()
+            .filter(|id| !self.checked_skins.contains(*id))
+            .cloned()
+            .collect()
+    }
 }
 impl ArtSource {
     fn key(&self, size: u32) -> String {
@@ -174,6 +210,7 @@ pub struct App {
     player_appearance: Option<Appearance>,
     crowd_job: Option<JoinHandle<()>>,
     crowd_skins: Vec<(String, Skin)>,
+    online_crowd: OnlineCrowd,
     epoch: u64,
     paused: Arc<AtomicBool>,
     refresh_pending: bool,
@@ -183,8 +220,8 @@ pub struct App {
     tiles: [Rc<VecModel<TileData>>; 2],
     host_list_rows: Rc<VecModel<HostListRow>>,
     pub interactions: [Interaction; 2],
-    pills: [Spring; 6],
-    pivots: [[f32; 2]; 6],
+    pills: [Spring; 5],
+    pivots: [[f32; 2]; 5],
     selected: usize,
     last_scale: f32,
 }
@@ -231,6 +268,7 @@ impl App {
             player_appearance: None,
             crowd_job: None,
             crowd_skins: Vec::new(),
+            online_crowd: OnlineCrowd::default(),
             epoch: 0,
             paused,
             refresh_pending: false,
@@ -238,8 +276,8 @@ impl App {
             tiles,
             host_list_rows,
             interactions: [Interaction::new(), Interaction::new()],
-            pills: [Spring::default(); 6],
-            pivots: [[0.0; 2]; 6],
+            pills: [Spring::default(); 5],
+            pivots: [[0.0; 2]; 5],
             selected: 0,
             last_scale: 0.0,
         }));
@@ -416,13 +454,14 @@ impl App {
     }
     /// Terminal scene state: cancels pending downloads and discards anything not yet uploaded.
     pub fn stop_player_appearance(&mut self) {
-        for job in [&mut self.appearance_job, &mut self.crowd_job] {
+        for job in [&mut self.appearance_job, &mut self.crowd_job, &mut self.poll_job] {
             if let Some(job) = job.take() {
                 job.abort();
             }
         }
         self.player_appearance = None;
-        self.crowd_skins = Vec::new();
+        self.crowd_skins.clear();
+        self.online_crowd.update(Vec::new());
         self.config.no_scene = true;
     }
     pub fn take_player_appearance(&mut self) -> Option<Appearance> {
@@ -430,6 +469,36 @@ impl App {
     }
     pub fn take_crowd_skins(&mut self) -> Vec<(String, Skin)> {
         std::mem::take(&mut self.crowd_skins)
+    }
+    pub fn take_online_players(&mut self) -> Option<Vec<String>> {
+        self.online_crowd.take_roster()
+    }
+    fn refresh_online_crowd(&mut self, ids: Vec<String>) {
+        if self.online_crowd.update(ids) {
+            self.crowd_skins
+                .retain(|(id, _)| self.online_crowd.ids.binary_search(id).is_ok());
+            if let Some(ui) = self.ui.upgrade() {
+                ui.window().request_redraw();
+            }
+        }
+        if self.crowd_job.is_some() {
+            return;
+        }
+        let ids = self.online_crowd.unchecked_ids();
+        if ids.is_empty() {
+            return;
+        }
+        if let Some(api) = self.api.clone() {
+            let tx = self.tx.clone();
+            let epoch = self.epoch;
+            self.crowd_job = Some(self.runtime.spawn(async move {
+                images::online_crowd(&api, ids, |id, skin| {
+                    let _ = tx.send(Event::CrowdSkin(epoch, id, skin));
+                })
+                .await;
+                let _ = tx.send(Event::OnlineSkinsFinished(epoch));
+            }));
+        }
     }
     fn login(&mut self) {
         self.api = None;
@@ -478,6 +547,8 @@ impl App {
     }
     fn stop_jobs(&mut self) {
         self.epoch += 1;
+        self.online_crowd.update(Vec::new());
+        self.crowd_skins.clear();
         for (_, j) in self.jobs.drain() {
             j.abort();
         }
@@ -497,8 +568,7 @@ impl App {
         self.stop_jobs();
         self.session = Some(api.clone());
         self.plaza.borrow_mut().connect(Some(api.clone()));
-        self.crowd_skins = Vec::new();
-        self.player_appearance = if self.player_enabled() {
+        self.player_appearance = if self.player_enabled() && !self.crowd_enabled() {
             match Appearance::steve() {
                 Ok(appearance) => Some(appearance),
                 Err(error) => {
@@ -709,17 +779,23 @@ impl App {
                 .collect();
             sync_rows(&self.host_list_rows, rows);
         }
-        let grids = ui.get_menu_grids();
+        // The viewport can fit these rows even before the new entries reach the Slint model.
+        let viewport_height = ui.get_menu_grid_height();
         let columns = ui.get_menu_grid_columns().max(1) as usize;
         let pitch = ui.get_menu_grid_row_pitch();
-        for (tab, shape) in grids.iter().enumerate() {
+        for tab in 0..self.tiles.len() {
             let entries = self.entries(tab);
             let scroll = if tab == 0 {
                 ui.get_host_scroll()
             } else {
                 ui.get_modpack_scroll()
             };
-            let rows = hosts::visible_rows(scroll, shape.h, pitch, entries.len().div_ceil(columns));
+            let rows = hosts::visible_rows(
+                scroll,
+                viewport_height,
+                pitch,
+                entries.len().div_ceil(columns),
+            );
             let model: Vec<_> = entries
                 .iter()
                 .enumerate()
@@ -927,7 +1003,7 @@ impl App {
                     match result {
                         Ok(data) => {
                             ui.set_error("".into());
-                            if self.player_enabled() {
+                            if self.player_enabled() && !self.crowd_enabled() {
                                 let http = data.api.http.clone();
                                 let cloth = data.player.cloth;
                                 let tx = self.tx.clone();
@@ -935,22 +1011,6 @@ impl App {
                                 self.appearance_job = Some(self.runtime.spawn(async move {
                                     let result = images::background_appearance(&http, cloth).await;
                                     let _ = tx.send(Event::Appearance(epoch, result));
-                                }));
-                            }
-                            if self.crowd_enabled() {
-                                let api = data.api.clone();
-                                let tx = self.tx.clone();
-                                let epoch = self.epoch;
-                                let limit = if self.config.background == rdi_renderer::background::Kind::Parade {
-                                    usize::MAX
-                                } else {
-                                    rdi_renderer::scene::crowd_sim::MAX_PLAYERS
-                                };
-                                self.crowd_job = Some(self.runtime.spawn(async move {
-                                    images::background_crowd(&api, limit, |id, skin| {
-                                        let _ = tx.send(Event::CrowdSkin(epoch, id, skin));
-                                    })
-                                    .await;
                                 }));
                             }
                             ui.set_player_name(data.player.name.into());
@@ -970,18 +1030,20 @@ impl App {
                                 modpacks = self.packs.len(),
                                 "Menu data loaded"
                             );
-                            let tx = self.tx.clone();
-                            let paused = self.paused.clone();
-                            let api = data.api;
-                            self.poll_job = Some(self.runtime.spawn(async move {
-                                loop {
-                                    if !paused.load(Ordering::Relaxed) {
-                                        let result = api.get("/host/online-player-ids").await;
-                                        let _ = tx.send(Event::Online(epoch, result));
+                            if self.crowd_enabled() {
+                                let tx = self.tx.clone();
+                                let paused = self.paused.clone();
+                                let api = data.api;
+                                self.poll_job = Some(self.runtime.spawn(async move {
+                                    loop {
+                                        if !paused.load(Ordering::Relaxed) {
+                                            let result = api.get("/host/online-player-ids").await;
+                                            let _ = tx.send(Event::Online(epoch, result));
+                                        }
+                                        tokio::time::sleep(Duration::from_secs(30)).await;
                                     }
-                                    tokio::time::sleep(Duration::from_secs(30)).await;
-                                }
-                            }));
+                                }));
+                            }
                             dirty = true;
                         }
                         Err(error) => {
@@ -1012,9 +1074,13 @@ impl App {
                 Event::CrowdSkin(epoch, id, skin)
                     if epoch == self.epoch && self.crowd_enabled() =>
                 {
-                    self.crowd_skins.push((id, skin));
-                    ui.window().request_redraw();
+                    if self.online_crowd.record_skin(&id) && let Some(skin) = skin
+                    {
+                        self.crowd_skins.push((id, skin));
+                        ui.window().request_redraw();
+                    }
                 }
+                Event::OnlineSkinsFinished(epoch) if epoch == self.epoch => self.crowd_job = None,
                 Event::Page(epoch, result) if epoch == self.epoch => {
                     self.page_job = None;
                     ui.set_loading_more(false);
@@ -1037,10 +1103,14 @@ impl App {
                         }
                     }
                 }
-                Event::Online(epoch, result) if epoch == self.epoch => match result {
-                    Ok(ids) => ui.set_online_count(ids.len() as i32),
-                    Err(error) => tracing::warn!(error=?error,"Online player poll failed"),
-                },
+                Event::Online(epoch, result)
+                    if epoch == self.epoch && self.crowd_enabled() =>
+                {
+                    match result {
+                        Ok(ids) => self.refresh_online_crowd(ids),
+                        Err(error) => tracing::warn!(?error, "Online player poll failed"),
+                    }
+                }
                 Event::Art(epoch, key, art)
                     if epoch == self.epoch && self.jobs.remove(&key).is_some() =>
                 {
@@ -1172,6 +1242,26 @@ impl Drop for App {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn online_crowd_tracks_all_distinct_players_and_discards_offline_skins() {
+        let mut crowd = OnlineCrowd::default();
+        let ids: Vec<String> = (0..75).map(|id| format!("player-{id:02}")).collect();
+        let reported = ids.iter().rev().cloned().chain(["player-00".into()]);
+        assert!(crowd.update(reported.collect()));
+        assert_eq!(crowd.take_roster(), Some(ids));
+        assert_eq!(crowd.unchecked_ids().len(), 75);
+        assert!(crowd.record_skin("player-00"));
+        assert!(crowd.record_skin("player-01"));
+        assert!(crowd.update(vec!["player-01".into(), "player-75".into()]));
+        assert_eq!(crowd.take_roster(), Some(vec!["player-01".into(), "player-75".into()]));
+        assert_eq!(crowd.unchecked_ids(), ["player-75"]);
+        assert!(!crowd.record_skin("player-00"));
+        assert!(!crowd.update(vec!["player-75".into(), "player-01".into()]));
+        assert_eq!(crowd.take_roster(), None);
+        assert!(crowd.update(Vec::new()));
+        assert_eq!(crowd.take_roster(), Some(Vec::new()));
+    }
 
     #[test]
     fn name_placeholder_matches_compose_hue_and_initial() {

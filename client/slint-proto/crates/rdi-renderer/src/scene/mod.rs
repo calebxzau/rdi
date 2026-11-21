@@ -500,24 +500,24 @@ impl Renderer {
             min_filter: wgpu::FilterMode::Linear,
             ..Default::default()
         });
-        let mut views = Vec::new();
-        for m in Material::ALL {
-            views.push(textures::upload(
-                &device,
-                &queue,
-                textures::bytes(m),
-                &format!("scene {m:?} SRGB"),
-            )?);
-        }
-        views.push(textures::upload(
+        let block = textures::solid(
             &device,
             &queue,
-            textures::SUN,
-            "scene sun SRGB",
-        )?);
+            [255; 4],
+            "scene blank block SRGB",
+            true,
+        );
+        let sun = textures::solid(
+            &device,
+            &queue,
+            [0; 4],
+            "scene blank sun detail SRGB",
+            true,
+        );
+        let views = std::iter::repeat_n(&block, Material::ALL.len()).chain([&sun]);
         let mut materials = vec![];
         let mut plain_materials = vec![];
-        for (i, view) in views.iter().enumerate() {
+        for (i, view) in views.enumerate() {
             let plain_entries = [
                 wgpu::BindGroupEntry {
                     binding: 0,
@@ -525,7 +525,7 @@ impl Renderer {
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
-                    resource: wgpu::BindingResource::Sampler(if i == 20 {
+                    resource: wgpu::BindingResource::Sampler(if i == Material::ALL.len() {
                         &sun_sampler
                     } else {
                         &magnification

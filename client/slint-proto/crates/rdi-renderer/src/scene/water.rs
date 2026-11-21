@@ -150,22 +150,21 @@ impl Water {
             compile_ms = start.elapsed().as_secs_f64() * 1000.,
             "Scene pipeline compiled"
         );
-        let normal = textures::upload_data(
+        // The shader maps red and green from [0, 1] to the signed normal offsets.
+        let normal = textures::solid(
             device,
             queue,
-            include_bytes!(
-                "../../../../../bg-renderer/src/main/resources/assets/complementary/textures/cloud-water.png"
-            ),
-            "scene water normal linear",
-        )?;
-        let noise = textures::upload_data(
+            [128, 128, 255, 255],
+            "scene flat water normal linear",
+            false,
+        );
+        let noise = textures::solid(
             device,
             queue,
-            include_bytes!(
-                "../../../../../bg-renderer/src/main/resources/assets/complementary/textures/noise.png"
-            ),
-            "scene water noise linear",
-        )?;
+            [128, 128, 128, 255],
+            "scene constant water noise linear",
+            false,
+        );
         let repeat = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("scene water repeat anisotropic8"),
             address_mode_u: wgpu::AddressMode::Repeat,
