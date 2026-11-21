@@ -53,7 +53,7 @@ class RdiWindowPropertiesTest {
         for (title in listOf(" 我的RDI房间 ", " ", "界".repeat(64))) {
             System.setProperty("rdi.window.title", title)
             applyProperties()
-            assertEquals(title, titles.last())
+            assertEquals("${title} @ rdi多人房间", titles.last())
         }
         assertTrue(errors.isEmpty())
     }
@@ -76,7 +76,7 @@ class RdiWindowPropertiesTest {
         System.setProperty("rdi.window.title", "测试房间")
         applyProperties()
         assertEquals(listOf(pixel), icons)
-        assertEquals(listOf("测试房间"), titles)
+        assertEquals(listOf("测试房间 @ rdi多人房间"), titles)
         assertTrue(errors.isEmpty())
     }
 
@@ -92,7 +92,7 @@ class RdiWindowPropertiesTest {
             applyProperties()
         }
         assertTrue(icons.isEmpty())
-        assertEquals(listOf("有效标题", "有效标题"), titles)
+        assertEquals(List(2) { "有效标题 @ rdi多人房间" }, titles)
         assertEquals(2, errors.size)
         assertTrue(errors.all { it.first.contains("rdi.window.icon") })
     }
@@ -106,7 +106,7 @@ class RdiWindowPropertiesTest {
         }
         assertTrue(icons.isEmpty())
         assertEquals(3, errors.size)
-        assertEquals(List(3) { "有效标题" }, titles)
+        assertEquals(List(3) { "有效标题 @ rdi多人房间" }, titles)
     }
 
     @Test
