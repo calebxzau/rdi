@@ -19,7 +19,8 @@ import { UiProof, ProofRow, ProofRect } from "ui_proof.slint";
 import { ResizeHandles } from "resize_handles.slint";
 import { HostList, HostListRow } from "host_list.slint";
 import { WardrobeScreen, WardrobeItem } from "wardrobe.slint";
-export { LoginAccount, CandidateRow, OptionDraft, TileData, NameInitial, ProofRow, ProofRect, GlassShape, ContentRow, LogRow, TaskRow, WardrobeItem, HostListRow }
+import { ModpackPlaza, ModpackDetails, PlazaCard, PlazaFilters, PlazaPack, PlazaVersion, PlazaContent } from "plaza.slint";
+export { LoginAccount, CandidateRow, OptionDraft, TileData, NameInitial, ProofRow, ProofRect, GlassShape, ContentRow, LogRow, TaskRow, WardrobeItem, HostListRow, PlazaCard, PlazaFilters, PlazaPack, PlazaVersion, PlazaContent }
 
 component MenuTileGrid inherits TileGrid {
     row-major: true;
@@ -41,6 +42,25 @@ export component AppWindow inherits Window {
     callback login-select(string);
     out property <[GlassShape]> pack-panels: [install-view.shape, options-view.shape];
     in property <int> pack-screen;
+    in property <[PlazaCard]> plaza-cards;
+    in property <[string]> plaza-categories;
+    in property <[string]> plaza-minecraft;
+    in property <[string]> plaza-sorts;
+    in property <bool> plaza-loading;
+    in property <bool> plaza-more;
+    in property <string> plaza-error;
+    in-out property <PlazaFilters> plaza-filters;
+    in-out property <string> plaza-query;
+    in-out property <length> plaza-scroll;
+    in property <bool> plaza-detail-loading;
+    in property <string> plaza-detail-error;
+    in property <PlazaPack> plaza-pack;
+    in property <[PlazaVersion]> plaza-versions;
+    in property <PlazaVersion> plaza-version;
+    in property <string> plaza-changelog;
+    in property <string> plaza-base-world;
+    in property <[PlazaContent]> plaza-contents;
+    callback plaza-action(string, string);
     in property <bool> host-list-visible;
     in property <[HostListRow]> all-hosts;
     out property <bool> host-list-near-end: root.host-list-visible && host-list-view.near-end;
@@ -85,6 +105,7 @@ export component AppWindow inherits Window {
     in property <string> install-missing-text;
     in property <int> install-missing-count;
     in property <string> pack-selected-id;
+    in property <bool> pack-has-detail;
     in-out property <bool> pack-menu;
     in property <string> pack-name;
     // Name plus version name, as in the Compose options title.
@@ -278,7 +299,7 @@ export component AppWindow inherits Window {
         create := GlassButton { width: 128px; label: "创建房间"; glyph: "\u{f067}"; clicked => {root.stub("创建房间");} press(on,x,y) => {root.pill-press(2,on,x,y);} }
     }
     HorizontalLayout { visible: root.selected == 1; x: (parent.width - 484px) / 2; y: parent.height - 60px; width: 484px; height: 36px; spacing: 12px;
-        plaza := GlassButton { width: 128px; label: "整合广场"; glyph: "\u{f19d5}"; clicked => {root.stub("整合广场");} press(on,x,y) => {root.pill-press(3,on,x,y);} }
+        plaza := GlassButton { width: 128px; label: "整合广场"; glyph: "\u{f19d5}"; clicked => {root.navigate("plaza");} press(on,x,y) => {root.pill-press(3,on,x,y);} }
         install := GlassButton { width: 176px; label: "整合包本地安装"; glyph: "\u{eaef}"; clicked => {root.navigate("install");} press(on,x,y) => {root.pill-press(4,on,x,y);} }
         import-pack := GlassButton { width: 156px; label: "导入rdipack2"; glyph: "\u{f019}"; clicked => {root.stub("导入rdipack2");} press(on,x,y) => {root.pill-press(5,on,x,y);} }
     }
@@ -308,6 +329,26 @@ export component AppWindow inherits Window {
         title: root.options-title; loading: root.options-loading; enabled-controls: root.options-enabled;
         error: root.options-error; total-memory: root.options-total-memory; draft <=> root.options-draft;
         action(a,v) => {if a == "back" {root.navigate("back");} else {root.pack-action("options." + a,v);} }
+    }
+    ModpackPlaza {
+        x: 24px; y: 56px; width: root.width - 48px; height: root.height - self.y - (root.game-running || root.game-status != "" ? 60px : 16px);
+        visible: root.pack-screen == 3 && !root.login-visible;
+        enabled: self.visible && !root.modal-open && root.activity-panel == 0;
+        cards: root.plaza-cards; categories: root.plaza-categories; minecraft: root.plaza-minecraft; sorts: root.plaza-sorts;
+        loading: root.plaza-loading; more: root.plaza-more; error: root.plaza-error;
+        keyword <=> root.plaza-query; filters <=> root.plaza-filters; scroll <=> root.plaza-scroll;
+        action(a, v) => { if a == "back" { root.navigate("back"); } else { root.plaza-action(a, v); } }
+    }
+    ModpackDetails {
+        x: (root.width - self.width) / 2; y: 56px; width: min(920px, root.width - 48px);
+        height: root.height - self.y - (root.game-running || root.game-status != "" ? 60px : 16px);
+        visible: (root.pack-screen == 4 || root.pack-screen == 5) && !root.login-visible;
+        enabled: self.visible && !root.modal-open && root.activity-panel == 0;
+        version-page: root.pack-screen == 5;
+        loading: root.plaza-detail-loading; error: root.plaza-detail-error; pack: root.plaza-pack;
+        versions: root.plaza-versions; version: root.plaza-version; changelog: root.plaza-changelog;
+        base-world: root.plaza-base-world; contents: root.plaza-contents;
+        action(a, v) => { if a == "back" { root.navigate("back"); } else { root.plaza-action(a, v); } }
     }
     host-list-view := HostList {
         x: 24px; y: 56px; width: root.width - 48px; height: root.height - self.y - (root.game-running || root.game-status != "" ? 60px : 16px);
@@ -407,10 +448,12 @@ export component AppWindow inherits Window {
             GlassButton { label: "取消"; clicked => {root.login-register = false;} }
         }
     }
-    if root.pack-menu: Rectangle { x: (root.width - 360px) / 2; y: (root.height - 320px) / 2; width: 360px; height: 320px; background: #f7faf0f5; border-radius: 24px;
+    if root.pack-menu: Rectangle { x: (root.width - self.width) / 2; y: (root.height - self.height) / 2; width: 360px; height: root.pack-has-detail ? 320px : 276px; background: #f7faf0f5; border-radius: 24px;
         VerticalLayout { padding: 24px; spacing: 12px;
             Text { text: root.pack-name; font-size: 22px; color: Theme.ink; overflow: elide; }
-            for label[i] in ["开始游戏", "高级", "目录", "详情", "内容", "取消"]: GlassButton { label: label; clicked => {root.pack-action("menu",i);} }
+            for label[i] in ["开始游戏", "高级", "目录"]: GlassButton { label: label; clicked => {root.pack-action("menu",i);} }
+            if root.pack-has-detail: GlassButton { label: "详情"; clicked => {root.pack-action("menu", "3");} }
+            for label[i] in ["内容", "取消"]: GlassButton { label: label; clicked => {root.pack-action("menu", i + 4);} }
         }
     }
     if root.local-play: LocalPlay { x: (root.width - self.width) / 2; y: (root.height - self.height) / 2; width: min(560px,root.width - 48px); height: min(self.preferred-height,root.height - 48px);

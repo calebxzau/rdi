@@ -130,7 +130,7 @@ fn host_placeholder(room_name: &str, pack_name: &str) -> NameInitial {
     })
 }
 
-fn name_placeholder(name: &str) -> NameInitial {
+pub(crate) fn name_placeholder(name: &str) -> NameInitial {
     let initial = name
         .chars()
         .find(|character| character.is_alphanumeric())
@@ -163,6 +163,7 @@ pub struct App {
     idle_pending: bool,
     login_ui: Rc<RefCell<crate::login::LoginUi>>,
     pack_ui: Rc<RefCell<crate::packs::PackUi>>,
+    plaza: Rc<RefCell<crate::plaza::Plaza>>,
     heads: HeadCache,
     cache: lru::LruCache<String, CachedArt>,
     jobs: HashMap<String, JoinHandle<()>>,
@@ -203,6 +204,7 @@ impl App {
         let host_list_rows = Rc::new(VecModel::default());
         ui.set_all_hosts(ModelRc::from(host_list_rows.clone()));
         let pack_ui = crate::packs::PackUi::wire(ui, runtime.clone());
+        let plaza = crate::plaza::Plaza::wire(ui, runtime.clone());
         let login_ui = crate::login::LoginUi::wire(ui, runtime.clone(), config.server.clone());
         let app = Rc::new(RefCell::new(Self {
             ui: ui.as_weak(),
@@ -215,6 +217,7 @@ impl App {
             api: None,
             session: None,
             pack_ui,
+            plaza,
             login_ui,
             running_processes: vec![],
             idle_pending: false,
@@ -432,6 +435,7 @@ impl App {
         self.api = None;
         self.session = None;
         self.pack_ui.borrow_mut().connect(None);
+        self.plaza.borrow_mut().connect(None);
         self.login_ui.borrow_mut().start();
     }
     /// Stopping the service force-stops the game and tasks, so logging out waits for them.
@@ -467,6 +471,7 @@ impl App {
         ui.set_options_dirty(false);
         ui.invoke_navigate("home".into());
         self.pack_ui.borrow_mut().connect(None);
+        self.plaza.borrow_mut().connect(None);
         ui.set_player_name("未登录".into());
         ui.set_player_head(self.fallback.clone());
         self.login_ui.borrow_mut().sign_out(session);
@@ -491,6 +496,7 @@ impl App {
     fn load_menu(&mut self, api: Client) {
         self.stop_jobs();
         self.session = Some(api.clone());
+        self.plaza.borrow_mut().connect(Some(api.clone()));
         self.crowd_skins = Vec::new();
         self.player_appearance = if self.player_enabled() {
             match Appearance::steve() {
@@ -841,6 +847,7 @@ impl App {
             }
         }
         self.pack_ui.borrow_mut().tick();
+        self.plaza.borrow_mut().tick();
         let mut dirty = false;
         if let Some(packs) = self.pack_ui.borrow_mut().take_packs() {
             self.packs = packs;

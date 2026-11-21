@@ -18,7 +18,7 @@ use std::{
 };
 
 /// Same units and rounding as Kotlin `Long.humanFileSize`, which the Compose screen shows.
-fn human_file_size(bytes: u64) -> String {
+pub(crate) fn human_file_size(bytes: u64) -> String {
     if bytes < 1024 {
         return format!("{bytes}B");
     }
@@ -501,6 +501,7 @@ impl PackUi {
             return;
         };
         ui.set_pack_selected_id(id.into());
+        ui.set_pack_has_detail(local_packs::remote_name(id).is_some());
         ui.set_pack_name(name.into());
         ui.set_options_title(options_title(id, name, version).into());
         if right {
@@ -734,7 +735,7 @@ impl PackUi {
                         Some(path) => self.open_directory(&path.to_string_lossy()),
                         None => ui.set_action_error("找不到这个整合包，请刷新列表".into()),
                     },
-                    "3" => ui.invoke_stub("整合包详情".into()),
+                    "3" => ui.invoke_plaza_action("installed".into(), ui.get_pack_selected_id()),
                     "4" => ui.invoke_stub("整合包内容".into()),
                     _ => {}
                 }

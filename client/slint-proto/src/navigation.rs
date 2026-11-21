@@ -8,6 +8,9 @@ pub enum Screen {
     Wardrobe,
     LocalModpackInstall,
     ModpackLocalAdvanceOption,
+    ModpackPlaza,
+    ModpackDetail,
+    ModpackVersionDetail,
 }
 #[derive(Default, Debug)]
 pub struct Navigation {

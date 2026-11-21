@@ -171,11 +171,19 @@ impl ServerApi {
         Ok(Session { account, jwt })
     }
     pub async fn get<T: DeserializeOwned>(&self, path: &str) -> Result<T> {
+        self.get_query(path, &[]).await
+    }
+    pub async fn get_query<T: DeserializeOwned>(
+        &self,
+        path: &str,
+        query: &[(&str, String)],
+    ) -> Result<T> {
         let jwt = self.jwt.as_deref().context("请先登录")?;
         let envelope = self
             .send(
                 self.http
                     .get(format!("{}{path}", self.base))
+                    .query(query)
                     .bearer_auth(jwt),
                 path,
             )

@@ -8,6 +8,7 @@ mod msa_sessions;
 mod hwspec;
 mod packs;
 mod tasks;
+mod plaza;
 mod digests;
 mod download;
 mod download_policy;

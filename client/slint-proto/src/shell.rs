@@ -68,6 +68,12 @@ impl Shell {
                 match action.as_str() {
                     "install" => { s.navigation.push(Screen::LocalModpackInstall); ui.invoke_pack_action("installer.open".into(), "".into()); }
                     "options" => s.navigation.push(Screen::ModpackLocalAdvanceOption),
+                    "plaza" if s.navigation.current() == Screen::Menu => {
+                        s.navigation.push(Screen::ModpackPlaza);
+                        ui.invoke_plaza_action("open".into(), "".into());
+                    }
+                    "plaza-detail" if matches!(s.navigation.current(), Screen::Menu | Screen::ModpackPlaza) => s.navigation.push(Screen::ModpackDetail),
+                    "plaza-version" if s.navigation.current() == Screen::ModpackDetail => s.navigation.push(Screen::ModpackVersionDetail),
                     "packs" => { s.navigation.home(); ui.invoke_select_tab(1); }
                     "back" | "home" if ui.get_pack_screen() == 2 && ui.get_options_dirty() => { ui.set_discard_options(true); return; }
                     "back" if ui.get_pack_screen() == 1 && ui.get_install_editor() => {ui.invoke_pack_action("installer.back".into(), "".into()); return;}
@@ -118,7 +124,14 @@ impl Shell {
         ui.set_gallery(self.navigation.current() == Screen::Gallery);
         ui.set_host_list_visible(self.navigation.current() == Screen::HostList);
         ui.set_wardrobe_visible(self.navigation.current() == Screen::Wardrobe);
-        ui.set_pack_screen(match self.navigation.current() { Screen::LocalModpackInstall => 1, Screen::ModpackLocalAdvanceOption => 2, _ => 0 });
+        ui.set_pack_screen(match self.navigation.current() {
+            Screen::LocalModpackInstall => 1,
+            Screen::ModpackLocalAdvanceOption => 2,
+            Screen::ModpackPlaza => 3,
+            Screen::ModpackDetail => 4,
+            Screen::ModpackVersionDetail => 5,
+            _ => 0,
+        });
         ui.set_can_back(self.navigation.can_back());
     }
     pub fn scene_frozen(&self, ui: &AppWindow) -> bool {

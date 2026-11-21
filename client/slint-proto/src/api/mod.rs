@@ -16,6 +16,7 @@ pub struct Client {
     pub http: reqwest::Client,
     service: Arc<LazyService>,
     uid: String,
+    pub is_dav: bool,
     server: ServerApi,
     /// The Java 25 the service runs on; Kotlin offered the same path as `globalJavaPath`.
     pub java_path: String,
@@ -26,6 +27,7 @@ impl Client {
     }
     fn connect_blocking(server: ServerApi, session: Session) -> Result<Self> {
         let uid = session.uid()?.to_owned();
+        let is_dav = session.account["name"].as_str() == Some("davickk");
         // Discovery is useful for options, but an unavailable runtime cannot block sign-in.
         let command = Self::command();
         let java_path = command
@@ -63,6 +65,7 @@ impl Client {
             server,
             service: Arc::new(service),
             uid,
+            is_dav,
             java_path,
         })
     }
@@ -131,6 +134,13 @@ impl Client {
     }
     pub async fn get<T: DeserializeOwned>(&self, path: &str) -> Result<T> {
         self.server.get(path).await
+    }
+    pub async fn get_query<T: DeserializeOwned>(
+        &self,
+        path: &str,
+        query: &[(&str, String)],
+    ) -> Result<T> {
+        self.server.get_query(path, query).await
     }
     pub async fn post<T: DeserializeOwned + Default>(&self, path: &str, body: &Value) -> Result<T> {
         self.server.post(path, body).await

@@ -181,7 +181,7 @@ fn scan(root: &Path) -> Result<Scan> {
 }
 
 /// `^([0-9a-fA-F]{24})_(.+)$`, with the id lowercased as Kotlin `ObjectId.toHexString` does.
-fn remote_name(name: &str) -> Option<(String, String)> {
+pub(crate) fn remote_name(name: &str) -> Option<(String, String)> {
     let (id, rest) = (name.get(..24)?, name.get(24..)?);
     let ver = rest.strip_prefix('_').filter(|v| !v.is_empty())?;
     id.bytes()
@@ -197,7 +197,7 @@ fn read_local(dir: &Path) -> Result<LocalInfo> {
 }
 
 /// Kotlin `McVersion` entry names and their `mcVer`.
-fn mc_version_name(entry: &str) -> Option<&'static str> {
+pub(crate) fn mc_version_name(entry: &str) -> Option<&'static str> {
     match entry {
         "V211" => Some("1.21.1"),
         "V201" => Some("1.20.1"),
