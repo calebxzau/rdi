@@ -1,24 +1,26 @@
-import { GlassButton } from "glass_button.slint";
+import { PlayerHead } from "player_head.slint";
+import { NameInitial, NameInitialIcon } from "name_initial_icon.slint";
 import { EmptyState, ErrorState, LoadingState, RScrollbar } from "shared.slint";
 import { Theme } from "theme.slint";
 
 export struct HostListRow {
-    id: string,
     name: string,
     modpack: string,
-    online-count: int,
-    playable: bool,
+    initial: NameInitial,
+    icon: image,
+    has-icon: bool,
+    heads: [image],
 }
 
 export component HostList inherits Rectangle {
     in property <bool> enabled: true;
     in property <[HostListRow]> rooms;
     in property <bool> loading;
-    in property <bool> starting-game;
     in property <string> error;
     out property <bool> near-end: list.rows-height + list.content-y <= list.height + list.row-height;
+    out property <int> first-visible-room: max(0, floor(-list.content-y / list.row-height)) * list.columns;
+    out property <int> end-visible-room: max(0, ceil((list.height - list.content-y) / list.row-height)) * list.columns;
     callback retry();
-    callback play(string);
 
     background: #f8f7eff7;
     border-radius: 24px;
@@ -26,32 +28,50 @@ export component HostList inherits Rectangle {
     FocusScope {
         width: root.width; height: root.height; enabled: root.enabled;
         list := Flickable {
-            x: 20px; y: 16px; width: parent.width - 52px; height: parent.height - self.y - 16px;
+            x: 10px; y: 16px; width: parent.width - 32px; height: parent.height - self.y - 16px;
+            property <length> gap: 6px;
+            property <length> minimum-card-width: 156px;
+            property <int> columns: max(1, floor((self.width + self.gap) / (self.minimum-card-width + self.gap)));
+            property <length> card-width: (self.width - (self.columns - 1) * self.gap) / self.columns;
             property <length> row-height: 68px;
-            property <length> rows-height: root.rooms.length * self.row-height;
+            property <length> rows-height: ceil(root.rooms.length / self.columns) * self.row-height;
             content-width: self.width;
             content-height: max(self.height, self.rows-height + (root.loading || root.error != "" ? 80px : 0px));
 
             for room[i] in root.rooms: Rectangle {
-                y: i * list.row-height; width: list.width; height: list.row-height - 6px;
+                x: mod(i, list.columns) * (list.card-width + list.gap);
+                y: floor(i / list.columns) * list.row-height;
+                width: list.card-width; height: list.row-height - list.gap;
                 visible: self.y + list.content-y + self.height > 0px && self.y + list.content-y < list.height;
                 border-radius: 12px; background: #ecefe7;
 
                 HorizontalLayout {
-                    padding-left: 16px; padding-right: 12px; spacing: 16px;
+                    padding-left: 8px; padding-right: 8px; spacing: 8px;
+                    VerticalLayout {
+                        width: 44px; alignment: center;
+                        Rectangle {
+                            width: 44px; height: self.width;
+                            if room.has-icon: Rectangle {
+                                width: 100%; height: 100%; border-radius: 8px; clip: true;
+                                background: #e2e4ed;
+                                Image { width: 100%; height: 100%; source: room.icon; image-fit: cover; }
+                            }
+                            if !room.has-icon: NameInitialIcon {
+                                width: 100%; height: 100%; border-radius: 8px;
+                                initial: room.initial; font-size: 20px;
+                            }
+                            for head[j] in room.heads: PlayerHead {
+                                x: mod(j, 3) * self.width;
+                                y: -5px + floor(j / 3) * self.height;
+                                width: 16px; height: self.width;
+                                source: head; clip-image: true;
+                            }
+                        }
+                    }
                     VerticalLayout {
                         horizontal-stretch: 1; alignment: center; spacing: 3px;
                         Text { text: room.name; min-width: 0px; overflow: elide; color: Theme.ink; font-size: 16px; font-weight: 600; }
                         Text { text: room.modpack; min-width: 0px; overflow: elide; color: #5b625b; font-size: 13px; }
-                    }
-                    Text {
-                        width: 88px; text: room.online-count + "人在线"; color: #5b625b;
-                        horizontal-alignment: right; vertical-alignment: center;
-                    }
-                    VerticalLayout {
-                        width: 104px; alignment: center;
-                        if room.playable: GlassButton { label: "进入房间"; enabled: !root.starting-game; clicked => {root.play(room.id);} }
-                        if !room.playable: Text { text: "暂不可进入"; color: #5b625b; horizontal-alignment: center; }
                     }
                 }
             }
@@ -61,7 +81,7 @@ export component HostList inherits Rectangle {
             }
         }
         RScrollbar {
-            x: parent.width - 24px; y: list.y; width: 6px; height: list.height;
+            x: parent.width - 14px; y: list.y; width: 6px; height: list.height;
             viewport: list.height; extent: list.content-height; position: -list.content-y;
             scrolled(offset) => {list.content-y = -offset;}
         }

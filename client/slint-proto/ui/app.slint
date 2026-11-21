@@ -12,13 +12,20 @@ import { TileData, Theme } from "theme.slint";
 import { TitleBar } from "title_bar.slint";
 import { AccountMenu } from "account_menu.slint";
 import { TileGrid } from "tile_grid.slint";
+import { NameInitial } from "name_initial_icon.slint";
 import { GlassTabBar } from "glass_tab_bar.slint";
 import { GlassButton, CircleIconButton } from "glass_button.slint";
 import { UiProof, ProofRow, ProofRect } from "ui_proof.slint";
 import { ResizeHandles } from "resize_handles.slint";
 import { HostList, HostListRow } from "host_list.slint";
 import { WardrobeScreen, WardrobeItem } from "wardrobe.slint";
-export { LoginAccount, CandidateRow, OptionDraft, TileData, ProofRow, ProofRect, GlassShape, ContentRow, LogRow, TaskRow, WardrobeItem, HostListRow }
+export { LoginAccount, CandidateRow, OptionDraft, TileData, NameInitial, ProofRow, ProofRect, GlassShape, ContentRow, LogRow, TaskRow, WardrobeItem, HostListRow }
+
+component MenuTileGrid inherits TileGrid {
+    row-major: true;
+    captions: true;
+}
+
 export component AppWindow inherits Window {
     in property <string> login-version;
     in property <bool> login-visible;
@@ -37,9 +44,13 @@ export component AppWindow inherits Window {
     in property <bool> host-list-visible;
     in property <[HostListRow]> all-hosts;
     out property <bool> host-list-near-end: root.host-list-visible && host-list-view.near-end;
+    out property <int> host-list-first-room: host-list-view.first-visible-room;
+    out property <int> host-list-end-room: host-list-view.end-visible-room;
     changed host-list-near-end => { if root.host-list-near-end {root.load-host-page();} }
+    changed host-list-visible => {root.scroll-changed();}
+    changed host-list-first-room => {if root.host-list-visible {root.scroll-changed();}}
+    changed host-list-end-room => {if root.host-list-visible {root.scroll-changed();}}
     callback load-host-page();
-    callback play-host(string);
     in property <bool> wardrobe-visible;
     in property <[WardrobeItem]> wardrobe-items;
     in property <bool> wardrobe-loading;
@@ -234,20 +245,24 @@ export component AppWindow inherits Window {
             return reject;
         }
     Image { width: parent.width; height: parent.height; source: root.backdrop-revision >= 0 ? root.backdrop : root.backdrop; image-fit: fill; }
-    title-bar := TitleBar { y: 0px; width: parent.width; player-name: root.player-name; head: root.player-head; account => {if !root.login-visible {root.account-menu = !root.account-menu;}} action(a) => {root.window-action(a);} stub(s) => {root.stub(s);} can-back: root.can-back; host-list-visible: root.host-list-visible; host-list-enabled: !root.login-visible && !root.ui-proof && !root.can-back; gallery-enabled: root.gallery-enabled; navigate(s) => {root.navigate(s);} }
+    title-bar := TitleBar { y: 0px; width: parent.width; player-name: root.player-name; head: root.player-head; account => {if !root.login-visible {root.account-menu = !root.account-menu;}} action(a) => {root.window-action(a);} stub(s) => {root.stub(s);} can-back: root.can-back; host-list-visible: root.host-list-visible; gallery-enabled: root.gallery-enabled; navigate(s) => {root.navigate(s);} }
     menu := FocusScope { x: 0px; y: 40px; width: parent.width; height: parent.height - 40px; visible: !root.login-visible && !root.ui-proof && !root.gallery && root.pack-screen == 0 && !root.wardrobe-visible && !root.host-list-visible; enabled: !root.modal-open && root.activity-panel == 0;
     tabs := GlassTabBar { x: (parent.width - self.width) / 2; y: 16px; tab-position: root.tab-position; selected: root.selected; select(t) => {root.select-tab(t);} press(i,on,x,y) => {root.pill-press(i,on,x,y);} }
-    pack-grid := TileGrid { row-major: true; visible: !root.loading && !root.packs-loading && root.packs-error == "" && root.error == "" && root.tab-position > 0; x: (1 - root.tab-position) * root.width; y: (parent.height - self.height) / 2; width: root.width; tiles: root.modpacks; scroll <=> root.modpack-scroll; fade: root.tab-position;
-        pressed: root.modpack-pressed; press-scale: root.modpack-scale;
-        hover(i,on) => {root.tile-hover(1,i,on);} press(i,on) => {root.tile-press(1,i,on);} action(i,r) => {root.tile-action(1,i,r);} moved => {root.scroll-changed();}
-    }
     Rectangle { y: root.grid-y * 1px - 40px; width: parent.width; height: root.menu-grid-height; clip: true;
-        host-grid := TileGrid { row-major: true; visible: !root.loading && root.error == "" && root.tab-position < 1; x: -root.tab-position * root.width; width: root.width; height: parent.height; captions: true; tiles: root.hosts; scroll <=> root.host-scroll; fade: 1 - root.tab-position;
-            // `opacity` here would render the whole scrollable grid through one huge offscreen layer;
-            // tiles fade their leaves instead, and a fully faded grid is hidden.
-
+        // Tile leaves fade individually to avoid an offscreen layer for each grid.
+        host-grid := MenuTileGrid {
+            x: -root.tab-position * parent.width; width: parent.width; height: parent.height;
+            visible: !root.loading && root.error == "" && root.tab-position < 1;
+            tiles: root.hosts; scroll <=> root.host-scroll; fade: 1 - root.tab-position;
             pressed: root.host-pressed; press-scale: root.host-scale;
             hover(i,on) => {root.tile-hover(0,i,on);} press(i,on) => {root.tile-press(0,i,on);} action(i,r) => {root.tile-action(0,i,r);} moved => {root.scroll-changed();}
+        }
+        pack-grid := MenuTileGrid {
+            x: (1 - root.tab-position) * parent.width; width: parent.width; height: parent.height;
+            visible: !root.loading && !root.packs-loading && root.packs-error == "" && root.error == "" && root.tab-position > 0;
+            tiles: root.modpacks; scroll <=> root.modpack-scroll; fade: root.tab-position;
+            pressed: root.modpack-pressed; press-scale: root.modpack-scale;
+            hover(i,on) => {root.tile-hover(1,i,on);} press(i,on) => {root.tile-press(1,i,on);} action(i,r) => {root.tile-action(1,i,r);} moved => {root.scroll-changed();}
         }
         if root.loading || (root.selected == 1 && root.packs-loading): Text { text: "正在加载…"; color: Theme.ink; font-size: 18px; horizontal-alignment: center; vertical-alignment: center; width: parent.width; height: parent.height; }
         if !root.loading && root.error == "" && (root.selected == 0 ? root.hosts.length == 0 : !root.packs-loading && root.packs-error == "" && root.modpacks.length == 0): Text {
@@ -299,10 +314,8 @@ export component AppWindow inherits Window {
         visible: root.host-list-visible && !root.login-visible;
         enabled: !root.modal-open && root.activity-panel == 0;
         rooms: root.all-hosts; loading: root.loading-more || (root.loading && root.all-hosts.length == 0);
-        starting-game: root.loading;
         error: root.error != "" ? root.error : root.page-error;
         retry => {if root.error != "" {root.retry();} else {root.retry-page();}}
-        play(id) => {root.play-host(id);}
     }
     wardrobe-view := WardrobeScreen {
         x: 24px; y: 56px; width: root.width - 48px; height: root.height - self.y - (root.game-running ? 60px : 16px);
@@ -366,9 +379,11 @@ export component AppWindow inherits Window {
     if root.account-menu && !root.login-visible: AccountMenu {
         x: 0px; y: 0px; width: parent.width; height: parent.height;
         anchor-x: title-bar.account-x; anchor-y: 44px;
+        host-list-enabled: !root.ui-proof && !root.can-back;
         dismiss => {root.account-menu = false;}
         player-info => {root.account-menu = false; root.stub("个人信息");}
         wardrobe => {root.account-menu = false; root.navigate("wardrobe");}
+        host-list => {root.account-menu = false; root.navigate("host-list");}
         logout => {root.account-menu = false; root.logout();}
     }
     if root.modal-open: Rectangle { x: 0px; y: 0px; width: parent.width; height: parent.height; background: #0009; TouchArea {} }

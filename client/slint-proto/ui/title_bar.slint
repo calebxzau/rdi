@@ -7,7 +7,6 @@ export component TitleBar inherits Rectangle {
     in property <image> head;
     in property <bool> can-back;
     in property <bool> gallery-enabled;
-    in property <bool> host-list-enabled;
     in property <bool> host-list-visible;
     callback navigate(string);
     callback action(int);
@@ -28,8 +27,7 @@ export component TitleBar inherits Rectangle {
         text: "房间列表"; color: Theme.ink; font-size: 16px; font-weight: 600;
         vertical-alignment: center;
     }
-    if root.host-list-enabled: GlassButton { x: 116px; y: 6px; width: 104px; height: 28px; label: "房间列表"; glyph: "\u{f03a}"; clicked => {root.navigate("host-list");} }
-    if root.gallery-enabled: GlassButton { x: root.host-list-visible || root.host-list-enabled ? 228px : 154px; y: 6px; width: 96px; height: 28px; label: "组件画廊"; clicked => {root.navigate("gallery");} }
+    if root.gallery-enabled: GlassButton { x: root.host-list-visible ? 228px : 154px; y: 6px; width: 96px; height: 28px; label: "组件画廊"; clicked => {root.navigate("gallery");} }
     HorizontalLayout { x: parent.width - 496px; y: 0px; width: 496px; height: 40px; spacing: 8px; padding: 0px; padding-right: 8px; alignment: end;
         // Padding centers the shorter items, since layouts place fixed-height items at the top.
         HorizontalLayout { spacing: 8px; padding-top: 6px; padding-bottom: 6px;

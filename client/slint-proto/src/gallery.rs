@@ -1,5 +1,5 @@
 //! Deterministic gallery fixtures and presentation actions; no launcher business logic.
-use crate::{AppWindow, ContentRow, LogRow, TaskRow, TileData, images};
+use crate::{AppWindow, ContentRow, LogRow, NameInitial, TaskRow, TileData, images};
 use anyhow::{Context, Result};
 use slint::{ComponentHandle, Model, ModelRc, VecModel};
 use std::{
@@ -35,7 +35,10 @@ impl Gallery {
             (0..30)
                 .map(|i| TileData {
                     name: format!("朋友的房间{} · Minecraft1.21.1超长中文名称", i + 1).into(),
-                    initial: "房".into(),
+                    initial: NameInitial {
+                        text: "房".into(),
+                        ..Default::default()
+                    },
                     status: i % 3,
                     dimmed: i % 4 == 1,
                     ..Default::default()

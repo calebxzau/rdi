@@ -1,5 +1,5 @@
 use crate::{
-    AppWindow, HostListRow, TileData,
+    AppWindow, HostListRow, NameInitial, TileData,
     anim::Spring,
     api::{Client, model::*},
     config::Config,
@@ -9,7 +9,7 @@ use crate::{
 };
 use anyhow::Result;
 use rdi_slint_proto::scene::player::{Appearance, Skin};
-use slint::{ComponentHandle, Model, ModelRc, VecModel};
+use slint::{Color, ComponentHandle, Model, ModelRc, VecModel};
 use std::{
     cell::RefCell,
     collections::{HashMap, HashSet},
@@ -68,17 +68,21 @@ impl Interaction {
         }
     }
 }
-#[derive(Clone)]
 struct Entry {
-    id: String,
     name: String,
     detail: String,
+    initial: NameInitial,
+    art: ArtSource,
+    status: i32,
+}
+#[derive(Clone)]
+struct ArtSource {
+    id: String,
     url: Option<String>,
     owner: Option<String>,
     heads: Vec<String>,
-    status: i32,
 }
-impl Entry {
+impl ArtSource {
     fn key(&self, size: u32) -> String {
         format!(
             "{}|{}|{size}|{}|{}",
@@ -88,6 +92,8 @@ impl Entry {
             self.heads.join(",")
         )
     }
+}
+impl Entry {
     fn tile(&self, art: Option<CachedArt>, fallback: &slint::Image) -> TileData {
         let (icon, has_icon, owner, heads) = art
             .map(|a| (a.icon, a.has_icon, a.owner, a.heads))
@@ -101,20 +107,47 @@ impl Entry {
                 )
             });
         TileData {
-            id: self.id.clone().into(),
+            id: self.art.id.clone().into(),
             name: self.name.clone().into(),
-            initial: self.name.chars().next().unwrap_or('房').to_string().into(),
+            initial: self.initial.clone(),
             detail: self.detail.clone().into(),
             icon,
             has_icon,
             owner,
-            has_owner: self.owner.is_some(),
+            has_owner: self.art.owner.is_some(),
             heads,
             dimmed: false,
             status: self.status,
         }
     }
 }
+
+fn host_placeholder(room_name: &str, pack_name: &str) -> NameInitial {
+    name_placeholder(if pack_name.trim().is_empty() {
+        room_name
+    } else {
+        pack_name
+    })
+}
+
+fn name_placeholder(name: &str) -> NameInitial {
+    let initial = name
+        .chars()
+        .find(|character| character.is_alphanumeric())
+        .map(|character| character.to_uppercase().collect::<String>().into())
+        .unwrap_or_else(|| "?".into());
+
+    // Match Compose's Java String.hashCode and HSL(45% saturation, 50% lightness).
+    let hash = name.encode_utf16().fold(0_i32, |hash, unit| {
+        hash.wrapping_mul(31).wrapping_add(i32::from(unit))
+    });
+    let hue = hash.rem_euclid(360) as f32;
+    NameInitial {
+        text: initial,
+        background: Color::from_hsva(hue, 0.45 / 0.725, 0.725, 1.0),
+    }
+}
+
 pub struct App {
     ui: slint::Weak<AppWindow>,
     runtime: tokio::runtime::Handle,
@@ -147,6 +180,7 @@ pub struct App {
     /// Kept for the app's lifetime and updated row by row: replacing a model recreates every tile,
     /// and femtovg then uploads every icon again (in-memory images have no shared texture cache).
     tiles: [Rc<VecModel<TileData>>; 2],
+    host_list_rows: Rc<VecModel<HostListRow>>,
     pub interactions: [Interaction; 2],
     pills: [Spring; 6],
     pivots: [[f32; 2]; 6],
@@ -166,6 +200,8 @@ impl App {
         let tiles = [Rc::new(VecModel::default()), Rc::new(VecModel::default())];
         ui.set_hosts(ModelRc::from(tiles[0].clone()));
         ui.set_modpacks(ModelRc::from(tiles[1].clone()));
+        let host_list_rows = Rc::new(VecModel::default());
+        ui.set_all_hosts(ModelRc::from(host_list_rows.clone()));
         let pack_ui = crate::packs::PackUi::wire(ui, runtime.clone());
         let login_ui = crate::login::LoginUi::wire(ui, runtime.clone(), config.server.clone());
         let app = Rc::new(RefCell::new(Self {
@@ -197,6 +233,7 @@ impl App {
             refresh_pending: false,
             fallback,
             tiles,
+            host_list_rows,
             interactions: [Interaction::new(), Interaction::new()],
             pills: [Spring::default(); 6],
             pivots: [[0.0; 2]; 6],
@@ -245,12 +282,6 @@ impl App {
                 && let Ok(mut a) = a.try_borrow_mut()
             {
                 a.load_page();
-            }
-        });
-        let weak = Rc::downgrade(app);
-        ui.on_play_host(move |id| {
-            if let Some(a) = weak.upgrade() {
-                a.borrow().play_host(id.as_str());
             }
         });
         let weak = Rc::downgrade(app);
@@ -311,12 +342,13 @@ impl App {
                 && let Some(entry) = a.borrow().entries(tab as usize).get(index as usize)
             {
                 let action = if right { "detail" } else { "play" };
-                tracing::info!(id = %entry.id, action, "Room tile action");
+                let id = &entry.art.id;
+                tracing::info!(%id, action, "Room tile action");
                 if tab == 1 {
-                    let version = a.borrow().pack_version(&entry.id);
-                    a.borrow().pack_ui.borrow_mut().open_pack(&entry.id, &entry.name, &version, right);
+                    let version = a.borrow().pack_version(id);
+                    a.borrow().pack_ui.borrow_mut().open_pack(id, &entry.name, &version, right);
                 } else if tab == 0 && !right {
-                    a.borrow().play_host(&entry.id);
+                    a.borrow().play_host(id);
                 } else if let Some(ui) = a.borrow().ui.upgrade() {
                     ui.invoke_stub(if tab == 0 { "房间详情".into() } else { "整合包详情".into() });
                 }
@@ -423,7 +455,7 @@ impl App {
         self.idle_pending = false;
         self.api = None;
         self.hosts = Hosts::default();
-        ui.set_all_hosts(ModelRc::default());
+        self.host_list_rows.clear();
         ui.set_page_error("".into());
         ui.set_loading_more(false);
         self.packs.clear();
@@ -483,7 +515,7 @@ impl App {
         ui.set_error("".into());
         ui.set_page_error("".into());
         ui.set_loading_more(false);
-        ui.set_all_hosts(ModelRc::default());
+        self.host_list_rows.clear();
         for model in &self.tiles {
             model.clear();
         }
@@ -530,12 +562,15 @@ impl App {
                 .into_iter()
                 .cloned()
                 .map(|h| Entry {
-                    id: h.id,
+                    initial: host_placeholder(&h.name, &h.modpack_name),
                     name: h.name,
                     detail: h.modpack_name,
-                    url: h.icon_url,
-                    owner: h.owner_id,
-                    heads: h.online_player_ids,
+                    art: ArtSource {
+                        id: h.id,
+                        url: h.icon_url,
+                        owner: h.owner_id,
+                        heads: h.online_player_ids,
+                    },
                     status: match h.status {
                         HostStatus::Playable => 1,
                         HostStatus::Started => 2,
@@ -547,16 +582,19 @@ impl App {
             self.packs
                 .iter()
                 .map(|m| Entry {
-                    id: m.id.clone(),
                     name: m.name.clone(),
+                    initial: name_placeholder(&m.name),
                     detail: format!(
                         "{} · {}",
                         if m.local { "本地导入" } else { "RDI" },
                         m.version
                     ),
-                    url: m.icon.clone(),
-                    owner: None,
-                    heads: vec![],
+                    art: ArtSource {
+                        id: m.id.clone(),
+                        url: m.icon.clone(),
+                        owner: None,
+                        heads: vec![],
+                    },
                     status: 0,
                 })
                 .collect()
@@ -587,21 +625,6 @@ impl App {
                 .await;
             let _ = tx.send(Event::Started(result));
         });
-    }
-    fn sync_host_list(&self, ui: &AppWindow) {
-        let rows = self
-            .hosts
-            .shown(true)
-            .into_iter()
-            .map(|host| HostListRow {
-                id: host.id.as_str().into(),
-                name: host.name.as_str().into(),
-                modpack: host.modpack_name.as_str().into(),
-                online_count: host.online_player_ids.len() as i32,
-                playable: host.playable,
-            })
-            .collect::<Vec<_>>();
-        ui.set_all_hosts(ModelRc::new(VecModel::from(rows)));
     }
     fn load_page(&mut self) {
         if self.hosts.ended || self.page_job.is_some() {
@@ -634,8 +657,55 @@ impl App {
         let size = (108.0 * ui.window().scale_factor()).ceil().max(1.0) as u32;
         let mut wanted = HashSet::new();
         let mut pending = vec![];
+        if ui.get_host_list_visible() {
+            let visible =
+                ui.get_host_list_first_room() as usize..ui.get_host_list_end_room() as usize;
+            let rows = self
+                .hosts
+                .shown(true)
+                .into_iter()
+                .enumerate()
+                .map(|(index, host)| {
+                    let mut row = HostListRow {
+                        name: host.name.as_str().into(),
+                        modpack: match host.pack_ver.as_deref().map(str::trim) {
+                            Some(version) if !version.is_empty() => {
+                                format!("{} · {version}", host.modpack_name).into()
+                            }
+                            _ => host.modpack_name.as_str().into(),
+                        },
+                        initial: host_placeholder(&host.name, &host.modpack_name),
+                        ..Default::default()
+                    };
+                    if visible.contains(&index) {
+                        let url = host.icon_url.as_ref().filter(|url| !url.is_empty());
+                        if url.is_none() && host.online_player_ids.is_empty() {
+                            return row;
+                        }
+                        let source = ArtSource {
+                            id: host.id.clone(),
+                            url: url.cloned(),
+                            owner: None,
+                            heads: host.online_player_ids.iter().take(5).cloned().collect(),
+                        };
+                        let key = source.key(size);
+                        wanted.insert(key.clone());
+                        if let Some(art) = self.cache.get(&key) {
+                            row.icon = art.icon.clone();
+                            row.has_icon = art.has_icon;
+                            row.heads = art.heads.clone();
+                        } else {
+                            pending.push((key, source));
+                        }
+                    }
+                    row
+                })
+                .collect();
+            sync_rows(&self.host_list_rows, rows);
+        }
         let grids = ui.get_menu_grids();
         let columns = ui.get_menu_grid_columns().max(1) as usize;
+        let pitch = ui.get_menu_grid_row_pitch();
         for (tab, shape) in grids.iter().enumerate() {
             let entries = self.entries(tab);
             let scroll = if tab == 0 {
@@ -643,17 +713,12 @@ impl App {
             } else {
                 ui.get_modpack_scroll()
             };
-            let pitch = if tab == 0 {
-                ui.get_menu_grid_row_pitch()
-            } else {
-                hosts::PITCH
-            };
             let rows = hosts::visible_rows(scroll, shape.h, pitch, entries.len().div_ceil(columns));
             let model: Vec<_> = entries
                 .iter()
                 .enumerate()
                 .map(|(index, e)| {
-                    let key = e.key(size);
+                    let key = e.art.key(size);
                     let visible = rows.contains(&(index / columns))
                         && (self.selected == tab
                             || (ui.get_tab_position() > 0.0 && ui.get_tab_position() < 1.0));
@@ -661,7 +726,7 @@ impl App {
                         wanted.insert(key.clone());
                         let cached = self.cache.get(&key).cloned();
                         if cached.is_none() {
-                            pending.push((key.clone(), e.clone()));
+                            pending.push((key, e.art.clone()));
                         }
                         cached
                     } else {
@@ -683,7 +748,7 @@ impl App {
         let Some(api) = self.api.clone() else {
             return;
         };
-        for (key, e) in pending {
+        for (key, source) in pending {
             if self.jobs.len() >= 6 {
                 break;
             }
@@ -697,21 +762,21 @@ impl App {
             let jobkey = key.clone();
             let fallback = images::steve();
             let job = self.runtime.spawn(async move {
-                let icon = if let Some(url) = e.url.filter(|u| !u.is_empty()) {
+                let icon = if let Some(url) = source.url.filter(|u| !u.is_empty()) {
                     match images::icon(&api.http, &url, size).await {
                         Ok(i) => Some(i),
                         Err(error) => {
                             let host = reqwest::Url::parse(&url)
                                 .ok()
                                 .and_then(|u| u.host_str().map(str::to_owned));
-                            tracing::warn!(?host,id=%e.id,error=?error,"Icon fallback");
+                            tracing::warn!(?host,id=%source.id,error=?error,"Icon fallback");
                             None
                         }
                     }
                 } else {
                     None
                 };
-                let owner = if let Some(uid) = e.owner {
+                let owner = if let Some(uid) = source.owner {
                     match heads.get(&api, &uid).await {
                         Ok(h) => Some(h),
                         Err(error) => {
@@ -723,7 +788,7 @@ impl App {
                     None
                 };
                 let mut online = vec![];
-                for uid in e.heads {
+                for uid in source.heads {
                     match heads.get(&api, &uid).await {
                         Ok(h) => online.push(h),
                         Err(error) => {
@@ -887,7 +952,9 @@ impl App {
                             self.packs = data.packs;
                             self.api = Some(data.api.clone());
                             self.pack_ui.borrow_mut().connect(Some(data.api.clone()));
-                            self.sync_host_list(&ui);
+                            if ui.get_host_list_visible() {
+                                self.refresh();
+                            }
                             if ui.get_host_list_near_end() {
                                 self.load_page();
                             }
@@ -952,7 +1019,7 @@ impl App {
                                 ended = self.hosts.ended,
                                 "Host page merged"
                             );
-                            self.sync_host_list(&ui);
+                            self.refresh();
                             if ui.get_host_list_near_end() {
                                 self.load_page();
                             }
@@ -1059,7 +1126,7 @@ impl App {
     }
 }
 /// Updates `model` to `rows`, touching only rows that changed so unchanged tiles keep their textures.
-fn sync_rows(model: &VecModel<TileData>, rows: Vec<TileData>) {
+fn sync_rows<T: Clone + PartialEq + 'static>(model: &VecModel<T>, rows: Vec<T>) {
     let len = rows.len();
     for (i, row) in rows.into_iter().enumerate() {
         if i >= model.row_count() {
@@ -1092,5 +1159,33 @@ impl Drop for App {
         {
             j.abort();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn name_placeholder_matches_compose_hue_and_initial() {
+        // This name exercises a negative Java hash and a UTF-16 surrogate pair.
+        let initial = name_placeholder("【a】冒险🐱");
+        assert_eq!(initial.text, "A");
+        assert_eq!(
+            initial.background,
+            Color::from_hsva(43.0, 0.45 / 0.725, 0.725, 1.0),
+        );
+
+        assert_eq!(name_placeholder("【冒险】整合包").text, "冒");
+        assert_eq!(name_placeholder("【2】").text, "2");
+        assert_eq!(name_placeholder("🐱").text, "?");
+    }
+
+    #[test]
+    fn host_placeholder_uses_pack_name_or_falls_back_to_room_name() {
+        let room = "【周末】房间";
+        let pack = "【冒险】整合包";
+        assert_eq!(host_placeholder(room, pack), name_placeholder(pack));
+        assert_eq!(host_placeholder(room, "  "), name_placeholder(room));
     }
 }

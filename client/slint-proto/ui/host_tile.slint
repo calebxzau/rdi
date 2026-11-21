@@ -1,5 +1,6 @@
-import { TileData, Theme } from "theme.slint";
+import { TileData } from "theme.slint";
 import { PlayerHead } from "player_head.slint";
+import { NameInitialIcon } from "name_initial_icon.slint";
 export component HostTile inherits Rectangle {
     in property <TileData> tile;
     in property <float> scale: 1;
@@ -17,8 +18,10 @@ export component HostTile inherits Rectangle {
         // (images.rs) and the dimming alpha is applied to each leaf.
         Rectangle { x: 9px * root.icon-scale; y: self.x; width: 108px * root.icon-scale; height: self.width;
             if root.tile.has-icon: Image { width: parent.width; height: parent.height; source: root.tile.icon; image-fit: cover; opacity: root.alpha; }
-            if !root.tile.has-icon: Rectangle { width: parent.width; height: parent.height; border-radius: 13px * root.icon-scale; background: #e2e4ed.with-alpha(root.alpha); }
-            if !root.tile.has-icon: Text { width: parent.width; height: parent.height; text: root.tile.initial; color: #51597b.with-alpha(root.alpha); font-size: 36px * root.icon-scale; horizontal-alignment: center; vertical-alignment: center; }
+            if !root.tile.has-icon: NameInitialIcon {
+                width: parent.width; height: parent.height; border-radius: 13px * root.icon-scale;
+                initial: root.tile.initial; alpha: root.alpha; font-size: 36px * root.icon-scale;
+            }
             for head[i] in root.tile.heads: PlayerHead { x: (-3px + mod(i,5) * 20px) * root.icon-scale; y: (-3px + floor(i/5) * 20px) * root.icon-scale; width: 18px * root.icon-scale; height: self.width; source: head; alpha: root.alpha; }
             if root.tile.has-owner: PlayerHead { x: parent.width - self.width + 3px * root.icon-scale; y: parent.height - self.height + 3px * root.icon-scale; width: 27px * root.icon-scale; height: self.width; source: root.tile.owner; alpha: root.alpha; }
         }

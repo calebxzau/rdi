@@ -17,6 +17,7 @@ pub struct HostBrief {
     pub id: String,
     pub name: String,
     pub modpack_name: String,
+    pub pack_ver: Option<String>,
     #[serde(default)]
     pub icon_url: Option<String>,
     #[serde(default)]
@@ -65,10 +66,12 @@ mod tests {
         assert_eq!(h.status, HostStatus::Other);
         assert!(h.playable);
         assert!(h.icon_url.is_none());
+        assert_eq!(h.pack_ver.as_deref(), Some("1"));
         let h: HostBrief =
             serde_json::from_str(r#"{"_id":"abc","name":"房间","modpackName":"包"}"#).unwrap();
         assert!(h.online_player_ids.is_empty());
         assert!(h.playable);
+        assert!(h.pack_ver.is_none());
     }
     #[test]
     fn samples() {

@@ -207,22 +207,16 @@ pub fn frame(
         }
     } else if ui.get_pack_screen() == 0 && !ui.get_wardrobe_visible() && !ui.get_host_list_visible() {
         if !ui.get_loading() && ui.get_error().is_empty() {
+            let row_pitch = ui.get_menu_grid_row_pitch();
+            let tile_size = ui.get_menu_grid_tile_size();
             for (tab, shape) in ui.get_menu_grids().iter().enumerate() {
                 let i = &interactions[tab];
                 f.grids.push(glass::Grid {
                     clip: rect(&shape),
                     x: shape.x,
                     y: shape.y,
-                    row_pitch: if tab == 0 {
-                        ui.get_menu_grid_row_pitch()
-                    } else {
-                        crate::hosts::PITCH
-                    },
-                    tile_size: if tab == 0 {
-                        ui.get_menu_grid_tile_size()
-                    } else {
-                        crate::hosts::TILE
-                    },
+                    row_pitch,
+                    tile_size,
                     columns: Some(ui.get_menu_grid_columns().max(1) as usize),
                     row_offsets: [
                         ui.get_menu_grid_row_offset(),

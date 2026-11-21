@@ -1,0 +1,18 @@
+export struct NameInitial { text: string, background: color }
+
+export component NameInitialIcon inherits Rectangle {
+    in property <NameInitial> initial;
+    in property <float> alpha: 1;
+    in property <length> font-size;
+    private property <bool> colored: root.initial.background != transparent;
+
+    background: (root.colored ? root.initial.background : #e2e4ed).with-alpha(root.alpha);
+    Text {
+        width: parent.width; height: parent.height;
+        text: root.initial.text;
+        color: (root.colored ? #fff : #51597b).with-alpha(root.alpha);
+        font-size: root.font-size;
+        font-weight: root.colored ? 700 : 400;
+        horizontal-alignment: center; vertical-alignment: center;
+    }
+}
