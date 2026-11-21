@@ -26,6 +26,8 @@ import java.util.UUID
 
 interface McpGameInterface {
 
+    fun supportsMcpTool(name: String): Boolean = true
+
     fun send(packet: McpC2SNetPacket): Result<String>
 
     fun inventory(): Result<InventoryListP>

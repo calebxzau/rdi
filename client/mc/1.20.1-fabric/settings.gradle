@@ -20,6 +20,8 @@ dependencyResolutionManagement {
 
 rootProject.name = 'c20a'
 
-include(':c-mc-common', ':mediaproc')
+include(':c-mc-common', ':mediaproc', ':rmcp-common', ':rmcp-client')
 project(':c-mc-common').projectDir = file('../common')
 project(':mediaproc').projectDir = file('../../mediaproc')
+project(':rmcp-common').projectDir = file('../../../mc/rmcp/common')
+project(':rmcp-client').projectDir = file('../../../mc/rmcp/client')

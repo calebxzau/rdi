@@ -11,7 +11,14 @@ object McpStandardResources {
         }
     }
 
-    fun basicPrompt(): String {
+    fun basicPrompt(includeWorldActions: Boolean = true): String {
+        if (!includeWorldActions) {
+            return """
+                Use the RDI Minecraft MCP tools to read and operate the running Minecraft client.
+                Only do what the player explicitly asked.
+                Call screen_read before interacting with an open screen and use the returned widget IDs and screen version.
+            """.trimIndent()
+        }
         return """
             Use the RDI Minecraft MCP tools to read live data from the running Minecraft client.
             Only do what the player explicitly asked.

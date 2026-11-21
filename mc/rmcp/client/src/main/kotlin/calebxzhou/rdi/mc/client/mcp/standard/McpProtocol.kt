@@ -16,13 +16,13 @@ object StandardMcpProtocol {
             "initialize" -> initialize(game)
             "notifications/initialized" -> return null
             "ping" -> JsonObject(emptyMap())
-            "tools/list" -> toolsList()
+            "tools/list" -> toolsList(game)
             "tools/call" -> toolsCall(request.params.asObjectOrEmpty(), game)
             "resources/list" -> resourcesList()
             "resources/read" -> resourcesRead(request.params.asObjectOrEmpty())
             "resources/templates/list" -> resourceTemplatesList()
             "prompts/list" -> promptsList()
-            "prompts/get" -> promptsGet(request.params.asObjectOrEmpty())
+            "prompts/get" -> promptsGet(request.params.asObjectOrEmpty(), game)
             else -> throw JsonRpcException(JsonRpc.METHOD_NOT_FOUND, "method not found: ${request.method}")
         }
         return if (request.isNotification) null else JsonRpc.success(request.id, result)
@@ -47,17 +47,17 @@ object StandardMcpProtocol {
             put("description", "Read and act on live Minecraft client state through RDI tools.")
             put("version", game.gameVersion())
         })
-        put("instructions", McpStandardResources.basicPrompt())
+        put("instructions", McpStandardResources.basicPrompt(game.supportsMcpTool("block_harvest_result")))
     }
 
-    private fun toolsList(): JsonObject = buildJsonObject {
-        put("tools", JsonArray(StandardMcpTools.all.map { it.toProtocolJson() }))
+    private fun toolsList(game: McpGameInterface): JsonObject = buildJsonObject {
+        put("tools", JsonArray(StandardMcpTools.all.filter { game.supportsMcpTool(it.name) }.map { it.toProtocolJson() }))
     }
 
     private fun toolsCall(params: JsonObject, game: McpGameInterface): JsonObject {
         val name = params.requiredString("name")
         val arguments = params["arguments"].asObjectOrEmpty()
-        val tool = StandardMcpTools.get(name)
+        val tool = StandardMcpTools.get(name)?.takeIf { game.supportsMcpTool(name) }
             ?: throw JsonRpcException(JsonRpc.INVALID_PARAMS, "unknown tool: $name")
         return tool.call(arguments, game)
             .getOrElse { StandardMcpToolResult.text(it.message ?: it.javaClass.simpleName, isError = true) }
@@ -105,7 +105,7 @@ object StandardMcpProtocol {
         })
     }
 
-    private fun promptsGet(params: JsonObject): JsonObject {
+    private fun promptsGet(params: JsonObject, game: McpGameInterface): JsonObject {
         val name = params.requiredString("name")
         if (name != McpStandardResources.BASIC_PROMPT_NAME) {
             throw JsonRpcException(JsonRpc.INVALID_PARAMS, "unknown prompt: $name")
@@ -118,7 +118,7 @@ object StandardMcpProtocol {
                     put("role", "user")
                     put("content", buildJsonObject {
                         put("type", "text")
-                        put("text", McpStandardResources.basicPrompt())
+                        put("text", McpStandardResources.basicPrompt(game.supportsMcpTool("block_harvest_result")))
                     })
                 })
             })

@@ -14,7 +14,7 @@ base {
 group = 'calebxzhou.rdi'
 version = mod_version
 
-def sharedBuildProjects = [':c-mc-common', ':mediaproc']
+def sharedBuildProjects = [':c-mc-common', ':mediaproc', ':rmcp-common', ':rmcp-client']
 sharedBuildProjects.each { projectPath ->
     evaluationDependsOn(projectPath)
 }
@@ -90,8 +90,6 @@ sourceSets.main {
     kotlin.srcDir '../../../mc/syncchunk/src/20/kotlin'
     kotlin.srcDir '../../../mc/syncchunk/src/2021Client/kotlin'
     java.srcDir '../../../mc/syncchunk/src/2021Client/java'
-    // Fabric does not include RMCP, and these two need its models.
-    kotlin.exclude '**/common2021/mcp/McpScreenControl.kt', '**/common2021/mcp/McpCommandControl.kt'
     resources {
         srcDir project(":c-mc-common").file("src/main/resources")
     }
@@ -122,6 +120,12 @@ dependencies {
 
     implementation project(':c-mc-common')
     implementation project(':mediaproc')
+    implementation project(':rmcp-client')
+    include(implementation('io.fusionauth:java-http:1.4.0'))
+    include(implementation('io.heapy.kotaml:kotaml-jvm:0.108.0'))
+    include(implementation('com.squareup.okio:okio-jvm:3.17.0'))
+    include(implementation('it.krzeminski:snakeyaml-engine-kmp-jvm:4.0.1'))
+    include(implementation('net.thauvin.erik.urlencoder:urlencoder-lib-jvm:1.6.0'))
 
     testImplementation 'org.jetbrains.kotlin:kotlin-test-junit5:2.4.21'
     testRuntimeOnly 'org.junit.jupiter:junit-jupiter-engine:6.1.1'
@@ -147,6 +151,11 @@ tasks.named('jar', Jar).configure {
     dependsOn project(':mediaproc').tasks.named('classes')
     from(project(':c-mc-common').sourceSets.main.output.classesDirs)
     from(project(':mediaproc').sourceSets.main.output.classesDirs)
+    [':rmcp-common', ':rmcp-client'].each { projectPath ->
+        def rmcpProject = project(projectPath)
+        dependsOn rmcpProject.tasks.named('classes')
+        from(rmcpProject.sourceSets.main.output)
+    }
 }
 idea {
     module {

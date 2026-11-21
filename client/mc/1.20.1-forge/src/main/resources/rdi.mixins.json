@@ -14,8 +14,6 @@
     "mZstdCompression"
   ],
   "client": [
-    "AAbstractSelectionList",
-    "mMcpChatCapture",
     "mResourceLocationPath",
     "mClientBatchingLogin",
     "mPersistentPacketQuery",

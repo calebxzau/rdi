@@ -1,4 +1,4 @@
-package calebxzhou.rdi.mc.client.mixin;
+package calebxzau.rdi.mc.v20.client.mixin;
 
 import calebxzau.mc.common2021.mcp.McpChatCapture;
 import net.minecraft.client.GuiMessageTag;
