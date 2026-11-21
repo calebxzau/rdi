@@ -1,6 +1,5 @@
 package calebxzhou.rdi.mc.client.network
 
-import calebxzau.rdi.mc.v20.forge.idle.IdleChannel
 import net.minecraft.client.Minecraft
 import net.minecraft.client.gui.screens.PauseScreen
 import org.lwjgl.glfw.GLFW
@@ -17,9 +16,9 @@ object RClientIdle {
     private var awaySinceMillis = 0L
 
     /** Called at the end of every client tick on the render thread. */
-    fun onClientTick(minecraft: Minecraft) {
+    fun onClientTick(minecraft: Minecraft, supported: Boolean, send: (Boolean) -> Unit) {
         val connection = minecraft.connection?.connection
-        if (minecraft.player == null || connection == null || connection.isMemoryConnection || !IdleChannel.isSupported(connection)) {
+        if (minecraft.player == null || connection == null || connection.isMemoryConnection || !supported) {
             reset()
             return
         }
@@ -27,11 +26,11 @@ object RClientIdle {
         val away = isAway(minecraft)
         if (!away) {
             awaySinceMillis = 0L
-            if (reportedAway) report(false)
+            if (reportedAway) report(false, send)
             return
         }
         if (awaySinceMillis == 0L) awaySinceMillis = now
-        if (!reportedAway && now - awaySinceMillis >= AWAY_DELAY_MILLIS) report(true)
+        if (!reportedAway && now - awaySinceMillis >= AWAY_DELAY_MILLIS) report(true, send)
     }
 
     /** Forgets the state when the session ends; the server forgets its side on logout. */
@@ -44,8 +43,8 @@ object RClientIdle {
         minecraft.screen is PauseScreen ||
             GLFW.glfwGetWindowAttrib(minecraft.window.window, GLFW.GLFW_ICONIFIED) == GLFW.GLFW_TRUE
 
-    private fun report(away: Boolean) {
+    private fun report(away: Boolean, send: (Boolean) -> Unit) {
         reportedAway = away
-        IdleChannel.sendToServer(away)
+        send(away)
     }
 }

@@ -16,6 +16,8 @@ import calebxzhou.rdi.mc.server.mcpimpl.McpNetwork
 import calebxzhou.rdi.mc.server.network.RServerNetwork
 import calebxzhou.rdi.mc.server.network.RServerBatching
 import calebxzhou.rdi.mc.server.network.RServerIdle
+import calebxzau.rdi.mc.v20.forge.idle.IdleChannel
+import net.minecraftforge.fml.ModList
 import calebxzhou.rdi.mc.server.network.RServerPacketRefs
 import calebxzhou.rdi.mc.server.network.RServerPersistentPackets
 import calebxzhou.rdi.mc.server.network.RServerPacketCapture
@@ -62,8 +64,8 @@ class RDIMain {
         RdiPacketRefChannel.register()
         RdiZstdStreamChannel.register()
         calebxzau.rdi.mc.v20.forge.l2.L2NameChannel.register()
-        calebxzau.rdi.mc.v20.forge.idle.IdleChannel.register()
-        RServerIdle.register()
+        IdleChannel.register()
+        IdleChannel.serverHandler = RServerIdle::onReport
         calebxzau.rdi.mc.server.chunkcache.ChunkCacheServerNetwork.register()
         calebxzau.rdi.mc.server.syncchunk.SyncChunkForgeNetwork.register()
         McpNetwork.register()
@@ -93,7 +95,9 @@ class RDIMain {
         fun starting(e: ServerStartingEvent) {
             val server = (e.getServer() as? DedicatedServer) ?: return
             PacketMetrics20.startBatchMetrics(server.serverDirectory.toPath().resolve("rdi").resolve("packet-traffic_v4.db"))
-            RServerPacketCapture.start(server)
+            RServerPacketCapture.start(server, "forge") {
+                ModList.get().mods.associate { it.modId to it.version.toString() }
+            }
 
             GameRules.visitGameRuleTypes(object : GameRules.GameRuleTypeVisitor {
                 override fun <T : GameRules.Value<T>> visit(key: GameRules.Key<T>, type: GameRules.Type<T>) {
@@ -145,7 +149,7 @@ class RDIMain {
         @SubscribeEvent @JvmStatic
         fun onPlayerJoin(e: PlayerEvent.PlayerLoggedInEvent) {
             val player: ServerPlayer = e.entity as ServerPlayer
-            RServerPacketCapture.onPlayerJoined(player)
+            RServerPacketCapture.onPlayerJoined(player, player.connection.connection.channel())
             PlayerChatRangeState.restore(player.uuid, PlayerNbtChatRangeStore(player))
             if (RDI.isAllOp()) {
                 player.server.playerList.op(player.gameProfile)

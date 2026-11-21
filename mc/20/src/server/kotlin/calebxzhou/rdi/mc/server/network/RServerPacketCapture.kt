@@ -3,10 +3,10 @@ package calebxzhou.rdi.mc.server.network
 import calebxzau.rdi.mc.v20.server.network.PacketMetricsPipeline20
 import calebxzau.rdi.mc.zstdcodec.PacketCaptureRecorder
 import com.google.gson.GsonBuilder
+import io.netty.channel.Channel
 import net.minecraft.SharedConstants
 import net.minecraft.server.MinecraftServer
 import net.minecraft.server.level.ServerPlayer
-import net.minecraftforge.fml.ModList
 import org.apache.logging.log4j.LogManager
 import java.nio.file.Files
 import java.nio.file.StandardOpenOption
@@ -18,7 +18,7 @@ object RServerPacketCapture {
     @Volatile
     private var recorder: PacketCaptureRecorder? = null
 
-    fun start(server: MinecraftServer) {
+    fun start(server: MinecraftServer, loader: String, mods: () -> Map<String, String>) {
         check(recorder == null) { "Packet capture already started" }
         val directory = server.serverDirectory.toPath().resolve("rdi").resolve("packbatch")
         val started = runCatching {
@@ -40,8 +40,8 @@ object RServerPacketCapture {
                 "started_unix_ms" to started.startedEpochMillis,
                 "direction" to "s2c",
                 "minecraft" to SharedConstants.getCurrentVersion().name,
-                "loader" to "forge",
-                "mods" to ModList.get().mods.associate { it.modId to it.version.toString() }.toSortedMap(),
+                "loader" to loader,
+                "mods" to mods().toSortedMap(),
             )
             Files.writeString(
                 directory.resolve("${started.runId}.json"),
@@ -53,9 +53,8 @@ object RServerPacketCapture {
         logger.info("Recording all joined players' outbound packet contents to {} (run {})", directory, started.runId)
     }
 
-    fun onPlayerJoined(player: ServerPlayer) {
+    fun onPlayerJoined(player: ServerPlayer, channel: Channel) {
         val active = recorder ?: return
-        val channel = player.connection.connection.channel()
         val capture = active.connection(player.uuid)
         channel.eventLoop().execute {
             if (!channel.isActive) return@execute

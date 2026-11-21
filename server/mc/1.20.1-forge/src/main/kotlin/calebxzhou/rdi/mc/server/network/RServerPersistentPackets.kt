@@ -1,12 +1,7 @@
 package calebxzhou.rdi.mc.server.network
 
-import calebxzau.rdi.mc.zstdcodec.PersistentPacketClientSession
-import calebxzau.rdi.mc.zstdcodec.PersistentPacketOffer
+import calebxzau.rdi.mc.v20.server.network.ServerPersistentPackets20
 import calebxzau.rdi.mc.zstdcodec.PersistentPacketQuery
-import calebxzau.rdi.mc.zstdcodec.PersistentPacketServerSession
-import calebxzau.rdi.mc.zstdcodec.PersistentPacketServerStore
-import calebxzau.rdi.mc.zstdcodec.PersistentPacketStore
-import calebxzau.rdi.mc.zstdcodec.ZstdCompressionPipeline
 import io.netty.buffer.Unpooled
 import io.netty.util.AttributeKey
 import net.minecraft.network.Connection
@@ -16,9 +11,7 @@ import net.minecraft.network.protocol.login.ServerboundCustomQueryPacket
 import net.minecraft.resources.ResourceLocation
 import net.minecraftforge.event.entity.player.PlayerNegotiationEvent
 import org.apache.logging.log4j.LogManager
-import java.nio.file.Path
 import java.util.concurrent.CompletableFuture
-import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 
 /**
@@ -34,23 +27,10 @@ object RServerPersistentPackets {
     private val pendingKey = AttributeKey.valueOf<CompletableFuture<Void>>("rdi.pcache.pending")
     private const val ANSWER_TIMEOUT_SECONDS = 10L
 
-    /** Each kind keeps a few older versions on disk as delta bases for clients that missed an update. */
-    private const val KEEP_PER_KIND = 4
-
-    private val diskExecutor = Executors.newSingleThreadExecutor { task ->
-        Thread(task, "RDI persistent packet store").apply { isDaemon = true }
-    }
-    private val store by lazy {
-        PersistentPacketServerStore(PersistentPacketStore(Path.of("rdi", "pcache"), KEEP_PER_KIND), diskExecutor)
-    }
-
-    internal fun isEnabled(property: (String) -> String?): Boolean =
-        property("rdi.pcache.enabled")?.trim()?.toBoolean() ?: true
-
     /** Sends the query; login proceeds after the answer, or after a timeout with plain packets. */
     fun onNegotiation(event: PlayerNegotiationEvent) {
         val connection = event.connection
-        if (!isEnabled(System::getProperty) || connection.isMemoryConnection) return
+        if (!ServerPersistentPackets20.isEnabled() || connection.isMemoryConnection) return
         val name = event.profile?.name
         val pending = CompletableFuture<Void>()
         connection.channel().attr(pendingKey).set(pending)
@@ -75,34 +55,10 @@ object RServerPersistentPackets {
             return true
         }
         try {
-            accept(connection, packet, name)
+            ServerPersistentPackets20.accept(connection.channel(), packet.data, name)
         } finally {
             pending.complete(null)
         }
         return true
-    }
-
-    private fun accept(connection: Connection, packet: ServerboundCustomQueryPacket, name: String) {
-        val data = packet.data
-        if (data == null) {
-            logger.info("Player {} keeps plain join packets; the client does not support persistent packets", name)
-            return
-        }
-        val body = ByteArray(data.readableBytes())
-        data.readBytes(body)
-        val offer = PersistentPacketOffer.decode(body).getOrElse { error ->
-            logger.error("Player {} keeps plain join packets; the persistent packet answer is malformed", name, error)
-            return
-        }
-        if (offer.version != PersistentPacketQuery.VERSION) {
-            logger.info("Player {} keeps plain join packets; client persistent packet version {} differs from {}", name, offer.version, PersistentPacketQuery.VERSION)
-            return
-        }
-        val held = offer.entries.groupBy { it.kind }.mapValues { (_, entries) ->
-            entries.take(PersistentPacketClientSession.HELD_PER_KIND).map { it.hash }
-        }
-        val trimmed = PersistentPacketOffer(offer.version, held.flatMap { (kind, hashes) -> hashes.map { PersistentPacketOffer.Entry(kind, it) } })
-        ZstdCompressionPipeline.attachPersistentPackets(connection.channel(), PersistentPacketServerSession(trimmed, store))
-        logger.info("Player {} persistent packets negotiated; the client holds {}", name, trimmed.entries.joinToString { "${it.kind}:${it.hash}" }.ifEmpty { "nothing yet" })
     }
 }

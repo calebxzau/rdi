@@ -2,14 +2,13 @@ package calebxzhou.rdi.mc.server.network
 
 import calebxzau.mc.common2021.RdiBatchChannel
 import calebxzau.rdi.mc.v20.server.network.PacketBatchPolicy20
-import calebxzau.rdi.mc.v20.server.network.PacketMetricsPipeline20
-import calebxzau.rdi.mc.zstdcodec.ZstdCompressionPipeline
+import calebxzau.rdi.mc.v20.server.network.ServerPacketExtensions20
 import net.minecraft.server.MinecraftServer
 import net.minecraft.server.level.ServerPlayer
 import net.minecraftforge.fml.ModList
 import org.apache.logging.log4j.LogManager
 
-/** Forge-only activation; shared codec and other loaders stay inactive by default. */
+/** Forge channel and verified mod-payload adapter for shared 1.20.1 batching. */
 object RServerBatching {
     private val logger = LogManager.getLogger("rdi")
     private val verifiedChannels: Set<String> by lazy {
@@ -23,41 +22,21 @@ object RServerBatching {
         }
     }
 
-    private fun batchingEnabled(): Boolean = System.getProperty("rdi.batch.enabled", "true").toBoolean()
-    private fun longWindowEnabled(): Boolean = System.getProperty("rdi.batch.longWindow", "false").toBoolean()
-    private fun entityBatchingEnabled(): Boolean = System.getProperty("rdi.batch.entity", "true").toBoolean()
-
     fun onPlayerJoined(player: ServerPlayer) {
         val connection = player.connection.connection
         if (!RdiBatchChannel.isRemotePresent(connection)) {
             logger.info("Player {} keeps legacy Zstd envelopes; rdi:batch is absent", player.gameProfile.name)
             return
         }
-        val channel = connection.channel()
-        PacketMetricsPipeline20.configureBatching(channel, longWindowEnabled(), verifiedChannels, entityBatchingEnabled())
-        ZstdCompressionPipeline.setOutboundBatching(channel, batchingEnabled())
-        logger.info("Player {} selective Zstd batching requested={}, long window={}, entity updates={}, handlers={}",
-            player.gameProfile.name, batchingEnabled(), longWindowEnabled(), entityBatchingEnabled(),
-            ZstdCompressionPipeline.describeHandlers(channel))
+        ServerPacketExtensions20.startBatching(connection.channel(), player.gameProfile.name, verifiedChannels)
     }
 
     fun flushAtTickEnd(server: MinecraftServer) {
-        val enabled = batchingEnabled()
-        val longWindow = longWindowEnabled()
-        val entityBatching = entityBatchingEnabled()
+        val settings = ServerPacketExtensions20.batchSettings()
         for (player in server.playerList.players) {
             val connection = player.connection.connection
             if (!RdiBatchChannel.isRemotePresent(connection)) continue
-            val channel = connection.channel()
-            // Policy updates and deadlines share one ordered Netty task.
-            channel.eventLoop().execute {
-                if (!channel.isActive) return@execute
-                PacketMetricsPipeline20.configureBatching(channel, longWindow, verifiedChannels, entityBatching)
-                if (ZstdCompressionPipeline.isOutboundBatchingEnabled(channel) != enabled) {
-                    ZstdCompressionPipeline.setOutboundBatching(channel, enabled)
-                }
-                if (enabled) ZstdCompressionPipeline.flushAtTickEnd(channel)
-            }
+            ServerPacketExtensions20.flushBatching(connection.channel(), settings, verifiedChannels)
         }
     }
 }

@@ -15,6 +15,7 @@
   },
   "mixins": [
     "rdi.fabric.mixins.json",
+    "rdi.fabric.network.mixins.json",
     "rdi.fabric.media.mixins.json",
     "rdi.fabric.save-import.mixins.json",
     "rdi.v20.client.mixins.json",

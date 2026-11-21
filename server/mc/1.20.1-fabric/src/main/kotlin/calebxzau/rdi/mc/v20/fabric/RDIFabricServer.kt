@@ -5,8 +5,10 @@ import calebxzhou.rdi.mc.common.RGlobalPlayerList
 import calebxzhou.rdi.mc.common.WebSocketClient
 import calebxzhou.rdi.mc.common.WsMessage
 import calebxzhou.rdi.mc.common.WsMessageHandler
+import calebxzhou.rdi.mc.server.network.RServerPacketCapture
 import calebxzhou.rdi.mc.rcmd.chat.RChatMessage
 import calebxzau.rdi.mc.v20.fabric.network.FabricChunkCacheServer
+import calebxzau.rdi.mc.v20.fabric.network.FabricPacketExtensionsServer
 import calebxzau.rdi.mc.v20.protocol.FabricRoomWire20
 import calebxzau.rdi.mc.v20.protocol.EncodedPlayerList20
 import calebxzau.rdi.mc.v20.server.network.PacketMetrics20
@@ -24,6 +26,7 @@ import net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents
 import net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents
+import net.fabricmc.loader.api.FabricLoader
 import net.minecraft.resources.ResourceLocation
 import net.minecraft.server.MinecraftServer
 import net.minecraft.server.level.ServerPlayer
@@ -35,12 +38,15 @@ class RDIFabricServer : DedicatedServerModInitializer {
     override fun onInitializeServer() {
         val nativeMagic = ZstdCompressionPipeline.verifyNativeLoaded()
         logger.info("RDI Fabric server initialized (Zstd magic {})", nativeMagic)
+        FabricPacketExtensionsServer.register()
         FabricChunkCacheServer.register()
 
         CommandRegistrationCallback.EVENT.register { dispatcher, _, _ ->
             SyncChunkCommands.register(dispatcher, SyncChunkSavedData20::of)
         }
         ServerPlayConnectionEvents.JOIN.register { handler, _, _ ->
+            RServerPacketCapture.onPlayerJoined(handler.player, handler.connection.channel)
+            FabricPacketExtensionsServer.onJoin(handler.player)
             currentSession?.takeIf { it.active.get() }?.let { sendPlayers(handler.player, it.playerList) }
             rcmdAdapter?.onPlayerJoin(handler.player)
         }
@@ -48,7 +54,14 @@ class RDIFabricServer : DedicatedServerModInitializer {
             rcmdAdapter?.onPlayerDisconnect(handler.player)
         }
         ServerLifecycleEvents.SERVER_STARTING.register { server ->
-            PacketMetrics20.start(server.serverDirectory.toPath().resolve("rdi").resolve("packet-traffic_v3.db"))
+            PacketMetrics20.startBatchMetrics(server.serverDirectory.toPath().resolve("rdi").resolve("packet-traffic_v4.db"))
+            if (System.getProperty("rdi.packetCapture.enabled").toBoolean()) {
+                RServerPacketCapture.start(server, "fabric") {
+                    FabricLoader.getInstance().allMods.associate { mod ->
+                        mod.metadata.id to mod.metadata.version.friendlyString
+                    }
+                }
+            }
         }
         ServerLifecycleEvents.SERVER_STARTED.register { server ->
             val session = FabricServerSession(server)
@@ -59,7 +72,8 @@ class RDIFabricServer : DedicatedServerModInitializer {
             WebSocketClient.start(session)
             logger.info("RDI Fabric room connection started for host {}", RDI.HOST_ID)
         }
-        ServerTickEvents.END_SERVER_TICK.register {
+        ServerTickEvents.END_SERVER_TICK.register { server ->
+            FabricPacketExtensionsServer.flushAtTickEnd(server)
             rcmdAdapter?.tick()
         }
         ServerLifecycleEvents.SERVER_STOPPING.register {
@@ -69,6 +83,7 @@ class RDIFabricServer : DedicatedServerModInitializer {
         }
         ServerLifecycleEvents.SERVER_STOPPED.register {
             PacketMetrics20.stop()
+            RServerPacketCapture.stop()
             runCatching { RegionZstdCodec.closeAll() }.onFailure { error ->
                 logger.error("Failed to close Zstd region compression pool", error)
             }

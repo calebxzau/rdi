@@ -198,6 +198,10 @@ object ZstdCompressionPipeline {
     fun isOutboundStreamEnabled(channel: Channel): Boolean =
         (channel.pipeline().get(COMPRESS_HANDLER_NAME) as? ZstdCompressionEncoder)?.isStreamEnabled() ?: false
 
+    @JvmStatic
+    fun isInboundStreamActive(channel: Channel): Boolean =
+        (channel.pipeline().get(DECOMPRESS_HANDLER_NAME) as? ZstdCompressionDecoder)?.isStreamActive() ?: false
+
     /** Prepares the RDI decoder for the server's STREAM_START; returns false when that decoder is absent. */
     @JvmStatic
     fun setInboundStreamIfAvailable(channel: Channel, ready: Boolean): Boolean {

@@ -10,6 +10,7 @@ import calebxzau.rdi.mc.v20.client.RoomJoinUi20
 import calebxzhou.rdi.mc.client.network.RClientNetwork
 import calebxzhou.rdi.mc.client.network.RClientBatching
 import calebxzhou.rdi.mc.client.network.RClientIdle
+import calebxzau.rdi.mc.v20.forge.idle.IdleChannel
 import calebxzhou.rdi.mc.client.network.RClientPacketRefs
 import calebxzhou.rdi.mc.client.network.RClientZstdStream
 import calebxzau.rdi.mc.v20.client.GlobalPlayerListState
@@ -45,7 +46,7 @@ class RDIMain {
         RdiPacketRefChannel.register()
         RdiZstdStreamChannel.register()
         calebxzau.rdi.mc.v20.forge.l2.L2NameChannel.register()
-        calebxzau.rdi.mc.v20.forge.idle.IdleChannel.register()
+        IdleChannel.register()
         calebxzau.rdi.mc.client.chunkcache.ChunkCacheClientNetwork.register()
         calebxzau.rdi.mc.client.syncchunk.SyncChunkForgeClient.register()
         calebxzau.rdi.mc.client.syncchunk.SyncChunkIntegratedForge.register()
@@ -89,7 +90,10 @@ class RDIMain {
         @SubscribeEvent
         @JvmStatic
         fun onClientTick(event: TickEvent.ClientTickEvent) {
-            if (event.phase == TickEvent.Phase.END) RClientIdle.onClientTick(Minecraft.getInstance())
+            if (event.phase != TickEvent.Phase.END) return
+            val minecraft = Minecraft.getInstance()
+            val supported = minecraft.connection?.connection?.let(IdleChannel::isSupported) == true
+            RClientIdle.onClientTick(minecraft, supported, IdleChannel::sendToServer)
         }
 
         @SubscribeEvent

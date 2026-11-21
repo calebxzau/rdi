@@ -16,6 +16,7 @@
   "mixins": [
     "rdi.v20.server.mixins.json",
     "rdi.fabric.server.mixins.json",
+    "rdi.v20.fabric-network.mixins.json",
     "rdi.chunkcache.server.mixins.json"
   ],
   "depends": {

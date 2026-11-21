@@ -1,6 +1,5 @@
 package calebxzhou.rdi.mc.server.network
 
-import calebxzau.rdi.mc.v20.forge.idle.IdleChannel
 import calebxzhou.rdi.mc.server.mixin.AClientboundMoveEntityPacket
 import calebxzhou.rdi.mc.server.mixin.AClientboundRotateHeadPacket
 import it.unimi.dsi.fastutil.ints.IntOpenHashSet
@@ -36,7 +35,7 @@ import java.util.concurrent.ConcurrentHashMap
 
 /**
  * Holds back what a player who stepped away cannot see or hear, and restores the current state when
- * they come back; the client reports both through [IdleChannel].
+ * they come back; the client reports both through the play channel.
  *
  * While away, far sounds, particles and swing animations are dropped. Movement of other entities and
  * block and block entity updates are only recorded; on return the server sends their current state.
@@ -75,12 +74,8 @@ object RServerIdle {
     internal fun isEnabled(property: (String) -> String?): Boolean =
         property("rdi.idle.enabled")?.trim()?.toBoolean() ?: true
 
-    fun register() {
-        IdleChannel.serverHandler = ::onReport
-    }
-
     /** Runs on the server thread. */
-    private fun onReport(player: ServerPlayer, away: Boolean) {
+    fun onReport(player: ServerPlayer, away: Boolean) {
         if (!isEnabled(System::getProperty)) return
         if (away) {
             if (awayPlayers.putIfAbsent(player.uuid, AwayState(player.level().dimension())) == null) {
