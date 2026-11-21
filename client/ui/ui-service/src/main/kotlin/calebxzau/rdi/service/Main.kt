@@ -50,7 +50,6 @@ private class ServiceSession(private val protocol: Protocol, private val runtime
         try {
             RequestDispatcher(protocol) { method, params -> handle(scope, method, params) }.run()
         } finally {
-            packs?.stopTasks()
             packs?.close()
             // Subscriptions and view-model loads live in this scope; stop them before returning.
             coroutineContext.cancelChildren()
@@ -61,8 +60,8 @@ private class ServiceSession(private val protocol: Protocol, private val runtime
     private suspend fun handle(scope: CoroutineScope, method: String, params: JsonObject): JsonElement {
         check(handshake || method == "handshake") { "请先连接启动服务" }
         check(loggedIn || method in setOf("handshake", "session.set", "shutdown")) { "请先登录" }
-        if (method.substringBefore('.') in setOf("installer", "packPlay", "tasks", "console")) {
-            return (packs ?: PackService(RuntimePackServiceDependencies(runtime), scope, controller::startSession, ::event).also { packs = it }).handle(method, params)
+        if (method.substringBefore('.') in setOf("packPlay", "console")) {
+            return (packs ?: PackService(RuntimePackServiceDependencies(), scope, controller::startSession, ::event).also { packs = it }).handle(method, params)
         }
         return when (method) {
             "handshake" -> {
@@ -130,7 +129,6 @@ private class ServiceSession(private val protocol: Protocol, private val runtime
             }
             "shutdown" -> buildJsonObject {
                 val idle = McPlayStore.sessions.none { it.preparing || it.isAlive() } &&
-                    calebxzhou.rdi.client.service.ClientTaskManager.entries.value.all { it.status.isTerminal } &&
                     packs?.isIdle() != false
                 put("stopped", params["ifIdle"]?.jsonPrimitive?.boolean != true || idle)
             }

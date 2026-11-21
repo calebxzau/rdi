@@ -1,3 +1,5 @@
+pub mod archive;
+pub mod resolver;
 pub mod installer;
 pub mod scanner;
 pub mod state;
@@ -115,6 +117,7 @@ mod tests {
         for saves in [false, true] {
             let request = installer::Request {
                 source: Some(source.clone()),
+                archive: None,
                 include_saves: saves,
                 version: "V201".into(),
                 loader: "Fabric".into(),
@@ -155,6 +158,7 @@ mod tests {
         file.set_len(512 * 1024 * 1024).unwrap();
         let request = installer::Request {
             source: Some(source),
+            archive: None,
             include_saves: false,
             version: "V211".into(),
             loader: "neoforge".into(),

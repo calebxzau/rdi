@@ -8,6 +8,13 @@ mod msa_sessions;
 mod hwspec;
 mod packs;
 mod tasks;
+mod digests;
+mod download;
+mod download_policy;
+mod content_store;
+mod catalog;
+#[cfg(test)]
+mod j4b_tests;
 mod import;
 mod local_packs;
 mod pack_options;

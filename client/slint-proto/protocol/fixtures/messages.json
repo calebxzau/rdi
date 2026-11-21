@@ -3,13 +3,13 @@
     "id": 1,
     "method": "handshake",
     "params": {
-      "protocolVersion": 4
+      "protocolVersion": 5
     }
   },
   {
     "id": 1,
     "result": {
-      "protocolVersion": 4
+      "protocolVersion": 5
     }
   },
   {
@@ -78,21 +78,6 @@
     }
   },
   {
-    "id": 103,
-    "method": "installer.action",
-    "params": {
-      "action": "archive",
-      "path": "C:/Downloads/example.mrpack"
-    }
-  },
-  {
-    "id": 104,
-    "method": "installer.install",
-    "params": {
-      "missingFilesConfirmed": true
-    }
-  },
-  {
     "id": 104,
     "result": {
       "runId": "019a55b0-0000-7000-8000-000000000001"
@@ -118,53 +103,9 @@
     }
   },
   {
-    "id": 109,
-    "method": "tasks.watch",
-    "params": {
-      "runId": "019a55b0-0000-7000-8000-000000000001"
-    }
-  },
-  {
     "id": 110,
     "method": "console.subscribe",
     "params": {}
-  },
-  {
-    "event": "installer.state",
-    "params": {
-      "scanning": false,
-      "archiveLoading": false,
-      "directoryLoading": false,
-      "error": "",
-      "candidates": [],
-      "pickedCandidates": [],
-      "runtimes": [
-        {
-          "mcVersion": "V211",
-          "modLoader": "neoforge",
-          "label": "1.21.1 / neoforge"
-        }
-      ],
-      "editor": {
-        "name": "测试包",
-        "comment": "",
-        "iconUrl": "",
-        "archivePath": "C:/Downloads/example.mrpack",
-        "mcVersion": "V211",
-        "modLoader": "neoforge",
-        "source": "archive",
-        "versionSelectable": false,
-        "canSubmit": true,
-        "submitting": false,
-        "previewLoading": false,
-        "resolving": false,
-        "confirmMissingFiles": false,
-        "progress": "",
-        "includeSaves": false,
-        "contents": [],
-        "missingFiles": []
-      }
-    }
   },
   {
     "event": "packOptions.state",
@@ -198,35 +139,6 @@
       "mode": "Offline",
       "nickname": "TestPlayer",
       "busy": false
-    }
-  },
-  {
-    "event": "tasks.state",
-    "params": {
-      "tasks": []
-    }
-  },
-  {
-    "event": "task.state",
-    "params": {
-      "runId": "019a55b0-0000-7000-8000-000000000001",
-      "title": "导入测试包",
-      "message": "完成",
-      "fraction": 1.0,
-      "error": "",
-      "terminal": true,
-      "status": 2,
-      "rows": [
-        {
-          "key": "root",
-          "title": "导入测试包",
-          "detail": "100%",
-          "depth": 0,
-          "group": false,
-          "status": 2,
-          "fraction": 1.0
-        }
-      ]
     }
   },
   {
@@ -280,13 +192,6 @@
     "id": 302,
     "result": {
       "stopped": true
-    }
-  },
-  {
-    "id": 401,
-    "method": "tasks.cancel",
-    "params": {
-      "runId": "019a55b0-0000-7000-8000-000000000001"
     }
   }
 ]

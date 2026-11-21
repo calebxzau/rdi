@@ -11,6 +11,7 @@ static COMMIT: Mutex<()> = Mutex::new(());
 #[derive(Clone)]
 pub struct Request {
     pub source: Option<PathBuf>,
+    pub archive: Option<super::archive::Selection>,
     pub include_saves: bool,
     pub version: String,
     pub loader: String,
@@ -198,6 +199,9 @@ pub fn install(versions: &Path, id: &str, request: &Request, context: &Context) 
         context.cancel.check()?;
         context.progress("正在准备", Some(0.));
         std::fs::create_dir(&staging)?;
+        if let Some(archive) = &request.archive {
+            super::archive::install(archive, &staging, context)?;
+        }
         if let Some(source) = &request.source {
             let root = std::path::absolute(source)?;
             let canonical_root = std::fs::canonicalize(&root)?;
@@ -237,7 +241,9 @@ pub fn install(versions: &Path, id: &str, request: &Request, context: &Context) 
             }
         }
         std::fs::create_dir_all(staging.join("mods"))?;
-        if request.source.is_none() || !staging.join("options.txt").is_file() {
+        if (request.source.is_none() && request.archive.is_none())
+            || !staging.join("options.txt").is_file()
+        {
             std::fs::write(staging.join("options.txt"), options(&request.version))?;
         }
         context.cancel.check()?;
@@ -264,7 +270,7 @@ pub fn install(versions: &Path, id: &str, request: &Request, context: &Context) 
                 }
             }
         }
-        let info = json!({"id":id,"name":unique_name(&request.name,&names),"comment":request.comment.trim(),"iconUrl":if request.icon.trim().is_empty(){Value::Null}else{json!(request.icon.trim())},"mcVersion":request.version,"modLoader":request.loader,"createdAt":std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_millis() as u64,"source":if request.source.is_some(){"Directory"}else{"Empty"}});
+        let info = json!({"id":id,"name":unique_name(&request.name,&names),"comment":request.comment.trim(),"iconUrl":if request.icon.trim().is_empty(){Value::Null}else{json!(request.icon.trim())},"mcVersion":request.version,"modLoader":request.loader,"createdAt":std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_millis() as u64,"source":if request.archive.is_some(){"Archive"}else if request.source.is_some(){"Directory"}else{"Empty"}});
         crate::credentials::write_atomic(
             &staging.join("rdi-local-pack.json"),
             serde_json::to_string(&info)?.as_bytes(),

@@ -1,5 +1,4 @@
-//! U4a UI adapters. Import, tasks and play stay in Kotlin; since J2 the installed pack list
-//! (`local_packs`) and pack options (`pack_options`) are read and written here.
+//! Rust pack/import/task UI adapters; only game play and console use the service.
 use crate::{
     AppWindow, CandidateRow, ContentRow, LogRow, OptionDraft, TaskRow,
     api::Client,
@@ -49,6 +48,9 @@ pub use crate::local_packs::InstalledPack;
 enum Reply {
     Service(u64, String, Result<Value>),
     Scan(u64, Vec<crate::import::scanner::Candidate>),
+    ArchiveProgress(u64, String, Option<f32>),
+    Archive(u64, Result<crate::import::archive::Preview>),
+    Resolved(u64, Result<std::collections::BTreeMap<String, Value>>),
     Directory(u64, PathBuf, Result<Vec<crate::import::scanner::Candidate>>),
     Packs(u64, PackList),
     OptionsLoaded(u64, Result<pack_options::Loaded>),
@@ -56,6 +58,17 @@ enum Reply {
     Pick(u64, String, Result<Option<String>>),
     Image(u64, String, Result<image::RgbaImage>),
 }
+type ArchiveCache = std::sync::Arc<
+    std::sync::Mutex<
+        HashMap<
+            String,
+            (
+                crate::import::archive::Preview,
+                std::collections::BTreeMap<String, Value>,
+            ),
+        >,
+    >,
+>;
 pub struct PackUi {
     ui: slint::Weak<AppWindow>,
     runtime: tokio::runtime::Handle,
@@ -67,15 +80,13 @@ pub struct PackUi {
     busy: bool,
     installer: Value,
     native: crate::import::state::State,
+    archive_cache: ArchiveCache,
     import_generation: u64,
-    archive_bridge: bool,
+    archive_cancel: crate::tasks::Cancellation,
     native_tasks: crate::tasks::Manager,
-    service_tasks: Vec<Value>,
     watched: String,
     task_sample: std::time::Instant,
     refreshed_tasks: HashSet<String>,
-    /// An `installer.open` is queued or in flight, so a close must still follow it.
-    installer_opening: bool,
     contents: Vec<Value>,
     visible_keys: Vec<String>,
     filter: (String, i32, bool),
@@ -86,7 +97,6 @@ pub struct PackUi {
     packs_generation: u64,
     loaded_packs: Option<Vec<InstalledPack>>,
     pack_dirs: HashMap<String, PathBuf>,
-    refreshed_run: String,
     options: OptionsState,
     java_was_enabled: bool,
     candidates: Rc<VecModel<CandidateRow>>,
@@ -134,14 +144,13 @@ impl PackUi {
             busy: false,
             installer: Value::Null,
             native: Default::default(),
+            archive_cache: Default::default(),
             import_generation: 0,
-            archive_bridge: false,
+            archive_cancel: Default::default(),
             native_tasks: Default::default(),
-            service_tasks: vec![],
             watched: String::new(),
             task_sample: std::time::Instant::now(),
             refreshed_tasks: Default::default(),
-            installer_opening: false,
             contents: vec![],
             visible_keys: vec![],
             filter: (String::new(), 0, false),
@@ -152,7 +161,6 @@ impl PackUi {
             packs_generation: 0,
             loaded_packs: None,
             pack_dirs: Default::default(),
-            refreshed_run: String::new(),
             options: OptionsState::default(),
             java_was_enabled: false,
             candidates,
@@ -211,16 +219,15 @@ impl PackUi {
             .map(|a| a.java_path.clone())
             .unwrap_or_default();
         self.api = api;
+        self.archive_cache.lock().unwrap().clear();
         // A list still loading for the previous session must not reach the next one.
         self.packs_generation += 1;
         self.loaded_packs = None;
         self.pack_dirs.clear();
         self.installer = Value::Null;
-        self.installer_opening = false;
-        self.archive_bridge = false;
+        self.archive_cancel.cancel();
         self.import_generation += 1;
         self.native = Default::default();
-        self.service_tasks.clear();
         self.watched.clear();
         self.task = Value::Null;
         self.last_device_uri.clear();
@@ -250,20 +257,9 @@ impl PackUi {
         self.generation += 1;
         self.queue.clear();
         self.busy = false;
-        self.installer_opening = false;
-        self.service_tasks.clear();
         self.logs.clear();
         self.sessions.clear();
         self.last_device_uri.clear();
-        // Rust imports survive; only a mirrored Kotlin archive editor is lost.
-        let archive = self.archive_bridge;
-        if archive {
-            self.archive_bridge = false;
-            self.import_generation += 1;
-            self.native = crate::import::state::State::open();
-            self.native.value["scanning"] = json!(false);
-            self.native_render();
-        }
         if !self.native_tasks.owns(&self.watched) {
             self.task = Value::Null;
             self.watched.clear();
@@ -277,24 +273,22 @@ impl PackUi {
             if ui.get_activity_panel() == 1 {
                 ui.set_activity_panel(0);
             }
-            if archive {
-                self.navigate("packs");
-            }
         }
         self.merge_tasks();
     }
     pub fn has_running_tasks(&self) -> bool {
-        self.native_tasks.running() || self.service_tasks.iter().any(|t| t["terminal"] == false)
+        self.native_tasks.running()
     }
     pub fn shutdown_tasks(&self) {
-        self.native_tasks.shutdown(std::time::Duration::from_secs(3));
+        self.native_tasks
+            .shutdown(std::time::Duration::from_secs(3));
     }
-    /// Screens that still need the service: the mirrored archive editor and the console.
+    /// Only the console screen needs the service.
     pub fn service_screens_idle(&self) -> bool {
         let Some(ui) = self.ui.upgrade() else {
             return true;
         };
-        !self.archive_bridge && ui.get_activity_panel() != 1
+        ui.get_activity_panel() != 1
     }
     fn native_render(&mut self) {
         self.installer(&self.native.value.clone());
@@ -302,10 +296,7 @@ impl PackUi {
     fn open_native(&mut self) {
         self.import_generation += 1;
         self.native = crate::import::state::State::open();
-        if self.archive_bridge {
-            self.call("installer.close", json!({}));
-        }
-        self.archive_bridge = false;
+        self.archive_cancel.cancel();
         self.native_render();
         self.scan_native();
     }
@@ -320,36 +311,84 @@ impl PackUi {
             let _ = tx.send(Reply::Scan(generation, list));
         });
     }
-    fn end_bridge(&mut self) {
-        if self.archive_bridge {
-            self.call("installer.close", json!({}));
-        }
-        self.archive_bridge = false;
+    fn close_native(&mut self) {
+        self.archive_cancel.cancel();
         self.import_generation += 1;
     }
-    /// J4a bridge: archives go to the Kotlin editor, every other source stays in Rust.
+    /// Every import source is owned by Rust. Screen generations discard late results.
     fn import_command(&mut self, action: &str, params: Value) {
         if action == "archive" {
+            self.archive_cancel.cancel();
+            self.archive_cancel = Default::default();
             self.import_generation += 1;
-            if !self.archive_bridge {
-                self.archive_bridge = true;
-                self.call("installer.open", json!({}));
-            }
-            self.call("installer.action", params);
+            self.native.value["archiveLoading"] = json!(true);
+            self.native.archive = None;
+            self.native.value["editor"] = json!({"source":"reading","archivePath":text(&params,"path"),"canSubmit":false,"previewLoading":true,"progress":"扫描压缩包条目","progressFraction":-1});
+            self.native.value["error"] = json!("");
+            self.native_render();
+            let path = PathBuf::from(text(&params, "path"));
+            let Some(api) = &self.api else {
+                return;
+            };
+            let http = api.http.clone();
+            let generation = self.import_generation;
+            let cancel = self.archive_cancel.clone();
+            let tx = self.tx.clone();
+            let runtime = self.runtime.clone();
+            let cache = self.archive_cache.clone();
+            self.runtime.spawn_blocking(move || {
+                let key = std::fs::metadata(&path).and_then(|m| {
+                    Ok(format!(
+                        "{}|{}|{:?}",
+                        path.display(),
+                        m.len(),
+                        m.modified()?
+                    ))
+                });
+                if let Ok(key) = &key {
+                    let cached = cache.lock().unwrap().get(key).cloned();
+                    if let Some((preview, resolved)) = cached {
+                        let _ = tx.send(Reply::Archive(generation, Ok(preview)));
+                        let _ = tx.send(Reply::Resolved(generation, Ok(resolved)));
+                        return;
+                    }
+                }
+                let catalog = crate::catalog::Catalog::new(http, &crate::paths::data_dir());
+                let result = runtime.block_on(crate::download::cancellable(
+                    &cancel,
+                    crate::import::archive::inspect(
+                        &path,
+                        &catalog,
+                        &cancel,
+                        &|stage, fraction| {
+                            let _ =
+                                tx.send(Reply::ArchiveProgress(generation, stage.into(), fraction));
+                        },
+                    ),
+                ));
+                if let Ok(preview) = &result {
+                    let copy = preview.clone();
+                    let _ = tx.send(Reply::Archive(generation, result));
+                    let resolved = runtime.block_on(crate::download::cancellable(
+                        &cancel,
+                        crate::import::resolver::resolve(&copy, &catalog, &cancel),
+                    ));
+                    if let (Ok(key), Ok(items)) = (key, &resolved) {
+                        let mut cache = cache.lock().unwrap();
+                        if cache.len() >= 8 {
+                            cache.clear();
+                        }
+                        cache.insert(key, (copy, items.clone()));
+                    }
+                    let _ = tx.send(Reply::Resolved(generation, resolved));
+                } else {
+                    let _ = tx.send(Reply::Archive(generation, result));
+                }
+            });
             return;
-        }
-        let leaves_bridge = matches!(
-            action,
-            "create" | "directory" | "candidate" | "pickedCandidate" | "back"
-        );
-        if self.archive_bridge && !leaves_bridge {
-            self.call("installer.action", params);
-            return;
-        }
-        if self.archive_bridge {
-            self.end_bridge();
         }
         if matches!(action, "create" | "candidate" | "pickedCandidate" | "back") {
+            self.archive_cancel.cancel();
             self.import_generation += 1;
             self.native.value["scanning"] = json!(false);
             self.native.value["directoryLoading"] = json!(false);
@@ -359,6 +398,7 @@ impl PackUi {
             return;
         }
         if action == "directory" {
+            self.archive_cancel.cancel();
             self.import_generation += 1;
             self.native.value["directoryLoading"] = json!(true);
             self.native_render();
@@ -372,15 +412,22 @@ impl PackUi {
             return;
         }
         let index = params["index"].as_u64().unwrap_or(0) as usize;
-        if let Err(error) = self.native.action(action, text(&params, "value"), index) {
+        if let Err(error) = self.native.action(
+            action,
+            if action == "optional" {
+                text(&params, "key")
+            } else {
+                text(&params, "value")
+            },
+            index,
+        ) {
             self.native.error(error);
         }
         self.native_render();
     }
-    /// Rust and Kotlin tasks in one list, newest first.
+    /// Launcher-lifetime Rust task list, newest first.
     fn merge_tasks(&mut self) {
         let mut all = self.native_tasks.list();
-        all.extend(self.service_tasks.clone());
         all.sort_by_key(|t| std::cmp::Reverse(t["createdAt"].as_u64().unwrap_or(0)));
         if let Some(ui) = self.ui.upgrade() {
             ui.set_tasks_running(all.iter().any(|t| t["terminal"] == false));
@@ -405,6 +452,7 @@ impl PackUi {
             }
         }
         if refresh {
+            tracing::info!("Rust任务结束，刷新整合包列表");
             self.refresh_packs();
         }
         if self.watched.is_empty()
@@ -422,7 +470,6 @@ impl PackUi {
         }
     }
     fn call(&mut self, method: &str, params: Value) {
-        self.installer_opening |= method == "installer.open";
         self.queue.push_back((method.into(), params));
         self.pump();
     }
@@ -484,7 +531,7 @@ impl PackUi {
             return;
         };
         self.packs_generation += 1;
-        tracing::info!(generation=self.packs_generation,"整合包列表刷新");
+        tracing::info!(generation = self.packs_generation, "整合包列表刷新");
         if let Some(ui) = self.ui.upgrade() {
             ui.set_packs_loading(true);
             ui.set_packs_error("".into());
@@ -492,17 +539,10 @@ impl PackUi {
         let tx = self.tx.clone();
         let generation = self.packs_generation;
         self.runtime.spawn(async move {
+            tracing::info!(generation, "开始读取本地整合包");
             let list = local_packs::load(&api).await;
             let _ = tx.send(Reply::Packs(generation, list));
         });
-    }
-    /// Kotlin refreshed the list when a watched task ended; refresh once per run.
-    fn refresh_after_task(&mut self) {
-        let run_id = text(&self.task, "runId");
-        if self.task["terminal"] == true && !run_id.is_empty() && run_id != self.refreshed_run {
-            self.refreshed_run = run_id.into();
-            self.refresh_packs();
-        }
     }
     fn open_options(&mut self, ui: &AppWindow) {
         let version_id = ui.get_pack_selected_id().to_string();
@@ -579,28 +619,66 @@ impl PackUi {
             "installer.open" => {
                 self.open_native();
             }
-            "installer.close" if self.installer.is_null() && !self.installer_opening && !self.archive_bridge => {}
-            "installer.close" => { self.end_bridge(); self.installer=Value::Null; }
+            "installer.close" if self.installer.is_null() => {}
+            "installer.close" => {
+                self.close_native();
+                self.installer = Value::Null;
+            }
             "installer.dismissError" if self.installer.is_null() => {}
             "installer.pickArchive" | "installer.pickDirectory" | "options.pickJdk" => {
                 self.pick(action)
             }
             "installer.install" | "installer.confirmMissing" => {
                 ui.set_install_can_submit(false);
-                if self.archive_bridge {
-                    let confirmed = action.ends_with("confirmMissing");
-                    self.call("installer.install", json!({"missingFilesConfirmed":confirmed}));
-                } else {
+                if self
+                    .native
+                    .archive
+                    .as_ref()
+                    .is_some_and(|p| !p.unavailable.is_empty())
+                    && !action.ends_with("confirmMissing")
+                {
+                    self.native.value["editor"]["confirmMissingFiles"] = json!(true);
+                    self.native_render();
+                    return;
+                }
+                {
                     match self.native.request() {
-                        Ok(request) => {
+                        Ok(mut request) => {
+                            if let Some(preview) = &self.native.archive {
+                                let Some(api) = &self.api else {
+                                    return;
+                                };
+                                request.archive = Some(crate::import::archive::Selection {
+                                    preview: preview.clone(),
+                                    optional: self.native.optional.clone(),
+                                    store: crate::content_store::Store {
+                                        root: crate::paths::data_dir().join("dlc"),
+                                        downloader: crate::download::Downloader {
+                                            http: api.http.clone(),
+                                        },
+                                    },
+                                    runtime: self.runtime.clone(),
+                                });
+                            }
                             let id = uuid::Uuid::now_v7().to_string();
                             let versions = local_packs::versions_dir();
-                            let verb = if request.source.is_some() { "导入" } else { "创建" };
+                            let verb = if request.source.is_some() || request.archive.is_some() {
+                                "导入"
+                            } else {
+                                "创建"
+                            };
                             let title = format!("{verb}整合包{}", request.name.trim());
                             let dedupe = format!("local-modpack-install:{id}");
-                            let run = self.native_tasks.submit(&self.runtime, title, dedupe, move |context| {
-                                crate::import::installer::install(&versions, &id, &request, &context)
-                            });
+                            let run = self.native_tasks.submit(
+                                &self.runtime,
+                                title,
+                                dedupe,
+                                move |context| {
+                                    crate::import::installer::install(
+                                        &versions, &id, &request, &context,
+                                    )
+                                },
+                            );
                             self.watched = run;
                             self.import_generation += 1;
                             self.native.value = Value::Null;
@@ -696,18 +774,14 @@ impl PackUi {
             }
             "tasks.subscribe" => {
                 self.merge_tasks();
-                // Only a Kotlin task needs the service; opening the screen alone does not.
-                if !self.watched.is_empty() && !self.native_tasks.owns(&self.watched) {
-                    self.call("tasks.watch", json!({"runId":self.watched}));
-                }
             }
             "tasks.cancel" => {
-                let run = if value.is_empty() { self.watched.clone() } else { value.to_owned() };
-                if self.native_tasks.owns(&run) {
-                    self.native_tasks.cancel(&run);
+                let run = if value.is_empty() {
+                    self.watched.clone()
                 } else {
-                    self.call("tasks.cancel", json!({"runId":run}));
-                }
+                    value.to_owned()
+                };
+                self.native_tasks.cancel(&run);
             }
             "tasks.watch" => {
                 self.collapsed.clear();
@@ -715,8 +789,6 @@ impl PackUi {
                 if let Some(task) = self.native_tasks.snapshot(value) {
                     self.task = task;
                     self.render_task();
-                } else {
-                    self.call("tasks.watch", json!({"runId":value}));
                 }
             }
             "tasks.toggle" => {
@@ -825,27 +897,66 @@ impl PackUi {
         }
         while let Ok(reply) = self.rx.try_recv() {
             match reply {
-                Reply::Scan(g, list) if g == self.import_generation && !self.archive_bridge => {
+                Reply::ArchiveProgress(g, stage, fraction) if g == self.import_generation => {
+                    self.native.value["editor"]["progress"] = json!(stage);
+                    self.native.value["editor"]["progressFraction"] =
+                        json!(fraction.unwrap_or(-1.));
+                    self.native_render();
+                }
+                Reply::Archive(g, result) if g == self.import_generation => {
+                    match result {
+                        Ok(preview) => self.native.preview(preview),
+                        Err(error) => {
+                            self.native.value["archiveLoading"] = json!(false);
+                            self.native.error(error);
+                        }
+                    }
+                    self.native_render();
+                }
+                Reply::Resolved(g, result) if g == self.import_generation => {
+                    match result {
+                        Ok(items) => {
+                            if let Some(contents) =
+                                self.native.value["editor"]["contents"].as_array_mut()
+                            {
+                                for row in contents {
+                                    if let Some(item) = items.get(text(row, "key")) {
+                                        for key in ["name", "detail", "icon"] {
+                                            row[key] = item[key].clone();
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        Err(error) => tracing::warn!(%error, "归档内容识别失败"),
+                    }
+                    self.native_render();
+                }
+                Reply::Scan(g, list) if g == self.import_generation => {
                     self.native.candidates(list);
                     self.native_render();
                 }
-                Reply::Directory(g, path, result)
-                    if g == self.import_generation && !self.archive_bridge =>
-                {
+                Reply::Directory(g, path, result) if g == self.import_generation => {
                     self.native.directory(path, result);
                     self.native_render();
                 }
                 Reply::Packs(g, list) if g == self.packs_generation => {
-                    tracing::info!(generation=g,count=list.packs.len(),"整合包列表已读取");
+                    tracing::info!(generation = g, count = list.packs.len(), "整合包列表已读取");
                     if let Some(ui) = self.ui.upgrade() {
                         ui.set_packs_loading(false);
                         ui.set_packs_error(list.error.as_str().into());
                     }
-                    self.pack_dirs = list.packs.iter().map(|p| (p.id.clone(), p.directory.clone())).collect();
+                    self.pack_dirs = list
+                        .packs
+                        .iter()
+                        .map(|p| (p.id.clone(), p.directory.clone()))
+                        .collect();
                     self.loaded_packs = Some(list.packs);
                 }
                 Reply::OptionsLoaded(g, result) if g == self.options.generation => {
-                    let Some(ui) = self.ui.upgrade() else { continue };
+                    let Some(ui) = self.ui.upgrade() else {
+                        continue;
+                    };
                     match result {
                         Ok(loaded) => {
                             self.java_was_enabled = loaded.draft.java_custom_enabled;
@@ -856,13 +967,17 @@ impl PackUi {
                         Err(error) => {
                             tracing::warn!(error = %format!("{error:#}"), "读取整合包设置失败");
                             self.options.failed = true;
-                            ui.set_options_error(format!("读取整合包设置失败：{}", root_message(&error)).into());
+                            ui.set_options_error(
+                                format!("读取整合包设置失败：{}", root_message(&error)).into(),
+                            );
                         }
                     }
                     self.render_options(&ui);
                 }
                 Reply::OptionsSaved(g, draft, back, result) if g == self.options.generation => {
-                    let Some(ui) = self.ui.upgrade() else { continue };
+                    let Some(ui) = self.ui.upgrade() else {
+                        continue;
+                    };
                     self.options.saving = false;
                     match result {
                         Ok(()) => {
@@ -875,60 +990,83 @@ impl PackUi {
                         }
                         Err(error) => {
                             tracing::warn!(error = %format!("{error:#}"), "保存整合包设置失败");
-                            ui.set_options_error(format!("保存整合包设置失败：{}", root_message(&error)).into());
+                            ui.set_options_error(
+                                format!("保存整合包设置失败：{}", root_message(&error)).into(),
+                            );
                             self.render_options(&ui);
                         }
                     }
                 }
-                Reply::Service(g,method,result) if g==self.generation=>{
-                    self.busy=false;
-                    if method == "installer.open" { self.installer_opening = false; }
+                Reply::Service(g, method, result) if g == self.generation => {
+                    self.busy = false;
                     match result {
-                        Ok(v)=>match method.as_str() {
-                            "installer.open" if self.archive_bridge=>self.installer(&v),
-                            "installer.install" if v["runId"].is_string()=>{
-                                if let Some(ui)=self.ui.upgrade(){ui.set_install_missing(false);}
-                                self.watched=text(&v,"runId").into();self.navigate("packs");self.call("tasks.watch",json!({"runId":v["runId"]}));self.end_bridge();
-                                self.navigate("tasks");
-                            }
-                            "installer.install"=>self.installer(&v),
-                            "packPlay.open"=>{
+                        Ok(v) => {
+                            if method == "packPlay.open" {
                                 self.play(&v);
-                                if v["local"]==false{self.action("play.start","");}
+                                if v["local"] == false {
+                                    self.action("play.start", "");
+                                }
                             }
-                            "installer.close"=>{},
-                            "tasks.watch" if text(&v,"runId")==self.watched=>{self.task=v;self.render_task();self.refresh_after_task();}
-                            _=>{}
-                        },
-                        Err(error)=>if let Some(ui)=self.ui.upgrade(){
-                            self.queue.clear();
-                            self.installer_opening = false;
-                            ui.set_action_error(format!("{error:#}").into());
-                            if method.starts_with("installer"){ui.set_install_can_submit(self.installer["editor"]["canSubmit"]==true);}
-                            ui.set_play_busy(false);
-                            if method == "installer.open" { ui.set_install_scanning(false); }
-                            if method == "packPlay.open" { ui.set_local_play(false); }
+                        }
+                        Err(error) => {
+                            if let Some(ui) = self.ui.upgrade() {
+                                self.queue.clear();
+                                ui.set_action_error(format!("{error:#}").into());
+                                ui.set_play_busy(false);
+                                if method == "packPlay.open" {
+                                    ui.set_local_play(false);
+                                }
+                            }
                         }
                     }
                     self.pump();
                 }
-                Reply::Pick(g,kind,result) if g==self.generation=>match result {
-                    Ok(Some(path))=>match kind.as_str(){
-                        "installer.pickArchive"|"installer.pickDirectory"=>{let action=if kind.ends_with("Archive"){"archive"}else{"directory"};self.import_command(action,json!({"action":action,"path":path}));},
-                        "options.pickJdk"=>if let Some(ui)=self.ui.upgrade(){let mut d=ui.get_options_draft();d.java_path=path.into();ui.set_options_draft(d);self.options_update(&ui);},
-                        "export"=>if let Some(ui)=self.ui.upgrade(){ui.invoke_notify(path.into());},_=>{}
+                Reply::Pick(g, kind, result) if g == self.generation => match result {
+                    Ok(Some(path)) => match kind.as_str() {
+                        "installer.pickArchive" | "installer.pickDirectory" => {
+                            let action = if kind.ends_with("Archive") {
+                                "archive"
+                            } else {
+                                "directory"
+                            };
+                            self.import_command(action, json!({"action":action,"path":path}));
+                        }
+                        "options.pickJdk" => {
+                            if let Some(ui) = self.ui.upgrade() {
+                                let mut d = ui.get_options_draft();
+                                d.java_path = path.into();
+                                ui.set_options_draft(d);
+                                self.options_update(&ui);
+                            }
+                        }
+                        "export" => {
+                            if let Some(ui) = self.ui.upgrade() {
+                                ui.invoke_notify(path.into());
+                            }
+                        }
+                        _ => {}
                     },
-                    Ok(None)=>{},Err(e)=>if let Some(ui)=self.ui.upgrade(){ui.set_action_error(format!("{e:#}").into());}
+                    Ok(None) => {}
+                    Err(e) => {
+                        if let Some(ui) = self.ui.upgrade() {
+                            ui.set_action_error(format!("{e:#}").into());
+                        }
+                    }
                 },
-                Reply::Image(g,key,result) if g==self.generation=>{
+                Reply::Image(g, key, result) if g == self.generation => {
                     self.pending_images.remove(&key);
                     match result {
-                        Ok(image)=>{self.images.insert(key,images::to_slint(&image));}
-                        Err(error)=>{tracing::warn!(%error,"整合包内容图标加载失败");self.failed_images.insert(key);}
+                        Ok(image) => {
+                            self.images.insert(key, images::to_slint(&image));
+                        }
+                        Err(error) => {
+                            tracing::warn!(%error,"整合包内容图标加载失败");
+                            self.failed_images.insert(key);
+                        }
                     }
                     self.render_contents();
                 }
-                _=>{}
+                _ => {}
             }
         }
     }
@@ -956,17 +1094,7 @@ impl PackUi {
     }
     pub fn event(&mut self, topic: &str, v: &Value) {
         match topic {
-            "installer.state" if self.archive_bridge => self.installer(v),
             "packPlay.state" => self.play(v),
-            "task.state" if self.watched.is_empty() || self.watched==text(v,"runId") => {
-                self.task = v.clone();
-                self.render_task();
-                self.refresh_after_task();
-            }
-            "tasks.state" => {
-                self.service_tasks = array(v, "tasks").to_vec();
-                self.merge_tasks();
-            }
             "console.state" => {
                 self.session_id = text(v, "sessionId").into();
                 sync(
@@ -1248,7 +1376,7 @@ impl PackUi {
                 .collect();
         }
         if let Some(ui) = self.ui.upgrade() {
-            ui.set_activity_can_cancel(self.task["terminal"]==false);
+            ui.set_activity_can_cancel(self.task["terminal"] == false);
             ui.set_activity_title(text(&self.task, "title").into());
             ui.set_activity_message(text(&self.task, "message").into());
             ui.set_activity_error(text(&self.task, "error").into());

@@ -17,7 +17,7 @@ The Slint launcher currently runs a headless Kotlin process, `ui-service`, for a
 | **J1** | Login and server requests | `LoginService`, `PlayerService.login`, `RServer`, `data.get` | **Implemented; GJ1 review pending** |
 | J2 | Read-only local data: installed pack list, pack options | `installedPacks.*`, `packOptions.*`, `ModpackService.getLocalPackDirs` | **Done; GJ2 passed 2026-11-10** |
 | J3 | Start the JVM on demand, only for install and game launch | `src/api/mod.rs` | **Done; owner accepted GJ3 2026-11-10** |
-| J4 | Tasks, downloads, local pack import | `tasks.*`, `installer.*`, `mod-catalog`, `client-store` | Design approved 2026-11-10; handoff `J4-PLAN.md`; GJ4a passed 2026-11-10; J4b next |
+| J4 | Tasks, downloads, local pack import | `tasks.*`, `installer.*`, `mod-catalog`, `client-store` | Design approved 2026-11-10; handoff `J4-PLAN.md`; GJ4a passed 2026-11-10; J4b partial implementation and validation recorded; parity work remains; GJ4b not passed |
 | J5 | Game launch, local game proxy, Microsoft login, node routing | `mclaunch`, `host.start`, `game.*`, `packPlay.*`, `NodeRefreshCoordinator` | Not designed |
 | J6 | Remove `ui-service`, package and switch | Updater and release manifests | Not designed |
 
@@ -485,7 +485,7 @@ Corrections to the overview row, found while reading the code:
    either launcher is reused by the other. Digest check before commit, temp file plus
    rename, hard link into the pack with copy as fallback.
 8. **Service.** `installer.*`, `tasks.*` and the installer part of the idle check
-   leave `ui-service`. Protocol version 4. The idle rule loses the import and task
+   leave `ui-service`. Protocol version 5 after J4a version 4. The idle rule loses the import and task
    screens; a running Rust task no longer keeps the JVM alive.
 9. **Logout.** Still refused while a task runs, now decided from the Rust task list.
 
@@ -519,3 +519,5 @@ build, cross-checks for macOS and Linux, `ui-service` tests. Live run through th
 slint-ui MCP with an isolated data directory: no Java child during any import; empty
 pack, folder copy, one CurseForge and one Modrinth archive; a pack imported by Rust
 starts in game; Compose lists it and reuses the cache.
+
+- 2026-11-10: J4b Rust downloader/cache/catalog/archive implementation and protocol v5 cleanup added. Validation and remaining acceptance gaps are recorded in `evidence/jvm-removal/j4b/`. GJ4b is not passed; no commit and no J5.

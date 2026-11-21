@@ -9,10 +9,14 @@ use std::path::PathBuf;
 #[derive(Default)]
 pub struct State {
     pub value: Value,
+    pub archive: Option<std::sync::Arc<super::archive::Preview>>,
+    pub optional: std::collections::BTreeSet<String>,
 }
 impl State {
     pub fn open() -> Self {
         Self {
+            archive: None,
+            optional: Default::default(),
             value: json!({"scanning":true,"archiveLoading":false,"directoryLoading":false,"error":"","candidates":[],"pickedCandidates":[],"runtimes":RUNTIMES.map(|(v,l,label)|json!({"mcVersion":v,"modLoader":l,"label":label}))}),
         }
     }
@@ -21,6 +25,8 @@ impl State {
         self.value["scanning"] = json!(false);
     }
     fn editor(&mut self, source: &str, path: &str, name: &str, v: &str, l: &str, selectable: bool) {
+        self.archive = None;
+        self.optional.clear();
         self.value["editor"] = json!({"name":name,"comment":"","iconUrl":"","mcVersion":v,"modLoader":l,"source":source,"sourceDirectory":path,"archivePath":"","versionSelectable":selectable,"canSubmit":true,"submitting":false,"previewLoading":false,"resolving":false,"confirmMissingFiles":false,"progress":"","progressFraction":-1,"includeSaves":false,"contents":[],"missingFiles":[]});
         self.value["error"] = json!("");
         self.value["pickedCandidates"] = json!([]);
@@ -103,20 +109,51 @@ impl State {
                     json!(self.value["editor"]["includeSaves"] != true)
             }
             "back" => {
+                self.archive = None;
+                self.optional.clear();
                 self.value.as_object_mut().unwrap().remove("editor");
             }
             "dismissCandidates" => self.value["pickedCandidates"] = json!([]),
             "dismissError" => self.value["error"] = json!(""),
-            "dismissMissing" | "optional" | "runtime" | "includeSaves" => {}
+            "dismissMissing" => self.value["editor"]["confirmMissingFiles"] = json!(false),
+            "optional" => {
+                if let Some(a) = &self.archive
+                    && a.files.iter().any(|f| f.key == value && !f.required)
+                {
+                    if !self.optional.remove(value) {
+                        self.optional.insert(value.into());
+                    }
+                    self.value["editor"]["contents"] = json!(a.contents(&self.optional));
+                }
+            }
+            "runtime" | "includeSaves" => {}
             _ => anyhow::bail!("不支持的导入操作"),
         }
         Ok(())
+    }
+    pub fn preview(&mut self, preview: super::archive::Preview) {
+        self.editor(
+            "archive",
+            "",
+            &preview.name,
+            &preview.version,
+            &preview.loader,
+            false,
+        );
+        self.value["archiveLoading"] = json!(false);
+        self.value["editor"]["archiveFormat"] = json!(preview.format);
+        self.value["editor"]["archivePath"] = json!(preview.path.to_string_lossy());
+        self.value["editor"]["comment"] = json!(preview.summary);
+        self.value["editor"]["contents"] = json!(preview.contents(&self.optional));
+        self.value["editor"]["missingFiles"] = json!(preview.unavailable);
+        self.archive = Some(std::sync::Arc::new(preview));
     }
     pub fn request(&self) -> Result<Request> {
         let e = &self.value["editor"];
         anyhow::ensure!(e["canSubmit"] == true, "整合包尚未准备好导入");
         let text = |key: &str| e[key].as_str().unwrap_or_default().to_owned();
         let request = Request {
+            archive: None,
             source: if e["source"] == "directory" {
                 Some(PathBuf::from(text("sourceDirectory")))
             } else {

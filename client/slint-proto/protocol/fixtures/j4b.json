@@ -1,0 +1,132 @@
+{
+  "paths": [
+    {
+      "path": "mods/example.jar",
+      "valid": true
+    },
+    {
+      "path": "config/中文.json",
+      "valid": true
+    },
+    {
+      "path": "../outside",
+      "valid": false
+    },
+    {
+      "path": "/absolute",
+      "valid": false
+    },
+    {
+      "path": "C:\\outside",
+      "valid": false
+    },
+    {
+      "path": "mods/../outside",
+      "valid": false
+    },
+    {
+      "path": "mods/CON.jar",
+      "valid": false
+    },
+    {
+      "path": "mods/a.",
+      "valid": false
+    },
+    {
+      "path": "mods//a.jar",
+      "valid": false
+    }
+  ],
+  "digests": [
+    {
+      "text": "abc",
+      "sha1": "a9993e364706816aba3e25717850c26c9cd0d89d",
+      "sha256": "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+      "murmur2": "1621425345"
+    },
+    {
+      "text": "a b\tc\r\n",
+      "sha1": "465a576c7a0751ebec662574f629da53e5e0e39f",
+      "murmur2": "1621425345"
+    },
+    {
+      "text": " \t\r\n",
+      "sha1": "51ad9342cf2c5b905c3b50a6b1278e8d84a8ba1f",
+      "murmur2": "0"
+    }
+  ],
+  "cache": {
+    "sha1": "a9993e364706816aba3e25717850c26c9cd0d89d.sha1",
+    "murmur2": "1621425345.murmur2"
+  },
+  "catalog": {
+    "modrinth": {
+      "request": {
+        "hashes": [
+          "a9993e364706816aba3e25717850c26c9cd0d89d"
+        ]
+      },
+      "response": {
+        "a9993e364706816aba3e25717850c26c9cd0d89d": {
+          "id": "v1",
+          "project_id": "p1",
+          "name": "Fixture",
+          "version_number": "1",
+          "version_type": "release",
+          "date_published": "2026-01-01T00:00:00Z",
+          "game_versions": [
+            "1.21.1"
+          ],
+          "loaders": [
+            "neoforge"
+          ],
+          "files": [
+            {
+              "filename": "fixture.jar",
+              "size": 3,
+              "primary": true,
+              "url": "https://cdn.modrinth.com/data/p1/versions/v1/fixture.jar",
+              "hashes": {
+                "sha1": "a9993e364706816aba3e25717850c26c9cd0d89d"
+              }
+            }
+          ],
+          "dependencies": []
+        }
+      }
+    },
+    "curseforge": {
+      "request": {
+        "fileIds": [
+          42
+        ]
+      },
+      "response": {
+        "data": [
+          {
+            "id": 42,
+            "modId": 7,
+            "fileName": "fixture.jar",
+            "displayName": "Fixture",
+            "fileLength": 3,
+            "releaseType": 1,
+            "fileDate": "2026-01-01T00:00:00Z",
+            "gameVersions": [
+              "1.21.1",
+              "NeoForge"
+            ],
+            "fileFingerprint": 1621425345,
+            "hashes": [
+              {
+                "algo": 1,
+                "value": "a9993e364706816aba3e25717850c26c9cd0d89d"
+              }
+            ],
+            "downloadUrl": "https://edge.forgecdn.net/files/0/42/fixture.jar",
+            "dependencies": []
+          }
+        ]
+      }
+    }
+  }
+}

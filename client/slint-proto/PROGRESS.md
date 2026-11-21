@@ -394,3 +394,13 @@ Implemented Rust tasks, scanner, empty/folder import and archive bridge choice(a
 Protocol v4 adds task cancellation and mixed task timestamps. Shared fixtures are
 checked by Kotlin and Rust. Validation details: `evidence/jvm-removal/j4a/`.
 GJ4a passed 2026-11-10 after review fixes; some owner checks moved to GJ4b.
+
+
+## 2026-11-10 J4b
+
+Added Rust archive preview/install, download/cache/catalog modules and protocol v5.
+Removed the temporary J4a Kotlin archive/task bridge. Kotlin Compose implementation
+is retained. Removed service source portions and tests are preserved in
+`DEL/j4b-20261110-service-import/` (ignored by Git).
+See `evidence/jvm-removal/j4b/` for automated/live evidence and unverified parity
+and owner acceptance items. Implementation parity remains incomplete; GJ4b not reached. No commit and no J5.

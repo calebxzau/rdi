@@ -445,3 +445,16 @@ Empty packs, folder import, recorded-folder scans and tasks run in Rust. Archive
 imports retain the Kotlin bridge until GJ4b. Protocol v4 adds tasks.cancel and
 createdAt for mixed task ordering. Validation and owner checks are recorded in
 `evidence/jvm-removal/j4a/`; GJ4a passed 2026-11-10.
+
+
+### J4b native imports
+
+Import and tasks now run in Rust, including CurseForge/Modrinth archives,
+optional/missing files, parallel downloads and the Compose-compatible `<data>/dlc`
+cache. Chinese identities are read only from
+`../ui/mod-catalog/src/main/resources/mod_catalog.db`; an unavailable index leaves
+platform names usable. Only play and console use protocol v5 and the lazy Kotlin
+process. See `J4-PLAN.md` and `evidence/jvm-removal/j4b/` for validation.
+
+On Windows generate/check ZIP fixtures with `tools/j4b-validate.ps1 kotlin-fixtures`,
+then run `test`, `clippy`, `release`, `kotlin`, `mac` and `linux`.

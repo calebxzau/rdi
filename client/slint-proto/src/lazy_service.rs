@@ -84,9 +84,7 @@ impl LazyService {
                         Duration::from_secs(60),
                     )?;
                 }
-                for method in ["game.subscribe", "tasks.subscribe"] {
-                    service.request(method, json!({}), Duration::from_secs(60))?;
-                }
+                service.request("game.subscribe", json!({}), Duration::from_secs(60))?;
                 Ok(service)
             })()
             .map_err(|error: anyhow::Error| format!("{error:#}"));
@@ -261,13 +259,12 @@ mod tests {
         }
         assert_eq!(count.load(Ordering::SeqCst), 1);
         assert_eq!(
-            &calls.lock().unwrap()[..5],
+            &calls.lock().unwrap()[..4],
             &[
                 "handshake",
                 "session.set",
                 "game.restore",
                 "game.subscribe",
-                "tasks.subscribe"
             ]
         );
     }

@@ -11,6 +11,10 @@ edition = "2024"
 allocation-probe = ["rdi-renderer/allocation-probe"]
 
 [dependencies]
+zip = { version = "=2.4.2", default-features = false, features = ["deflate"] }
+sha1 = "=0.10.7"
+sha2 = "=0.10.9"
+encoding_rs = "=0.8.41"
 uuid = { version = "=1.29.0", features = ["v7"] }
 
 rdi-renderer = { path = "crates/rdi-renderer" }

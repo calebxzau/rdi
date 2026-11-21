@@ -11,7 +11,6 @@ import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
 import kotlinx.serialization.json.*
-import java.nio.file.Path
 
 /** One framed-service session; no native UI and no credentials in snapshots. */
 internal class PackService(
@@ -21,8 +20,6 @@ internal class PackService(
     private val emit: (String, JsonObject) -> Unit,
 ) : AutoCloseable {
     private val logger = KotlinLogging.logger {}
-    private var installerScope: CoroutineScope? = null
-    private var installer: LocalModpackInstallViewModel? = null
     private val subscriptions = mutableMapOf<String, Job>()
     private var playJob: Job? = null
     private var pendingPlay: McPlayArgs? = null
@@ -50,63 +47,9 @@ internal class PackService(
             throw cause
         }
 
-    fun isIdle(): Boolean = installer == null && playJob?.isActive != true && pendingPlay == null
+    fun isIdle(): Boolean = playJob?.isActive != true && pendingPlay == null
 
     suspend fun handle(method: String, params: JsonObject): JsonObject = when (method) {
-        "installer.open" -> {
-            installerScope?.cancel()
-            val owned = CoroutineScope(scope.coroutineContext + SupervisorJob(scope.coroutineContext[Job]))
-            installerScope = owned
-            val model = withContext(Dispatchers.IO) { dependencies.installer(owned) }
-            installer = model
-            snapshots("installer.state", model.state, ::installerSnapshot)
-            installerSnapshot(model.state.value)
-        }
-        "installer.close" -> {
-            installerScope?.cancel(); installerScope = null; installer = null
-            subscriptions.remove("installer.state")?.cancel(); buildJsonObject {}
-        }
-        "installer.action", "installer.install" -> {
-            val model = checkNotNull(installer) { "请先打开导入页面" }
-            val action = if (method == "installer.install") "install" else params.text("action")
-            when (action) {
-                "scan" -> model.scanCandidates()
-                "archive" -> model.openArchive(Path.of(params.text("path")))
-                "directory" -> model.openDirectory(Path.of(params.text("path")))
-                "candidate", "pickedCandidate" -> {
-                    val list = if (action == "candidate") model.state.value.candidates else model.state.value.pickedCandidates
-                    model.openInstall(list.getOrNull(params["index"]?.jsonPrimitive?.int ?: -1) ?: error("请选择要导入的版本"))
-                }
-                "create" -> {
-                    val runtime = localModpackRuntimes.getOrNull(params["index"]?.jsonPrimitive?.int ?: -1) ?: error("请选择游戏版本")
-                    model.openCreate(runtime.first, runtime.second)
-                }
-                "name" -> model.updateName(params.text("value"))
-                "comment" -> model.updateComment(params.text("value"))
-                "icon" -> model.updateIconUrl(params.text("value"))
-                "runtime" -> {
-                    val runtime = localModpackRuntimes.getOrNull(params["index"]?.jsonPrimitive?.int ?: -1) ?: error("请选择游戏版本")
-                    model.updateRuntime(runtime.first, runtime.second)
-                }
-                "includeSaves" -> model.toggleIncludeSaves()
-                "optional" -> model.toggleOptionalFile(params.text("key"))
-                "back" -> model.closeEditor()
-                "dismissCandidates" -> model.dismissPickedCandidates()
-                "dismissMissing" -> model.dismissMissingFiles()
-                "dismissError" -> model.dismissError()
-                "install" -> {
-                    require(model.state.value.editor?.canSubmit == true) { "整合包尚未准备好导入" }
-                    model.submitInstall(params["missingFilesConfirmed"]?.jsonPrimitive?.boolean ?: false)
-                    val state = model.state.value
-                    if (state.editor == null) {
-                        val started = withTimeout(5_000) { model.events.first() }
-                        return buildJsonObject { put("runId", started.runId) }
-                    }
-                }
-                else -> error("不支持的导入操作")
-            }
-            installerSnapshot(model.state.value)
-        }
         "packPlay.open" -> {
             val pack = selected(params)
             playGeneration++
@@ -169,33 +112,6 @@ internal class PackService(
             }
             buildJsonObject { put("accepted", true) }
         }
-        "tasks.subscribe" -> {
-            snapshots("tasks.state", ClientTaskManager.entries) { entries -> buildJsonObject {
-                put("tasks", buildJsonArray { entries.forEach { add(taskSnapshot(it)) } })
-            } }
-            buildJsonObject {}
-        }
-        "tasks.cancel" -> {
-            val runId = params.text("runId")
-            requireNotNull(ClientTaskManager.entry(runId)) { "找不到这个任务" }
-            ClientTaskManager.cancel(runId)
-            buildJsonObject { put("accepted", true) }
-        }
-        "tasks.watch" -> {
-            val runId = params.text("runId")
-            val entry = ClientTaskManager.entry(runId) ?: error("找不到这个任务")
-            val task = ClientTaskManager.controller(runId) ?: error("找不到这个任务")
-            replace("task.state") {
-                task.state.collect {
-                    delay(34)
-                    val latest = task.state.value
-                    emit("task.state", taskSnapshot(entry, latest))
-                    // Rust refreshes the pack list itself when it sees the terminal snapshot.
-                    if (latest.status.isTerminal) cancel()
-                }
-            }
-            taskSnapshot(entry, task.state.value)
-        }
         "console.subscribe", "console.clear" -> {
             val session = params.text("sessionId").let { id -> McPlayStore.sessions.firstOrNull { it.id == id } ?: McPlayStore.sessions.lastOrNull() }
             if (method == "console.clear") session?.consoleState?.clear()
@@ -212,18 +128,12 @@ internal class PackService(
     }
 
     override fun close() {
-        installerScope?.cancel(); playJob?.cancel()
+        playJob?.cancel()
         subscriptions.values.forEach(Job::cancel)
         dependencies.close()
     }
 
-    suspend fun stopTasks() {
-        withContext(NonCancellable + Dispatchers.IO) {
-            ClientTaskManager.entries.value.filterNot { it.status.isTerminal }.forEach { entry ->
-                ClientTaskManager.controller(entry.runId)?.terminateAndJoin("启动器已关闭，任务已终止")
-            }
-        }
-    }
+
 }
 
 internal fun JsonObject.text(key: String): String = this[key]?.jsonPrimitive?.content.orEmpty()

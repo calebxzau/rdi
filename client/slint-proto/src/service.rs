@@ -56,10 +56,7 @@ impl Connection {
                             if !matches!(
                                 event,
                                 "game.state"
-                                    | "installer.state"
                                     | "packPlay.state"
-                                    | "tasks.state"
-                                    | "task.state"
                                     | "console.state"
                             ) {
                                 break "启动服务事件名称无效".into();
@@ -371,10 +368,7 @@ mod tests {
         let (connection, mut reader, mut writer) = connect();
         let fake = thread::spawn(move || {
             for topic in [
-                "installer.state",
                 "packPlay.state",
-                "tasks.state",
-                "task.state",
                 "console.state",
             ] {
                 for revision in 0..2 {
@@ -392,7 +386,7 @@ mod tests {
             .request("barrier", json!({}), Duration::from_secs(5))
             .unwrap();
         let events = connection.events.lock().unwrap();
-        assert_eq!(events.len(), 5);
+        assert_eq!(events.len(), 2);
         assert!(
             events
                 .values()
