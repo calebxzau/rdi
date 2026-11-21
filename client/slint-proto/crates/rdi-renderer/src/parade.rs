@@ -406,6 +406,12 @@ impl Renderer {
                 0,
                 bytemuck::cast_slice(&[logical_width, logical_height, 0., 0.]),
             );
+            let swing = (seconds * RUN_CYCLE_RADIANS_PER_SECOND)
+                .rem_euclid(std::f64::consts::TAU)
+                .sin() as f32;
+            let bob = RUN_BOB_PIXELS * (1. - swing * swing);
+            let y = logical_height - 8. - bob;
+            let stride = swing * RUN_LEG_SWING_RADIANS;
             self.poses.clear();
             self.visible.clear();
             for (index, member) in self.members.iter().enumerate() {
@@ -413,16 +419,8 @@ impl Renderer {
                 if x < -MARGIN as f32 || x > logical_width + MARGIN as f32 {
                     continue;
                 }
-                let swing = (seconds * RUN_CYCLE_RADIANS_PER_SECOND + index as f64 * 0.7)
-                    .rem_euclid(std::f64::consts::TAU)
-                    .sin() as f32;
-                let bob = RUN_BOB_PIXELS * (1. - swing * swing);
-                self.poses.push([
-                    x,
-                    logical_height - 8. - bob,
-                    swing * RUN_LEG_SWING_RADIANS,
-                    if member.variant & 1 != 0 { 5.5 } else { 6. },
-                ]);
+                let arm_pivot_x = if member.variant & 1 != 0 { 5.5 } else { 6. };
+                self.poses.push([x, y, stride, arm_pivot_x]);
                 self.visible.push(index);
             }
             if self.poses.len() > self.capacity {
