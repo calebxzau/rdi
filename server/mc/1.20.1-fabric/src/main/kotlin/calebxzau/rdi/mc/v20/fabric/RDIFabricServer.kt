@@ -6,6 +6,7 @@ import calebxzhou.rdi.mc.common.WebSocketClient
 import calebxzhou.rdi.mc.common.WsMessage
 import calebxzhou.rdi.mc.common.WsMessageHandler
 import calebxzhou.rdi.mc.rcmd.chat.RChatMessage
+import calebxzau.rdi.mc.v20.fabric.network.FabricChunkCacheServer
 import calebxzau.rdi.mc.v20.protocol.FabricRoomWire20
 import calebxzau.rdi.mc.v20.protocol.EncodedPlayerList20
 import calebxzau.rdi.mc.v20.server.network.PacketMetrics20
@@ -34,6 +35,7 @@ class RDIFabricServer : DedicatedServerModInitializer {
     override fun onInitializeServer() {
         val nativeMagic = ZstdCompressionPipeline.verifyNativeLoaded()
         logger.info("RDI Fabric server initialized (Zstd magic {})", nativeMagic)
+        FabricChunkCacheServer.register()
 
         CommandRegistrationCallback.EVENT.register { dispatcher, _, _ ->
             SyncChunkCommands.register(dispatcher, SyncChunkSavedData20::of)

@@ -15,7 +15,8 @@
   },
   "mixins": [
     "rdi.v20.server.mixins.json",
-    "rdi.fabric.server.mixins.json"
+    "rdi.fabric.server.mixins.json",
+    "rdi.chunkcache.server.mixins.json"
   ],
   "depends": {
     "fabricloader": ">=0.19.5",

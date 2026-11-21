@@ -46,6 +46,11 @@ sourceSets.main {
     java.srcDir '../../../mc/20/src/main/java'
     kotlin.srcDir '../../../mc/20/src/server/kotlin'
     kotlin.srcDir '../../../mc/20/src/main/kotlin'
+    kotlin.srcDir '../../../mc/20/fabric/src/main/kotlin'
+    kotlin.srcDir '../../../mc/chunkcache/src/main/kotlin'
+    kotlin.srcDir '../../../mc/chunkcache/src/20/kotlin'
+    kotlin.srcDir '../../../mc/chunkcache/src/server/kotlin'
+    java.srcDir '../../../mc/chunkcache/src/server/java'
     java.srcDir '../../../mc/common/codec/src/server/java'
     kotlin.srcDir '../../../mc/common/codec/src/main/kotlin'
     kotlin.srcDir '../../../mc/common/codec/src/netty41/kotlin'
@@ -57,6 +62,7 @@ sourceSets.main {
 }
 
 sourceSets.test.kotlin.srcDir '../../../mc/20/src/serverTest/kotlin'
+sourceSets.test.kotlin.srcDir '../../../mc/chunkcache/src/20Test/kotlin'
 sourceSets.test.kotlin.srcDir '../../../mc/syncchunk/src/test/kotlin'
 sourceSets.test.kotlin.srcDir '../../../mc/syncchunk/src/2021Test/kotlin'
 sourceSets.test.kotlin.srcDir '../../../mc/common/codec/src/serverTest/kotlin'

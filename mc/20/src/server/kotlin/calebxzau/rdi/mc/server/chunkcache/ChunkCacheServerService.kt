@@ -4,9 +4,9 @@ import calebxzau.rdi.mc.chunkcache.ChunkCacheLimits
 import calebxzau.rdi.mc.chunkcache.ChunkReuseCodec
 import calebxzau.rdi.mc.chunkcache.network.ChunkCacheAbsentPayload
 import calebxzau.rdi.mc.chunkcache.network.ChunkCacheCancelPayload
-import calebxzau.rdi.mc.chunkcache.network.ChunkCacheChannel
 import calebxzau.rdi.mc.chunkcache.network.ChunkCacheContextPayload
 import calebxzau.rdi.mc.chunkcache.network.ChunkCacheOfferPayload
+import calebxzau.rdi.mc.chunkcache.network.ChunkCachePayload
 import calebxzau.rdi.mc.chunkcache.network.ChunkCachePausedPayload
 import calebxzau.rdi.mc.chunkcache.network.ChunkCacheResultPayload
 import calebxzau.rdi.mc.chunkcache.network.ChunkCacheRetirePayload
@@ -26,7 +26,7 @@ import org.slf4j.LoggerFactory
 import java.util.UUID
 
 /**
- * Main-thread-owned state and send hook for optional cached-terrain reuse on Forge 1.20.1.
+ * Main-thread-owned state and send hook for optional cached-terrain reuse on Minecraft 1.20.1.
  *
  * Unlike 1.21, 1.20.1 sends each chunk synchronously from `ChunkMap.playerLoadedChunk` with no
  * batch acknowledgement, so a failed reuse is repaired by sending the current full chunk at once.
@@ -34,6 +34,15 @@ import java.util.UUID
  * The version-independent steps live in [ChunkCacheServerSession] and [ChunkCacheReuseSender].
  */
 object ChunkCacheServerService {
+    interface Transport {
+        fun isRemotePresent(player: ServerPlayer): Boolean
+        fun isWarmupRemotePresent(player: ServerPlayer): Boolean
+        fun sendToPlayer(player: ServerPlayer, payload: ChunkCachePayload)
+        fun toClientPacket(payload: ChunkCachePayload): Packet<*>
+    }
+
+    internal lateinit var transport: Transport
+
     private val logger = LoggerFactory.getLogger("rdi")
     private val sessions = mutableMapOf<UUID, Session>()
     private val sentChunks = ChunkCacheSentChunks()
@@ -74,7 +83,7 @@ object ChunkCacheServerService {
 
     /** Split to the wire limit, which older clients still enforce. */
     private fun sendRetire(player: ServerPlayer, session: Session, ids: List<Long>) {
-        ids.chunked(ChunkCacheLimits.MAX_IDS_PER_MESSAGE).forEach { ChunkCacheChannel.sendToPlayer(player, ChunkCacheRetirePayload(session.epoch, it)) }
+        ids.chunked(ChunkCacheLimits.MAX_IDS_PER_MESSAGE).forEach { transport.sendToPlayer(player, ChunkCacheRetirePayload(session.epoch, it)) }
     }
 
     /** The client will not offer these chunks; while warming up they may now be sent in full. */
@@ -252,7 +261,7 @@ object ChunkCacheServerService {
             sendRetire(player, session, listOf(candidate.id))
             return packet
         }
-        return ChunkCacheChannel.toClientPacket(reuse)
+        return transport.toClientPacket(reuse)
     }
 
     @JvmStatic
@@ -291,12 +300,26 @@ object ChunkCacheServerService {
 
     @JvmStatic
     fun reset(player: ServerPlayer) {
-        sessions.remove(player.uuid)?.logMetricsWindow(logger, "logout", player.scoreboardName)
+        val session = sessions[player.uuid] ?: return
+        if (session.player !== player) return
+        sessions.remove(player.uuid)
+        session.logMetricsWindow(logger, "logout", player.scoreboardName)
     }
 
     @JvmStatic
     fun initialize(player: ServerPlayer) {
         ensureContext(player)
+    }
+
+    fun receive(player: ServerPlayer, payload: ChunkCachePayload) {
+        when (payload) {
+            is ChunkCacheOfferPayload -> offer(player, payload)
+            is ChunkCacheCancelPayload -> cancel(player, payload)
+            is ChunkCacheResultPayload -> result(player, payload)
+            is ChunkCacheAbsentPayload -> absent(player, payload)
+            is ChunkCachePausedPayload -> paused(player, payload)
+            else -> Unit
+        }
     }
 
     @JvmStatic
@@ -317,14 +340,14 @@ object ChunkCacheServerService {
         // Without the send hooks no session could ever reuse terrain; the client then never starts one.
         if (!ChunkCacheCompat.isAvailable()) return null
         val connection = player.connection.connection
-        if (!ChunkCacheChannel.isRemotePresent(connection)) return null
+        if (!transport.isRemotePresent(player)) return null
         val dimension = player.level().dimension().location()
         val existing = sessions[player.uuid]
         if (existing != null && existing.player === player && existing.dimension == dimension) return existing
         // Respawn and dimension changes replace the session; keep its partial window.
         existing?.logMetricsWindow(logger, "session-replaced", existing.player.scoreboardName)
         // Warm-up and the larger capacity need both channels; a local client never prepares candidates.
-        val warm = ChunkCacheChannel.isWarmupRemotePresent(connection) && !connection.isMemoryConnection
+        val warm = transport.isWarmupRemotePresent(player) && !connection.isMemoryConnection
         // Start the window now; with 0 a new session would close its first "minute" on its first tick.
         val session = Session(
             player,
@@ -336,9 +359,9 @@ object ChunkCacheServerService {
             metricTick = player.server.tickCount.toLong(),
         )
         sessions[player.uuid] = session
-        ChunkCacheChannel.sendToPlayer(player, ChunkCacheContextPayload(session.epoch, dimension))
+        transport.sendToPlayer(player, ChunkCacheContextPayload(session.epoch, dimension))
         if (warm) {
-            ChunkCacheChannel.sendToPlayer(
+            transport.sendToPlayer(
                 player,
                 ChunkCacheWarmupPayload(session.epoch, session.capacity, warmupMillis.toInt(), ChunkCacheLimits.WARMUP_IMMEDIATE_RADIUS),
             )

@@ -1,8 +1,11 @@
 package calebxzau.rdi.mc.client.chunkcache
 
 import calebxzau.rdi.mc.chunkcache.ChunkReuseCodec
-import calebxzau.rdi.mc.chunkcache.network.ChunkCacheChannel
 import calebxzau.rdi.mc.chunkcache.network.ChunkCachePayload
+import calebxzau.rdi.mc.chunkcache.network.ChunkCacheContextPayload
+import calebxzau.rdi.mc.chunkcache.network.ChunkCacheRetirePayload
+import calebxzau.rdi.mc.chunkcache.network.ChunkCacheReusePayload
+import calebxzau.rdi.mc.chunkcache.network.ChunkCacheWarmupPayload
 import calebxzau.rdi.mc.client.chunkcache.mixin.AChunkCacheServerChunkRadius
 import net.minecraft.client.Minecraft
 import net.minecraft.client.multiplayer.ClientLevel
@@ -21,6 +24,13 @@ internal typealias ChunkCacheServerboundPayload = ChunkCachePayload
 
 /** Minecraft 1.20.1 APIs used by the shared client chunk cache in `mc/chunkcache/src/client`. */
 object ChunkCacheCompat {
+    interface Transport {
+        fun sendToServer(payload: ChunkCacheServerboundPayload)
+        fun canReportPause(listener: ClientPacketListener): Boolean
+    }
+
+    internal lateinit var transport: Transport
+
     // 1.20.1 reports exceeded NBT size and depth limits with plain RuntimeExceptions carrying these messages.
     private val limitMessages = listOf("Tried to read NBT tag that was too big", "Tried to read NBT tag with too high complexity")
 
@@ -38,11 +48,21 @@ object ChunkCacheCompat {
     fun isNbtLimitFailure(failure: Throwable): Boolean =
         failure.javaClass == RuntimeException::class.java && limitMessages.any { failure.message?.startsWith(it) == true }
 
-    /** The Forge channel sends on the current connection; callers check that it is still [listener]'s. */
+    /** Callers check that the current connection still belongs to [listener]. */
     fun sendToServer(@Suppress("UNUSED_PARAMETER") listener: ClientPacketListener, payload: ChunkCacheServerboundPayload) =
-        ChunkCacheChannel.sendToServer(payload)
+        transport.sendToServer(payload)
 
-    fun canReportPause(listener: ClientPacketListener): Boolean = ChunkCacheChannel.isStatusRemotePresent(listener.connection)
+    fun canReportPause(listener: ClientPacketListener): Boolean = transport.canReportPause(listener)
+
+    fun receive(listener: ClientPacketListener, payload: ChunkCachePayload) {
+        when (payload) {
+            is ChunkCacheContextPayload -> ChunkCacheClient.context(payload, listener)
+            is ChunkCacheReusePayload -> ChunkCacheClient.reuse(payload, listener)
+            is ChunkCacheRetirePayload -> ChunkCacheClient.retire(payload, listener)
+            is ChunkCacheWarmupPayload -> ChunkCacheClient.warmup(payload, listener)
+            else -> Unit
+        }
+    }
 
     fun restoreReuse(metadata: ByteArray, sections: ByteArray, @Suppress("UNUSED_PARAMETER") level: ClientLevel): ClientboundLevelChunkWithLightPacket =
         ChunkReuseCodec.restore(metadata, sections)

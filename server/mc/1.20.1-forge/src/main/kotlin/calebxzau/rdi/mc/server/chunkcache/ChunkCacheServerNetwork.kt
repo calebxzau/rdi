@@ -1,24 +1,24 @@
 package calebxzau.rdi.mc.server.chunkcache
 
-import calebxzau.rdi.mc.chunkcache.network.ChunkCacheAbsentPayload
-import calebxzau.rdi.mc.chunkcache.network.ChunkCacheCancelPayload
 import calebxzau.rdi.mc.chunkcache.network.ChunkCacheChannel
-import calebxzau.rdi.mc.chunkcache.network.ChunkCacheOfferPayload
-import calebxzau.rdi.mc.chunkcache.network.ChunkCachePausedPayload
-import calebxzau.rdi.mc.chunkcache.network.ChunkCacheResultPayload
+import calebxzau.rdi.mc.chunkcache.network.ChunkCachePayload
+import net.minecraft.server.level.ServerPlayer
 
 /** Registers the optional chunk cache channels; client-bound messages are ignored here. */
-object ChunkCacheServerNetwork {
+object ChunkCacheServerNetwork : ChunkCacheServerService.Transport {
     @JvmStatic
-    fun register() = ChunkCacheChannel.register { payload, context ->
-        val player = context.sender ?: return@register
-        when (payload) {
-            is ChunkCacheOfferPayload -> ChunkCacheServerService.offer(player, payload)
-            is ChunkCacheCancelPayload -> ChunkCacheServerService.cancel(player, payload)
-            is ChunkCacheResultPayload -> ChunkCacheServerService.result(player, payload)
-            is ChunkCacheAbsentPayload -> ChunkCacheServerService.absent(player, payload)
-            is ChunkCachePausedPayload -> ChunkCacheServerService.paused(player, payload)
-            else -> Unit
+    fun register() {
+        ChunkCacheServerService.transport = this
+        ChunkCacheChannel.register { payload, context ->
+            context.sender?.let { ChunkCacheServerService.receive(it, payload) }
         }
     }
+
+    override fun isRemotePresent(player: ServerPlayer) = ChunkCacheChannel.isRemotePresent(player.connection.connection)
+
+    override fun isWarmupRemotePresent(player: ServerPlayer) = ChunkCacheChannel.isWarmupRemotePresent(player.connection.connection)
+
+    override fun sendToPlayer(player: ServerPlayer, payload: ChunkCachePayload) = ChunkCacheChannel.sendToPlayer(player, payload)
+
+    override fun toClientPacket(payload: ChunkCachePayload) = ChunkCacheChannel.toClientPacket(payload)
 }

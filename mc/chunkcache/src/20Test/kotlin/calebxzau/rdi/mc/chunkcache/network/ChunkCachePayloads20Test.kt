@@ -13,7 +13,7 @@ import kotlin.test.assertTrue
 
 class ChunkCachePayloads20Test {
     private val epoch = UUID(12, 34)
-    private val dimension = ResourceLocation.fromNamespaceAndPath("minecraft", "overworld")
+    private val dimension = ResourceLocation("minecraft:overworld")
     private val hash = ByteArray(20) { it.toByte() }
 
     private fun <T : ChunkCachePayload> roundTrip(payload: T, decode: (FriendlyByteBuf) -> T): T {

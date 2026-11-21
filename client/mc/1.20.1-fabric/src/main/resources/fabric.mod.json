@@ -17,7 +17,8 @@
     "rdi.fabric.mixins.json",
     "rdi.fabric.media.mixins.json",
     "rdi.fabric.save-import.mixins.json",
-    "rdi.v20.client.mixins.json"
+    "rdi.v20.client.mixins.json",
+    "rdi.chunkcache.client.mixins.json"
   ],
   "depends": {
     "fabricloader": ">=0.19.5",
