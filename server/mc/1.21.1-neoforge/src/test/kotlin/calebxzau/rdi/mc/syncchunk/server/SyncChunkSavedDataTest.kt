@@ -66,7 +66,7 @@ class SyncChunkSavedDataTest {
 
             assertEquals(null, corruptStorage.get(SyncChunkSavedData.factory(), SyncChunkStorage.FILE_ID))
             assertFailsWith<IllegalStateException> {
-                SyncChunkService.getOrCreate(corruptStorage, dataFile)
+                SyncChunkSavedData.getOrCreate(corruptStorage, dataFile)
             }
             assertEquals(null, corruptStorage.get(SyncChunkSavedData.factory(), SyncChunkStorage.FILE_ID))
             corruptStorage.save()
@@ -75,7 +75,7 @@ class SyncChunkSavedDataTest {
             val missingDirectory = Files.createDirectory(directory.resolve("missing-data"))
             val missingFile = missingDirectory.resolve("${SyncChunkStorage.FILE_ID}.dat")
             val missingStorage = DimensionDataStorage(missingDirectory.toFile(), null, null)
-            val created = SyncChunkService.getOrCreate(missingStorage, missingFile)
+            val created = SyncChunkSavedData.getOrCreate(missingStorage, missingFile)
             assertTrue(created.snapshot().isEmpty())
             assertFalse(Files.exists(missingFile))
             missingStorage.save()

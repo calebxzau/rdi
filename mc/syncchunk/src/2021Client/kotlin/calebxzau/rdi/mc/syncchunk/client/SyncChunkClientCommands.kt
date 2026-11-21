@@ -17,36 +17,41 @@ object SyncChunkClientCommands {
     fun register(dispatcher: CommandDispatcher<CommandSourceStack>, isSupported: (Connection) -> Boolean) {
         dispatcher.register(
             Commands.literal("syncchunk")
-                .then(Commands.literal("show").executes { context -> toggleShow(context.source, isSupported) })
-                .then(Commands.literal("here").executes { context -> toggleHere(context.source) })
+                .then(Commands.literal("show").executes { context ->
+                    val source = context.source
+                    toggleShow(isSupported, { message -> source.sendSuccess({ message }, false) }, source::sendFailure)
+                })
+                .then(Commands.literal("here").executes { context ->
+                    toggleHere { message -> context.source.sendSuccess({ message }, false) }
+                })
         )
     }
 
-    private fun toggleShow(source: CommandSourceStack, isSupported: (Connection) -> Boolean): Int {
+    internal fun toggleShow(isSupported: (Connection) -> Boolean, feedback: (Component) -> Unit, error: (Component) -> Unit): Int {
         if (SyncChunkClientState.showSet) {
             SyncChunkClientState.showSet = false
-            source.sendSuccess({ Component.literal(SyncChunkMessages.SHOW_OFF) }, false)
+            feedback(Component.literal(SyncChunkMessages.SHOW_OFF))
             return 1
         }
         val minecraft = Minecraft.getInstance()
         val connection = minecraft.connection?.connection
         if (connection == null || !isSupported(connection)) {
-            source.sendFailure(Component.literal(SyncChunkMessages.SHOW_UNSUPPORTED))
+            error(Component.literal(SyncChunkMessages.SHOW_UNSUPPORTED))
             return 0
         }
         SyncChunkClientState.showSet = true
         val count = minecraft.level?.let { level ->
             SyncChunkClientState.chunksIn(connection, level.dimension().location().toString())?.size
         }
-        source.sendSuccess({ Component.literal(SyncChunkMessages.showOn(count)) }, false)
+        feedback(Component.literal(SyncChunkMessages.showOn(count)))
         return 1
     }
 
-    private fun toggleHere(source: CommandSourceStack): Int {
+    internal fun toggleHere(feedback: (Component) -> Unit): Int {
         val enabled = !SyncChunkClientState.showHere
         SyncChunkClientState.showHere = enabled
         val message = if (enabled) SyncChunkMessages.HERE_ON else SyncChunkMessages.HERE_OFF
-        source.sendSuccess({ Component.literal(message) }, false)
+        feedback(Component.literal(message))
         return 1
     }
 }

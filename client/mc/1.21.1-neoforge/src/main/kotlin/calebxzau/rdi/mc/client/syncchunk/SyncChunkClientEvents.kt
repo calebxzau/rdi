@@ -18,8 +18,9 @@ object SyncChunkClientEvents {
     @SubscribeEvent
     @JvmStatic
     fun registerCommands(event: RegisterClientCommandsEvent) {
-        SyncChunkClientCommands.register(event.dispatcher) {
-            Minecraft.getInstance().connection?.hasChannel(RSyncChunksPayload.TYPE) == true
+        SyncChunkClientCommands.register(event.dispatcher) { connection ->
+            SyncChunkIntegratedNeoForge.supportsOutlines(connection) ||
+                Minecraft.getInstance().connection?.hasChannel(RSyncChunksPayload.TYPE) == true
         }
     }
 

@@ -11,7 +11,7 @@ import java.util.UUID
 data class HostWorldImportPrecheckDto(
     /** `Data.Version.Name` of the save, e.g. `1.20.1`. */
     val mcVersionName: String,
-    /** The loader that saved the save last (from `fml.LoadingModList`). */
+    /** The loader identified from the save's metadata. */
     val loader: ModLoader,
     /** Accounts that will become members: mapped players and existing RDI players of the save. */
     val memberPlayerIds: List<@Contextual ObjectId> = emptyList(),

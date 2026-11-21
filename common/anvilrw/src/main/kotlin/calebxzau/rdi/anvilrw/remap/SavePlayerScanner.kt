@@ -6,8 +6,6 @@ import java.nio.file.Path
 import java.time.Instant
 import java.util.UUID
 
-enum class SaveLoader { Forge, NeoForge }
-
 enum class SavePlayerKind { Online, Offline, Rdi, Unknown }
 
 enum class NameHintSource { Mojang, UserCache, FtbTeams, FtbQuests }
@@ -35,8 +33,7 @@ data class SaveScanResult(
     val serverBrands: List<String>,
     /** Mod IDs of the root `fml.LoadingModList`, or null when the save has no `fml` compound. */
     val fmlModIds: List<String>?,
-    /** The loader that saved the save last, from [fmlModIds]; null without `fml`. */
-    val lastSavedLoader: SaveLoader?,
+    val loaderDetection: SaveLoaderDetection,
     val isHardcore: Boolean,
     /** `Data.Player.UUID`. The marking copy is launched with this UUID. */
     val singleplayerHostUuid: UUID?,
@@ -107,13 +104,7 @@ class SavePlayerScanner {
             dataVersion = metadata.dataVersion,
             serverBrands = metadata.serverBrands,
             fmlModIds = metadata.fmlModIds,
-            lastSavedLoader = metadata.fmlModIds?.let { ids ->
-                when {
-                    "neoforge" in ids -> SaveLoader.NeoForge
-                    "forge" in ids -> SaveLoader.Forge
-                    else -> null
-                }
-            },
+            loaderDetection = metadata.loaderDetection,
             isHardcore = metadata.hardcore,
             singleplayerHostUuid = hostUuid,
             players = players,

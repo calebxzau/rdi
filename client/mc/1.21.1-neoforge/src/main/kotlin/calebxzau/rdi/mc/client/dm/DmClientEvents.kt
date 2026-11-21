@@ -1,5 +1,6 @@
 package calebxzau.rdi.mc.client.dm
 
+import calebxzau.rdi.mc.client.syncchunk.SyncChunkIntegratedNeoForge
 import calebxzau.rdi.mc.zstdcodec.v21.ZstdStreamActivation21
 import calebxzhou.rdi.mc.server.network.RServerBatching
 import calebxzhou.rdi.mc.server.network.RServerPacketRefs
@@ -34,6 +35,7 @@ class DmClientEvents {
         @SubscribeEvent
         @JvmStatic
         fun registerCommands(event: RegisterClientCommandsEvent) {
+            if (SyncChunkIntegratedNeoForge.marking) return
             val config = DmConfig.fromSystemProperty().getOrElse { error ->
                 logger.error("Invalid rdi.dm.server; DM commands disabled", error)
                 null
@@ -73,6 +75,7 @@ class DmClientEvents {
         @SubscribeEvent
         @JvmStatic
         fun onLoggingIn(@Suppress("UNUSED_PARAMETER") event: ClientPlayerNetworkEvent.LoggingIn) {
+            if (SyncChunkIntegratedNeoForge.marking) return
             onClientThread {
                 DmParticipantSession.onLoggingIn(Minecraft.getInstance())
                 DmHostService.autoStartIfAssociated()

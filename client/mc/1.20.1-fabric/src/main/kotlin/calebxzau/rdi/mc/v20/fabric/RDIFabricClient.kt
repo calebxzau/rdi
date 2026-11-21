@@ -3,6 +3,7 @@ package calebxzau.rdi.mc.v20.fabric
 import calebxzhou.rdi.mc.common.RDI
 import calebxzau.rdi.mc.zstdcodec.ZstdCompressionPipeline
 import calebxzau.rdi.mc.v20.fabric.network.FabricRoomNetworking
+import calebxzau.rdi.mc.v20.fabric.syncchunk.SyncChunkIntegratedFabric
 import net.fabricmc.api.ClientModInitializer
 import org.slf4j.LoggerFactory
 
@@ -11,6 +12,7 @@ class RDIFabricClient : ClientModInitializer {
         val host = RDI.GAME_IP
         val nativeMagic = ZstdCompressionPipeline.verifyNativeLoaded()
         FabricRoomNetworking.register()
+        SyncChunkIntegratedFabric.register()
         logger.info("RDI Fabric client initialized for {} (Zstd magic {})", host, nativeMagic)
     }
 

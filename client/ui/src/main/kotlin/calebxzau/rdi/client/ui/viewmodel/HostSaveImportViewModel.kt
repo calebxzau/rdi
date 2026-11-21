@@ -9,6 +9,7 @@ import calebxzau.rdi.anvilrw.remap.SaveIdentityMapping
 import calebxzau.rdi.anvilrw.remap.SavePlayer
 import calebxzau.rdi.anvilrw.remap.SaveMarkingPlayer
 import calebxzau.rdi.anvilrw.remap.SavePlayerKind
+import calebxzau.rdi.anvilrw.remap.loaderDetection
 import calebxzau.rdi.client.service.HostSaveImportApi
 import calebxzau.rdi.client.service.HostSaveImportMarkingService
 import calebxzau.rdi.client.service.HostSaveImportService
@@ -30,7 +31,6 @@ import calebxzhou.rdi.client.service.startPlay
 import calebxzhou.rdi.client.ui.McPlayArgs
 import calebxzhou.rdi.common.exception.RequestError
 import calebxzhou.rdi.common.model.Host
-import calebxzhou.rdi.common.model.ModLoader
 import calebxzhou.rdi.common.model.Task2
 import calebxzhou.rdi.common.model.isDav
 import calebxzhou.rdi.common.util.toObjectId
@@ -148,13 +148,7 @@ class HostSaveImportViewModel(
         val source = folder.toPath().toAbsolutePath().normalize()
         val level = withContext(ioDispatcher) { NbtMetadataReader.readLevelDat(source.resolve("level.dat")) }
             .getOrElse { throw RequestError("无效的存档，无法读取主要数据", it) }
-        val loader = level.fmlModIds?.let { ids ->
-            when {
-                "neoforge" in ids -> ModLoader.neoforge
-                "forge" in ids -> ModLoader.forge
-                else -> null
-            }
-        } ?: throw RequestError("该存档最后一次不是用Forge/NeoForge保存的")
+        val loader = level.loaderDetection.toModLoader()
         gateway.precheck(host._id, HostWorldImportPrecheckDto(level.versionName ?: "", loader))
         val players = gateway.markingPlayers(source)
         _uiState.update {
@@ -256,12 +250,12 @@ class HostSaveImportViewModel(
         val members = (state.rows.mapNotNull { it.target?.accountId } +
             preparation.existingRdiPlayers.map { it.toObjectId().getOrThrow() }).distinct()
         val scan = preparation.scan
-        val loader = scan.lastSavedLoader?.toModLoader() ?: throw RequestError("该存档最后一次不是用Forge/NeoForge保存的")
+        val loader = scan.loaderDetection.toModLoader()
         val dto = HostWorldImportPrecheckDto(scan.mcVersionName ?: "", loader, members)
         val precheck = gateway.precheck(host._id, dto)
         val plan = SaveImportPlan(host._id, host.name, record, mapping, members, dto.mcVersionName, loader, precheck.memberWarnings)
         _uiState.update {
-            it.copy(step = SaveImportStep.Confirm, confirmation = SaveImportConfirmation(precheck, confirmationMessages(state, precheck), plan))
+            it.copy(step = SaveImportStep.Confirm, confirmation = SaveImportConfirmation(precheck, confirmationMessages(state, precheck, loader.directorySlug), plan))
         }
     }
 
@@ -320,12 +314,16 @@ class HostSaveImportViewModel(
         return copy(dualIdentities = duals, dualChoices = duals.associate { it.other to (dualChoices[it.other] ?: it.defaultKeep) })
     }
 
-    private fun confirmationMessages(state: HostSaveImportUiState, precheck: HostWorldImportPrecheckVo): List<String> = buildList {
+    private fun confirmationMessages(state: HostSaveImportUiState, precheck: HostWorldImportPrecheckVo, loaderBrand: String): List<String> = buildList {
         val scan = state.preparation?.scan
         add("当前房间的存档将被删除 并替换为导入的存档，此操作无法撤销。")
         state.summary?.let { add("只有标记的${it.marked.size}个区块会被完整保留，其余区块会在房间中重新生成(建筑、箱子和生物都会消失)") }
         if (precheck.gameRuleOverrideCount > 0) add("房间已设置的${precheck.gameRuleOverrideCount}条游戏规则将被清除，改用存档中的游戏规则。")
-        if (scan != null && scan.serverBrands.any { it.lowercase() in OTHER_LOADERS }) add("该存档曾被其他加载器打开过，部分数据可能已丢失。")
+        if (scan != null && scan.serverBrands.any { brand ->
+                brand.split(',').any { it.trim().lowercase().let { token -> token != loaderBrand && token in LOADER_BRANDS } }
+            }) {
+            add("该存档曾被其他加载器打开过，部分数据可能已丢失。")
+        }
         if (scan?.isHardcore == true) add("该存档是极限模式，导入后将关闭极限模式。")
         precheck.memberWarnings.forEach { warning ->
             val name = state.rows.firstOrNull { it.target?.accountId == warning.playerId }?.target?.name ?: warning.playerId.toHexString()
@@ -354,7 +352,7 @@ class HostSaveImportViewModel(
     }
 
     private companion object {
-        val OTHER_LOADERS = setOf("fabric", "quilt", "vanilla")
+        val LOADER_BRANDS = setOf("forge", "neoforge", "fabric", "quilt", "vanilla")
     }
 }
 
@@ -412,7 +410,10 @@ class RdiHostSaveImportGateway(
                 record.selectedPlayerName?.takeIf { it.matches(Regex("[A-Za-z0-9_]{1,16}")) } ?: AccountSessionStore.current.name,
                 record.launchUuid, "0",
             ),
-            extraJvmArgs = listOf("-Drdi.syncChunkMarking=true"),
+            extraJvmArgs = listOf(
+                "-Drdi.syncChunkMarking=true",
+                "-Drdi.syncChunkMarkingWorld=${record.copyFolderName}",
+            ),
             extraGameArgs = listOf("--quickPlaySingleplayer", record.copyFolderName),
             cleanup = onExit,
         )

@@ -45,6 +45,7 @@ kotlin {
 }
 
 loom {
+    accessWidenerPath = file('src/main/resources/rdi.client.accesswidener')
     mods {
         rdi {
             sourceSet sourceSets.main
@@ -69,6 +70,8 @@ loom {
 
 sourceSets.test.kotlin.srcDir '../../../mc/20/src/test/kotlin'
 sourceSets.test.kotlin.srcDir '../../../mc/common/codec/src/test/kotlin'
+sourceSets.test.kotlin.srcDir '../../../mc/syncchunk/src/test/kotlin'
+sourceSets.test.kotlin.srcDir '../../../mc/syncchunk/src/2021Test/kotlin'
 
 tasks.named('test', Test).configure {
     useJUnitPlatform()
@@ -82,6 +85,11 @@ sourceSets.main {
     kotlin.srcDir '../../../mc/common/codec/src/main/kotlin'
     kotlin.srcDir '../../../mc/common/codec/src/netty41/kotlin'
     kotlin.srcDir '../../../mc/rcmd/src/main/kotlin'
+    kotlin.srcDir '../../../mc/syncchunk/src/main/kotlin'
+    kotlin.srcDir '../../../mc/syncchunk/src/2021/kotlin'
+    kotlin.srcDir '../../../mc/syncchunk/src/20/kotlin'
+    kotlin.srcDir '../../../mc/syncchunk/src/2021Client/kotlin'
+    java.srcDir '../../../mc/syncchunk/src/2021Client/java'
     // Fabric does not include RMCP, and these two need its models.
     kotlin.exclude '**/common2021/mcp/McpScreenControl.kt', '**/common2021/mcp/McpCommandControl.kt'
     resources {
@@ -109,6 +117,7 @@ dependencies {
     modImplementation('net.fabricmc.fabric-api:fabric-networking-api-v1:1.3.15+0caff8d077')
     modImplementation('net.fabricmc.fabric-api:fabric-api-base:0.4.32+1802ada577')
     modImplementation('net.fabricmc.fabric-api:fabric-lifecycle-events-v1:2.2.23+1802ada577')
+    include(modImplementation('net.fabricmc.fabric-api:fabric-command-api-v2:2.2.14+1802ada577'))
     modImplementation('net.fabricmc:fabric-language-kotlin:1.14.2+kotlin.2.4.21')
 
     implementation project(':c-mc-common')

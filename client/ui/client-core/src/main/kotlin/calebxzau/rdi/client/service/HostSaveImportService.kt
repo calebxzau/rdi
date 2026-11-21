@@ -1,6 +1,6 @@
 package calebxzau.rdi.client.service
 
-import calebxzau.rdi.anvilrw.remap.SaveLoader
+import calebxzau.rdi.anvilrw.remap.SaveLoaderDetection
 import calebxzau.rdi.anvilrw.remap.SavePlayerKind
 import calebxzau.rdi.anvilrw.remap.SavePlayerScanner
 import calebxzau.rdi.anvilrw.remap.SaveScanResult
@@ -66,9 +66,13 @@ data class SaveImportPlan(
     val confirmedWarnings: List<HostWorldImportMemberWarning>,
 )
 
-fun SaveLoader.toModLoader(): ModLoader = when (this) {
-    SaveLoader.Forge -> ModLoader.forge
-    SaveLoader.NeoForge -> ModLoader.neoforge
+fun SaveLoaderDetection.toModLoader(): ModLoader = when (this) {
+    SaveLoaderDetection.Forge -> ModLoader.forge
+    SaveLoaderDetection.NeoForge -> ModLoader.neoforge
+    SaveLoaderDetection.FabricHistory -> ModLoader.Fabric
+    SaveLoaderDetection.Vanilla -> throw RequestError("暂不支持导入原版存档")
+    SaveLoaderDetection.Unknown -> throw RequestError("无法识别该存档使用的加载器")
+    SaveLoaderDetection.Conflicting -> throw RequestError("该存档的加载器记录互相冲突")
 }
 
 /**

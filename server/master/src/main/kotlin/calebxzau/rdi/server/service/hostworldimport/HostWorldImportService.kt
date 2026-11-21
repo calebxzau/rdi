@@ -3,7 +3,9 @@ package calebxzau.rdi.server.service.hostworldimport
 import calebxzau.rdi.anvilrw.remap.LevelMetadata
 import calebxzau.rdi.anvilrw.remap.NbtMetadataReader
 import calebxzau.rdi.anvilrw.remap.RemapLimits
+import calebxzau.rdi.anvilrw.remap.SaveLoaderDetection
 import calebxzau.rdi.anvilrw.remap.SaveSyncChunks
+import calebxzau.rdi.anvilrw.remap.loaderDetection
 import calebxzau.rdi.common.model.HostWorldImportCreateDto
 import calebxzau.rdi.common.model.HostWorldImportMemberWarning
 import calebxzau.rdi.common.model.HostWorldImportPrecheckDto
@@ -14,6 +16,7 @@ import calebxzau.rdi.server.service.worldarchive.WorldArchiveExtractor
 import calebxzau.rdi.server.service.hostrollback.HostRollbackService
 import calebxzhou.rdi.common.exception.RequestError
 import calebxzhou.rdi.common.model.Host
+import calebxzhou.rdi.common.model.McVersion
 import calebxzhou.rdi.common.model.ModLoader
 import calebxzhou.rdi.common.model.Modpack
 import calebxzhou.rdi.common.model.Task2
@@ -446,7 +449,7 @@ class HostWorldImportService(
         val modpack = hosts.modpack(host.modpackId) ?: throw RequestError("无此整合包")
         checkLoaderSupported(modpack)
         requestCheck(mcVersionName == modpack.mcVer.mcVer, "存档版本(${mcVersionName})与房间整合包版本(${modpack.mcVer.mcVer})不一致")
-        requestCheck(loader == modpack.modloader, "该存档最后一次不是用房间整合包的加载器保存的")
+        requestCheck(loader == modpack.modloader, "存档的加载器与房间整合包不一致")
         val ids = memberPlayerIds.distinct()
         requestCheck(ids.size <= MAX_MEMBER_PLAYERS, "存档中的玩家过多，最多${MAX_MEMBER_PLAYERS}名")
         requestCheck(hosts.accountsExist(ids), "部分玩家账号不存在")
@@ -470,14 +473,20 @@ class HostWorldImportService(
             .getOrElse { throw RequestError("存档的level.dat无效", it) }
         val expected = modpack.mcVer.mcVer
         requestCheck(level.versionName == expected, "存档版本(${level.versionName ?: "未知"})与房间整合包版本(${expected})不一致")
-        val loaderId = if (modpack.modloader == ModLoader.neoforge) "neoforge" else "forge"
-        requestCheck(level.fmlModIds?.contains(loaderId) == true, "该存档最后一次不是用Forge/NeoForge保存的")
+        val expectedLoader = when (modpack.modloader) {
+            ModLoader.forge -> SaveLoaderDetection.Forge
+            ModLoader.neoforge -> SaveLoaderDetection.NeoForge
+            ModLoader.Fabric -> SaveLoaderDetection.FabricHistory
+        }
+        requestCheck(level.loaderDetection == expectedLoader, "存档的加载器与房间整合包不一致")
         requestCheck(!level.hardcore, "存档仍为极限模式，请使用最新客户端重新导入")
     }
 
-    /** 1.21.1 NeoForge stays gated until its loader evidence is confirmed with a real save (Q5). */
+    /** Save import supports a subset of the loaders that can run rooms. */
     private fun checkLoaderSupported(modpack: Modpack) {
-        requestCheck(modpack.modloader == ModLoader.forge, "目前仅支持mc20forge导入存档")
+        val supported = modpack.modloader == ModLoader.forge ||
+            (modpack.modloader == ModLoader.Fabric && modpack.mcVer == McVersion.V201)
+        requestCheck(supported, "目前支持Forge和Minecraft 1.20.1 Fabric导入存档")
     }
 
     private fun ownedSession(hostId: ObjectId, importId: UUID, requester: ObjectId, isDav: Boolean): ImportSession =

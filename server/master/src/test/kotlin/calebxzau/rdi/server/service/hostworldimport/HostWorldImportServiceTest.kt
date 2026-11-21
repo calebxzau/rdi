@@ -31,6 +31,7 @@ import kotlin.io.path.readText
 import kotlin.io.path.writeText
 import kotlin.test.AfterTest
 import kotlin.test.Test
+import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
@@ -114,9 +115,34 @@ class HostWorldImportServiceTest {
                 access.modpacks[neo._id] = neo
                 service.precheck(access.addHost(modpackId = neo._id), owner, good.copy(mcVersionName = "1.21.1", loader = ModLoader.neoforge))
             },
+            "unsupported fabric version" to suspend {
+                val fabric = Modpack(name = "Fabric", authorId = ObjectId(), modloader = ModLoader.Fabric, mcVer = McVersion.V211)
+                access.modpacks[fabric._id] = fabric
+                service.precheck(access.addHost(modpackId = fabric._id), owner, good.copy(mcVersionName = "1.21.1", loader = ModLoader.Fabric))
+            },
         )
         cases.forEach { (name, call) -> assertFailsWith<RequestError>(name) { call() } }
         assertTrue(store.allSessions().isEmpty(), "precheck never creates a session")
+    }
+
+    @Test
+    fun fabricImportChecksTheArchiveBeforeReplacingTheWorld() = runBlocking {
+        val fabric = Modpack(name = "Fabric", authorId = owner, modloader = ModLoader.Fabric, mcVer = McVersion.V201)
+        access.modpacks[fabric._id] = fabric
+        val host = access.addHost(modpackId = fabric._id)
+        service.precheck(host, owner, HostWorldImportPrecheckDto("1.20.1", ModLoader.Fabric))
+        access.worldFile(host, "level.dat").writeText("old world")
+
+        val wrongLoader = upload(host, archive(level()), loader = ModLoader.Fabric)
+        assertFailsWith<RequestError> { runTasks() }
+        assertEquals(HostWorldImportStatus.Failed, service.status(host._id, wrongLoader, owner).status)
+        assertEquals("old world", access.worldFile(host, "level.dat").readText())
+
+        val fabricLevel = level(modIds = null, brands = listOf("vanilla", "fabric"))
+        val imported = upload(host, archive(fabricLevel), loader = ModLoader.Fabric)
+        runTasks()
+        assertEquals(HostWorldImportStatus.Ready, service.status(host._id, imported, owner).status)
+        assertContentEquals(fabricLevel, Files.readAllBytes(access.worldFile(host, "level.dat")))
     }
 
     @Test
@@ -124,6 +150,7 @@ class HostWorldImportServiceTest {
         val cases = mapOf(
             "version" to archive(level(version = "1.19.2")),
             "not saved by forge" to archive(level(modIds = null)),
+            "conflicting fml loaders" to archive(level(modIds = listOf("minecraft", "forge", "neoforge"))),
             "hardcore" to archive(level(hardcore = true)),
             "no sync list" to archive(level(), sync = null),
             "empty sync list" to archive(level(), sync = syncList(0)),
@@ -252,8 +279,13 @@ class HostWorldImportServiceTest {
 
     // ---- helpers ----
 
-    private suspend fun upload(host: Host, archive: ByteArray, members: List<ObjectId> = emptyList()): UUID {
-        val session = service.create(host, owner, HostWorldImportCreateDto(archive.size.toLong(), archive.sha1, "1.20.1", ModLoader.forge, members))
+    private suspend fun upload(
+        host: Host,
+        archive: ByteArray,
+        members: List<ObjectId> = emptyList(),
+        loader: ModLoader = ModLoader.forge,
+    ): UUID {
+        val session = service.create(host, owner, HostWorldImportCreateDto(archive.size.toLong(), archive.sha1, "1.20.1", loader, members))
         for (index in 0 until session.partCount) {
             val part = archive.copyOfRange(index * session.partSize, minOf(archive.size, (index + 1) * session.partSize))
             service.uploadPart(host._id, session.id, owner, index, part.size.toLong(), part.sha1, ByteReadChannel(part))
@@ -276,11 +308,17 @@ class HostWorldImportServiceTest {
         return file.readBytes()
     }
 
-    private fun level(version: String = "1.20.1", hardcore: Boolean = false, modIds: List<String>? = listOf("minecraft", "forge")): ByteArray =
+    private fun level(
+        version: String = "1.20.1",
+        hardcore: Boolean = false,
+        modIds: List<String>? = listOf("minecraft", "forge"),
+        brands: List<String> = emptyList(),
+    ): ByteArray =
         gzip(nbt {
             compound("Data") {
                 compound("Version") { string("Name", version) }
                 byte("hardcore", if (hardcore) 1 else 0)
+                if (brands.isNotEmpty()) stringList("ServerBrands", brands)
             }
             if (modIds != null) compound("fml") { compoundList("LoadingModList", modIds.map<String, NbtBuilder.() -> Unit> { id -> { string("ModId", id) } }) }
         })
@@ -316,6 +354,12 @@ class HostWorldImportServiceTest {
             out.writeByte(10)
             out.writeInt(items.size)
             items.forEach { item -> item(); out.writeByte(0) }
+        }
+        fun stringList(name: String, items: List<String>) {
+            named(9, name)
+            out.writeByte(8)
+            out.writeInt(items.size)
+            items.forEach(out::writeUTF)
         }
         private fun named(type: Int, name: String) {
             out.writeByte(type)

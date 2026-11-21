@@ -31,10 +31,11 @@ import calebxzau.rdi.client.ui.comp.SavePlayerMappingCard
 import calebxzau.rdi.client.ui.viewmodel.HostSaveImportViewModel
 import calebxzau.rdi.client.ui.viewmodel.SaveImportStep
 import calebxzhou.rdi.client.ui.McPlayArgs
+import calebxzhou.rdi.common.model.ModLoader
 import java.util.UUID
 
 private const val MARKING_NOTICE =
-    "1.点击开始按钮启动此整合包\n2.输入/syncchunk show显示你当前所在区块\n3.挨个找你想传的区块，站在里面，输入/syncchunk add，最多256个\n4.弄完了保存并退出"
+    "1.点击开始按钮启动此整合包\n2.输入/syncchunk here显示你当前所在区块\n3.挨个找你想传的区块，站在里面，输入/syncchunk add，最多256个\n4.弄完了保存并退出"
 
 /** Imports one of the owner's singleplayer saves into the host (plan §4). */
 @Composable
@@ -98,6 +99,9 @@ fun HostSaveImportScreen(
                         CircleIconButton(icon = "", label = "选择存档文件夹", enabled = !busy && state.host != null, onClick = viewModel::pickSave)
                         state.source?.let { source ->
                             Text("已选择：${source}", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            if (state.host?.modpack?.modloader == ModLoader.Fabric) {
+                                Text("检测到Fabric使用记录，请确认原存档与房间使用同一整合包。")
+                            }
                             Text("用哪个角色进入存档？", fontWeight = FontWeight.Bold)
                             if (state.markingPlayers.isEmpty()) {
                                 Text("使用我的RDI角色，从世界出生点开始")

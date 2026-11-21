@@ -33,7 +33,7 @@ class SavePlayerScannerTest {
 
         assertEquals("1.20.1", result.mcVersionName)
         assertEquals(3465, result.dataVersion)
-        assertEquals(SaveLoader.Forge, result.lastSavedLoader)
+        assertEquals(SaveLoaderDetection.Forge, result.loaderDetection)
         assertTrue(result.isHardcore)
         assertEquals(pcl, result.singleplayerHostUuid)
         assertNull(result.syncChunks)
@@ -60,13 +60,13 @@ class SavePlayerScannerTest {
     }
 
     @Test
-    fun loaderComesFromTheLastSave() {
-        assertEquals(SaveLoader.NeoForge, scan(listOf("minecraft", "neoforge")).lastSavedLoader)
-        assertNull(scan(listOf("minecraft")).lastSavedLoader)
-        scan(null).let {
-            assertNull(it.lastSavedLoader)
-            assertNull(it.fmlModIds)
-        }
+    fun scannerUsesTheSameDetectionAsTheLevelReader() {
+        val save = SyntheticSave().levelDat(modIds = null, brands = listOf("vanilla", "fabric"))
+        val level = NbtMetadataReader.readLevelDat(save.root.resolve("level.dat")).getOrThrow()
+        val scan = SavePlayerScanner().scan(save.root).getOrThrow()
+        assertEquals(SaveLoaderDetection.FabricHistory, scan.loaderDetection)
+        assertEquals(level.loaderDetection, scan.loaderDetection)
+        assertNull(scan.fmlModIds)
     }
 
     @Test
@@ -83,7 +83,4 @@ class SavePlayerScannerTest {
         val broken = SyntheticSave().bytes("level.dat", BoundedIo.gzip(byteArrayOf(10, 0, 0, 99)))
         assertIs<NbtFormatException>(SavePlayerScanner().scan(broken.root).exceptionOrNull())
     }
-
-    private fun scan(modIds: List<String>?): SaveScanResult =
-        SavePlayerScanner().scan(SyntheticSave().levelDat(modIds = modIds).root).getOrThrow()
 }

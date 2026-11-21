@@ -16,7 +16,7 @@ class SaveIdentityMappingTest {
     )
 
     private fun scan(vararg players: SavePlayer) =
-        SaveScanResult("1.20.1", 3465, emptyList(), null, null, false, null, players.toList(), null, 0)
+        SaveScanResult("1.20.1", 3465, emptyList(), null, SaveLoaderDetection.Unknown, false, null, players.toList(), null, 0)
 
     @Test
     fun plainAssignmentMapsToTheAccount() {

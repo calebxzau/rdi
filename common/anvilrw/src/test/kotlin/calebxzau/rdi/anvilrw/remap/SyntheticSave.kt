@@ -16,11 +16,12 @@ class SyntheticSave(val root: Path = createTempDirectory("synthetic-game").resol
         hardcore: Boolean = false,
         modIds: List<String>? = listOf("minecraft", "forge"),
         extraData: List<Pair<String, Tag>> = emptyList(),
+        brands: List<String> = listOf("forge"),
     ): SyntheticSave {
         val data = mutableListOf<Pair<String, Tag>>(
             "Version" to compound("Name" to TString("1.20.1"), "Id" to TInt(3465)),
             "DataVersion" to TInt(3465),
-            "ServerBrands" to TList(NbtTag.STRING, listOf(TString("forge"))),
+            "ServerBrands" to TList(NbtTag.STRING, brands.map(::TString)),
             "hardcore" to TByte(if (hardcore) 1 else 0),
         )
         host?.let { data += "Player" to it }

@@ -1,7 +1,7 @@
 package calebxzau.rdi.client.ui.viewmodel
 
 import calebxzau.rdi.anvilrw.remap.DualIdentityKeep
-import calebxzau.rdi.anvilrw.remap.SaveLoader
+import calebxzau.rdi.anvilrw.remap.SaveLoaderDetection
 import calebxzau.rdi.anvilrw.remap.SavePlayer
 import calebxzau.rdi.anvilrw.remap.SavePlayerScanner
 import calebxzau.rdi.anvilrw.remap.SaveScanResult
@@ -162,6 +162,20 @@ class HostSaveImportViewModelTest {
     }
 
     @Test
+    fun fabricBrandHistoryIsPassedToTheServerPrecheck() {
+        Files.write(save.resolve("level.dat"), levelDat(fmlId = null, brands = listOf("vanilla", "fabric")))
+        val gateway = FakeGateway(players = listOf(player(owner, host = true)))
+        val vm = HostSaveImportViewModel(
+            "host", gateway, picker = { save.toFile() }, self = { me to "我" },
+            ioDispatcher = Dispatchers.Unconfined, selfIsDav = { false },
+        )
+
+        vm.pickSave()
+
+        assertEquals(ModLoader.Fabric, gateway.lastPrecheck?.loader)
+    }
+
+    @Test
     fun selectedRoleIsSuggestedAsSelfInsteadOfOriginalOwner() {
         val gateway = FakeGateway(players = listOf(player(owner, host = true), player(online)))
         val vm = HostSaveImportViewModel("host", gateway, picker = { save.toFile() }, self = { me to "我" }, ioDispatcher = Dispatchers.Unconfined, selfIsDav = { false })
@@ -277,7 +291,7 @@ class HostSaveImportViewModelTest {
             Result.success(SaveImportMarkingSummary(marked, marked.groupingBy { it.dimensionId }.eachCount(), marked.size, emptyList()))
         override fun deleteCopy(record: SaveImportMarkingRecord) = Result.success(Unit).also { deleted++ }
         override suspend fun prepare(record: SaveImportMarkingRecord) = SaveImportPreparation(
-            SaveScanResult("1.20.1", 3465, brands, listOf("forge"), SaveLoader.Forge, hardcore, owner, players, marked, 0),
+            SaveScanResult("1.20.1", 3465, brands, listOf("forge"), SaveLoaderDetection.Forge, hardcore, owner, players, marked, 0),
             emptyMap(),
             msid.mapValues { (uuid, id) -> SavePlayerMsidMatchVo(uuid, id, "正版玩家") },
             existingRdi,
@@ -299,18 +313,25 @@ class HostSaveImportViewModelTest {
         }
     }
 
-    /** A gzip `level.dat` with version 1.20.1 saved by Forge. */
-    private fun levelDat(): ByteArray {
+    private fun levelDat(fmlId: String? = "forge", brands: List<String> = emptyList()): ByteArray {
         val nbt = ByteArrayOutputStream()
         DataOutputStream(nbt).use { out ->
             fun named(type: Int, name: String) { out.writeByte(type); out.writeUTF(name) }
             named(10, "")
             named(10, "Data")
             named(10, "Version"); named(8, "Name"); out.writeUTF("1.20.1"); out.writeByte(0)
+            if (brands.isNotEmpty()) {
+                named(9, "ServerBrands")
+                out.writeByte(8)
+                out.writeInt(brands.size)
+                brands.forEach(out::writeUTF)
+            }
             out.writeByte(0)
-            named(10, "fml")
-            named(9, "LoadingModList"); out.writeByte(10); out.writeInt(1); named(8, "ModId"); out.writeUTF("forge"); out.writeByte(0)
-            out.writeByte(0)
+            if (fmlId != null) {
+                named(10, "fml")
+                named(9, "LoadingModList"); out.writeByte(10); out.writeInt(1); named(8, "ModId"); out.writeUTF(fmlId); out.writeByte(0)
+                out.writeByte(0)
+            }
             out.writeByte(0)
         }
         return ByteArrayOutputStream().also { out -> GZIPOutputStream(out).use { it.write(nbt.toByteArray()) } }.toByteArray()
