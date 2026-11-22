@@ -2,19 +2,20 @@ import "../assets/fonts/1oppo.ttf";
 import "../assets/fonts/symbolsnerdfont.ttf";
 import { LoginScreen, LoginAccount } from "login.slint";
 import { LocalModpackInstall, ModpackLocalAdvanceOption, LocalPlay, CandidateRow, OptionDraft } from "packs.slint";
-import { GlassSurface } from "surfaces.slint";
+import { GlassSurface } from "components/surfaces.slint";
 import { ListView } from "std-widgets.slint";
 import { ComponentGallery } from "gallery.slint";
-import { GlassShape } from "surfaces.slint";
-import { SharedDialog, Toast, ContentRow, LogRow, TaskRow } from "shared.slint";
-import { Console, TaskProgress } from "activity.slint";
+import { GlassShape } from "components/surfaces.slint";
+import { SharedDialog, Toast, ContentRow, LogRow, TaskRow } from "components/shared.slint";
+import { Console, TaskProgress } from "components/activity.slint";
 import { TileData, Theme } from "theme.slint";
 import { TitleBar } from "title_bar.slint";
 import { AccountMenu } from "account_menu.slint";
-import { TileGrid } from "tile_grid.slint";
-import { NameInitial } from "name_initial_icon.slint";
+import { TileGrid } from "components/tile_grid.slint";
+import { CardHint } from "components/card_hint.slint";
+import { NameInitial } from "components/name_initial_icon.slint";
 import { GlassTabBar } from "glass_tab_bar.slint";
-import { GlassButton, CircleIconButton } from "glass_button.slint";
+import { GlassButton, CircleIconButton } from "components/glass_button.slint";
 import { UiProof, ProofRow, ProofRect } from "ui_proof.slint";
 import { ResizeHandles } from "resize_handles.slint";
 import { HostList, HostListRow } from "host_list.slint";
@@ -202,6 +203,7 @@ export component AppWindow inherits Window {
     callback proof-wheel(float);
     callback proof-start();
     title: "RDI Slint Prototype";
+    icon: @image-url("../assets/icon.png");
     preferred-width: 1280px; preferred-height: 720px; min-width: 800px; min-height: 600px;
     no-frame: true; background: transparent;
     default-font-family: "OPPO Sans 4.0";
@@ -274,7 +276,7 @@ export component AppWindow inherits Window {
             return reject;
         }
     Image { width: parent.width; height: parent.height; source: root.backdrop-revision >= 0 ? root.backdrop : root.backdrop; image-fit: fill; }
-    title-bar := TitleBar { y: 0px; width: parent.width; player-name: root.player-name; head: root.player-head; account => {if !root.login-visible {root.account-menu = !root.account-menu;}} action(a) => {root.window-action(a);} stub(s) => {root.stub(s);} can-back: root.can-back; host-list-visible: root.host-list-visible; gallery-enabled: root.gallery-enabled; navigate(s) => {root.navigate(s);} }
+    title-bar := TitleBar { y: 0px; width: parent.width; player-name: root.player-name; head: root.player-head; account => {if !root.login-visible {root.account-menu = !root.account-menu;}} action(a) => {root.window-action(a);} can-back: root.can-back; host-list-visible: root.host-list-visible; gallery-enabled: root.gallery-enabled; navigate(s) => {root.navigate(s);} }
     menu := FocusScope { x: 0px; y: 40px; width: parent.width; height: parent.height - 40px; visible: !root.login-visible && !root.ui-proof && !root.gallery && root.pack-screen == 0 && !root.wardrobe-visible && !root.host-list-visible; enabled: !root.modal-open && root.activity-panel == 0;
     tabs := GlassTabBar {
         x: (parent.width - self.width) / 2; y: 16px; tab-position: root.tab-position; selected: root.selected;
@@ -353,6 +355,17 @@ export component AppWindow inherits Window {
             press(on,x,y) => {root.pill-press(4,on,x,y);}
             Tooltip { text: @markdown("导入rdipack2"); }
         }
+    }
+    if menu.enabled && !root.account-menu && (root.selected == 0
+        ? root.tab-position == 0 && host-grid.has-hovered-tile
+        : root.tab-position == 1 && pack-grid.has-hovered-tile): CardHint {
+        modpack: root.selected == 1;
+        tile: self.modpack ? pack-grid.hovered-tile : host-grid.hovered-tile;
+        anchor-x: (self.modpack ? pack-grid.hovered-center-x : host-grid.hovered-center-x) - menu.absolute-position.x;
+        anchor-top: (self.modpack ? pack-grid.hovered-top-y : host-grid.hovered-top-y) - menu.absolute-position.y;
+        anchor-bottom: (self.modpack ? pack-grid.hovered-bottom-y : host-grid.hovered-bottom-y) - menu.absolute-position.y;
+        available-width: menu.width;
+        available-height: home-shortcuts.y;
     }
     }
     login-view := LoginScreen { visible: root.login-visible; enabled: !root.modal-open;

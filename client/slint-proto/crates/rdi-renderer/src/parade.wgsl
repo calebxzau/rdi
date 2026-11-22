@@ -37,7 +37,8 @@ fn rotate_y(v: vec3f) -> vec3f {
     let hips = vec3f(0., 12., 0.);
     let lean = 0.17;
     local = rotate_y(rotate_x(local - hips, lean) + hips);
-    let pixel = vec2f(pose.x + local.x*2.625, pose.y - local.y*2.625);
+    let pixels_per_unit = 1.3125;
+    let pixel = pose.xy + local.xy * vec2f(pixels_per_unit, -pixels_per_unit);
     // Plain RGBA output, matching the glass renderer. Larger z is nearer the viewer.
     let clip = vec4f(pixel/params.viewport.xy*vec2f(2., -2.) + vec2f(-1., 1.), 0.5 - local.z/100., 1.);
     return Out(clip, uv, rotate_y(rotate_x(direction, lean)));

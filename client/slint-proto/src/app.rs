@@ -20,9 +20,12 @@ use std::{
         atomic::{AtomicBool, Ordering},
         mpsc,
     },
-    time::Duration,
+    time::{Duration, Instant},
 };
 use tokio::task::JoinHandle;
+
+const ONLINE_POLL_INTERVAL: Duration = Duration::from_secs(30);
+
 struct Loaded {
     api: Client,
     player: PlayerInfo,
@@ -72,6 +75,8 @@ impl Interaction {
 struct Entry {
     name: String,
     detail: String,
+    version: String,
+    playable: bool,
     initial: NameInitial,
     art: ArtSource,
     status: i32,
@@ -147,6 +152,8 @@ impl Entry {
             name: self.name.clone().into(),
             initial: self.initial.clone(),
             detail: self.detail.clone().into(),
+            version: self.version.clone().into(),
+            playable: self.playable,
             icon,
             has_icon,
             owner,
@@ -206,6 +213,7 @@ pub struct App {
     page_job: Option<JoinHandle<()>>,
     login_job: Option<JoinHandle<()>>,
     poll_job: Option<JoinHandle<()>>,
+    next_online_poll: Option<Instant>,
     appearance_job: Option<JoinHandle<()>>,
     player_appearance: Option<Appearance>,
     crowd_job: Option<JoinHandle<()>>,
@@ -264,6 +272,7 @@ impl App {
             page_job: None,
             login_job: None,
             poll_job: None,
+            next_online_poll: None,
             appearance_job: None,
             player_appearance: None,
             crowd_job: None,
@@ -473,6 +482,22 @@ impl App {
     pub fn take_online_players(&mut self) -> Option<Vec<String>> {
         self.online_crowd.take_roster()
     }
+    fn poll_online_players(&mut self) {
+        if !self.crowd_enabled()
+            || self.poll_job.is_some()
+            || self.next_online_poll.is_some_and(|deadline| Instant::now() < deadline)
+        {
+            return;
+        }
+        if let Some(api) = self.api.clone() {
+            let tx = self.tx.clone();
+            let epoch = self.epoch;
+            self.poll_job = Some(self.runtime.spawn(async move {
+                let result = api.get("/host/online-player-ids").await;
+                let _ = tx.send(Event::Online(epoch, result));
+            }));
+        }
+    }
     fn refresh_online_crowd(&mut self, ids: Vec<String>) {
         if self.online_crowd.update(ids) {
             self.crowd_skins
@@ -547,6 +572,7 @@ impl App {
     }
     fn stop_jobs(&mut self) {
         self.epoch += 1;
+        self.next_online_poll = None;
         self.online_crowd.update(Vec::new());
         self.crowd_skins.clear();
         for (_, j) in self.jobs.drain() {
@@ -641,6 +667,8 @@ impl App {
                     initial: host_placeholder(&h.name, &h.modpack_name),
                     name: h.name,
                     detail: h.modpack_name,
+                    version: h.pack_ver.unwrap_or_default(),
+                    playable: h.playable,
                     art: ArtSource {
                         id: h.id,
                         url: h.icon_url,
@@ -660,11 +688,14 @@ impl App {
                 .map(|m| Entry {
                     name: m.name.clone(),
                     initial: name_placeholder(&m.name),
-                    detail: format!(
-                        "{} · {}",
-                        if m.local { "本地导入" } else { "RDI" },
-                        m.version
-                    ),
+                    detail: match (m.local, m.install_time()) {
+                        (true, Some(time)) => format!("本地导入 · 安装于{}", time.format("%Y-%m-%d %H:%M")),
+                        (false, Some(time)) => format!("安装于{}", time.format("%Y-%m-%d %H:%M")),
+                        (true, None) => "本地导入".into(),
+                        (false, None) => String::new(),
+                    },
+                    version: m.version.clone(),
+                    playable: true,
                     art: ArtSource {
                         id: m.id.clone(),
                         url: m.icon.clone(),
@@ -1030,20 +1061,6 @@ impl App {
                                 modpacks = self.packs.len(),
                                 "Menu data loaded"
                             );
-                            if self.crowd_enabled() {
-                                let tx = self.tx.clone();
-                                let paused = self.paused.clone();
-                                let api = data.api;
-                                self.poll_job = Some(self.runtime.spawn(async move {
-                                    loop {
-                                        if !paused.load(Ordering::Relaxed) {
-                                            let result = api.get("/host/online-player-ids").await;
-                                            let _ = tx.send(Event::Online(epoch, result));
-                                        }
-                                        tokio::time::sleep(Duration::from_secs(30)).await;
-                                    }
-                                }));
-                            }
                             dirty = true;
                         }
                         Err(error) => {
@@ -1106,6 +1123,8 @@ impl App {
                 Event::Online(epoch, result)
                     if epoch == self.epoch && self.crowd_enabled() =>
                 {
+                    self.poll_job = None;
+                    self.next_online_poll = Some(Instant::now() + ONLINE_POLL_INTERVAL);
                     match result {
                         Ok(ids) => self.refresh_online_crowd(ids),
                         Err(error) => tracing::warn!(?error, "Online player poll failed"),
@@ -1158,6 +1177,8 @@ impl App {
         if self.paused.load(Ordering::Relaxed) {
             return;
         }
+        // Leave due polls pending while inactive so the first focused tick can send them.
+        self.poll_online_players();
         let scale = ui.window().scale_factor();
         if scale != self.last_scale {
             self.last_scale = scale;

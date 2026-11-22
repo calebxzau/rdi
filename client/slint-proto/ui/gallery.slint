@@ -1,10 +1,10 @@
-import { TileGrid } from "tile_grid.slint";
+import { TileGrid } from "components/tile_grid.slint";
 import { Theme, TileData } from "theme.slint";
-import { GlassButton, CircleIconButton, ToggleButton } from "glass_button.slint";
-import { TextField, PasswordField } from "fields.slint";
-import { GlassSurface, GlassShape } from "surfaces.slint";
-import { ContentGrid, ContentRow, RScrollbar, HttpImage, HeadButton, LoadingState, EmptyState, ErrorState, TaskRow, LogRow } from "shared.slint";
-import { Console, TaskProgress } from "activity.slint";
+import { GlassButton, CircleIconButton, ToggleButton } from "components/glass_button.slint";
+import { TextField, PasswordField } from "components/fields.slint";
+import { GlassSurface, GlassShape } from "components/surfaces.slint";
+import { ContentGrid, ContentRow, RScrollbar, HttpImage, HeadButton, LoadingState, EmptyState, ErrorState, TaskRow, LogRow } from "components/shared.slint";
+import { Console, TaskProgress } from "components/activity.slint";
 export component ComponentGallery inherits FocusScope {
     in-out property <bool> password-revealed;
     in-out property <length> content-scroll;

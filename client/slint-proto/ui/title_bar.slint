@@ -1,5 +1,5 @@
-import { GlassButton } from "glass_button.slint";
-import { HeadButton } from "shared.slint";
+import { GlassButton } from "components/glass_button.slint";
+import { HeadButton } from "components/shared.slint";
 import { Theme } from "theme.slint";
 import { WindowDotButton } from "window_dot_button.slint";
 export component TitleBar inherits Rectangle {
@@ -10,9 +10,9 @@ export component TitleBar inherits Rectangle {
     in property <bool> host-list-visible;
     callback navigate(string);
     callback action(int);
-    callback stub(string);
     callback account();
     out property <length> account-x: head.absolute-position.x;
+    private property <length> nav-content-x: root.can-back ? 118px : 80px;
     height: 40px;
     background: #ffffff45;
     TouchArea { pointer-event(e) => {if e.kind == PointerEventKind.down && e.button == PointerEventButton.left {root.action(0);}} double-clicked => {root.action(2);} }
@@ -20,22 +20,18 @@ export component TitleBar inherits Rectangle {
         Image { width: 100%; height: 100%; source: @image-url("../assets/icon.png"); }
     }
     Text { x: 46px; height: parent.height; text: "rdi"; color: Theme.ink; font-size: 18px; font-weight: 700; vertical-alignment: center; }
-    GlassButton { x: 80px; y: 6px; width: 28px; height: 28px; circle: true; glyph: "\u{f015}"; clicked => {root.navigate("home");} }
-    if root.can-back: GlassButton { x: 116px; y: 6px; width: 28px; height: 28px; circle: true; glyph: "\u{f060}"; accessible-label: "返回"; clicked => {root.navigate("back");} }
+    if root.can-back: GlassButton { x: 80px; y: 6px; width: 28px; height: 28px; circle: true; glyph: "\u{f060}"; accessible-label: "返回"; clicked => {root.navigate("back");} }
     if root.host-list-visible: Text {
-        x: 154px; height: parent.height;
+        x: root.nav-content-x; height: parent.height;
         text: "房间列表"; color: Theme.ink; font-size: 16px; font-weight: 600;
         vertical-alignment: center;
     }
-    if root.gallery-enabled: GlassButton { x: root.host-list-visible ? 228px : 154px; y: 6px; width: 96px; height: 28px; label: "组件画廊"; clicked => {root.navigate("gallery");} }
+    if root.gallery-enabled: GlassButton { x: root.nav-content-x + (root.host-list-visible ? 74px : 0px); y: 6px; width: 96px; height: 28px; label: "组件画廊"; clicked => {root.navigate("gallery");} }
     HorizontalLayout { x: parent.width - 496px; y: 0px; width: 496px; height: 40px; spacing: 8px; padding: 0px; padding-right: 8px; alignment: end;
         // Padding centers the shorter items, since layouts place fixed-height items at the top.
         HorizontalLayout { spacing: 8px; padding-top: 6px; padding-bottom: 6px;
-            GlassButton { width: 28px; height: 28px; circle: true; glyph: "m"; clicked => {root.stub("MC百科");} }
-            GlassButton { width: 28px; height: 28px; circle: true; glyph: "\u{f0e0}"; clicked => {root.stub("邮件");} }
             GlassButton { width: 28px; height: 28px; circle: true; glyph: "\u{f11b}"; clicked => {root.navigate("console");} }
             GlassButton { width: 28px; height: 28px; circle: true; glyph: "\u{f0ae}"; clicked => {root.navigate("tasks");} }
-            GlassButton { width: 28px; height: 28px; circle: true; glyph: "\u{eb51}"; clicked => {root.stub("设置");} }
         }
         HorizontalLayout { padding-top: 2px; padding-bottom: 2px;
             head := HeadButton { width: 116px; source: root.head; player-name: root.player-name; clicked => {root.account();} }

@@ -54,7 +54,8 @@ prefill/auto-login settings. Rust reads saved passwords from the Compose-compati
 
 ## Layout
 
-- `ui/*.slint` — window, title bar, tab bar, tile grid, tiles, buttons.
+- `ui/*.slint` — window, title bar, home tab bar and screens.
+- `ui/components/*.slint` — reusable buttons, fields, tiles, grids, player heads and other shared UI.
 - `src/navigation.rs`, `src/shell.rs` — back stack, shared window state and layout-to-glass bridge.
 - `src/packs.rs`, `ui/packs.slint` — U4a local import, installed packs, advanced
   options, account-choice dialog, tasks and console. Business state comes from

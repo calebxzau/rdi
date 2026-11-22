@@ -27,6 +27,15 @@ pub struct InstalledPack {
     pub directory: PathBuf,
     created_at: i64,
 }
+
+impl InstalledPack {
+    pub(crate) fn install_time(&self) -> Option<chrono::DateTime<chrono::Local>> {
+        chrono::DateTime::from_timestamp_millis(self.created_at)
+            .filter(|_| self.created_at > 0)
+            .map(|time| time.with_timezone(&chrono::Local))
+    }
+}
+
 #[derive(Debug, Default)]
 pub struct PackList {
     pub packs: Vec<InstalledPack>,

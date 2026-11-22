@@ -116,7 +116,7 @@ Goal: without the Compose UI, a player can import a pack in the Slint launcher, 
   - When that tab's data source is gone, remove the `/modpack/search` stand-in from `data.get`'s allowlist.
 - **`ModpackLocalAdvanceOptionScreen`** (257 lines).
 - **Starting a pack.** RDI packs use the existing McPlay path. Local packs launch without the RDI core (`McPlayArgs.withRdiCore` → `MinecraftLaunchRequest.rdiRuntime`) and first show `LocalPlayDialog`. That dialog offers offline play, with a nickname and a warning for names outside `[A-Za-z0-9_]{3,16}`, or online play through Microsoft device-code login, which needs `RAccount.msid`. Design the service method yourself: either generalize the `host.start` path or add a new one. Duplicate-version confirmation and `game.state` must behave the same as for rooms.
-- **Install tasks, console and task panel.** `installer.install` returns a run id; Compose then returns to the 整合包 tab and opens that task. Wire U3's `TaskProgress` and `Console` (`ui/activity.slint`; gallery fixtures today) to real service data:
+- **Install tasks, console and task panel.** `installer.install` returns a run id; Compose then returns to the 整合包 tab and opens that task. Wire U3's `TaskProgress` and `Console` (`ui/components/activity.slint`; gallery fixtures today) to real service data:
   - add the events to `protocol/README.md` and `protocol/fixtures/messages.json`, used by both languages;
   - add them to the event allowlist in `src/service.rs` (around line 56). Any other event drops the connection;
   - send conflated snapshots no more than every 34ms, like the existing topics;

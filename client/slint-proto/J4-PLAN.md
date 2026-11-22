@@ -64,7 +64,7 @@ Rust, in `client/slint-proto`:
   or a `user_version` other than 5. Follow the same rule.
 - `src/credentials.rs`: `write_atomic`.
 - `src/api/server.rs`: the `reqwest` client with the system proxy.
-- `ui/app.slint` line 307 (`task-panel`) and `ui/activity.slint`: the task screen.
+- `ui/app.slint` (`task-panel`) and `ui/components/activity.slint`: the task screen.
 - `protocol/fixtures/`: fixtures read by both Rust and Kotlin tests.
 
 Kotlin:
@@ -136,7 +136,7 @@ gets a generation number so late results of a closed screen are dropped.
   extracts or downloads checks it. A cancelled import removes its staging folder
   and leaves no pack. The message is 任务已取消. The task screen gets one
   `CircleIconButton`-style cancel button on a running task, in the detail view and
-  in the list row; follow the existing buttons in `ui/activity.slint`. No
+  in the list row; follow the existing buttons in `ui/components/activity.slint`. No
   confirmation dialog. A finished task shows no cancel button.
 - Closing the launcher with a running task cancels it and waits for the cleanup,
   bounded to a few seconds.

@@ -1,8 +1,8 @@
 import { ListView, ScrollView, CheckBox, TextEdit } from "std-widgets.slint";
-import { GlassButton, CircleIconButton } from "glass_button.slint";
-import { TextField } from "fields.slint";
-import { ContentGrid, ContentRow, EmptyState, LoadingState } from "shared.slint";
-import { GlassShape } from "surfaces.slint";
+import { GlassButton, CircleIconButton } from "components/glass_button.slint";
+import { TextField } from "components/fields.slint";
+import { ContentGrid, ContentRow, EmptyState, LoadingState } from "components/shared.slint";
+import { GlassShape } from "components/surfaces.slint";
 import { Theme } from "theme.slint";
 
 export struct CandidateRow { name: string, detail: string, index: int, group: string, header: bool, collapsed: bool }

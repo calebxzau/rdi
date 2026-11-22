@@ -1,0 +1,31 @@
+export component PlayerHead inherits Rectangle {
+    in property <image> source;
+    /// Applied to each leaf instead of `opacity` here: opacity on an element with children
+    /// makes femtovg render it through an offscreen layer.
+    in property <float> alpha: 1;
+
+    pure function snap-to-pixel(value: length) -> length {
+        return round(value / 1phx) * 1phx;
+    }
+
+    frame := Rectangle {
+        // Align the clipped layer to physical pixels so femtovg preserves the skin's nearest sampling.
+        x: root.snap-to-pixel(root.absolute-position.x) - root.absolute-position.x;
+        y: root.snap-to-pixel(root.absolute-position.y) - root.absolute-position.y;
+        width: root.snap-to-pixel(root.width);
+        height: self.width;
+        // Match Compose PlayerHeadBadge at its base size of 18dp.
+        private property <length> inset: root.snap-to-pixel(root.width / 12);
+        border-radius: root.width * 4 / 18;
+        background: #f5fafd.with-alpha(root.alpha);
+        Rectangle {
+            x: frame.inset;
+            y: frame.inset;
+            width: frame.width - 2 * frame.inset;
+            height: self.width;
+            border-radius: root.width * 2 / 18;
+            clip: true;
+            Image { width: 100%; height: 100%; source: root.source; image-rendering: pixelated; opacity: root.alpha; }
+        }
+    }
+}

@@ -1,6 +1,6 @@
-import { PlayerHead } from "player_head.slint";
-import { NameInitial, NameInitialIcon } from "name_initial_icon.slint";
-import { EmptyState, ErrorState, LoadingState, RScrollbar } from "shared.slint";
+import { PlayerHead } from "components/player_head.slint";
+import { NameInitial, NameInitialIcon } from "components/name_initial_icon.slint";
+import { EmptyState, ErrorState, LoadingState, RScrollbar } from "components/shared.slint";
 import { Theme } from "theme.slint";
 
 export struct HostListRow {
@@ -64,7 +64,7 @@ export component HostList inherits Rectangle {
                                 x: mod(j, 3) * self.width;
                                 y: -5px + floor(j / 3) * self.height;
                                 width: 16px; height: self.width;
-                                source: head; clip-image: true;
+                                source: head;
                             }
                         }
                     }

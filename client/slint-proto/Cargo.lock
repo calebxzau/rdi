@@ -3903,6 +3903,7 @@ dependencies = [
  "anyhow",
  "base64",
  "bytemuck",
+ "chrono",
  "encoding_rs",
  "fontique",
  "glam",

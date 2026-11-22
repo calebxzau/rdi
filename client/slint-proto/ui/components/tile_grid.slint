@@ -1,5 +1,5 @@
 import { GlassShape } from "surfaces.slint";
-import { TileData, Theme } from "theme.slint";
+import { TileData, Theme } from "../theme.slint";
 import { HostTile } from "host_tile.slint";
 export component TileGrid inherits Rectangle {
     out property <GlassShape> shape: { x: root.absolute-position.x / 1px, y: root.absolute-position.y / 1px, w: root.width / 1px, h: root.height / 1px, radius: 22, alpha: root.fade, tint: transparent };
@@ -22,8 +22,28 @@ export component TileGrid inherits Rectangle {
         : 0px);
     out property <length> row-offset: root.center-offset(root.columns);
     out property <length> last-row-offset: root.center-offset(root.tiles.length - (root.row-count - 1) * root.columns);
+    private property <int> hovered: -1;
+    private property <string> hovered-id;
+    out property <TileData> hovered-tile: root.tiles[root.hovered];
+    private property <length> hovered-top: root.item-y(root.hovered) + root.scroll;
+    out property <bool> has-hovered-tile: root.visible && root.hovered >= 0 && root.hovered < root.tiles.length
+        && root.hovered-id == root.hovered-tile.id && root.hovered-top < root.height && root.hovered-top + root.tile-size > 0px;
+    out property <length> hovered-center-x: root.absolute-position.x + root.item-x(root.hovered) + Theme.tile / 2;
+    out property <length> hovered-top-y: root.absolute-position.y + max(0px, root.hovered-top);
+    out property <length> hovered-bottom-y: root.absolute-position.y + min(root.height, root.hovered-top + root.tile-size);
     pure function center-offset(count: int) -> length {
         return (root.width - (count - 1) * Theme.pitch - Theme.tile) / 2 - 16px;
+    }
+    pure function item-row(index: int) -> int {
+        return root.row-major ? floor(index / root.columns) : mod(index, 3);
+    }
+    pure function item-x(index: int) -> length {
+        if !root.row-major { return 16px + floor(index / 3) * Theme.pitch; }
+        return 16px + (root.item-row(index) == root.row-count - 1 ? root.last-row-offset : root.row-offset)
+            + mod(index, root.columns) * Theme.pitch;
+    }
+    pure function item-y(index: int) -> length {
+        return 16px + root.item-row(index) * root.row-pitch;
     }
     private property <length> min-scroll: (root.row-major ? root.height : root.width) - root.scroll-extent;
     changed min-scroll => { if root.row-major {root.scroll = clamp(root.scroll, root.min-scroll, 0px);} }
@@ -50,12 +70,8 @@ export component TileGrid inherits Rectangle {
         width: root.row-major ? root.width : root.scroll-extent;
         height: root.row-major ? root.scroll-extent : root.height;
         for tile[i] in root.tiles: Rectangle {
-            private property <int> tile-row: root.row-major ? floor(i / root.columns) : mod(i, 3);
-            private property <int> tile-column: root.row-major ? mod(i, root.columns) : floor(i / 3);
-            private property <length> offset: root.row-major
-                ? (self.tile-row == root.row-count - 1 ? root.last-row-offset : root.row-offset) : 0px;
-            x: 16px + self.offset + self.tile-column * Theme.pitch;
-            y: 16px + self.tile-row * root.row-pitch;
+            x: root.item-x(i);
+            y: root.item-y(i);
             width: Theme.tile; height: root.row-pitch;
             visible: root.row-major
                 ? self.y + self.height + root.scroll > 0px && self.y + root.scroll < root.height
@@ -63,7 +79,18 @@ export component TileGrid inherits Rectangle {
             HostTile {
                 x: (parent.width - self.width) / 2; y: 0px; width: root.tile-size; height: self.width;
                 tile: tile; scale: root.pressed == i ? root.press-scale : 1; fade: root.fade;
-                hover(on) => {root.hover(i,on);} press(on) => {root.press(i,on);} action(right) => {root.action(i,right);}
+                hover(on) => {
+                    if root.row-major {
+                        if on {
+                            root.hovered-id = tile.id;
+                            root.hovered = i;
+                        } else if root.hovered == i {
+                            root.hovered = -1;
+                        }
+                    }
+                    root.hover(i, on);
+                }
+                press(on) => {root.press(i,on);} action(right) => {root.action(i,right);}
             }
             if root.captions: Text {
                 x: 0px; y: root.tile-size + root.caption-gap; width: parent.width; height: root.caption-height;

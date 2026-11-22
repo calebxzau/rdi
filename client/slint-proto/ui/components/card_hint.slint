@@ -1,0 +1,100 @@
+import { Theme, TileData } from "../theme.slint";
+
+component HintLine inherits HorizontalLayout {
+    in property <string> label;
+    in property <string> version;
+    in property <bool> title;
+    spacing: 3px;
+    alignment: start;
+    Text {
+        text: root.label;
+        color: Theme.ink;
+        font-size: root.title ? 13px : 12px;
+        font-weight: root.title ? 600 : 400;
+        overflow: elide;
+        min-width: 0px;
+    }
+    if root.version != "": Text {
+        text: root.version;
+        color: #455059;
+        font-size: root.title ? 13px : 12px;
+        overflow: elide;
+        max-width: 100px;
+        min-width: 0px;
+    }
+}
+
+component MouseHint inherits HorizontalLayout {
+    in property <image> icon;
+    in property <string> label;
+    in property <float> emphasis: 1;
+    spacing: 2px;
+    alignment: start;
+    Image { source: root.icon; width: 22px; height: self.width; opacity: root.emphasis; }
+    Text { text: root.label; color: Theme.ink.with-alpha(root.emphasis); font-size: 12px; vertical-alignment: center; }
+}
+
+export component CardHint inherits Rectangle {
+    in property <TileData> tile;
+    in property <bool> modpack;
+    in property <length> anchor-x;
+    in property <length> anchor-top;
+    in property <length> anchor-bottom;
+    in property <length> available-width;
+    in property <length> available-height;
+
+    private property <length> edge: 8px;
+    private property <length> arrow-height: 7px;
+    private property <length> gap: 6px;
+    private property <bool> below: root.anchor-bottom + root.gap + root.arrow-height + root.height <= root.available-height - root.edge;
+    private property <length> arrow-x: clamp(root.anchor-x - root.x, 20px, root.width - 20px);
+
+    width: min(296px, content.preferred-width, root.available-width - 2 * root.edge);
+    height: content.preferred-height;
+    x: clamp(root.anchor-x - root.width / 2, root.edge, root.available-width - root.width - root.edge);
+    y: clamp(root.below ? root.anchor-bottom + root.gap + root.arrow-height : root.anchor-top - root.gap - root.arrow-height - root.height,
+        root.edge, root.available-height - root.height - root.edge);
+    background: #dce1e5;
+    border-radius: 22px;
+    drop-shadow-blur: 5px;
+    drop-shadow-offset-y: 2px;
+    drop-shadow-color: #00000033;
+
+    Path {
+        x: root.arrow-x - self.width / 2;
+        y: root.below ? -root.arrow-height + 1px : root.height - 1px;
+        width: 14px;
+        height: root.arrow-height;
+        viewbox-width: 14;
+        viewbox-height: 7;
+        fill: root.background;
+        commands: root.below ? "M 0 7 L 7 0 L 14 7 Z" : "M 0 0 L 7 7 L 14 0 Z";
+    }
+
+    content := VerticalLayout {
+        padding-left: 10px;
+        padding-right: 10px;
+        padding-top: 5px;
+        padding-bottom: 4px;
+        spacing: 1px;
+        HintLine { title: true; label: root.tile.name; version: root.modpack ? root.tile.version : ""; }
+        if root.tile.detail != "" || (!root.modpack && root.tile.version != ""): HintLine {
+            label: root.tile.detail;
+            version: root.modpack ? "" : root.tile.version;
+        }
+        HorizontalLayout {
+            spacing: 8px;
+            alignment: start;
+            MouseHint {
+                icon: @image-url("../../assets/icons/mouse_left.png");
+                label: root.modpack ? "单机玩" : "开玩";
+                emphasis: root.tile.playable ? 1 : 0.45;
+            }
+            MouseHint {
+                icon: @image-url("../../assets/icons/mouse_right.png");
+                label: root.modpack ? "菜单" : "详情 设置";
+                emphasis: root.modpack ? 1 : 0.45;
+            }
+        }
+    }
+}
