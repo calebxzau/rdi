@@ -399,6 +399,13 @@ impl Catalog {
             issues: self.issues(),
         })
     }
+    /// `CurseForgeService.downloadHeadersFor`: the API key for HTTPS forgecdn and mirror hosts.
+    pub fn download_headers_for(&self, url: &str) -> Result<reqwest::header::HeaderMap> {
+        if !url.get(..8).is_some_and(|s| s.eq_ignore_ascii_case("https://")) {
+            return Ok(Default::default());
+        }
+        self.http.download_headers(Platform::CurseForge, url)
+    }
     pub fn resolve_download(&self, file: &File) -> Result<crate::download::Source> {
         let url = file
             .url

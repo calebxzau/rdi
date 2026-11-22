@@ -42,6 +42,8 @@ struct Entry {
     fraction: Option<f32>,
     error: String,
     rows: Vec<Row>,
+    /// The row that `Context::progress` updates; 0 for single-leaf tasks.
+    current: usize,
     cancel: Cancellation,
 }
 impl Entry {
@@ -68,8 +70,34 @@ impl Context {
         if let Some(e) = entries.iter_mut().find(|e| e.id == self.id) {
             e.message = message.into();
             e.fraction = fraction;
-            e.rows[0].message = e.message.clone();
-            e.rows[0].fraction = fraction;
+            let current = e.current;
+            e.rows[current].message = e.message.clone();
+            e.rows[current].fraction = fraction;
+            if current > 0 {
+                // The group row shows the step message with the overall fraction.
+                let steps = (e.rows.len() - 1) as f32;
+                e.rows[0].message = e.message.clone();
+                e.rows[0].fraction =
+                    Some(((current - 1) as f32 + fraction.unwrap_or(0.).clamp(0., 1.)) / steps);
+            }
+        }
+    }
+    /// Starts visible step `index` of a task created by `submit_steps`; earlier steps are done.
+    pub fn step(&self, index: usize) {
+        let mut entries = self.manager.0.lock().unwrap();
+        if let Some(e) = entries.iter_mut().find(|e| e.id == self.id)
+            && index + 1 < e.rows.len()
+        {
+            for row in &mut e.rows[1..=index] {
+                row.done = true;
+            }
+            e.current = index + 1;
+            // The step is running before its first progress report.
+            e.message = "进行中".into();
+            e.fraction = None;
+            e.rows[index + 1].message = e.message.clone();
+            e.rows[0].message = e.rows[index + 1].title.clone();
+            e.rows[0].fraction = Some(index as f32 / (e.rows.len() - 1) as f32);
         }
     }
 }
@@ -79,6 +107,17 @@ impl Manager {
         runtime: &tokio::runtime::Handle,
         title: String,
         dedupe: String,
+        work: impl FnOnce(Context) -> Result<()> + Send + 'static,
+    ) -> String {
+        self.submit_steps(runtime, title, dedupe, &[], work)
+    }
+    /// Like `submit`, with one visible row per step under a group row.
+    pub fn submit_steps(
+        &self,
+        runtime: &tokio::runtime::Handle,
+        title: String,
+        dedupe: String,
+        steps: &[&str],
         work: impl FnOnce(Context) -> Result<()> + Send + 'static,
     ) -> String {
         let mut entries = self.0.lock().unwrap();
@@ -99,16 +138,28 @@ impl Manager {
             message: "准备中".into(),
             fraction: None,
             error: String::new(),
-            rows: vec![Row {
+            rows: std::iter::once(Row {
                 key: id.clone(),
                 title,
                 depth: 0,
+                group: !steps.is_empty(),
+                expanded: true,
+                message: String::new(),
+                fraction: None,
+                done: false,
+            })
+            .chain(steps.iter().enumerate().map(|(i, step)| Row {
+                key: format!("{id} / {i}"),
+                title: (*step).into(),
+                depth: 1,
                 group: false,
                 expanded: true,
                 message: String::new(),
                 fraction: None,
                 done: false,
-            }],
+            }))
+            .collect(),
+            current: 0,
             cancel: cancel.clone(),
         });
         drop(entries);
@@ -143,7 +194,9 @@ impl Manager {
                     e.status = 2;
                     e.fraction = Some(1.);
                     e.message = "安装完成".into();
-                    e.rows[0].done = true;
+                    for row in &mut e.rows {
+                        row.done = true;
+                    }
                 }
                 Err(_) if e.cancel.cancelled() => {
                     e.status = 4;
@@ -151,7 +204,7 @@ impl Manager {
                     e.error = e.message.clone();
                 }
                 Err(error) => {
-                    tracing::error!(error=%format!("{error:#}"),"导入整合包失败");
+                    tracing::error!(error=%format!("{error:#}"),title=%e.title,"整合包任务失败");
                     e.status = 3;
                     e.error = error.root_cause().to_string();
                     e.message = "任务失败".into();
@@ -170,6 +223,15 @@ impl Manager {
         {
             e.cancel.cancel();
         }
+    }
+    /// The run id of the unfinished task with this dedupe key.
+    pub fn active(&self, dedupe: &str) -> Option<String> {
+        self.0
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|e| e.dedupe == dedupe && e.status < 2)
+            .map(|e| e.id.clone())
     }
     pub fn owns(&self, id: &str) -> bool {
         self.0.lock().unwrap().iter().any(|e| e.id == id)
@@ -225,6 +287,7 @@ mod tests {
             fraction: Some(0.4),
             error: String::new(),
             cancel: Cancellation::default(),
+            current: 0,
             rows: vec![
                 Row {
                     key: "root".into(),

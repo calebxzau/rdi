@@ -119,6 +119,31 @@ impl ServerApi {
             jwt: None,
         })
     }
+    /// A token-holding API for tests against a local server.
+    #[cfg(test)]
+    pub fn with_token(base: &str, jwt: &str) -> Self {
+        Self {
+            http: Client::new(),
+            base: base.trim_end_matches('/').into(),
+            jwt: Some(jwt.into()),
+        }
+    }
+    /// The full URL of a server path such as `/mod/download/x.jar`.
+    pub fn url(&self, path: &str) -> String {
+        format!("{}{path}", self.base)
+    }
+    /// `RServer.authHeadersFor`: the login token only for URLs on this server.
+    pub fn auth_headers(&self, url: &str) -> Result<reqwest::header::HeaderMap> {
+        let mut headers = reqwest::header::HeaderMap::new();
+        if url.starts_with(&format!("{}/", self.base))
+            && let Some(jwt) = self.jwt.as_deref().filter(|j| !j.trim().is_empty())
+        {
+            let mut value: reqwest::header::HeaderValue = format!("Bearer {jwt}").parse()?;
+            value.set_sensitive(true);
+            headers.insert(reqwest::header::AUTHORIZATION, value);
+        }
+        Ok(headers)
+    }
     async fn send(&self, request: reqwest::RequestBuilder, path: &str) -> Result<Value> {
         let response = request.send().await.map_err(connection_error)?;
         let status = response.status();

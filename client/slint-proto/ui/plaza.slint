@@ -160,6 +160,8 @@ export component ModpackDetails inherits Rectangle {
     in property <string> changelog;
     in property <string> base-world;
     in property <[PlazaContent]> contents;
+    // 0 hidden, 1 安装, 2 安装中 (opens the task), 3 重新安装.
+    in property <int> install-state;
     callback action(string, string);
     background: #f8f7eff7;
     border-radius: 24px;
@@ -174,6 +176,10 @@ export component ModpackDetails inherits Rectangle {
             Text {
                 text: root.version-page ? root.pack.name + " · " + root.version.name : root.pack.name != "" ? root.pack.name : "整合包详情";
                 color: Theme.ink; font-size: 22px; font-weight: 600; vertical-alignment: center; overflow: elide; horizontal-stretch: 1;
+            }
+            if root.version-page && root.install-state > 0 && !root.loading && root.error == "": GlassButton {
+                label: root.install-state == 2 ? "安装中" : root.install-state == 3 ? "重新安装" : "安装";
+                glyph: "\u{f019}"; filled: root.install-state == 1; clicked => { root.action("install", ""); }
             }
             if !root.version-page && root.pack.has-source: GlassButton {
                 label: "打开原帖"; glyph: "\u{f08e}"; clicked => { root.action("source", ""); }

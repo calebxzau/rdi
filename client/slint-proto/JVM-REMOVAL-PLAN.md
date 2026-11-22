@@ -521,3 +521,4 @@ pack, folder copy, one CurseForge and one Modrinth archive; a pack imported by R
 starts in game; Compose lists it and reuses the cache.
 
 - 2026-11-10: J4b Rust downloader/cache/catalog/archive implementation and protocol v5 cleanup added. Validation and remaining acceptance gaps are recorded in `evidence/jvm-removal/j4b/`. GJ4b is not passed; no commit and no J5.
+- 2026-11-22: J4c (room pack install in Rust, `J4C-PLAN.md`) implemented; automated checks pass; isolated live run installed four real packs and entered a room game. Fixed the J4b downloader JSON content-type check. Stop at GJ4c: `evidence/jvm-removal/j4c/`. No commit.

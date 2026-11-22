@@ -57,6 +57,7 @@ enum Reply {
     OptionsSaved(u64, Draft, bool, Result<()>),
     Pick(u64, String, Result<Option<String>>),
     Image(u64, String, Result<image::RgbaImage>),
+    InstallStarted(u64, Result<String>),
 }
 type ArchiveCache = std::sync::Arc<
     std::sync::Mutex<
@@ -113,6 +114,11 @@ pub struct PackUi {
     collapsed_candidates: HashSet<String>,
     session_id: String,
     last_device_uri: String,
+    /// Running game versions, so a room pack install never replaces a version in use.
+    pub running: crate::pack_install::Running,
+    install_prompt: Option<(String, String)>,
+    /// Changes only with the signed-in session; a service restart must not drop a started install.
+    install_generation: u64,
 }
 impl PackUi {
     pub fn wire(ui: &AppWindow, runtime: tokio::runtime::Handle) -> Rc<RefCell<Self>> {
@@ -177,6 +183,9 @@ impl PackUi {
             collapsed_candidates: Default::default(),
             session_id: String::new(),
             last_device_uri: String::new(),
+            running: Default::default(),
+            install_prompt: None,
+            install_generation: 0,
         }));
         let weak = Rc::downgrade(&state);
         ui.on_pack_action(move |action, value| {
@@ -212,6 +221,8 @@ impl PackUi {
     }
     pub fn connect(&mut self, api: Option<Client>) {
         self.generation += 1;
+        self.install_generation += 1;
+        self.install_prompt = None;
         self.busy = false;
         self.queue.clear();
         self.global_java_path = api
@@ -238,6 +249,7 @@ impl PackUi {
             ui.set_pack_menu(false);
             ui.set_install_editor(false);
             ui.set_install_missing(false);
+            ui.set_install_prompt(false);
             ui.set_discard_options(false);
             ui.set_tasks_running(false);
             self.picked.clear();
@@ -275,6 +287,94 @@ impl PackUi {
             }
         }
         self.merge_tasks();
+    }
+    pub fn tasks(&self) -> crate::tasks::Manager {
+        self.native_tasks.clone()
+    }
+    /// Deps for `pack_install`. The catalog opens its identity database, so build it off the UI thread.
+    fn install_deps(&self) -> Option<impl FnOnce() -> crate::pack_install::Deps + Send + 'static> {
+        let api = self.api.as_ref()?;
+        let (server, http) = (api.server().clone(), api.http.clone());
+        let (tasks, runtime, running) = (
+            self.native_tasks.clone(),
+            self.runtime.clone(),
+            self.running.clone(),
+        );
+        Some(move || {
+            let data = crate::paths::data_dir();
+            crate::pack_install::Deps {
+                server,
+                tasks,
+                store: crate::content_store::Store {
+                    root: data.join("dlc"),
+                    downloader: crate::download::Downloader { http: http.clone() },
+                },
+                catalog: std::sync::Arc::new(crate::catalog::Catalog::new(http, &data)),
+                runtime,
+                versions: local_packs::versions_dir(),
+                prefer_mirror: crate::catalog::transport::prefer_mirror(&data.join("config.toml")),
+                running,
+            }
+        })
+    }
+    /// Shows one task in the task panel.
+    pub fn open_task(&mut self, run: &str) {
+        self.collapsed.clear();
+        self.watched = run.into();
+        if let Some(task) = self.native_tasks.snapshot(run) {
+            self.task = task;
+        }
+        self.merge_tasks();
+        self.render_task();
+        self.navigate("tasks");
+    }
+    /// The install confirmation; `value` is `{modpackId, version, name, size}` from the plaza or a room.
+    fn prompt_install(&mut self, ui: &AppWindow, value: &str) {
+        let Ok(v) = serde_json::from_str::<Value>(value) else {
+            tracing::error!("安装整合包参数无效");
+            return;
+        };
+        let (id, version) = (text(&v, "modpackId").to_owned(), text(&v, "version").to_owned());
+        if let Some(run) = self.native_tasks.active(&crate::pack_install::task_key(&id, &version)) {
+            self.open_task(&run);
+            return;
+        }
+        let mut detail = format!("版本{version}");
+        if let Some(size) = v["size"].as_u64().filter(|n| *n > 0) {
+            detail.push_str(&format!(" · {}", human_file_size(size)));
+        }
+        ui.set_install_prompt_name(text(&v, "name").into());
+        ui.set_install_prompt_detail(detail.into());
+        ui.set_install_prompt_extras(false);
+        ui.set_install_prompt(true);
+        self.install_prompt = Some((id, version));
+    }
+    fn confirm_install(&mut self, ui: &AppWindow) {
+        ui.set_install_prompt(false);
+        let Some((modpack_id, version)) = self.install_prompt.take() else {
+            return;
+        };
+        let Some(deps) = self.install_deps() else {
+            ui.set_action_error("请先登录".into());
+            return;
+        };
+        let include_extras = ui.get_install_prompt_extras();
+        let (tx, generation) = (self.tx.clone(), self.install_generation);
+        self.runtime.spawn_blocking(move || {
+            let deps = deps();
+            let result = crate::pack_install::start(
+                &deps,
+                crate::pack_install::InstallRequest {
+                    modpack_id,
+                    version,
+                    include_extras,
+                },
+            );
+            if let Err(error) = &result {
+                tracing::error!(error=%format!("{error:#}"),"开始安装整合包失败");
+            }
+            let _ = tx.send(Reply::InstallStarted(generation, result));
+        });
     }
     pub fn has_running_tasks(&self) -> bool {
         self.native_tasks.running()
@@ -776,6 +876,13 @@ impl PackUi {
             "tasks.subscribe" => {
                 self.merge_tasks();
             }
+            "install.prompt" => self.prompt_install(&ui, value),
+            "install.cancel" => {
+                ui.set_install_prompt(false);
+                self.install_prompt = None;
+            }
+            "install.confirm" => self.confirm_install(&ui),
+            "install.open" => self.open_task(value),
             "tasks.cancel" => {
                 let run = if value.is_empty() {
                     self.watched.clone()
@@ -898,6 +1005,14 @@ impl PackUi {
         }
         while let Ok(reply) = self.rx.try_recv() {
             match reply {
+                Reply::InstallStarted(g, result) if g == self.install_generation => match result {
+                    Ok(run) => self.open_task(&run),
+                    Err(error) => {
+                        if let Some(ui) = self.ui.upgrade() {
+                            ui.set_action_error(format!("{error}").into());
+                        }
+                    }
+                },
                 Reply::ArchiveProgress(g, stage, fraction) if g == self.import_generation => {
                     self.native.value["editor"]["progress"] = json!(stage);
                     self.native.value["editor"]["progressFraction"] =

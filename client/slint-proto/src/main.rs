@@ -17,6 +17,7 @@ mod catalog;
 #[cfg(test)]
 mod j4b_tests;
 mod import;
+mod pack_install;
 mod local_packs;
 mod pack_options;
 mod config;

@@ -108,6 +108,17 @@ fn identity(r: &Response) -> Option<String> {
         .or_else(|| r.headers().get(LAST_MODIFIED).and_then(|v| v.to_str().ok()))
         .map(str::to_owned)
 }
+/// Kotlin `contentType.match(ContentType.Application.Json)`: only `application/json`, with any
+/// parameters. CurseForge's CDN labels some zips `application/x-amz-json-1.0`; those are files.
+pub fn json_response(content_type: Option<&str>) -> bool {
+    content_type.is_some_and(|raw| {
+        raw.split(';')
+            .next()
+            .unwrap_or("")
+            .trim()
+            .eq_ignore_ascii_case("application/json")
+    })
+}
 pub fn content_range(raw: &str) -> Option<(u64, u64, u64)> {
     let (unit, rest) = raw.trim().split_once(' ')?;
     if !unit.eq_ignore_ascii_case("bytes") {
@@ -313,11 +324,12 @@ impl Downloader {
                 );
             }
             ensure!(
-                !response
-                    .headers()
-                    .get("content-type")
-                    .and_then(|h| h.to_str().ok())
-                    .is_some_and(|h| h.contains("json")),
+                !json_response(
+                    response
+                        .headers()
+                        .get("content-type")
+                        .and_then(|h| h.to_str().ok())
+                ),
                 "下载地址返回了JSON"
             );
             let total = if offset > 0 {

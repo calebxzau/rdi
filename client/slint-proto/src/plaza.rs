@@ -280,10 +280,14 @@ pub struct Plaza {
     icon_slots: Arc<Semaphore>,
     detail_id: String,
     detail: Option<Detail>,
+    tasks: crate::tasks::Manager,
+    /// The version page's (name, built) for the install button.
+    shown_version: Option<(String, bool)>,
+    install_checked: std::time::Instant,
 }
 
 impl Plaza {
-    pub fn wire(ui: &AppWindow, runtime: Handle) -> Rc<RefCell<Self>> {
+    pub fn wire(ui: &AppWindow, runtime: Handle, tasks: crate::tasks::Manager) -> Rc<RefCell<Self>> {
         let (tx, rx) = mpsc::channel();
         let cards = Rc::new(VecModel::default());
         ui.set_plaza_cards(cards.clone().into());
@@ -314,6 +318,9 @@ impl Plaza {
             icon_slots: Arc::new(Semaphore::new(6)),
             detail_id: String::new(),
             detail: None,
+            tasks,
+            shown_version: None,
+            install_checked: std::time::Instant::now(),
         }));
         let weak = Rc::downgrade(&plaza);
         ui.on_plaza_action(move |action, value| {
@@ -330,6 +337,7 @@ impl Plaza {
         abort(&mut self.detail_job);
         self.detail = None;
         self.detail_id.clear();
+        self.shown_version = None;
         self.keyword.clear();
         self.filters = PlazaFilters::default();
         self.next = None;
@@ -470,7 +478,30 @@ impl Plaza {
                     .into(),
                 );
                 ui.set_plaza_contents(VecModel::from_slice(&version.contents()));
+                self.shown_version = Some((version.name.clone(), version.status == "OK"));
+                self.update_install(&ui);
                 ui.invoke_navigate("plaza-version".into());
+            }
+            "install" if ui.get_pack_screen() == 5 => {
+                let Some(((name, true), detail)) = self.shown_version.clone().zip(self.detail.as_ref())
+                else {
+                    return;
+                };
+                match self.install_state(&name) {
+                    crate::pack_install::State::Installing(run) => {
+                        ui.invoke_pack_action("install.open".into(), run.into())
+                    }
+                    _ => {
+                        let size = detail
+                            .versions
+                            .iter()
+                            .find(|v| v.name == name)
+                            .and_then(|v| v.total_size);
+                        let value = serde_json::json!({"modpackId":self.detail_id,"version":name,
+                            "name":detail.name,"size":size});
+                        ui.invoke_pack_action("install.prompt".into(), value.to_string().into());
+                    }
+                }
             }
             "source" if ui.get_pack_screen() == 4 => {
                 let Some(url) = self
@@ -594,8 +625,37 @@ impl Plaza {
         Ok(())
     }
 
+    fn install_state(&self, version: &str) -> crate::pack_install::State {
+        crate::pack_install::state_in(
+            &self.tasks,
+            &local_packs::versions_dir(),
+            &self.detail_id,
+            version,
+        )
+    }
+    /// D2/D7: 安装, 安装中 or 重新安装, only for built versions.
+    fn update_install(&mut self, ui: &AppWindow) {
+        self.install_checked = std::time::Instant::now();
+        let value = match &self.shown_version {
+            Some((name, true)) => match self.install_state(name) {
+                crate::pack_install::State::Missing => 1,
+                crate::pack_install::State::Installing(_) => 2,
+                crate::pack_install::State::Installed => 3,
+            },
+            _ => 0,
+        };
+        if ui.get_plaza_install() != value {
+            ui.set_plaza_install(value);
+        }
+    }
+
     pub fn tick(&mut self) {
         let Some(ui) = self.ui.upgrade() else { return };
+        if ui.get_pack_screen() == 5
+            && self.install_checked.elapsed() >= std::time::Duration::from_millis(300)
+        {
+            self.update_install(&ui);
+        }
         while let Ok(reply) = self.rx.try_recv() {
             match reply {
                 Reply::Page(epoch, offset, result) if epoch == self.search_epoch => {

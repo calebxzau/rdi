@@ -65,7 +65,7 @@ struct Entry {
     size: u64,
     directory: bool,
 }
-fn decode_name(raw: &[u8]) -> String {
+pub(crate) fn decode_name(raw: &[u8]) -> String {
     match std::str::from_utf8(raw) {
         Ok(s) => s.into(),
         Err(_) => encoding_rs::GBK.decode(raw).0.into_owned(),

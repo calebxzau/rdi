@@ -17,6 +17,9 @@ sha2 = "=0.10.9"
 encoding_rs = "=0.8.41"
 uuid = { version = "=1.29.0", features = ["v7"] }
 chrono = { version = "=0.4.45", default-features = false, features = ["clock"] }
+# J4c: client pack archives are tar.zst; the zstd C library builds through zigbuild.
+tar = { version = "=0.4.46", default-features = false }
+zstd = { version = "=0.13.3", default-features = false }
 
 rdi-renderer = { path = "crates/rdi-renderer" }
 glam = "=0.34.1"

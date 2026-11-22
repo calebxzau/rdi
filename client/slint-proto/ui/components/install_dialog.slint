@@ -1,0 +1,34 @@
+import { CheckBox } from "std-widgets.slint";
+import { Theme } from "../theme.slint";
+import { GlassButton } from "glass_button.slint";
+import { GlassSurface } from "surfaces.slint";
+
+// J4c: confirm installing a room modpack. Used by the plaza version page and by a room click.
+export component InstallPackDialog inherits GlassSurface {
+    in property <string> pack-name;
+    in property <string> detail;
+    in-out property <bool> include-extras;
+    callback confirmed();
+    callback dismissed();
+    width: 480px; height: content.preferred-height; tint: #f3f4ecf2; background: #f3f4ec; border-radius: 24px;
+    out property <bool> contains-focus: confirm.focused || cancel.focused;
+    public function focus-dialog() { confirm.focus(); }
+    FocusScope {
+        forward-focus: confirm;
+        key-pressed(e) => {
+            if e.text == Key.Escape {root.dismissed(); return accept;}
+            if e.text == Key.Tab {if confirm.focused {cancel.focus();} else {confirm.focus();} return accept;}
+            return reject;
+        }
+        content := VerticalLayout { padding: 24px; spacing: 16px;
+            Text { text: "安装整合包"; font-size: 22px; font-weight: 600; color: Theme.ink; }
+            Text { text: root.pack-name; color: Theme.ink; font-size: 16px; wrap: word-wrap; }
+            if root.detail != "": Text { text: root.detail; color: #526050; font-size: 14px; wrap: word-wrap; }
+            CheckBox { text: "下载此包材质光影"; checked <=> root.include-extras; }
+            HorizontalLayout { alignment: end; spacing: 12px;
+                cancel := GlassButton { label: "取消"; clicked => {root.dismissed();} }
+                confirm := GlassButton { filled: true; label: "安装"; clicked => {root.confirmed();} }
+            }
+        }
+    }
+}

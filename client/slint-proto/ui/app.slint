@@ -7,6 +7,7 @@ import { ListView } from "std-widgets.slint";
 import { ComponentGallery } from "gallery.slint";
 import { GlassShape } from "components/surfaces.slint";
 import { SharedDialog, Toast, ContentRow, LogRow, TaskRow } from "components/shared.slint";
+import { InstallPackDialog } from "components/install_dialog.slint";
 import { Console, TaskProgress } from "components/activity.slint";
 import { TileData, Theme } from "theme.slint";
 import { TitleBar } from "title_bar.slint";
@@ -105,6 +106,12 @@ export component AppWindow inherits Window {
     in property <int> install-runtime-index;
     in property <[ContentRow]> install-contents;
     in-out property <bool> install-missing;
+    // J4c room pack install confirmation; plaza-install: 0 hidden, 1 安装, 2 安装中, 3 重新安装.
+    in-out property <bool> install-prompt;
+    in property <string> install-prompt-name;
+    in property <string> install-prompt-detail;
+    in-out property <bool> install-prompt-extras;
+    in property <int> plaza-install;
     in property <string> install-missing-text;
     in property <int> install-missing-count;
     in property <string> pack-selected-id;
@@ -171,7 +178,7 @@ export component AppWindow inherits Window {
     callback toggle-task(int);
     out property <bool> dialog-focused: dialog.contains-focus;
     out property <bool> gallery-password-revealed: gallery-view.password-revealed;
-    out property <bool> modal-open: root.login-register || root.action-error != "" || root.duplicate-host != "" || root.confirm-exit || root.gallery-dialog || root.local-play || root.pack-menu || root.discard-options || root.install-missing || root.picked-candidates.length > 0;
+    out property <bool> modal-open: root.login-register || root.action-error != "" || root.duplicate-host != "" || root.confirm-exit || root.gallery-dialog || root.local-play || root.pack-menu || root.discard-options || root.install-missing || root.install-prompt || root.picked-candidates.length > 0;
     out property <[GlassShape]> menu-grids: [host-grid.shape, pack-grid.shape];
     out property <[GlassShape]> menu-pills: home-shortcuts.modpacks
         ? [tabs.shape, tabs.selected-shape, first-shortcut.shape, second-shortcut.shape, third-shortcut.shape]
@@ -410,7 +417,7 @@ export component AppWindow inherits Window {
         version-page: root.pack-screen == 5;
         loading: root.plaza-detail-loading; error: root.plaza-detail-error; pack: root.plaza-pack;
         versions: root.plaza-versions; version: root.plaza-version; changelog: root.plaza-changelog;
-        base-world: root.plaza-base-world; contents: root.plaza-contents;
+        base-world: root.plaza-base-world; contents: root.plaza-contents; install-state: root.plaza-install;
         action(a, v) => { if a == "back" { root.navigate("back"); } else { root.plaza-action(a, v); } }
     }
     host-list-view := HostList {
@@ -492,7 +499,7 @@ export component AppWindow inherits Window {
     if root.modal-open: Rectangle { x: 0px; y: 0px; width: parent.width; height: parent.height; background: #0009; TouchArea {} }
     dialog := SharedDialog {
         width: min(480px, root.width - 48px);
-        x: (parent.width - self.width) / 2; y: (parent.height - self.height) / 2; visible: root.modal-open && !root.login-register && !root.local-play && !root.pack-menu && !root.discard-options && !root.install-missing && root.picked-candidates.length == 0;
+        x: (parent.width - self.width) / 2; y: (parent.height - self.height) / 2; visible: root.modal-open && !root.login-register && !root.local-play && !root.pack-menu && !root.discard-options && !root.install-missing && !root.install-prompt && root.picked-candidates.length == 0;
         title: root.confirm-exit ? "退出启动器" : root.duplicate-host != "" ? "重复启动" : root.action-error != "" ? "错误" : "与朋友一起冒险";
         message: root.confirm-exit ? (root.tasks-running ? "任务仍在进行，退出将终止任务和正在运行的游戏。是否继续？" : "游戏仍在运行，退出将终止游戏。是否继续？") : root.duplicate-host != "" ? "该整合包已在运行。再次启动可能造成存档、配置、日志或Mod缓存冲突。是否继续？" : root.action-error != "" ? root.action-error : "准备好探索Minecraft世界了吗？这段较长的中文说明会自动换行。";
         confirm-label: root.confirm-exit ? (root.tasks-running ? "终止并退出" : "终止游戏并退出") : root.duplicate-host != "" ? "继续启动" : root.login-visible ? "明白" : "确定";
@@ -538,6 +545,11 @@ export component AppWindow inherits Window {
         height: min(root.height - 96px, 220px + min(root.install-missing-count, 12) * 18px);
         title: "有" + root.install-missing-count + "个文件无法自动下载"; message: root.install-missing-text; confirm-label: "继续导入";
         confirmed => {root.pack-action("installer.confirmMissing", "");} dismissed => {root.pack-action("installer.dismissMissing", "");}
+    }
+    if root.install-prompt: InstallPackDialog { x: (root.width - self.width) / 2; y: (root.height - self.height) / 2; width: min(480px, root.width - 48px);
+        pack-name: root.install-prompt-name; detail: root.install-prompt-detail; include-extras <=> root.install-prompt-extras;
+        init => {self.focus-dialog();}
+        confirmed => {root.pack-action("install.confirm", "");} dismissed => {root.pack-action("install.cancel", "");}
     }
     if root.picked-candidates.length > 0: Rectangle { x: (root.width - 560px) / 2; y: 80px; width: 560px; height: root.height - 160px; background: #f7faf0f5; border-radius: 24px;
         VerticalLayout { padding: 24px; spacing: 12px;

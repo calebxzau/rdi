@@ -128,6 +128,9 @@ impl Client {
         let service = self.service.clone();
         tokio::task::spawn_blocking(move || service.stop_if_idle()).await?
     }
+    pub fn server(&self) -> &ServerApi {
+        &self.server
+    }
     pub fn uid(&self) -> Result<String> {
         ensure!(!self.uid.is_empty(), "请先登录");
         Ok(self.uid.clone())

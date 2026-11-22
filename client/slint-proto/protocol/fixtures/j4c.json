@@ -1,0 +1,2225 @@
+{
+    "lists": {
+        "removedSlugs": [
+            "chunky",
+            "customskinloader",
+            "default-server-properties",
+            "essential-mod",
+            "lazyyyyy",
+            "log-deduplicator",
+            "mcwifipnp",
+            "powerful-dummy",
+            "skybox-loader-forge",
+            "spark",
+            "tab-list",
+            "what-can-i-see",
+            "zstd-net",
+            "zstdnet"
+        ],
+        "forgeOnlyRemovedSlugs": [
+            "lazyyyyy",
+            "skybox-loader-forge"
+        ],
+        "clientSideSlugs": [
+            "controllable",
+            "flighthud-reborn",
+            "i18nupdatemod",
+            "mafglib",
+            "mekalus-oculus-fork-with-fixed-mekanism-mekasuit",
+            "modern-ui",
+            "status-effect-bars-reforged"
+        ],
+        "bothSideSlugs": [
+            "fusion-connected-textures",
+            "inventory-profiles-next",
+            "inventory-tweaks-refoxed",
+            "just-enough-resources-jer",
+            "loot-beams-refork",
+            "oh-the-trees-youll-grow",
+            "particular-reforged",
+            "radiant-gear",
+            "smartbrainlib"
+        ],
+        "fileSlugAliases": {
+            "true-ending": "trueending"
+        }
+    },
+    "cases": [
+        {
+            "name": "no override keeps every listed mod",
+            "loader": "forge",
+            "mods": [
+                {
+                    "platform": "mr",
+                    "projectId": "p-spark",
+                    "slug": "spark",
+                    "fileId": "f-spark",
+                    "hash": "0688f2dd0688f2dd0688f2dd0688f2dd0688f2dd",
+                    "side": "BOTH",
+                    "downloadUrls": [],
+                    "clientOnlyOverride": false,
+                    "clientOverrideReplaced": false
+                },
+                {
+                    "platform": "mr",
+                    "projectId": "p-world-backups",
+                    "slug": "world-backups",
+                    "fileId": "f-world-backups",
+                    "hash": "aa608fb6aa608fb6aa608fb6aa608fb6aa608fb6",
+                    "side": "BOTH",
+                    "downloadUrls": [],
+                    "clientOnlyOverride": false,
+                    "clientOverrideReplaced": false
+                },
+                {
+                    "platform": "mr",
+                    "projectId": "p-modern-ui",
+                    "slug": "modern-ui",
+                    "fileId": "f-modern-ui",
+                    "hash": "8887840288878402888784028887840288878402",
+                    "side": "BOTH",
+                    "downloadUrls": [],
+                    "clientOnlyOverride": false,
+                    "clientOverrideReplaced": false
+                },
+                {
+                    "platform": "mr",
+                    "projectId": "p-server-only",
+                    "slug": "server-only",
+                    "fileId": "f-server-only",
+                    "hash": "d00623f6d00623f6d00623f6d00623f6d00623f6",
+                    "side": "SERVER",
+                    "downloadUrls": [],
+                    "clientOnlyOverride": false,
+                    "clientOverrideReplaced": false
+                },
+                {
+                    "platform": "mr",
+                    "projectId": "p-unknown-side",
+                    "slug": "unknown-side",
+                    "fileId": "f-unknown-side",
+                    "hash": "ae9c70faae9c70faae9c70faae9c70faae9c70fa",
+                    "side": "UNKNOWN",
+                    "downloadUrls": [],
+                    "clientOnlyOverride": false,
+                    "clientOverrideReplaced": false
+                },
+                {
+                    "platform": "mr",
+                    "projectId": "p-True-Ending",
+                    "slug": "True-Ending",
+                    "fileId": "f-True-Ending",
+                    "hash": "2b506a462b506a462b506a462b506a462b506a46",
+                    "side": "BOTH",
+                    "downloadUrls": [],
+                    "clientOnlyOverride": false,
+                    "clientOverrideReplaced": false
+                },
+                {
+                    "platform": "mr",
+                    "projectId": "p- padded-slug ",
+                    "slug": " padded-slug ",
+                    "fileId": "f- padded-slug ",
+                    "hash": "e943c978e943c978e943c978e943c978e943c978",
+                    "side": "BOTH",
+                    "downloadUrls": [],
+                    "clientOnlyOverride": false,
+                    "clientOverrideReplaced": false
+                },
+                {
+                    "platform": "github",
+                    "projectId": "p-github-sha1",
+                    "slug": "github-sha1",
+                    "fileId": "f-github-sha1",
+                    "hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                    "side": "BOTH",
+                    "downloadUrls": [],
+                    "clientOnlyOverride": false,
+                    "clientOverrideReplaced": false
+                },
+                {
+                    "platform": "github",
+                    "projectId": "p-github-sha256",
+                    "slug": "github-sha256",
+                    "fileId": "f-github-sha256",
+                    "hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                    "side": "BOTH",
+                    "downloadUrls": [],
+                    "clientOnlyOverride": false,
+                    "clientOverrideReplaced": false
+                },
+                {
+                    "platform": "cf",
+                    "projectId": "p-curse",
+                    "slug": "curse",
+                    "fileId": "f-curse",
+                    "hash": "3735928559",
+                    "side": "BOTH",
+                    "downloadUrls": [],
+                    "clientOnlyOverride": false,
+                    "clientOverrideReplaced": false
+                }
+            ],
+            "expected": [
+                {
+                    "slug": "spark",
+                    "platform": "mr",
+                    "side": "BOTH",
+                    "fileName": "spark_mr_0688f2dd0688f2dd0688f2dd0688f2dd0688f2dd.jar",
+                    "digest": "sha1"
+                },
+                {
+                    "slug": "world-backups",
+                    "platform": "mr",
+                    "side": "BOTH",
+                    "fileName": "world-backups_mr_aa608fb6aa608fb6aa608fb6aa608fb6aa608fb6.jar",
+                    "digest": "sha1"
+                },
+                {
+                    "slug": "modern-ui",
+                    "platform": "mr",
+                    "side": "BOTH",
+                    "fileName": "modern-ui_mr_8887840288878402888784028887840288878402.jar",
+                    "digest": "sha1"
+                },
+                {
+                    "slug": "True-Ending",
+                    "platform": "mr",
+                    "side": "BOTH",
+                    "fileName": "trueending_mr_2b506a462b506a462b506a462b506a462b506a46.jar",
+                    "digest": "sha1"
+                },
+                {
+                    "slug": " padded-slug ",
+                    "platform": "mr",
+                    "side": "BOTH",
+                    "fileName": "padded-slug_mr_e943c978e943c978e943c978e943c978e943c978.jar",
+                    "digest": "sha1"
+                },
+                {
+                    "slug": "github-sha1",
+                    "platform": "github",
+                    "side": "BOTH",
+                    "fileName": "github-sha1_github_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.jar",
+                    "digest": "sha1"
+                },
+                {
+                    "slug": "github-sha256",
+                    "platform": "github",
+                    "side": "BOTH",
+                    "fileName": "github-sha256_github_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.jar",
+                    "digest": "sha256"
+                },
+                {
+                    "slug": "curse",
+                    "platform": "cf",
+                    "side": "BOTH",
+                    "fileName": "curse_cf_3735928559.jar",
+                    "digest": "murmur2"
+                }
+            ]
+        },
+        {
+            "name": "overrides on forge",
+            "loader": "forge",
+            "mods": [
+                {
+                    "platform": "mr",
+                    "projectId": "p-shadow",
+                    "slug": "shadow",
+                    "fileId": "f-shadow",
+                    "hash": "cccccccccccccccccccccccccccccccccccccccc",
+                    "side": "BOTH",
+                    "downloadUrls": [],
+                    "clientOnlyOverride": true,
+                    "clientOverrideReplaced": false
+                },
+                {
+                    "platform": "mr",
+                    "projectId": "p-shadow",
+                    "slug": "shadow",
+                    "fileId": "f-shadow",
+                    "hash": "dddddddddddddddddddddddddddddddddddddddd",
+                    "side": "BOTH",
+                    "downloadUrls": [],
+                    "clientOnlyOverride": false,
+                    "clientOverrideReplaced": false
+                },
+                {
+                    "platform": "mr",
+                    "projectId": "p-shadow-client",
+                    "slug": "shadow-client",
+                    "fileId": "f-shadow-client",
+                    "hash": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+                    "side": "BOTH",
+                    "downloadUrls": [],
+                    "clientOnlyOverride": true,
+                    "clientOverrideReplaced": false
+                },
+                {
+                    "platform": "mr",
+                    "projectId": "p-shadow-client",
+                    "slug": "shadow-client",
+                    "fileId": "f-shadow-client",
+                    "hash": "ffffffffffffffffffffffffffffffffffffffff",
+                    "side": "CLIENT",
+                    "downloadUrls": [],
+                    "clientOnlyOverride": false,
+                    "clientOverrideReplaced": false
+                },
+                {
+                    "platform": "mr",
+                    "projectId": "p-shadow-server",
+                    "slug": "shadow-server",
+                    "fileId": "f-shadow-server",
+                    "hash": "1111111111111111111111111111111111111111",
+                    "side": "BOTH",
+                    "downloadUrls": [],
+                    "clientOnlyOverride": true,
+                    "clientOverrideReplaced": false
+                },
+                {
+                    "platform": "mr",
+                    "projectId": "p-shadow-server",
+                    "slug": "shadow-server",
+                    "fileId": "f-shadow-server",
+                    "hash": "2222222222222222222222222222222222222222",
+                    "side": "SERVER",
+                    "downloadUrls": [],
+                    "clientOnlyOverride": false,
+                    "clientOverrideReplaced": false
+                },
+                {
+                    "platform": "mr",
+                    "projectId": "p-same-hash",
+                    "slug": "same-hash",
+                    "fileId": "f-same-hash",
+                    "hash": "3333333333333333333333333333333333333333",
+                    "side": "BOTH",
+                    "downloadUrls": [],
+                    "clientOnlyOverride": true,
+                    "clientOverrideReplaced": false
+                },
+                {
+                    "platform": "mr",
+                    "projectId": "p-same-hash",
+                    "slug": "same-hash",
+                    "fileId": "f-same-hash",
+                    "hash": "3333333333333333333333333333333333333333",
+                    "side": "BOTH",
+                    "downloadUrls": [],
+                    "clientOnlyOverride": false,
+                    "clientOverrideReplaced": false
+                },
+                {
+                    "platform": "mr",
+                    "projectId": "p-replaced-client",
+                    "slug": "replaced-client",
+                    "fileId": "f-replaced-client",
+                    "hash": "aa09a408aa09a408aa09a408aa09a408aa09a408",
+                    "side": "CLIENT",
+                    "downloadUrls": [],
+                    "clientOnlyOverride": false,
+                    "clientOverrideReplaced": true
+                },
+                {
+                    "platform": "mr",
+                    "projectId": "p-replaced-both",
+                    "slug": "replaced-both",
+                    "fileId": "f-replaced-both",
+                    "hash": "589dd6fe589dd6fe589dd6fe589dd6fe589dd6fe",
+                    "side": "BOTH",
+                    "downloadUrls": [],
+                    "clientOnlyOverride": false,
+                    "clientOverrideReplaced": true
+                },
+                {
+                    "platform": "mr",
+                    "projectId": "p-replaced-server",
+                    "slug": "replaced-server",
+                    "fileId": "f-replaced-server",
+                    "hash": "c4f8df80c4f8df80c4f8df80c4f8df80c4f8df80",
+                    "side": "SERVER",
+                    "downloadUrls": [],
+                    "clientOnlyOverride": false,
+                    "clientOverrideReplaced": true
+                },
+                {
+                    "platform": "mr",
+                    "projectId": "p-lazyyyyy",
+                    "slug": "lazyyyyy",
+                    "fileId": "f-lazyyyyy",
+                    "hash": "b54c8fb4b54c8fb4b54c8fb4b54c8fb4b54c8fb4",
+                    "side": "BOTH",
+                    "downloadUrls": [],
+                    "clientOnlyOverride": false,
+                    "clientOverrideReplaced": false
+                },
+                {
+                    "platform": "mr",
+                    "projectId": "p-skybox-loader-forge",
+                    "slug": "skybox-loader-forge",
+                    "fileId": "f-skybox-loader-forge",
+                    "hash": "ef693910ef693910ef693910ef693910ef693910",
+                    "side": "BOTH",
+                    "downloadUrls": [],
+                    "clientOnlyOverride": false,
+                    "clientOverrideReplaced": false
+                },
+                {
+                    "platform": "mr",
+                    "projectId": "p-spark",
+                    "slug": "spark",
+                    "fileId": "f-spark",
+                    "hash": "0688f2dd0688f2dd0688f2dd0688f2dd0688f2dd",
+                    "side": "BOTH",
+                    "downloadUrls": [],
+                    "clientOnlyOverride": false,
+                    "clientOverrideReplaced": false
+                },
+                {
+                    "platform": "mr",
+                    "projectId": "p-my-backup-mod",
+                    "slug": "my-backup-mod",
+                    "fileId": "f-my-backup-mod",
+                    "hash": "25363b3825363b3825363b3825363b3825363b38",
+                    "side": "BOTH",
+                    "downloadUrls": [],
+                    "clientOnlyOverride": false,
+                    "clientOverrideReplaced": false
+                },
+                {
+                    "platform": "mr",
+                    "projectId": "p-modern-ui",
+                    "slug": "modern-ui",
+                    "fileId": "f-modern-ui",
+                    "hash": "8887840288878402888784028887840288878402",
+                    "side": "BOTH",
+                    "downloadUrls": [],
+                    "clientOnlyOverride": false,
+                    "clientOverrideReplaced": false
+                },
+                {
+                    "platform": "mr",
+                    "projectId": "p-loot-beams-refork",
+                    "slug": "loot-beams-refork",
+                    "fileId": "f-loot-beams-refork",
+                    "hash": "31adbfc331adbfc331adbfc331adbfc331adbfc3",
+                    "side": "CLIENT",
+                    "downloadUrls": [],
+                    "clientOnlyOverride": false,
+                    "clientOverrideReplaced": false
+                },
+                {
+                    "platform": "mr",
+                    "projectId": "p-Inventory-Profiles-Next",
+                    "slug": "Inventory-Profiles-Next",
+                    "fileId": "f-Inventory-Profiles-Next",
+                    "hash": "54d0582554d0582554d0582554d0582554d05825",
+                    "side": "SERVER",
+                    "downloadUrls": [],
+                    "clientOnlyOverride": false,
+                    "clientOverrideReplaced": false
+                }
+            ],
+            "expected": [
+                {
+                    "slug": "shadow",
+                    "platform": "mr",
+                    "side": "CLIENT",
+                    "fileName": "shadow_mr_cccccccccccccccccccccccccccccccccccccccc.jar",
+                    "digest": "sha1"
+                },
+                {
+                    "slug": "shadow-client",
+                    "platform": "mr",
+                    "side": "CLIENT",
+                    "fileName": "shadow-client_mr_eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee.jar",
+                    "digest": "sha1"
+                },
+                {
+                    "slug": "shadow-server",
+                    "platform": "mr",
+                    "side": "CLIENT",
+                    "fileName": "shadow-server_mr_1111111111111111111111111111111111111111.jar",
+                    "digest": "sha1"
+                },
+                {
+                    "slug": "same-hash",
+                    "platform": "mr",
+                    "side": "CLIENT",
+                    "fileName": "same-hash_mr_3333333333333333333333333333333333333333.jar",
+                    "digest": "sha1"
+                },
+                {
+                    "slug": "same-hash",
+                    "platform": "mr",
+                    "side": "BOTH",
+                    "fileName": "same-hash_mr_3333333333333333333333333333333333333333.jar",
+                    "digest": "sha1"
+                },
+                {
+                    "slug": "modern-ui",
+                    "platform": "mr",
+                    "side": "CLIENT",
+                    "fileName": "modern-ui_mr_8887840288878402888784028887840288878402.jar",
+                    "digest": "sha1"
+                },
+                {
+                    "slug": "loot-beams-refork",
+                    "platform": "mr",
+                    "side": "BOTH",
+                    "fileName": "loot-beams-refork_mr_31adbfc331adbfc331adbfc331adbfc331adbfc3.jar",
+                    "digest": "sha1"
+                },
+                {
+                    "slug": "Inventory-Profiles-Next",
+                    "platform": "mr",
+                    "side": "BOTH",
+                    "fileName": "Inventory-Profiles-Next_mr_54d0582554d0582554d0582554d0582554d05825.jar",
+                    "digest": "sha1"
+                }
+            ]
+        },
+        {
+            "name": "overrides on neoforge",
+            "loader": "neoforge",
+            "mods": [
+                {
+                    "platform": "mr",
+                    "projectId": "p-shadow",
+                    "slug": "shadow",
+                    "fileId": "f-shadow",
+                    "hash": "cccccccccccccccccccccccccccccccccccccccc",
+                    "side": "BOTH",
+                    "downloadUrls": [],
+                    "clientOnlyOverride": true,
+                    "clientOverrideReplaced": false
+                },
+                {
+                    "platform": "mr",
+                    "projectId": "p-shadow",
+                    "slug": "shadow",
+                    "fileId": "f-shadow",
+                    "hash": "dddddddddddddddddddddddddddddddddddddddd",
+                    "side": "BOTH",
+                    "downloadUrls": [],
+                    "clientOnlyOverride": false,
+                    "clientOverrideReplaced": false
+                },
+                {
+                    "platform": "mr",
+                    "projectId": "p-shadow-client",
+                    "slug": "shadow-client",
+                    "fileId": "f-shadow-client",
+                    "hash": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+                    "side": "BOTH",
+                    "downloadUrls": [],
+                    "clientOnlyOverride": true,
+                    "clientOverrideReplaced": false
+                },
+                {
+                    "platform": "mr",
+                    "projectId": "p-shadow-client",
+                    "slug": "shadow-client",
+                    "fileId": "f-shadow-client",
+                    "hash": "ffffffffffffffffffffffffffffffffffffffff",
+                    "side": "CLIENT",
+                    "downloadUrls": [],
+                    "clientOnlyOverride": false,
+                    "clientOverrideReplaced": false
+                },
+                {
+                    "platform": "mr",
+                    "projectId": "p-shadow-server",
+                    "slug": "shadow-server",
+                    "fileId": "f-shadow-server",
+                    "hash": "1111111111111111111111111111111111111111",
+                    "side": "BOTH",
+                    "downloadUrls": [],
+                    "clientOnlyOverride": true,
+                    "clientOverrideReplaced": false
+                },
+                {
+                    "platform": "mr",
+                    "projectId": "p-shadow-server",
+                    "slug": "shadow-server",
+                    "fileId": "f-shadow-server",
+                    "hash": "2222222222222222222222222222222222222222",
+                    "side": "SERVER",
+                    "downloadUrls": [],
+                    "clientOnlyOverride": false,
+                    "clientOverrideReplaced": false
+                },
+                {
+                    "platform": "mr",
+                    "projectId": "p-same-hash",
+                    "slug": "same-hash",
+                    "fileId": "f-same-hash",
+                    "hash": "3333333333333333333333333333333333333333",
+                    "side": "BOTH",
+                    "downloadUrls": [],
+                    "clientOnlyOverride": true,
+                    "clientOverrideReplaced": false
+                },
+                {
+                    "platform": "mr",
+                    "projectId": "p-same-hash",
+                    "slug": "same-hash",
+                    "fileId": "f-same-hash",
+                    "hash": "3333333333333333333333333333333333333333",
+                    "side": "BOTH",
+                    "downloadUrls": [],
+                    "clientOnlyOverride": false,
+                    "clientOverrideReplaced": false
+                },
+                {
+                    "platform": "mr",
+                    "projectId": "p-replaced-client",
+                    "slug": "replaced-client",
+                    "fileId": "f-replaced-client",
+                    "hash": "aa09a408aa09a408aa09a408aa09a408aa09a408",
+                    "side": "CLIENT",
+                    "downloadUrls": [],
+                    "clientOnlyOverride": false,
+                    "clientOverrideReplaced": true
+                },
+                {
+                    "platform": "mr",
+                    "projectId": "p-replaced-both",
+                    "slug": "replaced-both",
+                    "fileId": "f-replaced-both",
+                    "hash": "589dd6fe589dd6fe589dd6fe589dd6fe589dd6fe",
+                    "side": "BOTH",
+                    "downloadUrls": [],
+                    "clientOnlyOverride": false,
+                    "clientOverrideReplaced": true
+                },
+                {
+                    "platform": "mr",
+                    "projectId": "p-replaced-server",
+                    "slug": "replaced-server",
+                    "fileId": "f-replaced-server",
+                    "hash": "c4f8df80c4f8df80c4f8df80c4f8df80c4f8df80",
+                    "side": "SERVER",
+                    "downloadUrls": [],
+                    "clientOnlyOverride": false,
+                    "clientOverrideReplaced": true
+                },
+                {
+                    "platform": "mr",
+                    "projectId": "p-lazyyyyy",
+                    "slug": "lazyyyyy",
+                    "fileId": "f-lazyyyyy",
+                    "hash": "b54c8fb4b54c8fb4b54c8fb4b54c8fb4b54c8fb4",
+                    "side": "BOTH",
+                    "downloadUrls": [],
+                    "clientOnlyOverride": false,
+                    "clientOverrideReplaced": false
+                },
+                {
+                    "platform": "mr",
+                    "projectId": "p-skybox-loader-forge",
+                    "slug": "skybox-loader-forge",
+                    "fileId": "f-skybox-loader-forge",
+                    "hash": "ef693910ef693910ef693910ef693910ef693910",
+                    "side": "BOTH",
+                    "downloadUrls": [],
+                    "clientOnlyOverride": false,
+                    "clientOverrideReplaced": false
+                },
+                {
+                    "platform": "mr",
+                    "projectId": "p-spark",
+                    "slug": "spark",
+                    "fileId": "f-spark",
+                    "hash": "0688f2dd0688f2dd0688f2dd0688f2dd0688f2dd",
+                    "side": "BOTH",
+                    "downloadUrls": [],
+                    "clientOnlyOverride": false,
+                    "clientOverrideReplaced": false
+                },
+                {
+                    "platform": "mr",
+                    "projectId": "p-my-backup-mod",
+                    "slug": "my-backup-mod",
+                    "fileId": "f-my-backup-mod",
+                    "hash": "25363b3825363b3825363b3825363b3825363b38",
+                    "side": "BOTH",
+                    "downloadUrls": [],
+                    "clientOnlyOverride": false,
+                    "clientOverrideReplaced": false
+                },
+                {
+                    "platform": "mr",
+                    "projectId": "p-modern-ui",
+                    "slug": "modern-ui",
+                    "fileId": "f-modern-ui",
+                    "hash": "8887840288878402888784028887840288878402",
+                    "side": "BOTH",
+                    "downloadUrls": [],
+                    "clientOnlyOverride": false,
+                    "clientOverrideReplaced": false
+                },
+                {
+                    "platform": "mr",
+                    "projectId": "p-loot-beams-refork",
+                    "slug": "loot-beams-refork",
+                    "fileId": "f-loot-beams-refork",
+                    "hash": "31adbfc331adbfc331adbfc331adbfc331adbfc3",
+                    "side": "CLIENT",
+                    "downloadUrls": [],
+                    "clientOnlyOverride": false,
+                    "clientOverrideReplaced": false
+                },
+                {
+                    "platform": "mr",
+                    "projectId": "p-Inventory-Profiles-Next",
+                    "slug": "Inventory-Profiles-Next",
+                    "fileId": "f-Inventory-Profiles-Next",
+                    "hash": "54d0582554d0582554d0582554d0582554d05825",
+                    "side": "SERVER",
+                    "downloadUrls": [],
+                    "clientOnlyOverride": false,
+                    "clientOverrideReplaced": false
+                }
+            ],
+            "expected": [
+                {
+                    "slug": "shadow",
+                    "platform": "mr",
+                    "side": "CLIENT",
+                    "fileName": "shadow_mr_cccccccccccccccccccccccccccccccccccccccc.jar",
+                    "digest": "sha1"
+                },
+                {
+                    "slug": "shadow-client",
+                    "platform": "mr",
+                    "side": "CLIENT",
+                    "fileName": "shadow-client_mr_eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee.jar",
+                    "digest": "sha1"
+                },
+                {
+                    "slug": "shadow-server",
+                    "platform": "mr",
+                    "side": "CLIENT",
+                    "fileName": "shadow-server_mr_1111111111111111111111111111111111111111.jar",
+                    "digest": "sha1"
+                },
+                {
+                    "slug": "same-hash",
+                    "platform": "mr",
+                    "side": "CLIENT",
+                    "fileName": "same-hash_mr_3333333333333333333333333333333333333333.jar",
+                    "digest": "sha1"
+                },
+                {
+                    "slug": "same-hash",
+                    "platform": "mr",
+                    "side": "BOTH",
+                    "fileName": "same-hash_mr_3333333333333333333333333333333333333333.jar",
+                    "digest": "sha1"
+                },
+                {
+                    "slug": "modern-ui",
+                    "platform": "mr",
+                    "side": "CLIENT",
+                    "fileName": "modern-ui_mr_8887840288878402888784028887840288878402.jar",
+                    "digest": "sha1"
+                },
+                {
+                    "slug": "loot-beams-refork",
+                    "platform": "mr",
+                    "side": "BOTH",
+                    "fileName": "loot-beams-refork_mr_31adbfc331adbfc331adbfc331adbfc331adbfc3.jar",
+                    "digest": "sha1"
+                },
+                {
+                    "slug": "Inventory-Profiles-Next",
+                    "platform": "mr",
+                    "side": "BOTH",
+                    "fileName": "Inventory-Profiles-Next_mr_54d0582554d0582554d0582554d0582554d05825.jar",
+                    "digest": "sha1"
+                }
+            ]
+        },
+        {
+            "name": "overrides on fabric",
+            "loader": "Fabric",
+            "mods": [
+                {
+                    "platform": "mr",
+                    "projectId": "p-shadow",
+                    "slug": "shadow",
+                    "fileId": "f-shadow",
+                    "hash": "cccccccccccccccccccccccccccccccccccccccc",
+                    "side": "BOTH",
+                    "downloadUrls": [],
+                    "clientOnlyOverride": true,
+                    "clientOverrideReplaced": false
+                },
+                {
+                    "platform": "mr",
+                    "projectId": "p-shadow",
+                    "slug": "shadow",
+                    "fileId": "f-shadow",
+                    "hash": "dddddddddddddddddddddddddddddddddddddddd",
+                    "side": "BOTH",
+                    "downloadUrls": [],
+                    "clientOnlyOverride": false,
+                    "clientOverrideReplaced": false
+                },
+                {
+                    "platform": "mr",
+                    "projectId": "p-shadow-client",
+                    "slug": "shadow-client",
+                    "fileId": "f-shadow-client",
+                    "hash": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+                    "side": "BOTH",
+                    "downloadUrls": [],
+                    "clientOnlyOverride": true,
+                    "clientOverrideReplaced": false
+                },
+                {
+                    "platform": "mr",
+                    "projectId": "p-shadow-client",
+                    "slug": "shadow-client",
+                    "fileId": "f-shadow-client",
+                    "hash": "ffffffffffffffffffffffffffffffffffffffff",
+                    "side": "CLIENT",
+                    "downloadUrls": [],
+                    "clientOnlyOverride": false,
+                    "clientOverrideReplaced": false
+                },
+                {
+                    "platform": "mr",
+                    "projectId": "p-shadow-server",
+                    "slug": "shadow-server",
+                    "fileId": "f-shadow-server",
+                    "hash": "1111111111111111111111111111111111111111",
+                    "side": "BOTH",
+                    "downloadUrls": [],
+                    "clientOnlyOverride": true,
+                    "clientOverrideReplaced": false
+                },
+                {
+                    "platform": "mr",
+                    "projectId": "p-shadow-server",
+                    "slug": "shadow-server",
+                    "fileId": "f-shadow-server",
+                    "hash": "2222222222222222222222222222222222222222",
+                    "side": "SERVER",
+                    "downloadUrls": [],
+                    "clientOnlyOverride": false,
+                    "clientOverrideReplaced": false
+                },
+                {
+                    "platform": "mr",
+                    "projectId": "p-same-hash",
+                    "slug": "same-hash",
+                    "fileId": "f-same-hash",
+                    "hash": "3333333333333333333333333333333333333333",
+                    "side": "BOTH",
+                    "downloadUrls": [],
+                    "clientOnlyOverride": true,
+                    "clientOverrideReplaced": false
+                },
+                {
+                    "platform": "mr",
+                    "projectId": "p-same-hash",
+                    "slug": "same-hash",
+                    "fileId": "f-same-hash",
+                    "hash": "3333333333333333333333333333333333333333",
+                    "side": "BOTH",
+                    "downloadUrls": [],
+                    "clientOnlyOverride": false,
+                    "clientOverrideReplaced": false
+                },
+                {
+                    "platform": "mr",
+                    "projectId": "p-replaced-client",
+                    "slug": "replaced-client",
+                    "fileId": "f-replaced-client",
+                    "hash": "aa09a408aa09a408aa09a408aa09a408aa09a408",
+                    "side": "CLIENT",
+                    "downloadUrls": [],
+                    "clientOnlyOverride": false,
+                    "clientOverrideReplaced": true
+                },
+                {
+                    "platform": "mr",
+                    "projectId": "p-replaced-both",
+                    "slug": "replaced-both",
+                    "fileId": "f-replaced-both",
+                    "hash": "589dd6fe589dd6fe589dd6fe589dd6fe589dd6fe",
+                    "side": "BOTH",
+                    "downloadUrls": [],
+                    "clientOnlyOverride": false,
+                    "clientOverrideReplaced": true
+                },
+                {
+                    "platform": "mr",
+                    "projectId": "p-replaced-server",
+                    "slug": "replaced-server",
+                    "fileId": "f-replaced-server",
+                    "hash": "c4f8df80c4f8df80c4f8df80c4f8df80c4f8df80",
+                    "side": "SERVER",
+                    "downloadUrls": [],
+                    "clientOnlyOverride": false,
+                    "clientOverrideReplaced": true
+                },
+                {
+                    "platform": "mr",
+                    "projectId": "p-lazyyyyy",
+                    "slug": "lazyyyyy",
+                    "fileId": "f-lazyyyyy",
+                    "hash": "b54c8fb4b54c8fb4b54c8fb4b54c8fb4b54c8fb4",
+                    "side": "BOTH",
+                    "downloadUrls": [],
+                    "clientOnlyOverride": false,
+                    "clientOverrideReplaced": false
+                },
+                {
+                    "platform": "mr",
+                    "projectId": "p-skybox-loader-forge",
+                    "slug": "skybox-loader-forge",
+                    "fileId": "f-skybox-loader-forge",
+                    "hash": "ef693910ef693910ef693910ef693910ef693910",
+                    "side": "BOTH",
+                    "downloadUrls": [],
+                    "clientOnlyOverride": false,
+                    "clientOverrideReplaced": false
+                },
+                {
+                    "platform": "mr",
+                    "projectId": "p-spark",
+                    "slug": "spark",
+                    "fileId": "f-spark",
+                    "hash": "0688f2dd0688f2dd0688f2dd0688f2dd0688f2dd",
+                    "side": "BOTH",
+                    "downloadUrls": [],
+                    "clientOnlyOverride": false,
+                    "clientOverrideReplaced": false
+                },
+                {
+                    "platform": "mr",
+                    "projectId": "p-my-backup-mod",
+                    "slug": "my-backup-mod",
+                    "fileId": "f-my-backup-mod",
+                    "hash": "25363b3825363b3825363b3825363b3825363b38",
+                    "side": "BOTH",
+                    "downloadUrls": [],
+                    "clientOnlyOverride": false,
+                    "clientOverrideReplaced": false
+                },
+                {
+                    "platform": "mr",
+                    "projectId": "p-modern-ui",
+                    "slug": "modern-ui",
+                    "fileId": "f-modern-ui",
+                    "hash": "8887840288878402888784028887840288878402",
+                    "side": "BOTH",
+                    "downloadUrls": [],
+                    "clientOnlyOverride": false,
+                    "clientOverrideReplaced": false
+                },
+                {
+                    "platform": "mr",
+                    "projectId": "p-loot-beams-refork",
+                    "slug": "loot-beams-refork",
+                    "fileId": "f-loot-beams-refork",
+                    "hash": "31adbfc331adbfc331adbfc331adbfc331adbfc3",
+                    "side": "CLIENT",
+                    "downloadUrls": [],
+                    "clientOnlyOverride": false,
+                    "clientOverrideReplaced": false
+                },
+                {
+                    "platform": "mr",
+                    "projectId": "p-Inventory-Profiles-Next",
+                    "slug": "Inventory-Profiles-Next",
+                    "fileId": "f-Inventory-Profiles-Next",
+                    "hash": "54d0582554d0582554d0582554d0582554d05825",
+                    "side": "SERVER",
+                    "downloadUrls": [],
+                    "clientOnlyOverride": false,
+                    "clientOverrideReplaced": false
+                }
+            ],
+            "expected": [
+                {
+                    "slug": "shadow",
+                    "platform": "mr",
+                    "side": "CLIENT",
+                    "fileName": "shadow_mr_cccccccccccccccccccccccccccccccccccccccc.jar",
+                    "digest": "sha1"
+                },
+                {
+                    "slug": "shadow-client",
+                    "platform": "mr",
+                    "side": "CLIENT",
+                    "fileName": "shadow-client_mr_eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee.jar",
+                    "digest": "sha1"
+                },
+                {
+                    "slug": "shadow-server",
+                    "platform": "mr",
+                    "side": "CLIENT",
+                    "fileName": "shadow-server_mr_1111111111111111111111111111111111111111.jar",
+                    "digest": "sha1"
+                },
+                {
+                    "slug": "same-hash",
+                    "platform": "mr",
+                    "side": "CLIENT",
+                    "fileName": "same-hash_mr_3333333333333333333333333333333333333333.jar",
+                    "digest": "sha1"
+                },
+                {
+                    "slug": "same-hash",
+                    "platform": "mr",
+                    "side": "BOTH",
+                    "fileName": "same-hash_mr_3333333333333333333333333333333333333333.jar",
+                    "digest": "sha1"
+                },
+                {
+                    "slug": "lazyyyyy",
+                    "platform": "mr",
+                    "side": "BOTH",
+                    "fileName": "lazyyyyy_mr_b54c8fb4b54c8fb4b54c8fb4b54c8fb4b54c8fb4.jar",
+                    "digest": "sha1"
+                },
+                {
+                    "slug": "skybox-loader-forge",
+                    "platform": "mr",
+                    "side": "BOTH",
+                    "fileName": "skybox-loader-forge_mr_ef693910ef693910ef693910ef693910ef693910.jar",
+                    "digest": "sha1"
+                },
+                {
+                    "slug": "modern-ui",
+                    "platform": "mr",
+                    "side": "BOTH",
+                    "fileName": "modern-ui_mr_8887840288878402888784028887840288878402.jar",
+                    "digest": "sha1"
+                },
+                {
+                    "slug": "loot-beams-refork",
+                    "platform": "mr",
+                    "side": "CLIENT",
+                    "fileName": "loot-beams-refork_mr_31adbfc331adbfc331adbfc331adbfc331adbfc3.jar",
+                    "digest": "sha1"
+                }
+            ]
+        },
+        {
+            "name": "sameMod fallbacks",
+            "loader": "forge",
+            "mods": [
+                {
+                    "platform": "mr",
+                    "projectId": "",
+                    "slug": "by-slug",
+                    "fileId": "f-by-slug",
+                    "hash": "4444444444444444444444444444444444444444",
+                    "side": "BOTH",
+                    "downloadUrls": [],
+                    "clientOnlyOverride": true,
+                    "clientOverrideReplaced": false
+                },
+                {
+                    "platform": "mr",
+                    "projectId": "other",
+                    "slug": "BY-SLUG",
+                    "fileId": "f-BY-SLUG",
+                    "hash": "5555555555555555555555555555555555555555",
+                    "side": "BOTH",
+                    "downloadUrls": [],
+                    "clientOnlyOverride": false,
+                    "clientOverrideReplaced": false
+                },
+                {
+                    "platform": "github",
+                    "projectId": "",
+                    "slug": "",
+                    "fileId": "f-",
+                    "hash": "6666666666666666666666666666666666666666",
+                    "side": "BOTH",
+                    "downloadUrls": [],
+                    "clientOnlyOverride": true,
+                    "clientOverrideReplaced": false
+                },
+                {
+                    "platform": "mr",
+                    "projectId": "x",
+                    "slug": "",
+                    "fileId": "f-",
+                    "hash": "7777777777777777777777777777777777777777",
+                    "side": "BOTH",
+                    "downloadUrls": [],
+                    "clientOnlyOverride": false,
+                    "clientOverrideReplaced": false
+                },
+                {
+                    "platform": "cf",
+                    "projectId": "42",
+                    "slug": "other-platform",
+                    "fileId": "f-other-platform",
+                    "hash": "1",
+                    "side": "BOTH",
+                    "downloadUrls": [],
+                    "clientOnlyOverride": true,
+                    "clientOverrideReplaced": false
+                },
+                {
+                    "platform": "mr",
+                    "projectId": "42",
+                    "slug": "other-platform-2",
+                    "fileId": "f-other-platform-2",
+                    "hash": "8888888888888888888888888888888888888888",
+                    "side": "BOTH",
+                    "downloadUrls": [],
+                    "clientOnlyOverride": false,
+                    "clientOverrideReplaced": false
+                }
+            ],
+            "expected": [
+                {
+                    "slug": "by-slug",
+                    "platform": "mr",
+                    "side": "CLIENT",
+                    "fileName": "by-slug_mr_4444444444444444444444444444444444444444.jar",
+                    "digest": "sha1"
+                },
+                {
+                    "slug": "",
+                    "platform": "github",
+                    "side": "CLIENT",
+                    "fileName": "_github_6666666666666666666666666666666666666666.jar",
+                    "digest": "sha1"
+                },
+                {
+                    "slug": "",
+                    "platform": "mr",
+                    "side": "BOTH",
+                    "fileName": "_mr_7777777777777777777777777777777777777777.jar",
+                    "digest": "sha1"
+                },
+                {
+                    "slug": "other-platform",
+                    "platform": "cf",
+                    "side": "CLIENT",
+                    "fileName": "other-platform_cf_1.jar",
+                    "digest": "murmur2"
+                },
+                {
+                    "slug": "other-platform-2",
+                    "platform": "mr",
+                    "side": "BOTH",
+                    "fileName": "other-platform-2_mr_8888888888888888888888888888888888888888.jar",
+                    "digest": "sha1"
+                }
+            ]
+        },
+        {
+            "name": "removed list on forge",
+            "loader": "forge",
+            "mods": [
+                {
+                    "platform": "mr",
+                    "projectId": "p-trigger",
+                    "slug": "trigger",
+                    "fileId": "f-trigger",
+                    "hash": "c0d355b8c0d355b8c0d355b8c0d355b8c0d355b8",
+                    "side": "BOTH",
+                    "downloadUrls": [],
+                    "clientOnlyOverride": true,
+                    "clientOverrideReplaced": false
+                },
+                {
+                    "platform": "mr",
+                    "projectId": "p-chunky",
+                    "slug": "chunky",
+                    "fileId": "f-chunky",
+                    "hash": "aee02bacaee02bacaee02bacaee02bacaee02bac",
+                    "side": "CLIENT",
+                    "downloadUrls": [],
+                    "clientOnlyOverride": false,
+                    "clientOverrideReplaced": false
+                },
+                {
+                    "platform": "mr",
+                    "projectId": "p-customskinloader",
+                    "slug": "customskinloader",
+                    "fileId": "f-customskinloader",
+                    "hash": "5c8df6015c8df6015c8df6015c8df6015c8df601",
+                    "side": "SERVER",
+                    "downloadUrls": [],
+                    "clientOnlyOverride": false,
+                    "clientOverrideReplaced": false
+                },
+                {
+                    "platform": "mr",
+                    "projectId": "p-default-server-properties",
+                    "slug": "default-server-properties",
+                    "fileId": "f-default-server-properties",
+                    "hash": "a78b9971a78b9971a78b9971a78b9971a78b9971",
+                    "side": "BOTH",
+                    "downloadUrls": [],
+                    "clientOnlyOverride": false,
+                    "clientOverrideReplaced": false
+                },
+                {
+                    "platform": "mr",
+                    "projectId": "p-essential-mod",
+                    "slug": "essential-mod",
+                    "fileId": "f-essential-mod",
+                    "hash": "f7a13803f7a13803f7a13803f7a13803f7a13803",
+                    "side": "CLIENT",
+                    "downloadUrls": [],
+                    "clientOnlyOverride": false,
+                    "clientOverrideReplaced": false
+                },
+                {
+                    "platform": "mr",
+                    "projectId": "p-lazyyyyy",
+                    "slug": "lazyyyyy",
+                    "fileId": "f-lazyyyyy",
+                    "hash": "b54c8fb4b54c8fb4b54c8fb4b54c8fb4b54c8fb4",
+                    "side": "SERVER",
+                    "downloadUrls": [],
+                    "clientOnlyOverride": false,
+                    "clientOverrideReplaced": false
+                },
+                {
+                    "platform": "mr",
+                    "projectId": "p-log-deduplicator",
+                    "slug": "log-deduplicator",
+                    "fileId": "f-log-deduplicator",
+                    "hash": "58f9652758f9652758f9652758f9652758f96527",
+                    "side": "BOTH",
+                    "downloadUrls": [],
+                    "clientOnlyOverride": false,
+                    "clientOverrideReplaced": false
+                },
+                {
+                    "platform": "mr",
+                    "projectId": "p-mcwifipnp",
+                    "slug": "mcwifipnp",
+                    "fileId": "f-mcwifipnp",
+                    "hash": "9d38cca79d38cca79d38cca79d38cca79d38cca7",
+                    "side": "CLIENT",
+                    "downloadUrls": [],
+                    "clientOnlyOverride": false,
+                    "clientOverrideReplaced": false
+                },
+                {
+                    "platform": "mr",
+                    "projectId": "p-powerful-dummy",
+                    "slug": "powerful-dummy",
+                    "fileId": "f-powerful-dummy",
+                    "hash": "872ba0f3872ba0f3872ba0f3872ba0f3872ba0f3",
+                    "side": "SERVER",
+                    "downloadUrls": [],
+                    "clientOnlyOverride": false,
+                    "clientOverrideReplaced": false
+                },
+                {
+                    "platform": "mr",
+                    "projectId": "p-skybox-loader-forge",
+                    "slug": "skybox-loader-forge",
+                    "fileId": "f-skybox-loader-forge",
+                    "hash": "ef693910ef693910ef693910ef693910ef693910",
+                    "side": "BOTH",
+                    "downloadUrls": [],
+                    "clientOnlyOverride": false,
+                    "clientOverrideReplaced": false
+                },
+                {
+                    "platform": "mr",
+                    "projectId": "p-spark",
+                    "slug": "spark",
+                    "fileId": "f-spark",
+                    "hash": "0688f2dd0688f2dd0688f2dd0688f2dd0688f2dd",
+                    "side": "CLIENT",
+                    "downloadUrls": [],
+                    "clientOnlyOverride": false,
+                    "clientOverrideReplaced": false
+                },
+                {
+                    "platform": "mr",
+                    "projectId": "p-tab-list",
+                    "slug": "tab-list",
+                    "fileId": "f-tab-list",
+                    "hash": "c72c87d6c72c87d6c72c87d6c72c87d6c72c87d6",
+                    "side": "SERVER",
+                    "downloadUrls": [],
+                    "clientOnlyOverride": false,
+                    "clientOverrideReplaced": false
+                },
+                {
+                    "platform": "mr",
+                    "projectId": "p-what-can-i-see",
+                    "slug": "what-can-i-see",
+                    "fileId": "f-what-can-i-see",
+                    "hash": "f68b34e9f68b34e9f68b34e9f68b34e9f68b34e9",
+                    "side": "BOTH",
+                    "downloadUrls": [],
+                    "clientOnlyOverride": false,
+                    "clientOverrideReplaced": false
+                },
+                {
+                    "platform": "mr",
+                    "projectId": "p-zstd-net",
+                    "slug": "zstd-net",
+                    "fileId": "f-zstd-net",
+                    "hash": "1045753910457539104575391045753910457539",
+                    "side": "CLIENT",
+                    "downloadUrls": [],
+                    "clientOnlyOverride": false,
+                    "clientOverrideReplaced": false
+                },
+                {
+                    "platform": "mr",
+                    "projectId": "p-zstdnet",
+                    "slug": "zstdnet",
+                    "fileId": "f-zstdnet",
+                    "hash": "0087519400875194008751940087519400875194",
+                    "side": "SERVER",
+                    "downloadUrls": [],
+                    "clientOnlyOverride": false,
+                    "clientOverrideReplaced": false
+                }
+            ],
+            "expected": [
+                {
+                    "slug": "trigger",
+                    "platform": "mr",
+                    "side": "CLIENT",
+                    "fileName": "trigger_mr_c0d355b8c0d355b8c0d355b8c0d355b8c0d355b8.jar",
+                    "digest": "sha1"
+                }
+            ]
+        },
+        {
+            "name": "client list on forge",
+            "loader": "forge",
+            "mods": [
+                {
+                    "platform": "mr",
+                    "projectId": "p-trigger",
+                    "slug": "trigger",
+                    "fileId": "f-trigger",
+                    "hash": "c0d355b8c0d355b8c0d355b8c0d355b8c0d355b8",
+                    "side": "BOTH",
+                    "downloadUrls": [],
+                    "clientOnlyOverride": true,
+                    "clientOverrideReplaced": false
+                },
+                {
+                    "platform": "mr",
+                    "projectId": "p-controllable",
+                    "slug": "controllable",
+                    "fileId": "f-controllable",
+                    "hash": "9ff1ec899ff1ec899ff1ec899ff1ec899ff1ec89",
+                    "side": "CLIENT",
+                    "downloadUrls": [],
+                    "clientOnlyOverride": false,
+                    "clientOverrideReplaced": false
+                },
+                {
+                    "platform": "mr",
+                    "projectId": "p-flighthud-reborn",
+                    "slug": "flighthud-reborn",
+                    "fileId": "f-flighthud-reborn",
+                    "hash": "a4fb5202a4fb5202a4fb5202a4fb5202a4fb5202",
+                    "side": "SERVER",
+                    "downloadUrls": [],
+                    "clientOnlyOverride": false,
+                    "clientOverrideReplaced": false
+                },
+                {
+                    "platform": "mr",
+                    "projectId": "p-i18nupdatemod",
+                    "slug": "i18nupdatemod",
+                    "fileId": "f-i18nupdatemod",
+                    "hash": "6225d53b6225d53b6225d53b6225d53b6225d53b",
+                    "side": "BOTH",
+                    "downloadUrls": [],
+                    "clientOnlyOverride": false,
+                    "clientOverrideReplaced": false
+                },
+                {
+                    "platform": "mr",
+                    "projectId": "p-mafglib",
+                    "slug": "mafglib",
+                    "fileId": "f-mafglib",
+                    "hash": "315b2110315b2110315b2110315b2110315b2110",
+                    "side": "CLIENT",
+                    "downloadUrls": [],
+                    "clientOnlyOverride": false,
+                    "clientOverrideReplaced": false
+                },
+                {
+                    "platform": "mr",
+                    "projectId": "p-mekalus-oculus-fork-with-fixed-mekanism-mekasuit",
+                    "slug": "mekalus-oculus-fork-with-fixed-mekanism-mekasuit",
+                    "fileId": "f-mekalus-oculus-fork-with-fixed-mekanism-mekasuit",
+                    "hash": "a2ef501da2ef501da2ef501da2ef501da2ef501d",
+                    "side": "SERVER",
+                    "downloadUrls": [],
+                    "clientOnlyOverride": false,
+                    "clientOverrideReplaced": false
+                },
+                {
+                    "platform": "mr",
+                    "projectId": "p-modern-ui",
+                    "slug": "modern-ui",
+                    "fileId": "f-modern-ui",
+                    "hash": "8887840288878402888784028887840288878402",
+                    "side": "BOTH",
+                    "downloadUrls": [],
+                    "clientOnlyOverride": false,
+                    "clientOverrideReplaced": false
+                },
+                {
+                    "platform": "mr",
+                    "projectId": "p-status-effect-bars-reforged",
+                    "slug": "status-effect-bars-reforged",
+                    "fileId": "f-status-effect-bars-reforged",
+                    "hash": "b40a0dfcb40a0dfcb40a0dfcb40a0dfcb40a0dfc",
+                    "side": "CLIENT",
+                    "downloadUrls": [],
+                    "clientOnlyOverride": false,
+                    "clientOverrideReplaced": false
+                }
+            ],
+            "expected": [
+                {
+                    "slug": "trigger",
+                    "platform": "mr",
+                    "side": "CLIENT",
+                    "fileName": "trigger_mr_c0d355b8c0d355b8c0d355b8c0d355b8c0d355b8.jar",
+                    "digest": "sha1"
+                },
+                {
+                    "slug": "controllable",
+                    "platform": "mr",
+                    "side": "CLIENT",
+                    "fileName": "controllable_mr_9ff1ec899ff1ec899ff1ec899ff1ec899ff1ec89.jar",
+                    "digest": "sha1"
+                },
+                {
+                    "slug": "flighthud-reborn",
+                    "platform": "mr",
+                    "side": "CLIENT",
+                    "fileName": "flighthud-reborn_mr_a4fb5202a4fb5202a4fb5202a4fb5202a4fb5202.jar",
+                    "digest": "sha1"
+                },
+                {
+                    "slug": "i18nupdatemod",
+                    "platform": "mr",
+                    "side": "CLIENT",
+                    "fileName": "i18nupdatemod_mr_6225d53b6225d53b6225d53b6225d53b6225d53b.jar",
+                    "digest": "sha1"
+                },
+                {
+                    "slug": "mafglib",
+                    "platform": "mr",
+                    "side": "CLIENT",
+                    "fileName": "mafglib_mr_315b2110315b2110315b2110315b2110315b2110.jar",
+                    "digest": "sha1"
+                },
+                {
+                    "slug": "mekalus-oculus-fork-with-fixed-mekanism-mekasuit",
+                    "platform": "mr",
+                    "side": "CLIENT",
+                    "fileName": "mekalus-oculus-fork-with-fixed-mekanism-mekasuit_mr_a2ef501da2ef501da2ef501da2ef501da2ef501d.jar",
+                    "digest": "sha1"
+                },
+                {
+                    "slug": "modern-ui",
+                    "platform": "mr",
+                    "side": "CLIENT",
+                    "fileName": "modern-ui_mr_8887840288878402888784028887840288878402.jar",
+                    "digest": "sha1"
+                },
+                {
+                    "slug": "status-effect-bars-reforged",
+                    "platform": "mr",
+                    "side": "CLIENT",
+                    "fileName": "status-effect-bars-reforged_mr_b40a0dfcb40a0dfcb40a0dfcb40a0dfcb40a0dfc.jar",
+                    "digest": "sha1"
+                }
+            ]
+        },
+        {
+            "name": "both list on forge",
+            "loader": "forge",
+            "mods": [
+                {
+                    "platform": "mr",
+                    "projectId": "p-trigger",
+                    "slug": "trigger",
+                    "fileId": "f-trigger",
+                    "hash": "c0d355b8c0d355b8c0d355b8c0d355b8c0d355b8",
+                    "side": "BOTH",
+                    "downloadUrls": [],
+                    "clientOnlyOverride": true,
+                    "clientOverrideReplaced": false
+                },
+                {
+                    "platform": "mr",
+                    "projectId": "p-fusion-connected-textures",
+                    "slug": "fusion-connected-textures",
+                    "fileId": "f-fusion-connected-textures",
+                    "hash": "d9c6d565d9c6d565d9c6d565d9c6d565d9c6d565",
+                    "side": "CLIENT",
+                    "downloadUrls": [],
+                    "clientOnlyOverride": false,
+                    "clientOverrideReplaced": false
+                },
+                {
+                    "platform": "mr",
+                    "projectId": "p-inventory-profiles-next",
+                    "slug": "inventory-profiles-next",
+                    "fileId": "f-inventory-profiles-next",
+                    "hash": "6b72dc456b72dc456b72dc456b72dc456b72dc45",
+                    "side": "SERVER",
+                    "downloadUrls": [],
+                    "clientOnlyOverride": false,
+                    "clientOverrideReplaced": false
+                },
+                {
+                    "platform": "mr",
+                    "projectId": "p-inventory-tweaks-refoxed",
+                    "slug": "inventory-tweaks-refoxed",
+                    "fileId": "f-inventory-tweaks-refoxed",
+                    "hash": "64f4102664f4102664f4102664f4102664f41026",
+                    "side": "BOTH",
+                    "downloadUrls": [],
+                    "clientOnlyOverride": false,
+                    "clientOverrideReplaced": false
+                },
+                {
+                    "platform": "mr",
+                    "projectId": "p-just-enough-resources-jer",
+                    "slug": "just-enough-resources-jer",
+                    "fileId": "f-just-enough-resources-jer",
+                    "hash": "7599e7937599e7937599e7937599e7937599e793",
+                    "side": "CLIENT",
+                    "downloadUrls": [],
+                    "clientOnlyOverride": false,
+                    "clientOverrideReplaced": false
+                },
+                {
+                    "platform": "mr",
+                    "projectId": "p-loot-beams-refork",
+                    "slug": "loot-beams-refork",
+                    "fileId": "f-loot-beams-refork",
+                    "hash": "31adbfc331adbfc331adbfc331adbfc331adbfc3",
+                    "side": "SERVER",
+                    "downloadUrls": [],
+                    "clientOnlyOverride": false,
+                    "clientOverrideReplaced": false
+                },
+                {
+                    "platform": "mr",
+                    "projectId": "p-oh-the-trees-youll-grow",
+                    "slug": "oh-the-trees-youll-grow",
+                    "fileId": "f-oh-the-trees-youll-grow",
+                    "hash": "9e1358c99e1358c99e1358c99e1358c99e1358c9",
+                    "side": "BOTH",
+                    "downloadUrls": [],
+                    "clientOnlyOverride": false,
+                    "clientOverrideReplaced": false
+                },
+                {
+                    "platform": "mr",
+                    "projectId": "p-particular-reforged",
+                    "slug": "particular-reforged",
+                    "fileId": "f-particular-reforged",
+                    "hash": "2504fdc82504fdc82504fdc82504fdc82504fdc8",
+                    "side": "CLIENT",
+                    "downloadUrls": [],
+                    "clientOnlyOverride": false,
+                    "clientOverrideReplaced": false
+                },
+                {
+                    "platform": "mr",
+                    "projectId": "p-radiant-gear",
+                    "slug": "radiant-gear",
+                    "fileId": "f-radiant-gear",
+                    "hash": "f46130a9f46130a9f46130a9f46130a9f46130a9",
+                    "side": "SERVER",
+                    "downloadUrls": [],
+                    "clientOnlyOverride": false,
+                    "clientOverrideReplaced": false
+                },
+                {
+                    "platform": "mr",
+                    "projectId": "p-smartbrainlib",
+                    "slug": "smartbrainlib",
+                    "fileId": "f-smartbrainlib",
+                    "hash": "cc18a898cc18a898cc18a898cc18a898cc18a898",
+                    "side": "BOTH",
+                    "downloadUrls": [],
+                    "clientOnlyOverride": false,
+                    "clientOverrideReplaced": false
+                }
+            ],
+            "expected": [
+                {
+                    "slug": "trigger",
+                    "platform": "mr",
+                    "side": "CLIENT",
+                    "fileName": "trigger_mr_c0d355b8c0d355b8c0d355b8c0d355b8c0d355b8.jar",
+                    "digest": "sha1"
+                },
+                {
+                    "slug": "fusion-connected-textures",
+                    "platform": "mr",
+                    "side": "BOTH",
+                    "fileName": "fusion-connected-textures_mr_d9c6d565d9c6d565d9c6d565d9c6d565d9c6d565.jar",
+                    "digest": "sha1"
+                },
+                {
+                    "slug": "inventory-profiles-next",
+                    "platform": "mr",
+                    "side": "BOTH",
+                    "fileName": "inventory-profiles-next_mr_6b72dc456b72dc456b72dc456b72dc456b72dc45.jar",
+                    "digest": "sha1"
+                },
+                {
+                    "slug": "inventory-tweaks-refoxed",
+                    "platform": "mr",
+                    "side": "BOTH",
+                    "fileName": "inventory-tweaks-refoxed_mr_64f4102664f4102664f4102664f4102664f41026.jar",
+                    "digest": "sha1"
+                },
+                {
+                    "slug": "just-enough-resources-jer",
+                    "platform": "mr",
+                    "side": "BOTH",
+                    "fileName": "just-enough-resources-jer_mr_7599e7937599e7937599e7937599e7937599e793.jar",
+                    "digest": "sha1"
+                },
+                {
+                    "slug": "loot-beams-refork",
+                    "platform": "mr",
+                    "side": "BOTH",
+                    "fileName": "loot-beams-refork_mr_31adbfc331adbfc331adbfc331adbfc331adbfc3.jar",
+                    "digest": "sha1"
+                },
+                {
+                    "slug": "oh-the-trees-youll-grow",
+                    "platform": "mr",
+                    "side": "BOTH",
+                    "fileName": "oh-the-trees-youll-grow_mr_9e1358c99e1358c99e1358c99e1358c99e1358c9.jar",
+                    "digest": "sha1"
+                },
+                {
+                    "slug": "particular-reforged",
+                    "platform": "mr",
+                    "side": "BOTH",
+                    "fileName": "particular-reforged_mr_2504fdc82504fdc82504fdc82504fdc82504fdc8.jar",
+                    "digest": "sha1"
+                },
+                {
+                    "slug": "radiant-gear",
+                    "platform": "mr",
+                    "side": "BOTH",
+                    "fileName": "radiant-gear_mr_f46130a9f46130a9f46130a9f46130a9f46130a9.jar",
+                    "digest": "sha1"
+                },
+                {
+                    "slug": "smartbrainlib",
+                    "platform": "mr",
+                    "side": "BOTH",
+                    "fileName": "smartbrainlib_mr_cc18a898cc18a898cc18a898cc18a898cc18a898.jar",
+                    "digest": "sha1"
+                }
+            ]
+        },
+        {
+            "name": "aliases list on forge",
+            "loader": "forge",
+            "mods": [
+                {
+                    "platform": "mr",
+                    "projectId": "p-trigger",
+                    "slug": "trigger",
+                    "fileId": "f-trigger",
+                    "hash": "c0d355b8c0d355b8c0d355b8c0d355b8c0d355b8",
+                    "side": "BOTH",
+                    "downloadUrls": [],
+                    "clientOnlyOverride": true,
+                    "clientOverrideReplaced": false
+                },
+                {
+                    "platform": "mr",
+                    "projectId": "p-true-ending",
+                    "slug": "true-ending",
+                    "fileId": "f-true-ending",
+                    "hash": "fe81d646fe81d646fe81d646fe81d646fe81d646",
+                    "side": "CLIENT",
+                    "downloadUrls": [],
+                    "clientOnlyOverride": false,
+                    "clientOverrideReplaced": false
+                }
+            ],
+            "expected": [
+                {
+                    "slug": "trigger",
+                    "platform": "mr",
+                    "side": "CLIENT",
+                    "fileName": "trigger_mr_c0d355b8c0d355b8c0d355b8c0d355b8c0d355b8.jar",
+                    "digest": "sha1"
+                },
+                {
+                    "slug": "true-ending",
+                    "platform": "mr",
+                    "side": "CLIENT",
+                    "fileName": "trueending_mr_fe81d646fe81d646fe81d646fe81d646fe81d646.jar",
+                    "digest": "sha1"
+                }
+            ]
+        },
+        {
+            "name": "removed list on Fabric",
+            "loader": "Fabric",
+            "mods": [
+                {
+                    "platform": "mr",
+                    "projectId": "p-trigger",
+                    "slug": "trigger",
+                    "fileId": "f-trigger",
+                    "hash": "c0d355b8c0d355b8c0d355b8c0d355b8c0d355b8",
+                    "side": "BOTH",
+                    "downloadUrls": [],
+                    "clientOnlyOverride": true,
+                    "clientOverrideReplaced": false
+                },
+                {
+                    "platform": "mr",
+                    "projectId": "p-chunky",
+                    "slug": "chunky",
+                    "fileId": "f-chunky",
+                    "hash": "aee02bacaee02bacaee02bacaee02bacaee02bac",
+                    "side": "CLIENT",
+                    "downloadUrls": [],
+                    "clientOnlyOverride": false,
+                    "clientOverrideReplaced": false
+                },
+                {
+                    "platform": "mr",
+                    "projectId": "p-customskinloader",
+                    "slug": "customskinloader",
+                    "fileId": "f-customskinloader",
+                    "hash": "5c8df6015c8df6015c8df6015c8df6015c8df601",
+                    "side": "SERVER",
+                    "downloadUrls": [],
+                    "clientOnlyOverride": false,
+                    "clientOverrideReplaced": false
+                },
+                {
+                    "platform": "mr",
+                    "projectId": "p-default-server-properties",
+                    "slug": "default-server-properties",
+                    "fileId": "f-default-server-properties",
+                    "hash": "a78b9971a78b9971a78b9971a78b9971a78b9971",
+                    "side": "BOTH",
+                    "downloadUrls": [],
+                    "clientOnlyOverride": false,
+                    "clientOverrideReplaced": false
+                },
+                {
+                    "platform": "mr",
+                    "projectId": "p-essential-mod",
+                    "slug": "essential-mod",
+                    "fileId": "f-essential-mod",
+                    "hash": "f7a13803f7a13803f7a13803f7a13803f7a13803",
+                    "side": "CLIENT",
+                    "downloadUrls": [],
+                    "clientOnlyOverride": false,
+                    "clientOverrideReplaced": false
+                },
+                {
+                    "platform": "mr",
+                    "projectId": "p-lazyyyyy",
+                    "slug": "lazyyyyy",
+                    "fileId": "f-lazyyyyy",
+                    "hash": "b54c8fb4b54c8fb4b54c8fb4b54c8fb4b54c8fb4",
+                    "side": "SERVER",
+                    "downloadUrls": [],
+                    "clientOnlyOverride": false,
+                    "clientOverrideReplaced": false
+                },
+                {
+                    "platform": "mr",
+                    "projectId": "p-log-deduplicator",
+                    "slug": "log-deduplicator",
+                    "fileId": "f-log-deduplicator",
+                    "hash": "58f9652758f9652758f9652758f9652758f96527",
+                    "side": "BOTH",
+                    "downloadUrls": [],
+                    "clientOnlyOverride": false,
+                    "clientOverrideReplaced": false
+                },
+                {
+                    "platform": "mr",
+                    "projectId": "p-mcwifipnp",
+                    "slug": "mcwifipnp",
+                    "fileId": "f-mcwifipnp",
+                    "hash": "9d38cca79d38cca79d38cca79d38cca79d38cca7",
+                    "side": "CLIENT",
+                    "downloadUrls": [],
+                    "clientOnlyOverride": false,
+                    "clientOverrideReplaced": false
+                },
+                {
+                    "platform": "mr",
+                    "projectId": "p-powerful-dummy",
+                    "slug": "powerful-dummy",
+                    "fileId": "f-powerful-dummy",
+                    "hash": "872ba0f3872ba0f3872ba0f3872ba0f3872ba0f3",
+                    "side": "SERVER",
+                    "downloadUrls": [],
+                    "clientOnlyOverride": false,
+                    "clientOverrideReplaced": false
+                },
+                {
+                    "platform": "mr",
+                    "projectId": "p-skybox-loader-forge",
+                    "slug": "skybox-loader-forge",
+                    "fileId": "f-skybox-loader-forge",
+                    "hash": "ef693910ef693910ef693910ef693910ef693910",
+                    "side": "BOTH",
+                    "downloadUrls": [],
+                    "clientOnlyOverride": false,
+                    "clientOverrideReplaced": false
+                },
+                {
+                    "platform": "mr",
+                    "projectId": "p-spark",
+                    "slug": "spark",
+                    "fileId": "f-spark",
+                    "hash": "0688f2dd0688f2dd0688f2dd0688f2dd0688f2dd",
+                    "side": "CLIENT",
+                    "downloadUrls": [],
+                    "clientOnlyOverride": false,
+                    "clientOverrideReplaced": false
+                },
+                {
+                    "platform": "mr",
+                    "projectId": "p-tab-list",
+                    "slug": "tab-list",
+                    "fileId": "f-tab-list",
+                    "hash": "c72c87d6c72c87d6c72c87d6c72c87d6c72c87d6",
+                    "side": "SERVER",
+                    "downloadUrls": [],
+                    "clientOnlyOverride": false,
+                    "clientOverrideReplaced": false
+                },
+                {
+                    "platform": "mr",
+                    "projectId": "p-what-can-i-see",
+                    "slug": "what-can-i-see",
+                    "fileId": "f-what-can-i-see",
+                    "hash": "f68b34e9f68b34e9f68b34e9f68b34e9f68b34e9",
+                    "side": "BOTH",
+                    "downloadUrls": [],
+                    "clientOnlyOverride": false,
+                    "clientOverrideReplaced": false
+                },
+                {
+                    "platform": "mr",
+                    "projectId": "p-zstd-net",
+                    "slug": "zstd-net",
+                    "fileId": "f-zstd-net",
+                    "hash": "1045753910457539104575391045753910457539",
+                    "side": "CLIENT",
+                    "downloadUrls": [],
+                    "clientOnlyOverride": false,
+                    "clientOverrideReplaced": false
+                },
+                {
+                    "platform": "mr",
+                    "projectId": "p-zstdnet",
+                    "slug": "zstdnet",
+                    "fileId": "f-zstdnet",
+                    "hash": "0087519400875194008751940087519400875194",
+                    "side": "SERVER",
+                    "downloadUrls": [],
+                    "clientOnlyOverride": false,
+                    "clientOverrideReplaced": false
+                }
+            ],
+            "expected": [
+                {
+                    "slug": "trigger",
+                    "platform": "mr",
+                    "side": "CLIENT",
+                    "fileName": "trigger_mr_c0d355b8c0d355b8c0d355b8c0d355b8c0d355b8.jar",
+                    "digest": "sha1"
+                },
+                {
+                    "slug": "skybox-loader-forge",
+                    "platform": "mr",
+                    "side": "BOTH",
+                    "fileName": "skybox-loader-forge_mr_ef693910ef693910ef693910ef693910ef693910.jar",
+                    "digest": "sha1"
+                }
+            ]
+        },
+        {
+            "name": "client list on Fabric",
+            "loader": "Fabric",
+            "mods": [
+                {
+                    "platform": "mr",
+                    "projectId": "p-trigger",
+                    "slug": "trigger",
+                    "fileId": "f-trigger",
+                    "hash": "c0d355b8c0d355b8c0d355b8c0d355b8c0d355b8",
+                    "side": "BOTH",
+                    "downloadUrls": [],
+                    "clientOnlyOverride": true,
+                    "clientOverrideReplaced": false
+                },
+                {
+                    "platform": "mr",
+                    "projectId": "p-controllable",
+                    "slug": "controllable",
+                    "fileId": "f-controllable",
+                    "hash": "9ff1ec899ff1ec899ff1ec899ff1ec899ff1ec89",
+                    "side": "CLIENT",
+                    "downloadUrls": [],
+                    "clientOnlyOverride": false,
+                    "clientOverrideReplaced": false
+                },
+                {
+                    "platform": "mr",
+                    "projectId": "p-flighthud-reborn",
+                    "slug": "flighthud-reborn",
+                    "fileId": "f-flighthud-reborn",
+                    "hash": "a4fb5202a4fb5202a4fb5202a4fb5202a4fb5202",
+                    "side": "SERVER",
+                    "downloadUrls": [],
+                    "clientOnlyOverride": false,
+                    "clientOverrideReplaced": false
+                },
+                {
+                    "platform": "mr",
+                    "projectId": "p-i18nupdatemod",
+                    "slug": "i18nupdatemod",
+                    "fileId": "f-i18nupdatemod",
+                    "hash": "6225d53b6225d53b6225d53b6225d53b6225d53b",
+                    "side": "BOTH",
+                    "downloadUrls": [],
+                    "clientOnlyOverride": false,
+                    "clientOverrideReplaced": false
+                },
+                {
+                    "platform": "mr",
+                    "projectId": "p-mafglib",
+                    "slug": "mafglib",
+                    "fileId": "f-mafglib",
+                    "hash": "315b2110315b2110315b2110315b2110315b2110",
+                    "side": "CLIENT",
+                    "downloadUrls": [],
+                    "clientOnlyOverride": false,
+                    "clientOverrideReplaced": false
+                },
+                {
+                    "platform": "mr",
+                    "projectId": "p-mekalus-oculus-fork-with-fixed-mekanism-mekasuit",
+                    "slug": "mekalus-oculus-fork-with-fixed-mekanism-mekasuit",
+                    "fileId": "f-mekalus-oculus-fork-with-fixed-mekanism-mekasuit",
+                    "hash": "a2ef501da2ef501da2ef501da2ef501da2ef501d",
+                    "side": "SERVER",
+                    "downloadUrls": [],
+                    "clientOnlyOverride": false,
+                    "clientOverrideReplaced": false
+                },
+                {
+                    "platform": "mr",
+                    "projectId": "p-modern-ui",
+                    "slug": "modern-ui",
+                    "fileId": "f-modern-ui",
+                    "hash": "8887840288878402888784028887840288878402",
+                    "side": "BOTH",
+                    "downloadUrls": [],
+                    "clientOnlyOverride": false,
+                    "clientOverrideReplaced": false
+                },
+                {
+                    "platform": "mr",
+                    "projectId": "p-status-effect-bars-reforged",
+                    "slug": "status-effect-bars-reforged",
+                    "fileId": "f-status-effect-bars-reforged",
+                    "hash": "b40a0dfcb40a0dfcb40a0dfcb40a0dfcb40a0dfc",
+                    "side": "CLIENT",
+                    "downloadUrls": [],
+                    "clientOnlyOverride": false,
+                    "clientOverrideReplaced": false
+                }
+            ],
+            "expected": [
+                {
+                    "slug": "trigger",
+                    "platform": "mr",
+                    "side": "CLIENT",
+                    "fileName": "trigger_mr_c0d355b8c0d355b8c0d355b8c0d355b8c0d355b8.jar",
+                    "digest": "sha1"
+                },
+                {
+                    "slug": "controllable",
+                    "platform": "mr",
+                    "side": "CLIENT",
+                    "fileName": "controllable_mr_9ff1ec899ff1ec899ff1ec899ff1ec899ff1ec89.jar",
+                    "digest": "sha1"
+                },
+                {
+                    "slug": "i18nupdatemod",
+                    "platform": "mr",
+                    "side": "BOTH",
+                    "fileName": "i18nupdatemod_mr_6225d53b6225d53b6225d53b6225d53b6225d53b.jar",
+                    "digest": "sha1"
+                },
+                {
+                    "slug": "mafglib",
+                    "platform": "mr",
+                    "side": "CLIENT",
+                    "fileName": "mafglib_mr_315b2110315b2110315b2110315b2110315b2110.jar",
+                    "digest": "sha1"
+                },
+                {
+                    "slug": "modern-ui",
+                    "platform": "mr",
+                    "side": "BOTH",
+                    "fileName": "modern-ui_mr_8887840288878402888784028887840288878402.jar",
+                    "digest": "sha1"
+                },
+                {
+                    "slug": "status-effect-bars-reforged",
+                    "platform": "mr",
+                    "side": "CLIENT",
+                    "fileName": "status-effect-bars-reforged_mr_b40a0dfcb40a0dfcb40a0dfcb40a0dfcb40a0dfc.jar",
+                    "digest": "sha1"
+                }
+            ]
+        },
+        {
+            "name": "both list on Fabric",
+            "loader": "Fabric",
+            "mods": [
+                {
+                    "platform": "mr",
+                    "projectId": "p-trigger",
+                    "slug": "trigger",
+                    "fileId": "f-trigger",
+                    "hash": "c0d355b8c0d355b8c0d355b8c0d355b8c0d355b8",
+                    "side": "BOTH",
+                    "downloadUrls": [],
+                    "clientOnlyOverride": true,
+                    "clientOverrideReplaced": false
+                },
+                {
+                    "platform": "mr",
+                    "projectId": "p-fusion-connected-textures",
+                    "slug": "fusion-connected-textures",
+                    "fileId": "f-fusion-connected-textures",
+                    "hash": "d9c6d565d9c6d565d9c6d565d9c6d565d9c6d565",
+                    "side": "CLIENT",
+                    "downloadUrls": [],
+                    "clientOnlyOverride": false,
+                    "clientOverrideReplaced": false
+                },
+                {
+                    "platform": "mr",
+                    "projectId": "p-inventory-profiles-next",
+                    "slug": "inventory-profiles-next",
+                    "fileId": "f-inventory-profiles-next",
+                    "hash": "6b72dc456b72dc456b72dc456b72dc456b72dc45",
+                    "side": "SERVER",
+                    "downloadUrls": [],
+                    "clientOnlyOverride": false,
+                    "clientOverrideReplaced": false
+                },
+                {
+                    "platform": "mr",
+                    "projectId": "p-inventory-tweaks-refoxed",
+                    "slug": "inventory-tweaks-refoxed",
+                    "fileId": "f-inventory-tweaks-refoxed",
+                    "hash": "64f4102664f4102664f4102664f4102664f41026",
+                    "side": "BOTH",
+                    "downloadUrls": [],
+                    "clientOnlyOverride": false,
+                    "clientOverrideReplaced": false
+                },
+                {
+                    "platform": "mr",
+                    "projectId": "p-just-enough-resources-jer",
+                    "slug": "just-enough-resources-jer",
+                    "fileId": "f-just-enough-resources-jer",
+                    "hash": "7599e7937599e7937599e7937599e7937599e793",
+                    "side": "CLIENT",
+                    "downloadUrls": [],
+                    "clientOnlyOverride": false,
+                    "clientOverrideReplaced": false
+                },
+                {
+                    "platform": "mr",
+                    "projectId": "p-loot-beams-refork",
+                    "slug": "loot-beams-refork",
+                    "fileId": "f-loot-beams-refork",
+                    "hash": "31adbfc331adbfc331adbfc331adbfc331adbfc3",
+                    "side": "SERVER",
+                    "downloadUrls": [],
+                    "clientOnlyOverride": false,
+                    "clientOverrideReplaced": false
+                },
+                {
+                    "platform": "mr",
+                    "projectId": "p-oh-the-trees-youll-grow",
+                    "slug": "oh-the-trees-youll-grow",
+                    "fileId": "f-oh-the-trees-youll-grow",
+                    "hash": "9e1358c99e1358c99e1358c99e1358c99e1358c9",
+                    "side": "BOTH",
+                    "downloadUrls": [],
+                    "clientOnlyOverride": false,
+                    "clientOverrideReplaced": false
+                },
+                {
+                    "platform": "mr",
+                    "projectId": "p-particular-reforged",
+                    "slug": "particular-reforged",
+                    "fileId": "f-particular-reforged",
+                    "hash": "2504fdc82504fdc82504fdc82504fdc82504fdc8",
+                    "side": "CLIENT",
+                    "downloadUrls": [],
+                    "clientOnlyOverride": false,
+                    "clientOverrideReplaced": false
+                },
+                {
+                    "platform": "mr",
+                    "projectId": "p-radiant-gear",
+                    "slug": "radiant-gear",
+                    "fileId": "f-radiant-gear",
+                    "hash": "f46130a9f46130a9f46130a9f46130a9f46130a9",
+                    "side": "SERVER",
+                    "downloadUrls": [],
+                    "clientOnlyOverride": false,
+                    "clientOverrideReplaced": false
+                },
+                {
+                    "platform": "mr",
+                    "projectId": "p-smartbrainlib",
+                    "slug": "smartbrainlib",
+                    "fileId": "f-smartbrainlib",
+                    "hash": "cc18a898cc18a898cc18a898cc18a898cc18a898",
+                    "side": "BOTH",
+                    "downloadUrls": [],
+                    "clientOnlyOverride": false,
+                    "clientOverrideReplaced": false
+                }
+            ],
+            "expected": [
+                {
+                    "slug": "trigger",
+                    "platform": "mr",
+                    "side": "CLIENT",
+                    "fileName": "trigger_mr_c0d355b8c0d355b8c0d355b8c0d355b8c0d355b8.jar",
+                    "digest": "sha1"
+                },
+                {
+                    "slug": "fusion-connected-textures",
+                    "platform": "mr",
+                    "side": "CLIENT",
+                    "fileName": "fusion-connected-textures_mr_d9c6d565d9c6d565d9c6d565d9c6d565d9c6d565.jar",
+                    "digest": "sha1"
+                },
+                {
+                    "slug": "inventory-tweaks-refoxed",
+                    "platform": "mr",
+                    "side": "BOTH",
+                    "fileName": "inventory-tweaks-refoxed_mr_64f4102664f4102664f4102664f4102664f41026.jar",
+                    "digest": "sha1"
+                },
+                {
+                    "slug": "just-enough-resources-jer",
+                    "platform": "mr",
+                    "side": "CLIENT",
+                    "fileName": "just-enough-resources-jer_mr_7599e7937599e7937599e7937599e7937599e793.jar",
+                    "digest": "sha1"
+                },
+                {
+                    "slug": "oh-the-trees-youll-grow",
+                    "platform": "mr",
+                    "side": "BOTH",
+                    "fileName": "oh-the-trees-youll-grow_mr_9e1358c99e1358c99e1358c99e1358c99e1358c9.jar",
+                    "digest": "sha1"
+                },
+                {
+                    "slug": "particular-reforged",
+                    "platform": "mr",
+                    "side": "CLIENT",
+                    "fileName": "particular-reforged_mr_2504fdc82504fdc82504fdc82504fdc82504fdc8.jar",
+                    "digest": "sha1"
+                },
+                {
+                    "slug": "smartbrainlib",
+                    "platform": "mr",
+                    "side": "BOTH",
+                    "fileName": "smartbrainlib_mr_cc18a898cc18a898cc18a898cc18a898cc18a898.jar",
+                    "digest": "sha1"
+                }
+            ]
+        },
+        {
+            "name": "aliases list on Fabric",
+            "loader": "Fabric",
+            "mods": [
+                {
+                    "platform": "mr",
+                    "projectId": "p-trigger",
+                    "slug": "trigger",
+                    "fileId": "f-trigger",
+                    "hash": "c0d355b8c0d355b8c0d355b8c0d355b8c0d355b8",
+                    "side": "BOTH",
+                    "downloadUrls": [],
+                    "clientOnlyOverride": true,
+                    "clientOverrideReplaced": false
+                },
+                {
+                    "platform": "mr",
+                    "projectId": "p-true-ending",
+                    "slug": "true-ending",
+                    "fileId": "f-true-ending",
+                    "hash": "fe81d646fe81d646fe81d646fe81d646fe81d646",
+                    "side": "CLIENT",
+                    "downloadUrls": [],
+                    "clientOnlyOverride": false,
+                    "clientOverrideReplaced": false
+                }
+            ],
+            "expected": [
+                {
+                    "slug": "trigger",
+                    "platform": "mr",
+                    "side": "CLIENT",
+                    "fileName": "trigger_mr_c0d355b8c0d355b8c0d355b8c0d355b8c0d355b8.jar",
+                    "digest": "sha1"
+                },
+                {
+                    "slug": "true-ending",
+                    "platform": "mr",
+                    "side": "CLIENT",
+                    "fileName": "trueending_mr_fe81d646fe81d646fe81d646fe81d646fe81d646.jar",
+                    "digest": "sha1"
+                }
+            ]
+        }
+    ]
+}

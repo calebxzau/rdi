@@ -132,3 +132,12 @@ Do not start J5. All changes are unstaged/uncommitted. Final Rust tests/Clippy
 pass after the last adapter change; cross checks passed with the existing2
 warnings. The latest release rebuild must be checked before claiming final
 binary parity with source. The isolated preview was closed through MCP.
+
+## J4c follow-up (2026-11-22)
+
+J4c's live run found that the downloader rejected any content type containing `json`;
+Kotlin only rejects `application/json`. forgecdn serves some zips as
+`application/x-amz-json-1.0`, so those downloads failed. Fixed in
+`download::json_response`, with a test. The same downloader then installed four real
+room packs (up to 431 mods, 297MB archives) in the J4c live run; see
+`../j4c/gate-summary.md`.

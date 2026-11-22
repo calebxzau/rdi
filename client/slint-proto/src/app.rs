@@ -48,6 +48,8 @@ struct CachedArt {
 enum Event {
     Loaded(u64, Result<Loaded>),
     Started(Result<serde_json::Value>),
+    /// J4c: a room's pack is not ready; `Ok(run)` is a running install, `Err(prompt)` the dialog data.
+    NeedPack(Result<String, serde_json::Value>),
     IdleStopped(Result<bool>),
     Appearance(u64, Result<Appearance>),
     CrowdSkin(u64, String, Option<Skin>),
@@ -249,7 +251,7 @@ impl App {
         let host_list_rows = Rc::new(VecModel::default());
         ui.set_all_hosts(ModelRc::from(host_list_rows.clone()));
         let pack_ui = crate::packs::PackUi::wire(ui, runtime.clone());
-        let plaza = crate::plaza::Plaza::wire(ui, runtime.clone());
+        let plaza = crate::plaza::Plaza::wire(ui, runtime.clone(), pack_ui.borrow().tasks());
         let login_ui = crate::login::LoginUi::wire(ui, runtime.clone(), config.server.clone());
         let app = Rc::new(RefCell::new(Self {
             ui: ui.as_weak(),
@@ -719,7 +721,20 @@ impl App {
         let size = ui.window().size();
         let id = id.to_owned();
         let tx = self.tx.clone();
+        let tasks = self.pack_ui.borrow().tasks();
         self.runtime.spawn(async move {
+            // J4c 4.3: Rust checks the room's pack first; Kotlin's own check stays behind it.
+            match room_pack(&api, &id, &tasks).await {
+                Ok(None) => {}
+                Ok(Some(need)) => {
+                    let _ = tx.send(Event::NeedPack(need));
+                    return;
+                }
+                Err(error) => {
+                    let _ = tx.send(Event::Started(Err(error)));
+                    return;
+                }
+            }
             let result = api
                 .call(
                     "host.start",
@@ -942,6 +957,7 @@ impl App {
             let weak = self.ui.clone();
             let _ = weak.upgrade_in_event_loop(|ui| ui.set_action_error("启动服务意外退出".into()));
             if self.running_processes.is_empty() {
+                self.pack_ui.borrow().running.update(Default::default(), false);
                 ui.set_game_running(false);
                 ui.set_game_status("".into());
                 // Rust task state survives a service crash.
@@ -983,6 +999,17 @@ impl App {
                             .filter_map(|session| session.get("process").cloned())
                             .collect();
                         api.update_processes(self.running_processes.clone());
+                        // A session still preparing may not report its version yet.
+                        self.pack_ui.borrow().running.update(
+                            sessions
+                                .iter()
+                                .filter(|s| s["running"] == true || s["preparing"] == true)
+                                .filter_map(|s| s["process"]["versionId"].as_str().map(str::to_owned))
+                                .collect(),
+                            sessions.iter().any(|s| {
+                                s["preparing"] == true && s["process"]["versionId"].as_str().is_none()
+                            }),
+                        );
                         let status = sessions
                             .iter()
                             .map(|session| {
@@ -1009,6 +1036,22 @@ impl App {
                     self.idle_pending = false;
                     if let Err(error) = result {
                         tracing::warn!(%error, "空闲准备结束失败");
+                    }
+                }
+                Event::NeedPack(need) => {
+                    ui.set_loading(false);
+                    if !ui.get_game_running() {
+                        ui.set_game_status("".into());
+                    }
+                    match need {
+                        Ok(run) => {
+                            ui.invoke_notify("整合包正在下载，请等待下载完成后再启动".into());
+                            self.pack_ui.borrow_mut().open_task(&run);
+                        }
+                        Err(prompt) => self
+                            .pack_ui
+                            .borrow_mut()
+                            .action("install.prompt", &prompt.to_string()),
                     }
                 }
                 Event::Started(result) => {
@@ -1306,4 +1349,44 @@ mod tests {
         assert_eq!(host_placeholder(room, pack), name_placeholder(pack));
         assert_eq!(host_placeholder(room, "  "), name_placeholder(room));
     }
+}
+
+/// The fields of Kotlin `Host.DetailVo` the pack check needs.
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RoomDetail {
+    modpack: RoomPack,
+    pack_ver: String,
+}
+#[derive(serde::Deserialize)]
+struct RoomPack {
+    id: String,
+    #[serde(default)]
+    name: String,
+}
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RoomVersion {
+    total_size: Option<u64>,
+}
+/// `None` when the pack is installed; otherwise the running install or the confirmation data.
+async fn room_pack(
+    api: &Client,
+    host_id: &str,
+    tasks: &crate::tasks::Manager,
+) -> anyhow::Result<Option<Result<String, serde_json::Value>>> {
+    let detail: RoomDetail = api.get(&format!("/host/{host_id}/detail")).await?;
+    let (id, version) = (detail.modpack.id, detail.pack_ver);
+    let versions = crate::local_packs::versions_dir();
+    Ok(match crate::pack_install::state_in(tasks, &versions, &id, &version) {
+        crate::pack_install::State::Installed => None,
+        crate::pack_install::State::Installing(run) => Some(Ok(run)),
+        crate::pack_install::State::Missing => {
+            let info: RoomVersion = api
+                .get(&format!("/modpack/{id}/version/{version}"))
+                .await?;
+            Some(Err(serde_json::json!({"modpackId":id,"version":version,
+                "name":detail.modpack.name,"size":info.total_size})))
+        }
+    })
 }

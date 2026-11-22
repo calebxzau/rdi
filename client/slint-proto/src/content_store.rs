@@ -4,7 +4,7 @@ use crate::{
     download::{Downloader, Progress, Source, cancellable},
     tasks::Cancellation,
 };
-use anyhow::{Result, ensure};
+use anyhow::{Context as _, Result, ensure};
 use std::{
     collections::{BTreeSet, HashMap},
     path::{Path, PathBuf},
@@ -28,12 +28,14 @@ static LOCKS: OnceLock<Mutex<HashMap<String, Weak<tokio::sync::Mutex<()>>>>> = O
 static NETWORK: Semaphore = Semaphore::const_new(32);
 static VERIFY: Semaphore = Semaphore::const_new(32);
 static COPY: Semaphore = Semaphore::const_new(32);
-fn locks(digests: &[Digest], target: &Path) -> Vec<Arc<tokio::sync::Mutex<()>>> {
+fn locks(digests: &[Digest], target: Option<&Path>) -> Vec<Arc<tokio::sync::Mutex<()>>> {
     let mut keys: BTreeSet<_> = digests
         .iter()
         .map(|d| format!("{}:{}", d.algorithm.suffix(), d.value))
         .collect();
-    keys.insert(format!("target:{}", target.display()));
+    if let Some(target) = target {
+        keys.insert(format!("target:{}", target.display()));
+    }
     let mut map = LOCKS.get_or_init(Default::default).lock().unwrap();
     map.retain(|_, v| v.strong_count() > 0);
     keys.into_iter()
@@ -108,6 +110,12 @@ fn remove(path: &Path) {
     }
 }
 struct Temp(PathBuf);
+/// A verified cache entry, or a verified temporary file when the cache cannot be written.
+/// A temporary file is deleted when this is dropped.
+pub struct Fetched {
+    pub path: PathBuf,
+    _temporary: Option<Temp>,
+}
 impl Drop for Temp {
     fn drop(&mut self) {
         remove(&self.0);
@@ -236,33 +244,13 @@ impl Store {
         }
         Ok(())
     }
-    async fn checked(&self, path: &Path, r: &Request, c: &Cancellation) -> Result<()> {
-        let _permit = cancellable(c, async { Ok(VERIFY.acquire().await?) }).await?;
-        verify(path, r, c)
-    }
-    async fn one(
+    /// Cache hit, or download, verify and commit. The caller holds the digest locks.
+    async fn obtain(
         &self,
         r: &Request,
-        root: &Path,
         c: &Cancellation,
         progress: &(dyn Fn(Progress) + Sync),
-    ) -> Result<()> {
-        c.check()?;
-        let target = root.join(relative(&r.relative_path)?);
-        no_symlink(target.parent().unwrap())?;
-        let target_link =
-            std::fs::symlink_metadata(&target).is_ok_and(|m| m.file_type().is_symlink());
-        if !target_link && target.try_exists()? {
-            self.checked(&target, r, c)
-                .await
-                .map_err(|_| anyhow::anyhow!("目标文件内容不同，拒绝覆盖: {}", target.display()))?;
-            return Ok(());
-        }
-        let locks = locks(&r.digests, &target);
-        let mut guards = vec![];
-        for lock in &locks {
-            guards.push(cancellable(c, async { Ok(lock.lock().await) }).await?);
-        }
+    ) -> Result<(PathBuf, Option<Temp>)> {
         let mut cached = None;
         for d in &r.digests {
             let path = self.cache_path(d);
@@ -374,6 +362,84 @@ impl Store {
                 }
             }
         }
+        Ok((source, temporary))
+    }
+    /// The verified cache path for one request, with the same single flight, digest check and
+    /// commit as `materialize`, but without linking it anywhere.
+    pub async fn fetch(
+        &self,
+        request: &Request,
+        cancel: &Cancellation,
+        progress: &(dyn Fn(Progress) + Sync),
+    ) -> Result<Fetched> {
+        ensure!(!request.id.trim().is_empty(), "内容id不能为空");
+        ensure!(!request.digests.is_empty(), "内容缺少校验信息: {}", request.id);
+        let mut r = request.clone();
+        r.digests = r
+            .digests
+            .iter()
+            .map(|d| Digest::new(d.algorithm, &d.value))
+            .collect::<Result<_>>()?;
+        let mut algorithms = BTreeSet::new();
+        for d in &r.digests {
+            ensure!(algorithms.insert(d.algorithm), "同一内容摘要算法重复: {}", r.id);
+        }
+        cancel.check()?;
+        let locks = locks(&r.digests, None);
+        let mut guards = vec![];
+        for lock in &locks {
+            guards.push(cancellable(cancel, async { Ok(lock.lock().await) }).await?);
+        }
+        let (path, temporary) = self.obtain(&r, cancel, progress).await?;
+        let bytes = std::fs::metadata(&path)?.len();
+        progress(Progress {
+            bytes,
+            total: Some(bytes),
+            speed: 0.,
+        });
+        Ok(Fetched {
+            path,
+            _temporary: temporary,
+        })
+    }
+    /// Whether a cache file exists for any digest; cheap, without verifying it.
+    pub fn has_cached(&self, r: &Request) -> bool {
+        r.digests.iter().any(|d| {
+            Digest::new(d.algorithm, &d.value)
+                .is_ok_and(|d| self.cache_path(&d).is_file())
+        })
+    }
+    async fn checked(&self, path: &Path, r: &Request, c: &Cancellation) -> Result<()> {
+        let _permit = cancellable(c, async { Ok(VERIFY.acquire().await?) }).await?;
+        verify(path, r, c)
+    }
+    async fn one(
+        &self,
+        r: &Request,
+        root: &Path,
+        c: &Cancellation,
+        progress: &(dyn Fn(Progress) + Sync),
+    ) -> Result<()> {
+        c.check()?;
+        let target = root.join(relative(&r.relative_path)?);
+        no_symlink(target.parent().unwrap())?;
+        let target_link =
+            std::fs::symlink_metadata(&target).is_ok_and(|m| m.file_type().is_symlink());
+        if !target_link && target.try_exists()? {
+            self.checked(&target, r, c)
+                .await
+                .map_err(|_| anyhow::anyhow!("目标文件内容不同，拒绝覆盖: {}", target.display()))?;
+            return Ok(());
+        }
+        let locks = locks(&r.digests, Some(&target));
+        let mut guards = vec![];
+        for lock in &locks {
+            guards.push(cancellable(c, async { Ok(lock.lock().await) }).await?);
+        }
+        let (source, temporary) = self
+            .obtain(r, c, progress)
+            .await
+            .with_context(|| format!("下载失败: {}", r.relative_path))?;
         let _permit = cancellable(c, async { Ok(COPY.acquire().await?) }).await?;
         c.check()?;
         no_symlink(target.parent().unwrap())?;
