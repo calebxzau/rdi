@@ -16,24 +16,23 @@ component AccountMenuItem inherits Rectangle {
 export component AccountMenu inherits Rectangle {
     in property <length> anchor-x;
     in property <length> anchor-y;
-    in property <bool> host-list-enabled;
     callback dismiss();
     callback player-info();
-    callback wardrobe();
-    callback host-list();
+    callback mail();
+    callback settings();
     callback logout();
     TouchArea { clicked => {root.dismiss();} }
     Rectangle {
-        width: 124px; height: root.host-list-enabled ? 156px : 120px;
+        width: 124px; height: menu-items.preferred-height;
         x: max(8px, min(root.anchor-x, root.width - self.width - 8px)); y: root.anchor-y;
         border-radius: 12px; background: #eef1f5;
         drop-shadow-blur: 10px; drop-shadow-offset-y: 3px; drop-shadow-color: #00000026;
         TouchArea {}
-        VerticalLayout {
+        menu-items := VerticalLayout {
             padding-top: 6px; padding-bottom: 6px;
             AccountMenuItem { glyph: "\u{f449}"; label: "个人信息"; clicked => {root.player-info();} }
-            AccountMenuItem { glyph: "\u{ee1c}"; label: "衣柜"; clicked => {root.wardrobe();} }
-            if root.host-list-enabled: AccountMenuItem { glyph: "\u{f03a}"; label: "房间列表"; clicked => {root.host-list();} }
+            AccountMenuItem { glyph: "\u{f0e0}"; label: "邮箱"; clicked => {root.mail();} }
+            AccountMenuItem { glyph: "\u{eb51}"; label: "设置"; clicked => {root.settings();} }
             AccountMenuItem { glyph: "\u{f2f5}"; label: "退出登录"; clicked => {root.logout();} }
         }
     }

@@ -172,9 +172,9 @@ export component AppWindow inherits Window {
     out property <bool> gallery-password-revealed: gallery-view.password-revealed;
     out property <bool> modal-open: root.login-register || root.action-error != "" || root.duplicate-host != "" || root.confirm-exit || root.gallery-dialog || root.local-play || root.pack-menu || root.discard-options || root.install-missing || root.picked-candidates.length > 0;
     out property <[GlassShape]> menu-grids: [host-grid.shape, pack-grid.shape];
-    out property <[GlassShape]> menu-pills: root.selected == 1
-        ? [tabs.shape, tabs.selected-shape, plaza.shape, install.shape, import-pack.shape]
-        : [tabs.shape, tabs.selected-shape];
+    out property <[GlassShape]> menu-pills: home-shortcuts.modpacks
+        ? [tabs.shape, tabs.selected-shape, first-shortcut.shape, second-shortcut.shape, third-shortcut.shape]
+        : [tabs.shape, tabs.selected-shape, first-shortcut.shape, second-shortcut.shape];
     out property <[GlassShape]> glass-panels: [gallery-view.surfaces[0], gallery-view.surfaces[1], dialog.shape];
     in-out property <string> action-error;
     in-out property <string> duplicate-host;
@@ -233,8 +233,13 @@ export component AppWindow inherits Window {
     out property <float> logical-height: self.height / 1px;
     property <length> room-grid-top: 116px;
     property <length> room-grid-space: self.height - root.room-grid-top - 86px;
-    out property <length> menu-grid-height: min(476px, root.room-grid-space);
-    out property <float> grid-y: (root.room-grid-top + (root.room-grid-space - root.menu-grid-height) / 2) / 1px;
+    private property <length> parade-top: root.height - 56px;
+    private property <length> shortcut-size: 48px;
+    private property <length> menu-grid-bottom-limit: root.parade-top - root.shortcut-size - 12px;
+    out property <length> menu-grid-height: min(476px, root.room-grid-space,
+        root.menu-grid-bottom-limit - root.room-grid-top);
+    private property <length> centered-grid-y: root.room-grid-top + (root.room-grid-space - root.menu-grid-height) / 2;
+    out property <float> grid-y: min(root.centered-grid-y, root.menu-grid-bottom-limit - root.menu-grid-height) / 1px;
     out property <int> menu-grid-columns: host-grid.columns;
     out property <float> menu-grid-row-offset: host-grid.row-offset / 1px;
     out property <float> host-grid-last-row-offset: host-grid.last-row-offset / 1px;
@@ -303,10 +308,51 @@ export component AppWindow inherits Window {
             GlassButton { width: 120px; label: "重试"; glyph: "\u{f021}"; clicked => {root.retry();} }
         }
     }
-    HorizontalLayout { visible: root.selected == 1; x: (parent.width - 484px) / 2; y: parent.height - 60px; width: 484px; height: 36px; spacing: 12px;
-        plaza := GlassButton { width: 128px; label: "整合广场"; glyph: "\u{f19d5}"; clicked => {root.navigate("plaza");} press(on,x,y) => {root.pill-press(2,on,x,y);} }
-        install := GlassButton { width: 176px; label: "整合包本地安装"; glyph: "\u{eaef}"; clicked => {root.navigate("install");} press(on,x,y) => {root.pill-press(3,on,x,y);} }
-        import-pack := GlassButton { width: 156px; label: "导入rdipack2"; glyph: "\u{f019}"; clicked => {root.stub("导入rdipack2");} press(on,x,y) => {root.pill-press(4,on,x,y);} }
+    home-shortcuts := Rectangle {
+        private property <bool> modpacks: root.selected == 1;
+        private property <length> step: root.shortcut-size + 16px;
+        private property <length> grid-bottom: self.modpacks
+            ? pack-grid.absolute-position.y + pack-grid.height
+            : host-grid.absolute-position.y + host-grid.height;
+        x: (parent.width - self.width) / 2;
+        y: (self.grid-bottom + root.parade-top - self.height) / 2 - menu.absolute-position.y;
+        width: root.shortcut-size + (self.modpacks ? 2 : 1) * self.step;
+        height: root.shortcut-size;
+
+        first-shortcut := CircleIconButton {
+            x: 0px;
+            height: root.shortcut-size;
+            glyph: home-shortcuts.modpacks ? "\u{f19d5}" : "\u{f03a}";
+            accessible-label: home-shortcuts.modpacks ? "整合广场" : "房间列表";
+            enabled: menu.enabled && !root.account-menu;
+            clicked => {root.navigate(home-shortcuts.modpacks ? "plaza" : "host-list");}
+            accessible-action-default => {if self.enabled {self.clicked();}}
+            press(on,x,y) => {root.pill-press(2,on,x,y);}
+            Tooltip { text: home-shortcuts.modpacks ? @markdown("整合广场") : @markdown("房间列表"); }
+        }
+        second-shortcut := CircleIconButton {
+            x: home-shortcuts.step;
+            height: root.shortcut-size;
+            glyph: home-shortcuts.modpacks ? "\u{eaef}" : "\u{ee1c}";
+            accessible-label: home-shortcuts.modpacks ? "整合包本地安装" : "衣柜";
+            enabled: first-shortcut.enabled;
+            clicked => {root.navigate(home-shortcuts.modpacks ? "install" : "wardrobe");}
+            accessible-action-default => {if self.enabled {self.clicked();}}
+            press(on,x,y) => {root.pill-press(3,on,x,y);}
+            Tooltip { text: home-shortcuts.modpacks ? @markdown("整合包本地安装") : @markdown("衣柜"); }
+        }
+        third-shortcut := CircleIconButton {
+            x: 2 * home-shortcuts.step;
+            height: root.shortcut-size;
+            visible: home-shortcuts.modpacks;
+            glyph: "\u{f019}";
+            accessible-label: "导入rdipack2";
+            enabled: self.visible && first-shortcut.enabled;
+            clicked => {root.stub("导入rdipack2");}
+            accessible-action-default => {if self.enabled {self.clicked();}}
+            press(on,x,y) => {root.pill-press(4,on,x,y);}
+            Tooltip { text: @markdown("导入rdipack2"); }
+        }
     }
     }
     login-view := LoginScreen { visible: root.login-visible; enabled: !root.modal-open;
@@ -424,11 +470,10 @@ export component AppWindow inherits Window {
     if root.account-menu && !root.login-visible: AccountMenu {
         x: 0px; y: 0px; width: parent.width; height: parent.height;
         anchor-x: title-bar.account-x; anchor-y: 44px;
-        host-list-enabled: !root.ui-proof && !root.can-back;
         dismiss => {root.account-menu = false;}
         player-info => {root.account-menu = false; root.stub("个人信息");}
-        wardrobe => {root.account-menu = false; root.navigate("wardrobe");}
-        host-list => {root.account-menu = false; root.navigate("host-list");}
+        mail => {root.account-menu = false; root.stub("邮件");}
+        settings => {root.account-menu = false; root.stub("设置");}
         logout => {root.account-menu = false; root.logout();}
     }
     if root.modal-open: Rectangle { x: 0px; y: 0px; width: parent.width; height: parent.height; background: #0009; TouchArea {} }
