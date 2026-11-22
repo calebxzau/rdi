@@ -14,6 +14,10 @@
     "mZstdCompression"
   ],
   "client": [
+    "APoseStack",
+    "mClientEntityTickGuard",
+    "mClientLivingTickListeners",
+    "mClientEntityRenderGuard",
     "mResourceLocationPath",
     "mClientBatchingLogin",
     "mPersistentPacketQuery",
@@ -36,6 +40,7 @@
     "mTcrCoreFancyMenuLogo",
     "mFarmingTalesServerLinks",
     "mDcSharpLocator",
+    "mMobEffectsVfxParticles",
     "HollowFlowProfileMixin",
     "EffekAvifTextureMixin",
     "mScreenBan",

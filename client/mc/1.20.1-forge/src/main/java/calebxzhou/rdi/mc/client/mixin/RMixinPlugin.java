@@ -62,6 +62,9 @@ public final class RMixinPlugin implements IMixinConfigPlugin {
         if (DC_SHARP_LOCATOR_MIXIN.equals(mixinClassName)) {
             return classExists(DC_SHARP_LOCATOR_TARGET);
         }
+        if ("calebxzhou.rdi.mc.client.mixin.mMobEffectsVfxParticles".equals(mixinClassName)) {
+            return classExists(targetClassName);
+        }
         if (HOLLOW_FLOW_PROFILE_MIXIN.equals(mixinClassName)) {
             return classExists(HOLLOW_FLOW_PROFILE_TARGET);
         }
