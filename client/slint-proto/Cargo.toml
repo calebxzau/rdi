@@ -61,6 +61,19 @@ naga = { version = "30.0.1", features = ["wgsl-in"] }
 [build-dependencies]
 slint-build = "=1.18.1"
 
+# Everyday builds and tests: line numbers for our own code, no debug info for dependencies.
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false
+
+# Breakpoint debugging of our own code: cargo run/test --profile debugging (target/debugging).
+# Dependencies keep no debug info, so slint/wgpu cannot be stepped into.
+[profile.debugging]
+inherits = "dev"
+debug = true
+
 [profile.release]
 opt-level = 3
 lto = "thin"
