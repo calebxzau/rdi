@@ -205,6 +205,10 @@ pub struct App {
     /// The signed-in session, also while the menu is still loading and `api` is empty.
     session: Option<Client>,
     running_processes: Vec<serde_json::Value>,
+    /// The service's last `game.state`; Rust sessions are merged in by `render_games`.
+    service_running: bool,
+    service_sessions: Vec<serde_json::Value>,
+    play_revision: u64,
     idle_pending: bool,
     login_ui: Rc<RefCell<crate::login::LoginUi>>,
     pack_ui: Rc<RefCell<crate::packs::PackUi>>,
@@ -251,6 +255,8 @@ impl App {
         let host_list_rows = Rc::new(VecModel::default());
         ui.set_all_hosts(ModelRc::from(host_list_rows.clone()));
         let pack_ui = crate::packs::PackUi::wire(ui, runtime.clone());
+        // J5 D5: look for Java 25 once, in the background, as the updater does.
+        crate::java_runtime::start(&runtime);
         let plaza = crate::plaza::Plaza::wire(ui, runtime.clone(), pack_ui.borrow().tasks());
         let login_ui = crate::login::LoginUi::wire(ui, runtime.clone(), config.server.clone());
         let app = Rc::new(RefCell::new(Self {
@@ -267,6 +273,9 @@ impl App {
             plaza,
             login_ui,
             running_processes: vec![],
+            service_running: false,
+            service_sessions: vec![],
+            play_revision: 0,
             idle_pending: false,
             heads: HeadCache::default(),
             cache: lru::LruCache::new(NonZeroUsize::new(60).unwrap()),
@@ -410,7 +419,9 @@ impl App {
         ui.on_stop_games(move || {
             if let Some(app) = stop_app.upgrade() {
                 let app = app.borrow();
-                if let Some(api) = app.api.clone() {
+                app.pack_ui.borrow().play.stop_all(true);
+                // Only a service that has games is asked, so stopping never starts it.
+                if let Some(api) = app.api.clone().filter(|_| !app.service_sessions.is_empty() || app.service_running) {
                     let tx = app.tx.clone();
                     app.runtime.spawn(async move {
                         let result = api.call("game.stopAll", serde_json::json!({})).await;
@@ -941,7 +952,53 @@ impl App {
         }
     }
     pub fn shutdown_tasks(&self) {
+        // The exit dialog says running games end with the launcher, as the service does.
+        self.pack_ui.borrow().play.stop_all(true);
         self.pack_ui.borrow().shutdown_tasks();
+    }
+    /// The game bar, the running flag and the install guard from service and Rust sessions.
+    fn render_games(&mut self, ui: &AppWindow) {
+        let rust = self.pack_ui.borrow().rust_sessions();
+        let alive = |s: &serde_json::Value| s["running"] == true || s["preparing"] == true;
+        ui.set_game_running(self.service_running || rust.iter().any(|s| s.preparing || s.running));
+        let mut versions: std::collections::HashSet<String> = self
+            .service_sessions
+            .iter()
+            .filter(|s| alive(s))
+            .filter_map(|s| s["process"]["versionId"].as_str().map(str::to_owned))
+            .collect();
+        versions.extend(rust.iter().filter(|s| s.preparing || s.running).map(|s| s.version_id.clone()));
+        // A service session still preparing may not report its version yet.
+        let unknown = self.service_sessions.iter().any(|s| s["preparing"] == true && s["process"]["versionId"].as_str().is_none());
+        self.pack_ui.borrow().running.update(versions, unknown);
+        let mut status: Vec<String> = self
+            .service_sessions
+            .iter()
+            .map(|session| {
+                let title = session["title"].as_str().unwrap_or("游戏");
+                let status = if session["preparing"] == true {
+                    "启动中"
+                } else if session["running"] == true {
+                    "运行中"
+                } else {
+                    session["exitMessage"].as_str().unwrap_or("已结束")
+                };
+                format!("{title}：{status}")
+            })
+            .collect();
+        status.extend(rust.iter().map(|s| {
+            let state = if s.preparing {
+                "启动中"
+            } else if s.running {
+                "运行中"
+            } else {
+                s.exit_message.as_deref().unwrap_or("已结束")
+            };
+            format!("{}：{state}", s.title)
+        }));
+        if !status.is_empty() || !rust.is_empty() || !self.service_sessions.is_empty() {
+            ui.set_game_status(status.join("；").into());
+        }
     }
     pub fn tick(&mut self, dt: f32) {
         let authenticated = self.login_ui.borrow_mut().tick();
@@ -957,9 +1014,11 @@ impl App {
             let weak = self.ui.clone();
             let _ = weak.upgrade_in_event_loop(|ui| ui.set_action_error("启动服务意外退出".into()));
             if self.running_processes.is_empty() {
-                self.pack_ui.borrow().running.update(Default::default(), false);
-                ui.set_game_running(false);
+                self.service_running = false;
+                self.service_sessions.clear();
+                self.pack_ui.borrow_mut().clear_service_games();
                 ui.set_game_status("".into());
+                self.render_games(&ui);
                 // Rust task state survives a service crash.
             } else if let Some(api) = self.api.clone() {
                 let tx = self.tx.clone();
@@ -976,6 +1035,7 @@ impl App {
             self.packs = packs;
             dirty = true;
         }
+        let mut render = false;
         if let Some(api) = &self.api {
             for event in api.take_events() {
                 let topic = event["event"].as_str().unwrap_or("");
@@ -986,12 +1046,10 @@ impl App {
                         ui.set_action_error(error.into());
                         continue;
                     }
-                    ui.set_game_running(
-                        state["running"] == true
-                            || state["sessions"].as_array().is_some_and(|sessions| {
-                                sessions.iter().any(|s| s["preparing"] == true)
-                            }),
-                    );
+                    self.service_running = state["running"] == true
+                        || state["sessions"].as_array().is_some_and(|sessions| {
+                            sessions.iter().any(|s| s["preparing"] == true)
+                        });
                     if let Some(sessions) = state["sessions"].as_array() {
                         self.running_processes = sessions
                             .iter()
@@ -999,36 +1057,17 @@ impl App {
                             .filter_map(|session| session.get("process").cloned())
                             .collect();
                         api.update_processes(self.running_processes.clone());
-                        // A session still preparing may not report its version yet.
-                        self.pack_ui.borrow().running.update(
-                            sessions
-                                .iter()
-                                .filter(|s| s["running"] == true || s["preparing"] == true)
-                                .filter_map(|s| s["process"]["versionId"].as_str().map(str::to_owned))
-                                .collect(),
-                            sessions.iter().any(|s| {
-                                s["preparing"] == true && s["process"]["versionId"].as_str().is_none()
-                            }),
-                        );
-                        let status = sessions
-                            .iter()
-                            .map(|session| {
-                                let title = session["title"].as_str().unwrap_or("游戏");
-                                let status = if session["preparing"] == true {
-                                    "启动中"
-                                } else if session["running"] == true {
-                                    "运行中"
-                                } else {
-                                    session["exitMessage"].as_str().unwrap_or("已结束")
-                                };
-                                format!("{title}：{status}")
-                            })
-                            .collect::<Vec<_>>()
-                            .join("；");
-                        ui.set_game_status(status.into());
+                        self.service_sessions = sessions.clone();
+                        self.pack_ui.borrow_mut().service_game_state(sessions);
                     }
+                    render = true;
                 }
             }
+        }
+        let revision = self.pack_ui.borrow().play.revision();
+        if render || revision != self.play_revision {
+            self.play_revision = revision;
+            self.render_games(&ui);
         }
         while let Ok(event) = self.rx.try_recv() {
             match event {
@@ -1200,7 +1239,8 @@ impl App {
         if !self.idle_pending
             && let Some(api) = &self.api
         {
-            let eligible = !ui.get_game_running()
+            // Rust games do not need the service, so only its own games keep it alive.
+            let eligible = !self.service_running
                 && self.pack_ui.borrow().service_screens_idle()
                 && !ui.get_local_play()
                 && !ui.get_play_busy()

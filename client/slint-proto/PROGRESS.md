@@ -404,3 +404,16 @@ is retained. Removed service source portions and tests are preserved in
 `DEL/j4b-20261110-service-import/` (ignored by Git).
 See `evidence/jvm-removal/j4b/` for automated/live evidence and unverified parity
 and owner acceptance items. Implementation parity remains incomplete; GJ4b not reached. No commit and no J5.
+
+## 2026-11-22 AVIF spike and J5a
+
+- AVIF spike: the server returns AVIF for 2 of 65 pack icons. `rav1d 1.1.0` aborts the process
+  on corrupt AV1 data and was rejected; `rav1d-safe 0.6.0` (AGPL-3.0, accepted under the owner's
+  GPL note, confirmed by the owner 2026-11-23) + `avif-parse 2.1.0` decode in pure Rust, wired into `images.rs`.
+- J5a: Rust installs Minecraft, Forge 1.20.1 / NeoForge 1.21.1 and assets, and starts local packs
+  offline (`src/mc_install`, `src/mc_launch`, `src/play`, `src/java_runtime.rs`, `src/play_ui.rs`).
+  Launch command matches Kotlin through `protocol/fixtures/j5a.json` (D6). Live run on Windows with
+  the service disabled reached both title screens; Kotlin and Rust accepted each other's NeoForge
+  install. Rooms, RDI packs, online play, Fabric and GTNH still use the service.
+- See `evidence/jvm-removal/j5a/gate-summary.md` and `owner-checklist.md`. Stopped at GJ5a; no
+  commit, no J5b.

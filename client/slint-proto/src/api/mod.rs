@@ -9,7 +9,7 @@ use std::{process::Command, sync::Arc};
 // Keep the updater source unchanged; its modulo spelling is outside this port.
 #[allow(clippy::manual_is_multiple_of)]
 #[path = "../../../updater/src/java_discovery.rs"]
-mod java_discovery;
+pub(crate) mod java_discovery;
 
 #[derive(Clone)]
 pub struct Client {
@@ -20,6 +20,9 @@ pub struct Client {
     server: ServerApi,
     /// The Java 25 the service runs on; Kotlin offered the same path as `globalJavaPath`.
     pub java_path: String,
+    /// J5a local play: the default offline name and whether a Microsoft profile is bound.
+    pub account_name: String,
+    pub has_msid: bool,
 }
 impl Client {
     pub async fn connect(server: ServerApi, session: Session) -> Result<Self> {
@@ -28,6 +31,8 @@ impl Client {
     fn connect_blocking(server: ServerApi, session: Session) -> Result<Self> {
         let uid = session.uid()?.to_owned();
         let is_dav = session.account["name"].as_str() == Some("davickk");
+        let account_name = session.account["name"].as_str().unwrap_or_default().to_owned();
+        let has_msid = session.account["msid"].as_str().is_some_and(|m| !m.trim().is_empty());
         // Discovery is useful for options, but an unavailable runtime cannot block sign-in.
         let command = Self::command();
         let java_path = command
@@ -67,6 +72,8 @@ impl Client {
             uid,
             is_dav,
             java_path,
+            account_name,
+            has_msid,
         })
     }
     fn command() -> Result<Vec<String>> {

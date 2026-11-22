@@ -380,6 +380,50 @@ fn is_blank(text: &str) -> bool {
     text.trim().is_empty()
 }
 
+/// Kotlin `ModpackLaunchSnapshot`: what a launch takes from the saved options.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Snapshot {
+    pub java_path: Option<String>,
+    pub max_memory_mb: Option<i32>,
+    pub jdwp_jvm_arg: Option<String>,
+    pub custom_jvm_args: Vec<String>,
+    pub forgeguard_disabled: bool,
+}
+
+/// Kotlin `ModpackLaunchOptionsService.loadSnapshot`. Blocking. Rust never creates `data.db`, so
+/// a missing file means no saved options, as for a pack that never had any.
+pub fn snapshot(db: &Path, version_id: &str) -> Result<Snapshot> {
+    if !db.exists() {
+        tracing::info!(version_id, "启动器数据文件不存在，使用默认启动设置");
+        return Ok(Snapshot::default());
+    }
+    let Some(record) = find(&open(db)?, version_id)? else {
+        return Ok(Snapshot::default());
+    };
+    snapshot_of(record)
+}
+
+fn snapshot_of(record: Record) -> Result<Snapshot> {
+    ensure!(record.java_path.as_deref().is_none_or(|j| !is_blank(j)), "整合包自定义JDK路径为空");
+    ensure!(record.max_memory_mb.is_none_or(|m| m > 4096), "整合包自定义最大内存无效");
+    let jdwp_jvm_arg = if record.jdwp_enabled {
+        let param = record.jdwp_param.as_deref().map(kt_trim).unwrap_or("");
+        ensure!(!param.is_empty(), "整合包JDWP参数为空");
+        ensure!(!param.contains('\n') && !param.contains('\r'), "整合包JDWP参数包含换行");
+        ensure!(!param.starts_with("-agentlib:jdwp="), "整合包JDWP参数格式无效");
+        Some(format!("-agentlib:jdwp={param}"))
+    } else {
+        None
+    };
+    Ok(Snapshot {
+        java_path: record.java_path,
+        max_memory_mb: record.max_memory_mb,
+        jdwp_jvm_arg,
+        custom_jvm_args: parse_jvm_params(&record.custom_jvm_params)?,
+        forgeguard_disabled: record.forgeguard_disabled,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -512,5 +556,27 @@ mod tests {
         );
         assert_eq!(arch_mismatch("no arch here", "aarch64", false), None);
         assert_eq!(normalize(Path::new("/a/b/../c/./java")), PathBuf::from("/a/c/java"));
+    }
+
+    #[test]
+    fn launch_snapshots_follow_load_snapshot() {
+        let record = |java: Option<&str>, memory: Option<i32>, jdwp: bool, param: Option<&str>, jvm: &str| Record {
+            version_id: "v".into(),
+            java_path: java.map(str::to_owned),
+            max_memory_mb: memory,
+            jdwp_enabled: jdwp,
+            jdwp_param: param.map(str::to_owned),
+            custom_jvm_params: jvm.into(),
+            forgeguard_disabled: false,
+        };
+        let s = snapshot_of(record(Some("C:/jdk/bin/java.exe"), Some(8192), true, Some(" transport=dt_socket "), "-Da=1\r\n\n-Db=2")).unwrap();
+        assert_eq!(s.jdwp_jvm_arg.as_deref(), Some("-agentlib:jdwp=transport=dt_socket"));
+        assert_eq!(s.custom_jvm_args, ["-Da=1", "-Db=2"]);
+        assert!(snapshot_of(record(Some(" "), None, false, None, "")).is_err());
+        assert!(snapshot_of(record(None, Some(4096), false, None, "")).is_err());
+        assert!(snapshot_of(record(None, None, true, Some("-agentlib:jdwp=x"), "")).is_err());
+        assert!(snapshot_of(record(None, None, true, Some(""), "")).is_err());
+        assert!(snapshot_of(record(None, None, false, None, "x")).is_err());
+        assert_eq!(snapshot(Path::new("missing/data.db"), "v").unwrap(), Snapshot::default());
     }
 }

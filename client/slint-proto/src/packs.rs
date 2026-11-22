@@ -45,6 +45,8 @@ fn options_title(id: &str, name: &str, version: &str) -> String {
     }
 }
 pub use crate::local_packs::InstalledPack;
+#[path = "play_ui.rs"]
+mod play_ui;
 enum Reply {
     Service(u64, String, Result<Value>),
     Scan(u64, Vec<crate::import::scanner::Candidate>),
@@ -119,6 +121,13 @@ pub struct PackUi {
     install_prompt: Option<(String, String)>,
     /// Changes only with the signed-in session; a service restart must not drop a started install.
     install_generation: u64,
+    /// J5a: games started by Rust.
+    pub play: crate::play::Sessions,
+    native_play: Option<play_ui::NativePlay>,
+    service_games: play_ui::ServiceGames,
+    service_sessions: Vec<(String, String)>,
+    service_lines: Vec<String>,
+    play_revision: u64,
 }
 impl PackUi {
     pub fn wire(ui: &AppWindow, runtime: tokio::runtime::Handle) -> Rc<RefCell<Self>> {
@@ -186,6 +195,12 @@ impl PackUi {
             running: Default::default(),
             install_prompt: None,
             install_generation: 0,
+            play: Default::default(),
+            native_play: None,
+            service_games: Default::default(),
+            service_sessions: vec![],
+            service_lines: vec![],
+            play_revision: 0,
         }));
         let weak = Rc::downgrade(&state);
         ui.on_pack_action(move |action, value| {
@@ -269,8 +284,10 @@ impl PackUi {
         self.generation += 1;
         self.queue.clear();
         self.busy = false;
-        self.logs.clear();
-        self.sessions.clear();
+        self.service_games = Default::default();
+        self.service_sessions.clear();
+        self.service_lines.clear();
+        self.render_console();
         self.last_device_uri.clear();
         if !self.native_tasks.owns(&self.watched) {
             self.task = Value::Null;
@@ -388,7 +405,7 @@ impl PackUi {
         let Some(ui) = self.ui.upgrade() else {
             return true;
         };
-        ui.get_activity_panel() != 1
+        ui.get_activity_panel() != 1 || !(self.service_games.any_session || !self.service_sessions.is_empty())
     }
     fn native_render(&mut self) {
         self.installer(&self.native.value.clone());
@@ -615,6 +632,10 @@ impl PackUi {
             ui.set_pack_menu(false);
             ui.set_play_error("".into());
             ui.set_play_device_uri("".into());
+            self.native_play = None;
+            if self.open_native_play(&ui, ui.get_pack_selected_id().as_str()) {
+                return;
+            }
             ui.set_local_play(true);
             ui.set_play_busy(true);
             self.call(
@@ -866,9 +887,15 @@ impl PackUi {
             "play.cancel" => {
                 ui.set_local_play(false);
                 ui.set_play_busy(false);
-                self.call("packPlay.cancel", json!({}));
+                if !self.cancel_native_play() {
+                    self.call("packPlay.cancel", json!({}));
+                }
             }
+            "java.install" => self.install_java(),
             "play.start" | "play.duplicate" => {
+                if self.start_native_play(&ui, action == "play.duplicate") {
+                    return;
+                }
                 let size = ui.window().size();
                 ui.set_play_busy(true);
                 self.call("packPlay.start",json!({"versionId":ui.get_pack_selected_id().as_str(),"mode":if ui.get_play_online(){"Online"}else{"Offline"},"nickname":ui.get_play_nickname().as_str(),"windowWidth":size.width,"windowHeight":size.height,"allowDuplicateVersion":action=="play.duplicate"}));
@@ -910,13 +937,7 @@ impl PackUi {
                     self.render_task();
                 }
             }
-            "console.subscribe" | "console.select" => {
-                if action.ends_with("select") {
-                    self.session_id = value.into();
-                }
-                self.call("console.subscribe", json!({"sessionId":self.session_id}));
-            }
-            "console.clear" => self.call("console.clear", json!({"sessionId":self.session_id})),
+            "console.subscribe" | "console.select" | "console.clear" => self.console_action(action, value),
             "console.line" => {
                 if let Some(row) = value
                     .parse::<usize>()
@@ -998,6 +1019,7 @@ impl PackUi {
         });
     }
     pub fn tick(&mut self) {
+        self.tick_play();
         // Rust tasks publish freely; the UI samples them like Kotlin's sample(34).
         if self.task_sample.elapsed() >= std::time::Duration::from_millis(34) {
             self.task_sample = std::time::Instant::now();
@@ -1211,46 +1233,7 @@ impl PackUi {
     pub fn event(&mut self, topic: &str, v: &Value) {
         match topic {
             "packPlay.state" => self.play(v),
-            "console.state" => {
-                self.session_id = text(v, "sessionId").into();
-                sync(
-                    &self.sessions,
-                    array(v, "sessions")
-                        .iter()
-                        .enumerate()
-                        .map(|(i, t)| CandidateRow {
-                            name: text(t, "title").into(),
-                            detail: text(t, "id").into(),
-                            index: i as i32,
-                            collapsed: text(t, "id") == self.session_id,
-                            ..Default::default()
-                        })
-                        .collect(),
-                );
-                let lines = array(v, "lines")
-                    .iter()
-                    .filter_map(Value::as_str)
-                    .collect::<Vec<_>>();
-                sync(
-                    &self.logs,
-                    lines
-                        .iter()
-                        .map(|line| LogRow {
-                            text: (*line).into(),
-                            level: if line.contains("ERROR") {
-                                2
-                            } else if line.contains("WARN") {
-                                1
-                            } else {
-                                0
-                            },
-                        })
-                        .collect(),
-                );
-                if let Some(ui) = self.ui.upgrade() {
-                    ui.set_activity_log_text(lines.join("\n").into());
-                }
-            }
+            "console.state" => self.service_console(v),
             _ => {}
         }
     }

@@ -61,7 +61,7 @@ impl Shell {
                         else if ui.get_install_missing() { ui.invoke_pack_action("installer.dismissMissing".into(), "".into()); }
                         else if ui.get_picked_candidates().row_count() > 0 { ui.invoke_pack_action("installer.dismissCandidates".into(), "".into()); }
                         else if !ui.get_action_error().is_empty() { ui.set_action_error("".into()); ui.invoke_pack_action("installer.dismissError".into(), "".into()); }
-                        else { ui.set_pack_menu(false); ui.set_discard_options(false); ui.set_duplicate_host("".into()); ui.set_confirm_exit(false); ui.set_gallery_dialog(false); }
+                        else { ui.set_pack_menu(false); ui.set_discard_options(false); ui.set_duplicate_host("".into()); ui.set_java_missing(false); ui.set_confirm_exit(false); ui.set_gallery_dialog(false); }
                     }
                     return;
                 }

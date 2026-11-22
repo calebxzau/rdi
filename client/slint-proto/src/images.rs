@@ -12,12 +12,19 @@ use std::{
     time::Duration,
 };
 use tokio::sync::{Mutex, OnceCell, Semaphore};
+const MAX_IMAGE_DIMENSION: u32 = 8192;
 pub fn decode(bytes: &[u8]) -> Result<DynamicImage> {
+    if crate::avif::is_avif(bytes) {
+        let image = crate::avif::decode(bytes, MAX_IMAGE_DIMENSION)?;
+        return RgbaImage::from_raw(image.width, image.height, image.pixels)
+            .map(DynamicImage::ImageRgba8)
+            .context("AVIF图片数据不完整");
+    }
     let format = image::guess_format(bytes).context("无法识别图片格式")?;
     let mut reader = image::ImageReader::with_format(Cursor::new(bytes), format);
     let mut limits = image::Limits::default();
-    limits.max_image_width = Some(8192);
-    limits.max_image_height = Some(8192);
+    limits.max_image_width = Some(MAX_IMAGE_DIMENSION);
+    limits.max_image_height = Some(MAX_IMAGE_DIMENSION);
     limits.max_alloc = Some(128 * 1024 * 1024);
     reader.limits(limits);
     reader.decode().context("图片解码失败")
@@ -423,5 +430,10 @@ mod tests {
         let img = steve().unwrap();
         assert_eq!(img.dimensions(), (8, 8));
         assert!(decode(b"broken").is_err());
+    }
+    #[test]
+    fn decode_routes_avif() {
+        let image = decode(include_bytes!("../assets/sponsor.avif")).unwrap();
+        assert_eq!((image.width(), image.height()), (256, 256));
     }
 }
