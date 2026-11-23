@@ -509,9 +509,20 @@ fn install_into(
 }
 
 fn mod_requests(deps: &Deps, plan: &Plan, headers: &Headers) -> Result<Vec<Request>> {
+    requests_for(deps, &plan.mods, headers)
+}
+
+/// Download requests for mods outside a pack install (J5b room base and extra mods), each at
+/// `mods/<fileName>`; the caller may change `relative_path`. Blocks on CurseForge lookups, so
+/// async callers run it on a blocking thread.
+pub fn mod_download_requests(deps: &Deps, mods: &[mods::Mod]) -> Result<Vec<Request>> {
+    requests_for(deps, mods, &Headers(deps))
+}
+
+fn requests_for(deps: &Deps, list: &[mods::Mod], headers: &Headers) -> Result<Vec<Request>> {
     // Look up real CurseForge URLs once, only for mods the cache does not already hold.
     let mut lookups = vec![];
-    for m in &plan.mods {
+    for m in list {
         if m.platform.eq_ignore_ascii_case("cf") && !m.trusted_curse_forge() {
             let probe = mods::request(m, vec![])?;
             if !deps.store.has_cached(&probe) {
@@ -529,8 +540,7 @@ fn mod_requests(deps: &Deps, plan: &Plan, headers: &Headers) -> Result<Vec<Reque
             .block_on(deps.catalog.get_files(&lookups))?
             .value
     };
-    plan.mods
-        .iter()
+    list.iter()
         .map(|m| {
             let real = if m.trusted_curse_forge() {
                 m.download_urls

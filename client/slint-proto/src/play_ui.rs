@@ -183,6 +183,35 @@ impl PackUi {
         })
     }
 
+    /// J5b: what a room start needs. The catalog opens its database, so the caller builds the
+    /// deps off the UI thread. Also makes the last room game's end stop the room connection.
+    pub fn room_deps(&self, primary: &str) -> Option<impl FnOnce() -> crate::play::room::RoomDeps + Send + 'static> {
+        let api = self.api.as_ref()?;
+        let (uid, account_name, is_dav) = (api.uid().ok()?, api.account_name.clone(), api.is_dav);
+        let install = self.install_deps()?;
+        let play = self.play_deps()?;
+        let runtime = self.runtime.clone();
+        self.play.set_rooms_idle(std::sync::Arc::new(move || {
+            runtime.spawn(crate::route::link::stop());
+        }));
+        let endpoint = crate::route::Endpoint::new(primary);
+        Some(move || crate::play::room::RoomDeps {
+            play,
+            install: install(),
+            endpoint,
+            runtime_dir: crate::play::runtime::default_dir(),
+            tools: crate::paths::data_dir().join("tools"),
+            account_name,
+            uid,
+            is_dav,
+        })
+    }
+
+    /// The service's running games per version, for the duplicate check of a Rust start.
+    pub fn service_alive_by_version(&self) -> HashMap<String, usize> {
+        self.service_games.alive_by_version.clone()
+    }
+
     /// `java.install`: the updater's automatic Java 25 install as a launcher task.
     pub(super) fn install_java(&mut self) {
         let Some(api) = self.api.as_ref() else {

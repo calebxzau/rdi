@@ -1,0 +1,184 @@
+{
+  "comment": "Written by J5bKotlinThinFixtureTest (client/mclaunch); inputs in j5b-thin/, checked by the thinning tests in Rust.",
+  "cacheSchema": "v3",
+  "mods": [
+    {
+      "name": "already-thin.jar",
+      "changed": false
+    },
+    {
+      "name": "kff-5.jar",
+      "changed": true,
+      "thinCache": "thin-kotlin-mod/v3-f17050edbf26efee3c78271a0dd624c0a8287276.jar",
+      "originalCache": "original-kotlin-mod/f17050edbf26efee3c78271a0dd624c0a8287276.jar",
+      "entries": [
+        {
+          "name": "META-INF/MANIFEST.MF",
+          "sha1": "79e33dd52ebdf615e6696ae69add91cb990d81e2"
+        },
+        {
+          "name": "META-INF/jarjar/kfflang.jar",
+          "jar": [
+            {
+              "name": "META-INF/MANIFEST.MF",
+              "sha1": "79e33dd52ebdf615e6696ae69add91cb990d81e2"
+            },
+            {
+              "name": "thedarkcolour/kotlinforforge/Lang.class",
+              "sha1": "7a2f85497548f3db88542025e6f75908b8716c12"
+            }
+          ]
+        },
+        {
+          "name": "META-INF/jarjar/kfflib.jar",
+          "jar": [
+            {
+              "name": "META-INF/MANIFEST.MF",
+              "sha1": "79e33dd52ebdf615e6696ae69add91cb990d81e2"
+            },
+            {
+              "name": "thedarkcolour/kotlinforforge/Lib.class",
+              "sha1": "9d062bafff17ba8b9a1215c4c51485134d509d91"
+            }
+          ]
+        },
+        {
+          "name": "META-INF/jarjar/kffmod.jar",
+          "jar": [
+            {
+              "name": "META-INF/MANIFEST.MF",
+              "sha1": "79e33dd52ebdf615e6696ae69add91cb990d81e2"
+            },
+            {
+              "name": "thedarkcolour/kotlinforforge/Mod.class",
+              "sha1": "7dd30f0a95d522bfc058be4e75847f8b6df9f76b"
+            }
+          ]
+        },
+        {
+          "name": "META-INF/jarjar/metadata.json",
+          "json": {
+            "jars": [
+              {
+                "identifier": {
+                  "group": "thedarkcolour",
+                  "artifact": "kfflang"
+                },
+                "version": {
+                  "range": "[1,)",
+                  "artifactVersion": "1.0"
+                },
+                "path": "META-INF/jarjar/kfflang.jar",
+                "isObfuscated": false
+              },
+              {
+                "identifier": {
+                  "group": "thedarkcolour",
+                  "artifact": "kfflib"
+                },
+                "version": {
+                  "range": "[1,)",
+                  "artifactVersion": "1.0"
+                },
+                "path": "META-INF/jarjar/kfflib.jar",
+                "isObfuscated": false
+              },
+              {
+                "identifier": {
+                  "group": "thedarkcolour",
+                  "artifact": "kffmod"
+                },
+                "version": {
+                  "range": "[1,)",
+                  "artifactVersion": "1.0"
+                },
+                "path": "META-INF/jarjar/kffmod.jar",
+                "isObfuscated": false
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "kotlin-mod.jar",
+      "changed": true,
+      "thinCache": "thin-kotlin-mod/v3-d227bd25ecad3c1e607cecde93b4bbf51daa33f4.jar",
+      "originalCache": "original-kotlin-mod/d227bd25ecad3c1e607cecde93b4bbf51daa33f4.jar",
+      "entries": [
+        {
+          "name": "META-INF/MANIFEST.MF",
+          "sha1": "79e33dd52ebdf615e6696ae69add91cb990d81e2"
+        },
+        {
+          "name": "META-INF/mods.toml",
+          "sha1": "b40ce54d9cf97d1de9c0f8c108434ed2cc8e70c4"
+        },
+        {
+          "name": "META-INF/jarjar/helper.jar",
+          "jar": [
+            {
+              "name": "META-INF/MANIFEST.MF",
+              "sha1": "79e33dd52ebdf615e6696ae69add91cb990d81e2"
+            },
+            {
+              "name": "kotlin/Shaded.class",
+              "sha1": "13528f32f0e6fda71a45f09b90e054515bf23571"
+            },
+            {
+              "name": "com/example/helper/Helper.class",
+              "sha1": "623c73a6f24d88d84d2235c8a639c80b80004b70"
+            },
+            {
+              "name": "META-INF/jarjar/metadata.json",
+              "json": {
+                "jars": []
+              }
+            }
+          ]
+        },
+        {
+          "name": "kotlinmod/Main.class",
+          "sha1": "b28b7af69320201d1cf206ebf28373980add1451"
+        },
+        {
+          "name": "assets/kotlinmod/lang/zh_cn.json",
+          "sha1": "ae1ee4c942c571d0d197d99d0d985779af17fdad"
+        },
+        {
+          "name": "META-INF/jarjar/metadata.json",
+          "json": {
+            "other": {
+              "keep": [
+                1,
+                2
+              ]
+            },
+            "jars": [
+              {
+                "identifier": {
+                  "group": "com.example",
+                  "artifact": "helper"
+                },
+                "version": {
+                  "range": "[1,)",
+                  "artifactVersion": "1.0"
+                },
+                "path": "META-INF/jarjar/helper.jar",
+                "isObfuscated": false
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "missing-runtime.jar",
+      "changed": false
+    },
+    {
+      "name": "plain.jar",
+      "changed": false
+    }
+  ]
+}

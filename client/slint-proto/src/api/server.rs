@@ -8,8 +8,23 @@ use std::{path::Path, time::Duration};
 #[derive(Clone)]
 pub struct ServerApi {
     pub http: Client,
-    base: String,
+    base: Base,
     jwt: Option<String>,
+}
+
+/// The server address, shared by every clone of one `ServerApi`, so a node entry that moves the
+/// player to the backup address (`RServer.now`) applies to all requests at once (J5b B3).
+#[derive(Clone)]
+struct Base(std::sync::Arc<std::sync::RwLock<String>>);
+impl From<String> for Base {
+    fn from(value: String) -> Self {
+        Self(std::sync::Arc::new(std::sync::RwLock::new(value.trim_end_matches('/').to_owned())))
+    }
+}
+impl std::fmt::Display for Base {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0.read().unwrap())
+    }
 }
 pub struct Session {
     pub account: Value,
@@ -115,7 +130,7 @@ impl ServerApi {
         };
         Ok(Self {
             http: client(config.proxy.as_ref())?,
-            base: base.trim_end_matches('/').into(),
+            base: base.into(),
             jwt: None,
         })
     }
@@ -124,9 +139,31 @@ impl ServerApi {
     pub fn with_token(base: &str, jwt: &str) -> Self {
         Self {
             http: Client::new(),
-            base: base.trim_end_matches('/').into(),
+            base: base.to_owned().into(),
             jwt: Some(jwt.into()),
         }
+    }
+    /// The current server address, such as `https://rdi.calebxzhou.cn:65331`.
+    pub fn base(&self) -> String {
+        self.base.to_string()
+    }
+    /// Moves every clone of this API to another address; requests already sent keep theirs.
+    pub fn switch_base(&self, base: &str) {
+        let base = base.trim_end_matches('/');
+        let mut current = self.base.0.write().unwrap();
+        if *current != base {
+            tracing::info!(from = %*current, to = %base, "切换服务器地址");
+            *current = base.to_owned();
+        }
+    }
+    /// A copy at another address with its own, unshared address (the node lookup always asks
+    /// the primary server, whatever address requests currently use).
+    pub fn at(&self, base: &str) -> Self {
+        Self { http: self.http.clone(), base: base.to_owned().into(), jwt: self.jwt.clone() }
+    }
+    /// The login token; a room game uses it as its access token, as Kotlin's `loggedAccount.jwt`.
+    pub fn jwt(&self) -> Option<&str> {
+        self.jwt.as_deref()
     }
     /// The full URL of a server path such as `/mod/download/x.jar`.
     pub fn url(&self, path: &str) -> String {
@@ -363,7 +400,7 @@ pub(crate) mod tests {
         (
             ServerApi {
                 http: client(None).unwrap(),
-                base,
+                base: base.into(),
                 jwt: Some("fake-token".into()),
             },
             task,
@@ -458,7 +495,7 @@ pub(crate) mod tests {
         drop(listener);
         let api = ServerApi {
             http: client(None).unwrap(),
-            base: format!("http://{addr}"),
+            base: format!("http://{addr}").into(),
             jwt: Some("fake".into()),
         };
         assert_eq!(
@@ -559,7 +596,7 @@ pub(crate) mod tests {
                 .timeout(Duration::from_millis(30))
                 .build()
                 .unwrap(),
-            base,
+            base: base.into(),
             jwt: Some("fake".into()),
         };
         assert_eq!(

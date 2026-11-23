@@ -96,6 +96,7 @@ fn launch_commands_match_the_kotlin_fixture() {
             java_override: java_override.as_deref(),
             max_memory_override: case["maxMemoryMb"].as_i64().map(|m| m as i32),
             extra_jvm_args: &extra,
+            rdi: None,
         };
         let env = Environment {
             directories: &dirs,
@@ -170,4 +171,104 @@ fn spawned_output_reaches_the_callback() {
     assert_eq!(lines, ["one", "two"]);
     let status = started.child.wait().unwrap();
     assert_eq!(exit_line(status.code()), "MC已结束，退出代码: 3");
+}
+
+const J5B_FIXTURE: &str = include_str!("../../protocol/fixtures/j5b-launch.json");
+
+/// Room games (`rdiRuntime = true`): runtime jars first on the class path, NeoForge logging and
+/// media arguments after the UTF-8 ones, then the room's own arguments.
+#[test]
+fn room_launch_commands_match_the_kotlin_fixture() {
+    let j5a: Value = serde_json::from_str(FIXTURE).unwrap();
+    let h = &j5a["host"];
+    let host = Host {
+        os_name: h["osName"].as_str().unwrap().into(),
+        os_arch: h["osArch"].as_str().unwrap().into(),
+        os_version: h["osVersion"].as_str().unwrap().into(),
+        path_separator: h["pathSeparator"].as_str().unwrap().into(),
+    };
+    let fixture: Value = serde_json::from_str(J5B_FIXTURE).unwrap();
+    assert_eq!(fixture["pathSeparator"], h["pathSeparator"]);
+    let cases = fixture["cases"].as_array().unwrap();
+    assert_eq!(cases.len(), 2);
+    let strings = |v: &Value| -> Vec<String> { v.as_array().unwrap().iter().map(|s| s.as_str().unwrap().to_owned()).collect() };
+    for case in cases {
+        let root = temp();
+        let root_text = root.to_string_lossy().into_owned();
+        let runtime_root = root.join("runtime");
+        let dirs = Directories { versions: root.join("versions"), libraries: root.join("libraries"), assets: root.join("assets") };
+        let mc = case["mcVersion"].as_str().unwrap();
+        let loader_name = case["loader"].as_str().unwrap();
+        let dir_name = crate::mc_install::meta::loader(mc, loader_name).unwrap().dir_name;
+        let raw: Manifest = serde_json::from_str(
+            &std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("protocol/fixtures/j5a").join(case["loaderManifest"].as_str().unwrap())).unwrap(),
+        )
+        .unwrap();
+        let manifest = strip_checksums(vanilla(mc));
+        let loader = strip_checksums(normalize_loader(raw, dir_name, mc));
+        for library in manifest.libraries.iter().chain(&loader.libraries) {
+            if let Some(path) = library.downloads.artifact.as_ref().and_then(|a| a.path.clone()).filter(|p| !p.trim().is_empty()).or_else(|| manifest::descriptor_path(&library.name)) {
+                placeholder_jar(&dirs.libraries.join(path));
+            }
+        }
+        placeholder_jar(&dirs.versions.join(mc).join(format!("{mc}.jar")));
+        let version_id = case["versionId"].as_str().unwrap();
+        let version_dir = dirs.versions.join(version_id);
+        std::fs::create_dir_all(version_dir.join("mods")).unwrap();
+        let account = Account {
+            name: case["accountName"].as_str().unwrap().into(),
+            uuid: case["accountUuid"].as_str().unwrap().into(),
+            access_token: "jwt-secret".into(),
+            user_type: "msa".into(),
+        };
+        let extra: Vec<String> = strings(&case["extraJvmArgs"]).into_iter().map(|a| a.replace("${ROOT}", &root_text)).collect();
+        let classpath: Vec<PathBuf> =
+            strings(&case["runtimeClasspath"]).iter().map(|e| runtime_root.join(e.strip_prefix("${RUNTIME}/").unwrap())).collect();
+        let natives = PathBuf::from(case["mediaNatives"].as_str().unwrap().replace("${ROOT}", &root_text));
+        let window = strings(&case["window"]);
+        let request = Request {
+            mc_version: mc,
+            version_id,
+            version_dir: &version_dir,
+            manifest: &manifest,
+            loader: &loader,
+            account: &account,
+            window: (window[0].parse().unwrap(), window[1].parse().unwrap()),
+            java_override: None,
+            max_memory_override: case["maxMemoryMb"].as_i64().map(|m| m as i32),
+            extra_jvm_args: &extra,
+            rdi: Some(RdiRuntime { loader: loader_name, classpath: &classpath, media_natives: &natives }),
+        };
+        let env = Environment {
+            directories: &dirs,
+            host: &host,
+            java: "JAVA",
+            java_major: 25,
+            max_memory_mb: case["defaultMaxMemoryMb"].as_i64().unwrap() as i32,
+            launcher_version: case["launcherVersion"].as_str().unwrap(),
+            free_memory_mb: &|| panic!("a maximum is configured"),
+        };
+        let runtime_text = runtime_root.to_string_lossy().into_owned();
+        let built: Vec<String> = mask_secrets(&command(&request, &env).unwrap())
+            .into_iter()
+            .map(|a| a.replace(&format!("{runtime_text}{}", std::path::MAIN_SEPARATOR), "${RUNTIME}/").replace(&root_text, "${ROOT}").replace('\\', "/"))
+            .collect();
+        let expected = strings(&case["command"]);
+        for (i, (b, e)) in built.iter().zip(&expected).enumerate() {
+            assert_eq!(b, e, "{} argument {i}", case["name"]);
+        }
+        assert_eq!(built.len(), expected.len(), "{}", case["name"]);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+}
+
+#[test]
+fn neoforge_logging_arguments_yield_to_the_players_own() {
+    assert!(neoforge_logging_jvm_args("1.20.1", "forge", &[]).is_empty());
+    assert!(neoforge_logging_jvm_args("1.21.1", "forge", &[]).is_empty());
+    let own = vec!["-Dforge.logging.marker.core=ACCEPT".to_string(), "-Drdi.logging.rootLevel".to_string()];
+    assert_eq!(
+        neoforge_logging_jvm_args("1.21.1", "neoforge", &own),
+        ["-Dforge.logging.marker.loading=NEUTRAL", "-Dforge.logging.marker.forgemod=NEUTRAL"]
+    );
 }

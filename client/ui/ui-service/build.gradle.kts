@@ -33,3 +33,26 @@ application { mainClass.set("calebxzau.rdi.service.MainKt") }
 configurations.configureEach {
     exclude(group = "org.jetbrains.androidx.lifecycle", module = "lifecycle-viewmodel-desktop")
 }
+
+// J5b (J5 decision D4): the jars a room game needs, for the Rust launcher. Development builds read
+// build/game-runtime; packaging it is J6.
+val forgeguardAgent = configurations.create("forgeguardAgent") {
+    isCanBeConsumed = false
+    isCanBeResolved = true
+    isTransitive = false
+}
+dependencies { forgeguardAgent(project(":forgeguard")) }
+tasks.register<JavaExec>("gameRuntime") {
+    group = "rdi"
+    description = "Writes build/game-runtime: Kotlin, zstd-jni, mediaproc and Forgeguard jars plus manifest.json."
+    val output = layout.buildDirectory.dir("game-runtime")
+    // A plain file collection, because the configuration cache cannot store a Configuration.
+    val agent = files(forgeguardAgent)
+    classpath = sourceSets.main.get().runtimeClasspath
+    mainClass.set("calebxzau.rdi.service.GameRuntimeExportKt")
+    inputs.files(agent)
+    outputs.dir(output)
+    argumentProviders.add(CommandLineArgumentProvider {
+        listOf(output.get().asFile.absolutePath, agent.singleFile.absolutePath)
+    })
+}

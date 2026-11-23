@@ -433,3 +433,18 @@ and owner acceptance items. Implementation parity remains incomplete; GJ4b not r
   operations and their refusals) on a local master. Seven UI bugs found live were fixed.
 - See `evidence/ui-port/u4c1/gate-summary.md` and `owner-checklist.md`.
 - GU4c1 passed 2026-11-23; template cards now show the author (owner's review). Committed.
+
+## 2026-11-23 J5b steps 1-7: room games from Rust (stopped at GJ5b1)
+
+- Forge 1.20.1 and NeoForge 1.21.1 rooms start without the service: `src/play/{room,mods_sync,core,
+  runtime,thin,window}.rs`, `src/route/{mod,link}.rs` (room connection linked in from
+  `client/local-proxy-rs`), launch command with RDI runtimes in `src/mc_launch`. GTNH/Fabric rooms
+  still use the service.
+- Kotlin fixtures `j5b-launch.json`, `j5b-thin.json` (+ `j5b-thin/`), `j5b-sync.json`,
+  `j5b-window.json`; `:ui-service:gameRuntime` writes `ui-service/build/game-runtime`.
+- clippy, `cargo test --workspace` (21 new), zigbuild macOS/Linux, Kotlin fixture tests pass. Live on
+  the real server: a NeoForge 1.21.1 room joined the world through the Rust room connection.
+- See `evidence/jvm-removal/j5b/gate-summary.md` and `owner-checklist.md`.
+- GJ5b1 accepted by the owner 2026-11-23, committed. Owner direction: drop the Kotlin class path
+  mount and thinning later (KFF supplies Kotlin); see `J5B-PLAN.md`.
+

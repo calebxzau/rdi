@@ -30,6 +30,9 @@ rav1d-safe = { version = "=0.6.0", default-features = false, features = ["bitdep
 avif-parse = "=2.1.0"
 
 rdi-renderer = { path = "crates/rdi-renderer" }
+# J5b: the room connection runs inside the launcher (J5 decision D3), no native library to load.
+rdi-local-proxy = { path = "../local-proxy-rs" }
+rdi-session-resume = { path = "../../common/session-resume-rs" }
 glam = "=0.34.1"
 half = "=2.7.1"
 bytemuck = { version = "=1.25.2", features = ["derive"] }

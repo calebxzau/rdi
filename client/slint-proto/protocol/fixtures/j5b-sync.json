@@ -1,0 +1,303 @@
+{
+  "comment": "Written by J5bRoomModSyncFixtureTest (client-core); checked by the room mod sync tests in Rust.",
+  "extraModPrefix": "X$_",
+  "removedSlugsForge": [
+    "chunky",
+    "customskinloader",
+    "default-server-properties",
+    "essential-mod",
+    "lazyyyyy",
+    "log-deduplicator",
+    "mcwifipnp",
+    "powerful-dummy",
+    "skybox-loader-forge",
+    "spark",
+    "tab-list",
+    "what-can-i-see",
+    "zstd-net",
+    "zstdnet"
+  ],
+  "removedNames": [
+    {
+      "file": "spark.jar",
+      "forge": true,
+      "neoforge": true
+    },
+    {
+      "file": "spark-1.10.jar",
+      "forge": true,
+      "neoforge": true
+    },
+    {
+      "file": "spark_forge.jar",
+      "forge": true,
+      "neoforge": true
+    },
+    {
+      "file": "SPARK-1.0.JAR",
+      "forge": true,
+      "neoforge": true
+    },
+    {
+      "file": "sparkle.jar",
+      "forge": false,
+      "neoforge": false
+    },
+    {
+      "file": "spark.zip",
+      "forge": false,
+      "neoforge": false
+    },
+    {
+      "file": "lazyyyyy-1.0.jar",
+      "forge": true,
+      "neoforge": true
+    },
+    {
+      "file": "skybox-loader-forge_1.jar",
+      "forge": true,
+      "neoforge": true
+    },
+    {
+      "file": "chunky.jar",
+      "forge": true,
+      "neoforge": true
+    },
+    {
+      "file": "tab-list-2.jar",
+      "forge": true,
+      "neoforge": true
+    },
+    {
+      "file": "jei.jar",
+      "forge": false,
+      "neoforge": false
+    }
+  ],
+  "cases": [
+    {
+      "name": "fresh-folder",
+      "loader": "forge",
+      "active": [
+        {
+          "platform": "cf",
+          "projectId": "p-jei",
+          "slug": "jei",
+          "fileId": "f-jei",
+          "hash": "aaa111",
+          "side": "BOTH"
+        },
+        {
+          "platform": "cf",
+          "projectId": "p-oculus",
+          "slug": "oculus",
+          "fileId": "f-oculus",
+          "hash": "bbb222",
+          "side": "CLIENT"
+        },
+        {
+          "platform": "cf",
+          "projectId": "p-servercore",
+          "slug": "servercore",
+          "fileId": "f-servercore",
+          "hash": "ccc333",
+          "side": "SERVER"
+        },
+        {
+          "platform": "cf",
+          "projectId": "p-mystery",
+          "slug": "mystery",
+          "fileId": "f-mystery",
+          "hash": "ddd444",
+          "side": "UNKNOWN"
+        },
+        {
+          "platform": "cf",
+          "projectId": "p-spark",
+          "slug": "spark",
+          "fileId": "f-spark",
+          "hash": "eee555",
+          "side": "BOTH"
+        },
+        {
+          "platform": "cf",
+          "projectId": "p-true-ending",
+          "slug": "true-ending",
+          "fileId": "f-true-ending",
+          "hash": "fff666",
+          "side": "BOTH"
+        },
+        {
+          "platform": "mr",
+          "projectId": "p- Create ",
+          "slug": " Create ",
+          "fileId": "f- Create ",
+          "hash": "aaa888",
+          "side": "BOTH"
+        }
+      ],
+      "disabled": [
+        {
+          "platform": "cf",
+          "projectId": "p-journeymap",
+          "slug": "journeymap",
+          "fileId": "f-journeymap",
+          "hash": "abc777",
+          "side": "CLIENT"
+        }
+      ],
+      "extra": [
+        {
+          "platform": "cf",
+          "projectId": "p-waystones",
+          "slug": "waystones",
+          "fileId": "f-waystones",
+          "hash": "123aaa",
+          "side": "BOTH"
+        },
+        {
+          "platform": "cf",
+          "projectId": "p-dynmap",
+          "slug": "dynmap",
+          "fileId": "f-dynmap",
+          "hash": "123bbb",
+          "side": "SERVER"
+        },
+        {
+          "platform": "cf",
+          "projectId": "p-spark",
+          "slug": "spark",
+          "fileId": "f-spark",
+          "hash": "eee555",
+          "side": "BOTH"
+        }
+      ],
+      "existing": [],
+      "baseDeleted": [],
+      "baseDownload": [
+        "jei_cf_aaa111.jar",
+        "oculus_cf_bbb222.jar",
+        "trueending_cf_fff666.jar",
+        "Create_mr_aaa888.jar"
+      ],
+      "extraDeleted": [],
+      "extraDownload": [
+        "X$_waystones_cf_123aaa.jar"
+      ]
+    },
+    {
+      "name": "existing-files",
+      "loader": "neoforge",
+      "active": [
+        {
+          "platform": "cf",
+          "projectId": "p-jei",
+          "slug": "jei",
+          "fileId": "f-jei",
+          "hash": "aaa111",
+          "side": "BOTH"
+        },
+        {
+          "platform": "cf",
+          "projectId": "p-oculus",
+          "slug": "oculus",
+          "fileId": "f-oculus",
+          "hash": "bbb222",
+          "side": "CLIENT"
+        },
+        {
+          "platform": "cf",
+          "projectId": "p-servercore",
+          "slug": "servercore",
+          "fileId": "f-servercore",
+          "hash": "ccc333",
+          "side": "SERVER"
+        },
+        {
+          "platform": "cf",
+          "projectId": "p-mystery",
+          "slug": "mystery",
+          "fileId": "f-mystery",
+          "hash": "ddd444",
+          "side": "UNKNOWN"
+        },
+        {
+          "platform": "cf",
+          "projectId": "p-true-ending",
+          "slug": "true-ending",
+          "fileId": "f-true-ending",
+          "hash": "fff666",
+          "side": "BOTH"
+        },
+        {
+          "platform": "mr",
+          "projectId": "p- Create ",
+          "slug": " Create ",
+          "fileId": "f- Create ",
+          "hash": "aaa888",
+          "side": "BOTH"
+        },
+        {
+          "platform": "cf",
+          "projectId": "p-jei",
+          "slug": "jei",
+          "fileId": "f-jei",
+          "hash": "aaa111",
+          "side": "BOTH"
+        }
+      ],
+      "disabled": [
+        {
+          "platform": "cf",
+          "projectId": "p-journeymap",
+          "slug": "journeymap",
+          "fileId": "f-journeymap",
+          "hash": "abc777",
+          "side": "CLIENT"
+        },
+        {
+          "platform": "cf",
+          "projectId": "p-spark",
+          "slug": "spark",
+          "fileId": "f-spark",
+          "hash": "eee555",
+          "side": "BOTH"
+        }
+      ],
+      "extra": [
+        {
+          "platform": "cf",
+          "projectId": "p-waystones",
+          "slug": "waystones",
+          "fileId": "f-waystones",
+          "hash": "123aaa",
+          "side": "BOTH"
+        }
+      ],
+      "existing": [
+        "jei_cf_aaa111.jar",
+        " Create _mr_aaa888.jar",
+        "servercore_cf_ccc333.jar",
+        "mystery_cf_ddd444.jar",
+        "journeymap_cf_abc777.jar",
+        "spark_cf_eee555.jar",
+        "X$_waystones_cf_123aaa.jar",
+        "X$_old_cf_999.jar",
+        "other.jar"
+      ],
+      "baseDeleted": [
+        "journeymap_cf_abc777.jar",
+        "servercore_cf_ccc333.jar",
+        "mystery_cf_ddd444.jar"
+      ],
+      "baseDownload": [
+        "oculus_cf_bbb222.jar",
+        "trueending_cf_fff666.jar"
+      ],
+      "extraDeleted": [
+        "X$_old_cf_999.jar"
+      ],
+      "extraDownload": []
+    }
+  ]
+}

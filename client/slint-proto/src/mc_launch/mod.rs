@@ -1,7 +1,8 @@
-//! J5a: the launch command and the game process, ported from `client/mclaunch`
-//! (`MinecraftLauncher.launchInternal`) for Forge 1.20.1 and NeoForge 1.21.1 without RDI runtimes.
-//! The command must equal Kotlin's; `protocol/fixtures/j5a.json` is written by the Kotlin test
-//! `J5aLaunchCommandFixtureTest` and checked here (decision D6).
+//! J5a/J5b: the launch command and the game process, ported from `client/mclaunch`
+//! (`MinecraftLauncher.launchInternal`) for Forge 1.20.1 and NeoForge 1.21.1, without RDI runtimes
+//! (local packs) or with them (rooms). The command must equal Kotlin's; `protocol/fixtures/j5a.json`
+//! and `j5b-launch.json` are written by the Kotlin tests `J5aLaunchCommandFixtureTest` and
+//! `J5bLaunchCommandFixtureTest` and checked here (decision D6).
 pub mod manifest;
 #[cfg(test)]
 mod tests;
@@ -44,6 +45,36 @@ pub struct Request<'a> {
     pub java_override: Option<&'a str>,
     pub max_memory_override: Option<i32>,
     pub extra_jvm_args: &'a [String],
+    /// `rdiRuntime = true`: a room game. `None` for local packs.
+    pub rdi: Option<RdiRuntime<'a>>,
+}
+
+/// The RDI runtimes of a room game on Forge 1.20.1 or NeoForge 1.21.1.
+pub struct RdiRuntime<'a> {
+    /// `forge` or `neoforge`, as `ModLoader.name`.
+    pub loader: &'a str,
+    /// Kotlin, zstd-jni and mediaproc jars; they go first on the class path.
+    pub classpath: &'a [PathBuf],
+    /// The unpacked FFmpeg natives (`MediaProcGameRuntime.nativeLibraryDir`).
+    pub media_natives: &'a Path,
+}
+
+/// `neoForgeLoggingJvmArgs`: quiet FML's marker logging on NeoForge 1.21.1 unless the player set it.
+pub fn neoforge_logging_jvm_args(mc_version: &str, loader: &str, extra_jvm_args: &[String]) -> Vec<String> {
+    if mc_version != "1.21.1" || !loader.eq_ignore_ascii_case("neoforge") {
+        return vec![];
+    }
+    let user: std::collections::HashSet<&str> = extra_jvm_args.iter().map(|a| a.split('=').next().unwrap_or(a)).collect();
+    [
+        "-Dforge.logging.marker.loading=NEUTRAL",
+        "-Dforge.logging.marker.core=NEUTRAL",
+        "-Dforge.logging.marker.forgemod=NEUTRAL",
+        "-Drdi.logging.rootLevel=DEBUG",
+    ]
+    .into_iter()
+    .filter(|a| !user.contains(a.split('=').next().unwrap_or(a)))
+    .map(String::from)
+    .collect()
 }
 
 pub struct Environment<'a> {
@@ -124,6 +155,12 @@ pub fn command(request: &Request, env: &Environment) -> Result<Vec<String>> {
     resolved_jvm.extend(loader.jvm_arguments(host));
 
     let mut classpath_entries: Vec<String> = vec![];
+    for entry in request.rdi.iter().flat_map(|r| r.classpath) {
+        let entry = text(entry);
+        if !classpath_entries.contains(&entry) {
+            classpath_entries.push(entry);
+        }
+    }
     for entry in manifest::classpath(base_libraries, &loader.libraries, &dirs.libraries, host) {
         let entry = text(&entry);
         if !classpath_entries.contains(&entry) {
@@ -201,6 +238,15 @@ pub fn command(request: &Request, env: &Environment) -> Result<Vec<String>> {
     }
     jvm.push(format!("-XX:ErrorFile={}", text(&version_dir.join("logs").join("hs_err_pid%p.log"))));
     jvm.extend(UTF8_LOGGING.iter().map(|s| s.to_string()));
+    if let Some(rdi) = &request.rdi {
+        jvm.extend(neoforge_logging_jvm_args(request.mc_version, rdi.loader, request.extra_jvm_args));
+        jvm.extend([
+            "-Dorg.bytedeco.javacpp.pathsFirst=true".into(),
+            "-Dorg.bytedeco.javacpp.findLibraries=false".into(),
+            "-Dorg.bytedeco.javacpp.maxPhysicalBytes=0".into(),
+            format!("-Dorg.bytedeco.javacpp.platform.preloadpath={}", text(rdi.media_natives)),
+        ]);
+    }
     jvm.extend(request.extra_jvm_args.iter().cloned());
     jvm.push(JAVA4SHELL_MITIGATION.into());
     let main_class = loader.main_class.clone().context("缺少启动主类")?;

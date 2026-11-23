@@ -92,7 +92,16 @@ impl Mod {
     pub fn file_name(&self) -> String {
         format!("{}_{}_{}.jar", self.file_slug(), self.platform, self.hash)
     }
-    fn normalized_slug(&self) -> String {
+    /// `Mod.legacyFileName`: the slug as stored, without trimming or alias.
+    pub fn legacy_file_name(&self) -> String {
+        format!("{}_{}_{}.jar", self.slug, self.platform, self.hash)
+    }
+    /// `Mod.fileNames`: current then legacy name, without duplicates.
+    pub fn file_names(&self) -> Vec<String> {
+        let (current, legacy) = (self.file_name(), self.legacy_file_name());
+        if current == legacy { vec![current] } else { vec![current, legacy] }
+    }
+    pub(crate) fn normalized_slug(&self) -> String {
         self.slug.trim().to_lowercase()
     }
     fn with_side(&self, side: Side) -> Self {
@@ -139,7 +148,7 @@ pub fn github_uses_sha1(hash: &str) -> bool {
 }
 
 /// Kotlin `sameMod`.
-fn same_mod(a: &Mod, b: &Mod) -> bool {
+pub(crate) fn same_mod(a: &Mod, b: &Mod) -> bool {
     let (ap, bp) = (a.project_id.trim(), b.project_id.trim());
     if a.platform == b.platform && !ap.is_empty() && !bp.is_empty() {
         return ap == bp;

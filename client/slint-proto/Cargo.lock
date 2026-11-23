@@ -4122,6 +4122,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "rdi-local-proxy"
+version = "0.1.0"
+dependencies = [
+ "rdi-session-resume",
+ "tokio",
+]
+
+[[package]]
 name = "rdi-renderer"
 version = "0.1.0"
 dependencies = [
@@ -4137,6 +4145,14 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "wgpu",
+]
+
+[[package]]
+name = "rdi-session-resume"
+version = "0.1.0"
+dependencies = [
+ "getrandom 0.3.4",
+ "tokio",
 ]
 
 [[package]]
@@ -4158,7 +4174,9 @@ dependencies = [
  "naga",
  "pollster",
  "rav1d-safe",
+ "rdi-local-proxy",
  "rdi-renderer",
+ "rdi-session-resume",
  "regex",
  "reqwest",
  "rfd",

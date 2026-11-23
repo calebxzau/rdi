@@ -448,14 +448,8 @@ impl App {
                         app.pack_ui.borrow_mut().action("play.duplicate", "");
                         return;
                     }
-                    ui.set_loading(true);
-                    ui.set_game_status("正在准备".into());
-                    let size = ui.window().size();
-                    let tx = app.tx.clone();
-                    app.runtime.spawn(async move {
-                        let result = api.call("host.start", serde_json::json!({"hostId":id,"allowDuplicateVersion":true,"windowWidth":size.width,"windowHeight":size.height})).await;
-                        let _ = tx.send(Event::Started(result));
-                    });
+                    let _ = api;
+                    app.start_room(&ui, &id, true);
                 }
             }
         });
@@ -737,14 +731,38 @@ impl App {
         if ui.get_loading() || !self.hosts.items.get(id).is_some_and(|host| host.playable) {
             return;
         }
+        let _ = api;
+        self.start_room(&ui, id, false);
+    }
+    /// J5b: Forge 1.20.1 and NeoForge 1.21.1 rooms start in Rust; other rooms (GTNH, Fabric) keep
+    /// using the service's `host.start` until J5c.
+    fn start_room(&self, ui: &crate::AppWindow, id: &str, allow_duplicate: bool) {
+        let Some(api) = self.api.clone() else {
+            return;
+        };
+        if crate::java_runtime::state() == crate::java_runtime::State::Missing {
+            if cfg!(windows) {
+                ui.set_java_missing(true);
+            } else {
+                ui.set_action_error(format!("{}，请安装后重新启动启动器", crate::java_runtime::MISSING_MESSAGE).into());
+            }
+            return;
+        }
+        let (builder, external, tasks) = {
+            let packs = self.pack_ui.borrow();
+            (packs.room_deps(&self.config.server), packs.service_alive_by_version(), packs.tasks())
+        };
+        let Some(builder) = builder else {
+            ui.set_action_error("请先登录".into());
+            return;
+        };
         ui.set_loading(true);
         ui.set_game_status("正在准备".into());
         let size = ui.window().size();
         let id = id.to_owned();
         let tx = self.tx.clone();
-        let tasks = self.pack_ui.borrow().tasks();
         self.runtime.spawn(async move {
-            // J4c 4.3: Rust checks the room's pack first; Kotlin's own check stays behind it.
+            // J4c 4.3: the room's pack must be installed first.
             match room_pack(&api, &id, &tasks).await {
                 Ok(None) => {}
                 Ok(Some(need)) => {
@@ -756,16 +774,37 @@ impl App {
                     return;
                 }
             }
-            let result = api
-                .call(
-                    "host.start",
-                    serde_json::json!({
-                        "hostId": id,
-                        "windowWidth": size.width,
-                        "windowHeight": size.height,
-                    }),
-                )
-                .await;
+            let deps = match tokio::task::spawn_blocking(builder).await {
+                Ok(deps) => deps,
+                Err(error) => {
+                    let _ = tx.send(Event::Started(Err(anyhow::anyhow!("准备游玩失败: {error}"))));
+                    return;
+                }
+            };
+            let request = crate::play::room::RoomStart {
+                host_id: id.clone(),
+                window: (size.width, size.height),
+                allow_duplicate,
+                external_alive: external,
+            };
+            use crate::play::{Admitted, room::RoomOutcome};
+            let result = match crate::play::room::start(&deps, request).await {
+                Ok(RoomOutcome::Admitted(Admitted::Started(_))) => Ok(serde_json::json!({"accepted": true})),
+                Ok(RoomOutcome::Admitted(Admitted::Duplicate)) => Ok(serde_json::json!({"duplicateVersion": true, "hostId": id})),
+                Ok(RoomOutcome::Service) => {
+                    api.call(
+                        "host.start",
+                        serde_json::json!({
+                            "hostId": id,
+                            "allowDuplicateVersion": allow_duplicate,
+                            "windowWidth": size.width,
+                            "windowHeight": size.height,
+                        }),
+                    )
+                    .await
+                }
+                Err(error) => Err(error),
+            };
             let _ = tx.send(Event::Started(result));
         });
     }
@@ -1152,6 +1191,11 @@ impl App {
                             self.packs = data.packs;
                             self.api = Some(data.api.clone());
                             self.pack_ui.borrow_mut().connect(Some(data.api.clone()));
+                            // J5b B3: the node entry at sign-in; a failure keeps the current route.
+                            let (server, endpoint) = (data.api.server().clone(), crate::route::Endpoint::new(&self.config.server));
+                            self.runtime.spawn(async move {
+                                let _ = crate::route::refresh(&server, &endpoint).await;
+                            });
                             if ui.get_host_list_visible() {
                                 self.refresh();
                             }

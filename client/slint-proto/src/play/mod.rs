@@ -3,6 +3,12 @@
 //! identity. Rooms, RDI packs and Microsoft online play still start through the service; their
 //! sessions are mirrored in from `game.state` by the app so one list covers both.
 //! No Slint types here, so the planned launcher MCP can call these functions.
+pub mod core;
+pub mod mods_sync;
+pub mod room;
+pub mod runtime;
+pub mod thin;
+pub mod window;
 #[cfg(test)]
 mod tests;
 
@@ -25,6 +31,8 @@ struct Session {
     exit_message: Option<String>,
     console: std::collections::VecDeque<String>,
     cancel: Cancellation,
+    /// A room game: it needs the room connection while it is alive.
+    room: bool,
 }
 
 impl Session {
@@ -47,6 +55,8 @@ pub struct SessionView {
 struct Inner {
     list: Vec<Session>,
     revision: u64,
+    /// Called once no room game is alive any more (`stopLocalMcProxy`).
+    rooms_idle: Option<Arc<dyn Fn() + Send + Sync>>,
 }
 
 /// The Rust session store; cheap to clone.
@@ -69,6 +79,15 @@ impl Sessions {
     /// `McPlayStore.admitSession`: `None` when the version already runs and no duplicate is allowed.
     /// `external` counts this version's sessions that live in the service.
     pub fn admit(&self, title: &str, version_id: &str, allow_duplicate: bool, external: usize) -> Option<String> {
+        self.admit_kind(title, version_id, allow_duplicate, external, false)
+    }
+
+    /// `admit` for a room game, which keeps the room connection alive.
+    pub fn admit_room(&self, title: &str, version_id: &str, allow_duplicate: bool, external: usize) -> Option<String> {
+        self.admit_kind(title, version_id, allow_duplicate, external, true)
+    }
+
+    fn admit_kind(&self, title: &str, version_id: &str, allow_duplicate: bool, external: usize, room: bool) -> Option<String> {
         self.with(|inner| {
             let alive = inner.list.iter().filter(|s| s.version_id == version_id && s.alive()).count() + external;
             if !allow_duplicate && alive > 0 {
@@ -85,6 +104,7 @@ impl Sessions {
                 exit_message: None,
                 console: Default::default(),
                 cancel: Cancellation::default(),
+                room,
             });
             Some(id)
         })
@@ -100,6 +120,29 @@ impl Sessions {
                 s.console.push_back(line);
             }
         });
+    }
+
+    /// `McPlayStore.appendProxyLog`: a line for every game that is preparing or running.
+    pub fn append_alive(&self, line: impl Into<String>) {
+        let line = line.into();
+        let ids: Vec<String> = self.0.lock().unwrap().list.iter().filter(|s| s.alive()).map(|s| s.id.clone()).collect();
+        for id in ids {
+            self.append(&id, line.clone());
+        }
+    }
+
+    pub fn set_rooms_idle(&self, hook: Arc<dyn Fn() + Send + Sync>) {
+        self.0.lock().unwrap().rooms_idle = Some(hook);
+    }
+
+    fn check_rooms_idle(&self) {
+        let hook = {
+            let inner = self.0.lock().unwrap();
+            if inner.list.iter().any(|s| s.room && s.alive()) { None } else { inner.rooms_idle.clone() }
+        };
+        if let Some(hook) = hook {
+            hook();
+        }
     }
 
     fn cancel(&self, id: &str) -> Option<Cancellation> {
@@ -138,6 +181,7 @@ impl Sessions {
                 s.exit_message = message;
             }
         });
+        self.check_rooms_idle();
     }
 
     /// `McGameSession.requestStop`.
@@ -414,6 +458,7 @@ async fn run(deps: &Deps, session: &str, request: &LocalStart, account: &Account
             java_override: snapshot.java_path.as_deref(),
             max_memory_override: snapshot.max_memory_mb,
             extra_jvm_args: &jvm,
+            rdi: None,
         },
         &mc_launch::Environment {
             directories: &dirs,
@@ -430,8 +475,14 @@ async fn run(deps: &Deps, session: &str, request: &LocalStart, account: &Account
     if stopped() {
         return Ok(());
     }
+    spawn_and_watch(sessions, session, &command, &request.version_dir, &request.version_id)
+}
+
+/// Starts the command, attaches the process to the session and adds the exit line when it ends
+/// (`readProcessOutput`). A session stopped meanwhile kills the new process instead.
+fn spawn_and_watch(sessions: &Sessions, session: &str, command: &[String], version_dir: &Path, version_id: &str) -> Result<()> {
     let (lines, id) = (sessions.clone(), session.to_owned());
-    let started = mc_launch::spawn(&command, &request.version_dir, move |line| {
+    let started = mc_launch::spawn(command, version_dir, move |line| {
         if !line.is_empty() {
             lines.append(&id, line);
         }
@@ -440,8 +491,7 @@ async fn run(deps: &Deps, session: &str, request: &LocalStart, account: &Account
     let Some(child) = sessions.attach(session, started.child) else {
         return Ok(());
     };
-    tracing::info!(pid, version = %request.version_id, "游戏已启动");
-    // `readProcessOutput`: the exit line once the process ends.
+    tracing::info!(pid, version = %version_id, "游戏已启动");
     let (sessions, id) = (sessions.clone(), session.to_owned());
     std::thread::Builder::new()
         .name("mc-exit-watch".into())
