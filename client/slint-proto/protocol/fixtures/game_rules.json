@@ -1,0 +1,464 @@
+{
+    "categories": [
+        {
+            "name": "常用",
+            "rules": [
+                {
+                    "id": "fallDamage",
+                    "name": "摔落伤害",
+                    "description": "玩家是否承受摔落伤害。",
+                    "valueType": "BOOLEAN",
+                    "value": "true"
+                },
+                {
+                    "id": "keepInventory",
+                    "name": "死亡后保留物品栏",
+                    "description": "玩家死亡后是否保留物品与经验。",
+                    "valueType": "BOOLEAN",
+                    "value": "false"
+                },
+                {
+                    "id": "doFireTick",
+                    "name": "火焰蔓延",
+                    "description": "火是否蔓延及自然熄灭。",
+                    "valueType": "BOOLEAN",
+                    "value": "true"
+                }
+            ]
+        },
+        {
+            "name": "掉落",
+            "rules": [
+                {
+                    "id": "tntExplosionDropDecay",
+                    "name": "在TNT爆炸中，一些方块不会掉落战利品",
+                    "description": "TNT爆炸会炸毁部分掉落物。",
+                    "valueType": "BOOLEAN",
+                    "value": "false"
+                },
+                {
+                    "id": "blockExplosionDropDecay",
+                    "name": "在方块交互爆炸中，一些方块不会掉落战利品",
+                    "description": "在与方块交互引起的爆炸中，部分被破坏方块的掉落物会被炸毁。",
+                    "valueType": "BOOLEAN",
+                    "value": "true"
+                },
+                {
+                    "id": "mobExplosionDropDecay",
+                    "name": "在生物爆炸中，一些方块不会掉落战利品",
+                    "description": "生物爆炸会炸毁部分掉落物。",
+                    "valueType": "BOOLEAN",
+                    "value": "true"
+                },
+                {
+                    "id": "projectilesCanBreakBlocks",
+                    "name": "弹射物能否破坏方块",
+                    "description": "控制弹射物能否破坏可被其破坏的方块。",
+                    "valueType": "BOOLEAN",
+                    "value": "true"
+                },
+                {
+                    "id": "doTileDrops",
+                    "name": "方块掉落",
+                    "description": "破坏方块后是否掉落资源(含经验)。",
+                    "valueType": "BOOLEAN",
+                    "value": "true"
+                },
+                {
+                    "id": "doMobLoot",
+                    "name": "生物战利品掉落",
+                    "description": "生物死亡后是否掉落资源与经验。",
+                    "valueType": "BOOLEAN",
+                    "value": "true"
+                },
+                {
+                    "id": "doEntityDrops",
+                    "name": "非生物实体掉落",
+                    "description": "控制矿车、物品展示框、船等的物品掉落。",
+                    "valueType": "BOOLEAN",
+                    "value": "true"
+                }
+            ]
+        },
+        {
+            "name": "聊天",
+            "rules": [
+                {
+                    "id": "sendCommandFeedback",
+                    "name": "发送命令反馈",
+                    "description": "命令返回信息是否在聊天框显示。",
+                    "valueType": "BOOLEAN",
+                    "value": "true"
+                },
+                {
+                    "id": "commandBlockOutput",
+                    "name": "广播命令方块输出",
+                    "description": "命令方块输出是否向管理员显示。",
+                    "valueType": "BOOLEAN",
+                    "value": "true"
+                },
+                {
+                    "id": "showDeathMessages",
+                    "name": "显示死亡消息",
+                    "description": "是否在聊天框显示玩家死亡消息。",
+                    "valueType": "BOOLEAN",
+                    "value": "true"
+                },
+                {
+                    "id": "announceAdvancements",
+                    "name": "进度通知",
+                    "description": "是否在聊天框公告玩家进度达成。",
+                    "valueType": "BOOLEAN",
+                    "value": "true"
+                },
+                {
+                    "id": "logAdminCommands",
+                    "name": "通告管理员命令",
+                    "description": "是否在日志记录管理员使用的命令。",
+                    "valueType": "BOOLEAN",
+                    "value": "true"
+                }
+            ]
+        },
+        {
+            "name": "生成",
+            "rules": [
+                {
+                    "id": "doInsomnia",
+                    "name": "生成幻翼",
+                    "description": "幻翼是否在夜晚生成。",
+                    "valueType": "BOOLEAN",
+                    "value": "true"
+                },
+                {
+                    "id": "spawnMonsters",
+                    "name": "生成怪物",
+                    "description": "敌对生物是否能自然生成。",
+                    "valueType": "BOOLEAN",
+                    "value": "true"
+                },
+                {
+                    "id": "doTraderSpawning",
+                    "name": "生成流浪商人",
+                    "description": "控制流浪商人生成。",
+                    "valueType": "BOOLEAN",
+                    "value": "true"
+                },
+                {
+                    "id": "doPatrolSpawning",
+                    "name": "生成灾厄巡逻队",
+                    "description": "控制灾厄巡逻队生成。",
+                    "valueType": "BOOLEAN",
+                    "value": "true"
+                },
+                {
+                    "id": "doMobSpawning",
+                    "name": "生成生物",
+                    "description": "生物是否自然生成(不影响刷怪笼/summon)。",
+                    "valueType": "BOOLEAN",
+                    "value": "true"
+                },
+                {
+                    "id": "doWardenSpawning",
+                    "name": "生成监守者",
+                    "description": "监守者是否生成。",
+                    "valueType": "BOOLEAN",
+                    "value": "true"
+                }
+            ]
+        },
+        {
+            "name": "生物",
+            "rules": [
+                {
+                    "id": "mobGriefing",
+                    "name": "允许破坏性生物行为",
+                    "description": "生物是否能放置/修改/破坏方块或捡拾物品等。",
+                    "valueType": "BOOLEAN",
+                    "value": "true"
+                },
+                {
+                    "id": "disableRaids",
+                    "name": "启用袭击",
+                    "description": "是否禁用袭击。",
+                    "valueType": "BOOLEAN",
+                    "value": "true"
+                },
+                {
+                    "id": "maxEntityCramming",
+                    "name": "实体挤压上限",
+                    "description": "同位置可推动实体的上限，超过会挤压伤害。",
+                    "valueType": "INTEGER",
+                    "value": "24"
+                },
+                {
+                    "id": "forgiveDeadPlayers",
+                    "name": "宽恕死亡玩家",
+                    "description": "被激怒的中立生物在目标玩家死亡后是否息怒。",
+                    "valueType": "BOOLEAN",
+                    "value": "true"
+                },
+                {
+                    "id": "universalAnger",
+                    "name": "无差别愤怒",
+                    "description": "被激怒的中立生物是否攻击附近任何玩家。",
+                    "valueType": "BOOLEAN",
+                    "value": "false"
+                }
+            ]
+        },
+        {
+            "name": "世界更新",
+            "rules": [
+                {
+                    "id": "waterSourceConversion",
+                    "name": "允许流动水转化为水源",
+                    "description": "流动水在两面与水源相邻时转化为水源。",
+                    "valueType": "BOOLEAN",
+                    "value": "true"
+                },
+                {
+                    "id": "lavaSourceConversion",
+                    "name": "允许流动熔岩转化为熔岩源",
+                    "description": "流动熔岩在两面与源相邻时转化为源。",
+                    "valueType": "BOOLEAN",
+                    "value": "false"
+                },
+                {
+                    "id": "allowFireTicksAwayFromPlayer",
+                    "name": "允许火在远离玩家处蔓延",
+                    "description": "控制火和熔岩能否在距离任何玩家超过8个区块处蔓延。",
+                    "valueType": "BOOLEAN",
+                    "value": "false"
+                },
+                {
+                    "id": "doWeatherCycle",
+                    "name": "天气更替",
+                    "description": "天气是否变化。",
+                    "valueType": "BOOLEAN",
+                    "value": "true"
+                },
+                {
+                    "id": "doDaylightCycle",
+                    "name": "游戏内时间流逝",
+                    "description": "是否进行昼夜更替和月相变化。",
+                    "valueType": "BOOLEAN",
+                    "value": "true"
+                },
+                {
+                    "id": "snowAccumulationHeight",
+                    "name": "积雪厚度",
+                    "description": "降雪时可堆积的最高雪层数。",
+                    "valueType": "INTEGER",
+                    "value": "1"
+                },
+                {
+                    "id": "doVinesSpread",
+                    "name": "藤蔓蔓延",
+                    "description": "藤蔓能否随机向相邻方块蔓延。",
+                    "valueType": "BOOLEAN",
+                    "value": "true"
+                },
+                {
+                    "id": "randomTickSpeed",
+                    "name": "随机刻速率",
+                    "description": "每区块每刻随机方块刻的频率。",
+                    "valueType": "INTEGER",
+                    "value": "3"
+                }
+            ]
+        },
+        {
+            "name": "玩家",
+            "rules": [
+                {
+                    "id": "spectatorsGenerateChunks",
+                    "name": "允许旁观者生成地形",
+                    "description": "旁观模式玩家是否能生成区块。",
+                    "valueType": "BOOLEAN",
+                    "value": "true"
+                },
+                {
+                    "id": "playersSleepingPercentage",
+                    "name": "入睡占比",
+                    "description": "跳过夜晚所需玩家占比。",
+                    "valueType": "INTEGER",
+                    "value": "100"
+                },
+                {
+                    "id": "freezeDamage",
+                    "name": "冰冻伤害",
+                    "description": "玩家是否承受冰冻伤害。",
+                    "valueType": "BOOLEAN",
+                    "value": "true"
+                },
+                {
+                    "id": "playersNetherPortalCreativeDelay",
+                    "name": "创造模式下玩家在下界传送门中等待的时间",
+                    "description": "创造模式穿越下界门所需刻数。",
+                    "valueType": "INTEGER",
+                    "value": "0"
+                },
+                {
+                    "id": "doLimitedCrafting",
+                    "name": "合成需要配方",
+                    "description": "玩家只能使用已解锁的配方。",
+                    "valueType": "BOOLEAN",
+                    "value": "false"
+                },
+                {
+                    "id": "pvp",
+                    "name": "启用PvP",
+                    "description": "玩家之间能否造成伤害。",
+                    "valueType": "BOOLEAN",
+                    "value": "true"
+                },
+                {
+                    "id": "locatorBar",
+                    "name": "启用玩家定位栏",
+                    "description": "是否启用定位栏和路径点。",
+                    "valueType": "BOOLEAN",
+                    "value": "true"
+                },
+                {
+                    "id": "disablePlayerMovementCheck",
+                    "name": "启用玩家移动检测",
+                    "description": "是否停止检查并限制玩家移动速度。",
+                    "valueType": "BOOLEAN",
+                    "value": "true"
+                },
+                {
+                    "id": "disableElytraMovementCheck",
+                    "name": "启用鞘翅移动检测",
+                    "description": "是否停止检查鞘翅玩家移动速度。",
+                    "valueType": "BOOLEAN",
+                    "value": "true"
+                },
+                {
+                    "id": "enderPearlsVanishOnDeath",
+                    "name": "掷出的末影珍珠在死亡时消失",
+                    "description": "玩家投掷的末影珍珠是否在其死亡时消失。",
+                    "valueType": "BOOLEAN",
+                    "value": "true"
+                },
+                {
+                    "id": "drowningDamage",
+                    "name": "溺水伤害",
+                    "description": "玩家是否承受窒息伤害。",
+                    "valueType": "BOOLEAN",
+                    "value": "true"
+                },
+                {
+                    "id": "fireDamage",
+                    "name": "火焰伤害",
+                    "description": "玩家是否承受火焰伤害。",
+                    "valueType": "BOOLEAN",
+                    "value": "true"
+                },
+                {
+                    "id": "naturalRegeneration",
+                    "name": "生命值自然恢复",
+                    "description": "玩家在饥饿足够时是否自然回血。",
+                    "valueType": "BOOLEAN",
+                    "value": "true"
+                },
+                {
+                    "id": "doImmediateRespawn",
+                    "name": "立即重生",
+                    "description": "玩家死亡时是否直接重生。",
+                    "valueType": "BOOLEAN",
+                    "value": "false"
+                },
+                {
+                    "id": "spawnRadius",
+                    "name": "重生点半径",
+                    "description": "首登或无重生点玩家在世界出生点周围的距离。",
+                    "valueType": "INTEGER",
+                    "value": "10"
+                },
+                {
+                    "id": "playersNetherPortalDefaultDelay",
+                    "name": "非创造模式下玩家在下界传送门中等待的时间",
+                    "description": "非创造模式穿越下界门所需刻数。",
+                    "valueType": "INTEGER",
+                    "value": "80"
+                }
+            ]
+        },
+        {
+            "name": "杂项",
+            "rules": [
+                {
+                    "id": "tntExplodes",
+                    "name": "允许TNT被点燃并爆炸",
+                    "description": "TNT是否会爆炸。",
+                    "valueType": "BOOLEAN",
+                    "value": "true"
+                },
+                {
+                    "id": "allowEnteringNetherUsingPortals",
+                    "name": "允许进入下界",
+                    "description": "控制玩家能否进入下界。",
+                    "valueType": "BOOLEAN",
+                    "value": "true"
+                },
+                {
+                    "id": "globalSoundEvents",
+                    "name": "全局声音事件",
+                    "description": "特定事件声音可全图听见。",
+                    "valueType": "BOOLEAN",
+                    "value": "true"
+                },
+                {
+                    "id": "spawnerBlocksEnabled",
+                    "name": "启用刷怪笼方块",
+                    "description": "是否允许刷怪笼与试炼刷怪笼运作。",
+                    "valueType": "BOOLEAN",
+                    "value": "true"
+                },
+                {
+                    "id": "commandBlocksEnabled",
+                    "name": "启用命令方块",
+                    "description": "命令方块是否被启用。",
+                    "valueType": "BOOLEAN",
+                    "value": "true"
+                },
+                {
+                    "id": "maxCommandForkCount",
+                    "name": "命令上下文数量限制",
+                    "description": "execute等命令可用的上下文最大值。",
+                    "valueType": "INTEGER",
+                    "value": "65536"
+                },
+                {
+                    "id": "commandModificationBlockLimit",
+                    "name": "命令修改方块数量限制",
+                    "description": "单条命令(如fill/clone)最多能更改的方块数量。",
+                    "valueType": "INTEGER",
+                    "value": "32768"
+                },
+                {
+                    "id": "maxCommandChainLength",
+                    "name": "命令连锁执行数量限制",
+                    "description": "连锁命令方块和函数的总数量限制。",
+                    "valueType": "INTEGER",
+                    "value": "65536"
+                },
+                {
+                    "id": "minecartMaxSpeed",
+                    "name": "矿车最大速度",
+                    "description": "矿车默认最大速度(实验性矿车改进)。",
+                    "valueType": "INTEGER",
+                    "value": "8"
+                },
+                {
+                    "id": "reducedDebugInfo",
+                    "name": "简化调试信息",
+                    "description": "是否简化调试屏幕内容。",
+                    "valueType": "BOOLEAN",
+                    "value": "false"
+                }
+            ]
+        }
+    ]
+}

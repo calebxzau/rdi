@@ -61,6 +61,7 @@ impl Shell {
                         else if ui.get_install_missing() { ui.invoke_pack_action("installer.dismissMissing".into(), "".into()); }
                         else if ui.get_picked_candidates().row_count() > 0 { ui.invoke_pack_action("installer.dismissCandidates".into(), "".into()); }
                         else if !ui.get_action_error().is_empty() { ui.set_action_error("".into()); ui.invoke_pack_action("installer.dismissError".into(), "".into()); }
+                        else if ui.global::<crate::Rooms>().get_modal() { ui.global::<crate::Rooms>().invoke_action("dismiss".into(), "".into()); }
                         else { ui.set_pack_menu(false); ui.set_discard_options(false); ui.set_duplicate_host("".into()); ui.set_java_missing(false); ui.set_confirm_exit(false); ui.set_gallery_dialog(false); }
                     }
                     return;
@@ -72,7 +73,9 @@ impl Shell {
                         s.navigation.push(Screen::ModpackPlaza);
                         ui.invoke_plaza_action("open".into(), "".into());
                     }
-                    "plaza-detail" if matches!(s.navigation.current(), Screen::Menu | Screen::ModpackPlaza) => s.navigation.push(Screen::ModpackDetail),
+                    "plaza-detail" if matches!(s.navigation.current(), Screen::Menu | Screen::ModpackPlaza | Screen::RoomDetail) => s.navigation.push(Screen::ModpackDetail),
+                    "room-detail" if matches!(s.navigation.current(), Screen::Menu | Screen::HostList) => s.navigation.push(Screen::RoomDetail),
+                    "room-form" if matches!(s.navigation.current(), Screen::RoomDetail | Screen::ModpackVersionDetail) => s.navigation.push(Screen::RoomForm),
                     "plaza-version" if s.navigation.current() == Screen::ModpackDetail => s.navigation.push(Screen::ModpackVersionDetail),
                     "packs" => { s.navigation.home(); ui.invoke_select_tab(1); }
                     "back" | "home" if ui.get_pack_screen() == 2 && ui.get_options_dirty() => { ui.set_discard_options(true); return; }
@@ -130,6 +133,11 @@ impl Shell {
             Screen::ModpackPlaza => 3,
             Screen::ModpackDetail => 4,
             Screen::ModpackVersionDetail => 5,
+            _ => 0,
+        });
+        ui.global::<crate::Rooms>().set_screen(match self.navigation.current() {
+            Screen::RoomDetail => 1,
+            Screen::RoomForm => 2,
             _ => 0,
         });
         ui.set_can_back(self.navigation.can_back());
@@ -218,7 +226,11 @@ pub fn frame(
                 press_scale: ui.get_gallery_press_scale(),
             });
         }
-    } else if ui.get_pack_screen() == 0 && !ui.get_wardrobe_visible() && !ui.get_host_list_visible() {
+    } else if ui.get_pack_screen() == 0
+        && !ui.get_wardrobe_visible()
+        && !ui.get_host_list_visible()
+        && ui.global::<crate::Rooms>().get_screen() == 0
+    {
         if !ui.get_loading() && ui.get_error().is_empty() {
             let row_pitch = ui.get_menu_grid_row_pitch();
             let tile_size = ui.get_menu_grid_tile_size();

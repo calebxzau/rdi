@@ -9,6 +9,8 @@ mod hwspec;
 mod packs;
 mod tasks;
 mod plaza;
+mod rooms;
+mod rooms_ui;
 mod digests;
 mod download;
 mod download_policy;

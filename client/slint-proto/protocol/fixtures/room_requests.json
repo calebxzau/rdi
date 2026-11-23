@@ -1,0 +1,77 @@
+{
+    "cases": [
+        {
+            "name": "create-template",
+            "json": {
+                "name": "玩家的测试整合",
+                "modpackId": "66a000000000000000000002",
+                "packVer": "2.0.0",
+                "difficulty": 3,
+                "gameMode": 0,
+                "levelType": "minecraft:flat",
+                "allowCheats": false,
+                "whitelist": true,
+                "gameRules": {
+                    "keepInventory": "true"
+                },
+                "baseWorldId": "0193d3a4-1111-7000-8000-000000000001",
+                "initialMemberIds": [
+                    "66a000000000000000000010",
+                    "66a000000000000000000011"
+                ]
+            }
+        },
+        {
+            "name": "create-generate",
+            "json": {
+                "name": "房间",
+                "modpackId": "66a000000000000000000002",
+                "packVer": "1.0",
+                "difficulty": 1,
+                "gameMode": 1,
+                "levelType": "skyblockbuilder:skyblock",
+                "allowCheats": true,
+                "whitelist": false,
+                "gameRules": {},
+                "initialMemberIds": [
+                    "66a000000000000000000010"
+                ]
+            }
+        },
+        {
+            "name": "options-unchanged-terrain",
+            "json": {
+                "name": "修改后的名称",
+                "difficulty": 2,
+                "gameMode": 0,
+                "whitelist": true,
+                "allowCheats": false,
+                "gameRules": {
+                    "randomTickSpeed": "10"
+                }
+            }
+        },
+        {
+            "name": "options-terrain",
+            "json": {
+                "name": "房间",
+                "difficulty": 3,
+                "gameMode": 0,
+                "levelType": "minecraft:flat",
+                "whitelist": true,
+                "allowCheats": false,
+                "gameRules": {}
+            }
+        },
+        {
+            "name": "delete-keep-world",
+            "json": {}
+        },
+        {
+            "name": "delete-world",
+            "json": {
+                "deleteWorld": true
+            }
+        }
+    ]
+}

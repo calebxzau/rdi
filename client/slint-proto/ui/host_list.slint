@@ -4,6 +4,7 @@ import { EmptyState, ErrorState, LoadingState, RScrollbar } from "components/sha
 import { Theme } from "theme.slint";
 
 export struct HostListRow {
+    id: string,
     name: string,
     modpack: string,
     initial: NameInitial,
@@ -21,6 +22,8 @@ export component HostList inherits Rectangle {
     out property <int> first-visible-room: max(0, floor(-list.content-y / list.row-height)) * list.columns;
     out property <int> end-visible-room: max(0, ceil((list.height - list.content-y) / list.row-height)) * list.columns;
     callback retry();
+    // U4c1: a click opens the room's details, as in Compose.
+    callback open(string);
 
     background: #f8f7eff7;
     border-radius: 24px;
@@ -43,7 +46,10 @@ export component HostList inherits Rectangle {
                 y: floor(i / list.columns) * list.row-height;
                 width: list.card-width; height: list.row-height - list.gap;
                 visible: self.y + list.content-y + self.height > 0px && self.y + list.content-y < list.height;
-                border-radius: 12px; background: #ecefe7;
+                border-radius: 12px; background: room-touch.has-hover ? #e3e8dd : #ecefe7;
+                accessible-role: button; accessible-label: room.name;
+                accessible-action-default => { if room.id != "" { root.open(room.id); } }
+                room-touch := TouchArea { enabled: root.enabled && room.id != ""; mouse-cursor: pointer; clicked => { root.open(room.id); } }
 
                 HorizontalLayout {
                     padding-left: 8px; padding-right: 8px; spacing: 8px;

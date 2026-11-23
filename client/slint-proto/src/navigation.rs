@@ -11,6 +11,10 @@ pub enum Screen {
     ModpackPlaza,
     ModpackDetail,
     ModpackVersionDetail,
+    /// U4c1: room details and members.
+    RoomDetail,
+    /// U4c1: the create or edit form of a room.
+    RoomForm,
 }
 #[derive(Default, Debug)]
 pub struct Navigation {
@@ -75,6 +79,8 @@ mod tests {
             Screen::HostList,
             Screen::LocalModpackInstall,
             Screen::ModpackLocalAdvanceOption,
+            Screen::RoomDetail,
+            Screen::RoomForm,
         ] {
             let mut navigation = Navigation::default();
             navigation.push(screen);

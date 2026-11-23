@@ -455,6 +455,18 @@ impl Plaza {
                     self.show_detail(&ui, id);
                 }
             }
+            // U4c1: the pack card on a room's details page.
+            "pack" if pack_id(value) => self.show_detail(&ui, value.to_owned()),
+            // U4c1 D1(b): 创建房间 on a built version opens the room form.
+            "create-room" if ui.get_pack_screen() == 5 => {
+                let Some(((name, true), detail)) = self.shown_version.clone().zip(self.detail.as_ref())
+                else {
+                    return;
+                };
+                let value = serde_json::json!({"modpackId":self.detail_id,"version":name,
+                    "name":detail.name,"mcVer":detail.mc_ver});
+                ui.global::<crate::Rooms>().invoke_action("create".into(), value.to_string().into());
+            }
             "retry-detail" if ui.get_pack_screen() == 4 => self.request_detail(&ui),
             "version" if ui.get_pack_screen() == 4 => {
                 let Some((detail, api)) = self.detail.as_ref().zip(self.api.as_ref()) else {

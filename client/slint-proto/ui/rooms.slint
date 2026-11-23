@@ -1,0 +1,544 @@
+// U4 batch c1: create a room, room details and members (Compose HostInfoScreen, HostMembersPane,
+// HostNewCreateScreen, GameRuleModal, BaseWorldSelectionModal, CreateRoomGuideDialog).
+// Rust drives everything through the `Rooms` global (src/rooms_ui.rs).
+import { ListView, ScrollView } from "std-widgets.slint";
+import { TextField } from "components/fields.slint";
+import { CircleIconButton, GlassButton } from "components/glass_button.slint";
+import { EmptyState, ErrorState, LoadingState } from "components/shared.slint";
+import { NameInitial, NameInitialIcon } from "components/name_initial_icon.slint";
+import { PlayerHead } from "components/player_head.slint";
+import { Theme } from "theme.slint";
+
+export struct RoomInfo {
+    name: string, pack-name: string, pack-meta: string, pack-initial: NameInitial, pack-icon: image, has-pack-icon: bool,
+    hid: string, mid: string, wid: string, can-manage: bool, is-owner: bool, can-view-members: bool, needs-name: bool,
+}
+// role: 0 owner, 1 admin, 2 member.
+export struct RoomMember { id: string, name: string, head: image, role: int, label: string, menu: bool }
+export struct RoomMenuEntry { key: string, label: string, glyph: string, danger: bool }
+export struct RoomFriend { id: string, name: string, head: image }
+// level: the generated terrain card (0-3), or -1 while a template is chosen.
+export struct RoomFormView {
+    title: string, pack-line: string, edit: bool, create: bool, loading: bool, submitting: bool, updating: bool,
+    can-submit: bool, difficulty: int, mode: int, level: int, template-title: string, required: bool,
+    binding-error: string, whitelist: bool, cheats: bool, rule-count: int,
+}
+export struct RoomRule { header: bool, id: string, name: string, description: string, boolean: bool, checked: bool, text: string, invalid: bool, changed: bool }
+export struct RoomWorld { id: string, name: string, owner-name: string, owner-head: image }
+
+export global Rooms {
+    // 0 none, 1 details, 2 form; set by the shell from navigation.
+    in-out property <int> screen;
+    in-out property <bool> guide;
+    in-out property <bool> loading;
+    in-out property <string> error;
+    in-out property <RoomInfo> info;
+    in-out property <bool> members-loading;
+    in-out property <string> members-note;
+    in-out property <[RoomMember]> members;
+    in-out property <bool> can-invite;
+    in-out property <bool> deleting;
+    in-out property <bool> menu-open;
+    in-out property <[RoomMenuEntry]> menu-entries;
+    in-out property <length> menu-x;
+    in-out property <length> menu-y;
+    in-out property <string> confirm-title;
+    in-out property <string> confirm-message;
+    in-out property <string> alert-title;
+    in-out property <string> alert-message;
+    in-out property <bool> delete-open;
+    in-out property <string> delete-name;
+    in-out property <bool> delete-world;
+    in-out property <bool> invite-open;
+    in-out property <string> invite-qq;
+    in-out property <RoomFormView> form;
+    in-out property <string> form-name;
+    // difficulty 0-3, mode 4-5, terrain normal 6, flat 7, skyblock 8.
+    in-out property <[image]> icons;
+    in-out property <[RoomFriend]> friends;
+    in-out property <bool> friend-open;
+    in-out property <string> friend-qq;
+    in-out property <bool> friend-loading;
+    in-out property <bool> friend-can-add;
+    in-out property <string> friend-error;
+    in-out property <bool> custom-open;
+    in-out property <string> custom-text;
+    in-out property <string> custom-error;
+    in-out property <bool> rules-open;
+    in-out property <[RoomRule]> rules;
+    in-out property <string> rules-title;
+    in-out property <bool> rules-valid: true;
+    in-out property <bool> rules-confirm;
+    in-out property <[string]> rules-changes;
+    in-out property <bool> world-open;
+    in-out property <bool> world-loading;
+    in-out property <string> world-error;
+    in-out property <[RoomWorld]> worlds;
+    in-out property <string> world-draft;
+    in-out property <bool> world-can-confirm;
+    // A dialog that a confirmation or alert can stack on.
+    out property <bool> under: self.delete-open || self.invite-open || self.friend-open || self.custom-open || self.rules-open || self.world-open;
+    // Every dialog except the member menu, which does not dim the window (a Compose dropdown).
+    out property <bool> dialog: self.guide || self.confirm-title != "" || self.alert-title != "" || self.under;
+    out property <bool> modal: self.dialog || self.menu-open;
+    callback action(string, string);
+    // An integer rule field changed; returns the text the field shows (the default after clearing it).
+    callback rule-edited(string, string) -> string;
+}
+
+// A checkbox whose state always follows `checked`; clicking only reports.
+component RoomCheck inherits Rectangle {
+    in property <bool> checked;
+    in property <string> text;
+    in property <bool> enabled: true;
+    callback toggled();
+    accessible-role: checkbox;
+    accessible-checked: root.checked;
+    accessible-label: root.text;
+    accessible-action-default => { if root.enabled { root.toggled(); } }
+    height: 32px;
+    min-width: root.text == "" ? 24px : 30px + label.preferred-width;
+    preferred-width: self.min-width;
+    horizontal-stretch: 0;
+    Rectangle { x: 2px; y: (parent.height - 20px) / 2; width: 20px; height: 20px; border-radius: 4px;
+        border-width: 2px; border-color: !root.enabled ? #a9aea7 : root.checked ? #446c49 : #5b625b;
+        background: root.checked ? (root.enabled ? #446c49 : #a9aea7) : transparent;
+        if root.checked: Text { text: "\u{f00c}"; font-family: Theme.symbols; color: white; font-size: 13px; horizontal-alignment: center; vertical-alignment: center; }
+    }
+    label := Text { x: 30px; width: max(0px, parent.width - 30px); height: parent.height; text: root.text; vertical-alignment: center; color: root.enabled ? Theme.ink : #777b77; font-size: 14px; }
+    TouchArea { enabled: root.enabled; mouse-cursor: pointer; clicked => { root.toggled(); } }
+}
+
+// Compose TinyClickCopyText: `label value`, copied to the clipboard on click.
+component CopyText inherits Rectangle {
+    in property <string> label;
+    in property <string> value;
+    height: 13px;
+    Text { width: parent.width; text: root.label + " " + (root.value == "" ? "-" : root.value); font-size: 10px; color: #8e948c; overflow: elide; vertical-alignment: center; }
+    // Never shown: the clipboard is reached through a text input's copy().
+    clipboard := TextInput { x: 0px; y: 0px; width: 1px; height: 1px; text: root.value; read-only: true; color: transparent; single-line: true; font-size: 1px; }
+    TouchArea { enabled: root.value != ""; mouse-cursor: pointer; clicked => { clipboard.select-all(); clipboard.copy(); clipboard.clear-selection(); } }
+}
+
+// Compose ImageCard: picture, title and a selected state.
+component OptionCard inherits Rectangle {
+    in property <string> title;
+    in property <image> icon;
+    in property <bool> selected;
+    in property <bool> enabled: true;
+    callback clicked();
+    accessible-role: button;
+    accessible-label: root.title;
+    accessible-checked: root.selected;
+    accessible-action-default => { if root.enabled { root.clicked(); } }
+    width: 96px; height: 108px; border-radius: 14px;
+    background: root.selected ? #dce8d4 : touch.has-hover && root.enabled ? #ffffffe0 : #ffffff99;
+    border-width: root.selected ? 2px : 1px; border-color: root.selected ? #446c49 : #d5dccf;
+    Image { x: 14px; y: 8px; width: 68px; height: 68px; source: root.icon; image-fit: contain; opacity: root.enabled ? 1 : 0.45; }
+    Text { x: 4px; y: 80px; width: parent.width - 8px; height: 22px; text: root.title; overflow: elide; horizontal-alignment: center; font-size: 13px;
+        color: root.enabled ? Theme.ink : #8e948c; }
+    touch := TouchArea { enabled: root.enabled; mouse-cursor: pointer; clicked => { root.clicked(); } }
+}
+
+component SectionTitle inherits Text { color: Theme.ink; font-size: 16px; font-weight: 600; }
+
+// Room details: title bar and the members section (HostInfoScreen + HostMembersPane).
+export component RoomDetails inherits Rectangle {
+    in property <bool> enabled: true;
+    background: #f8f7eff7;
+    border-radius: 24px;
+    private property <RoomInfo> info: Rooms.info;
+    private property <bool> ready: !Rooms.loading && Rooms.error == "" && self.info.hid != "";
+    FocusScope {
+        x: 0px; y: 0px; width: root.width; height: root.height; enabled: root.enabled;
+        HorizontalLayout {
+            x: 20px; y: 14px; width: parent.width - 40px; height: 48px; spacing: 10px;
+            VerticalLayout { alignment: center;
+                CircleIconButton { glyph: "\u{f060}"; accessible-label: "返回"; clicked => { Rooms.action("back-nav", ""); } }
+            }
+            Text { text: root.info.name != "" ? root.info.name : "房间详情"; color: Theme.ink; font-size: 22px; font-weight: 600;
+                vertical-alignment: center; overflow: elide; horizontal-stretch: 1; min-width: 80px; }
+            if root.ready: pack-card := Rectangle {
+                width: 250px; border-radius: 12px; background: pack-touch.has-hover ? #ffffff : #ffffffb8;
+                border-width: 1px; border-color: #d5dccf;
+                accessible-role: button; accessible-label: root.info.pack-name;
+                accessible-action-default => { Rooms.action("pack", ""); }
+                if root.info.has-pack-icon: Image { x: 6px; y: 6px; width: 36px; height: 36px; source: root.info.pack-icon; image-fit: contain; }
+                if !root.info.has-pack-icon: NameInitialIcon { x: 6px; y: 6px; width: 36px; height: 36px; initial: root.info.pack-initial; border-radius: 8px; font-size: 16px; }
+                Text { x: 50px; y: 6px; width: parent.width - 58px; text: root.info.pack-name; font-size: 14px; font-weight: 600; color: Theme.ink; overflow: elide; }
+                Text { x: 50px; y: 26px; width: parent.width - 58px; text: root.info.pack-meta; font-size: 11px; color: #5b625b; overflow: elide; }
+                pack-touch := TouchArea { mouse-cursor: pointer; clicked => { Rooms.action("pack", ""); } }
+            }
+            if root.ready: VerticalLayout { width: 150px; alignment: center; spacing: 1px;
+                CopyText { label: "hid"; value: root.info.hid; }
+                CopyText { label: "mid"; value: root.info.mid; }
+                CopyText { label: "wid"; value: root.info.wid; }
+            }
+            if root.ready && root.info.can-manage: VerticalLayout { alignment: center;
+                CircleIconButton { glyph: "\u{eaf8}"; accessible-label: "设置"; clicked => { Rooms.action("settings", ""); }
+                    Tooltip { text: @markdown("设置"); } }
+            }
+            if root.ready && root.info.is-owner: VerticalLayout { alignment: center;
+                CircleIconButton { glyph: "\u{ea81}"; accessible-label: "删除房间"; destructive: true; enabled: !Rooms.deleting;
+                    clicked => { Rooms.action("delete", ""); }
+                    Tooltip { text: @markdown("删除房间"); } }
+            }
+        }
+        if Rooms.loading && root.info.hid == "": LoadingState { x: 20px; y: 72px; width: parent.width - 40px; height: parent.height - 88px; }
+        if Rooms.error != "": ErrorState { x: 20px; y: 72px; width: parent.width - 40px; height: parent.height - 88px; message: Rooms.error;
+            retry => { Rooms.action("retry", ""); } }
+        if root.ready && root.info.can-view-members: members := Rectangle {
+            x: 24px; y: 76px; width: parent.width - 48px; height: parent.height - self.y - 20px;
+            HorizontalLayout { x: 0px; y: 0px; width: parent.width; height: 28px; spacing: 8px; alignment: start;
+                SectionTitle { text: "成员列表"; vertical-alignment: center; }
+                Text { text: "仅房间成员可随时启动房间"; color: #5b625b; font-size: 13px; vertical-alignment: center; }
+            }
+            if Rooms.members-loading && Rooms.members.length == 0: LoadingState { x: 0px; y: 36px; width: parent.width; height: 48px; }
+            if Rooms.members-note != "": Text { x: 0px; y: 40px; text: Rooms.members-note; color: #ba3434; font-size: 14px; }
+            chips := Flickable {
+                x: 0px; y: 36px; width: parent.width; height: parent.height - self.y;
+                private property <length> chip-width: 210px;
+                private property <length> gap: 8px;
+                private property <int> columns: max(1, floor((self.width + self.gap) / (self.chip-width + self.gap)));
+                private property <int> cells: Rooms.members.length + (Rooms.can-invite ? 1 : 0);
+                content-height: ceil(self.cells / self.columns) * 52px;
+                for member[i] in Rooms.members: Rectangle {
+                    x: mod(i, chips.columns) * (chips.chip-width + chips.gap); y: floor(i / chips.columns) * 52px;
+                    width: chips.chip-width; height: 44px; border-radius: 12px;
+                    background: member-touch.has-hover && member.menu ? #e3e8dd : #eceee8;
+                    accessible-role: button; accessible-label: member.name + " " + member.label;
+                    accessible-action-default => { if member.menu { Rooms.menu-x = self.absolute-position.x; Rooms.menu-y = self.absolute-position.y + self.height; Rooms.action("menu", member.id); } }
+                    PlayerHead { x: 10px; y: 12px; width: 20px; height: 20px; source: member.head; }
+                    Text { x: 38px; y: 0px; width: parent.width - 38px - badge.width - 16px; height: parent.height; text: member.name; font-size: 15px; color: Theme.ink; overflow: elide; vertical-alignment: center; }
+                    badge := Rectangle { x: parent.width - self.width - 8px; y: 12px; height: 20px; width: badge-text.preferred-width + 16px; border-radius: 10px;
+                        background: member.role == 0 ? #6b5778 : member.role == 1 ? #a8a8a8 : #cd7f32;
+                        badge-text := Text { text: (member.role == 0 ? "\u{edeb}" : member.role == 1 ? "\u{efa6}" : "\u{ef0c}") + " " + member.label;
+                            font-family: Theme.symbols; color: white; font-size: 11px; horizontal-alignment: center; vertical-alignment: center; }
+                    }
+                    member-touch := TouchArea { enabled: member.menu; mouse-cursor: member.menu ? pointer : default;
+                        clicked => { Rooms.menu-x = parent.absolute-position.x; Rooms.menu-y = parent.absolute-position.y + parent.height; Rooms.action("menu", member.id); } }
+                }
+                if Rooms.can-invite: CircleIconButton {
+                    x: mod(Rooms.members.length, chips.columns) * (chips.chip-width + chips.gap) + 4px;
+                    y: floor(Rooms.members.length / chips.columns) * 52px + 4px;
+                    glyph: "\u{f067}"; accessible-label: "邀请"; clicked => { Rooms.action("invite", ""); }
+                    Tooltip { text: @markdown("邀请"); }
+                }
+            }
+        }
+    }
+}
+
+// The room form for create and edit (HostNewCreateScreen).
+export component RoomForm inherits Rectangle {
+    in property <bool> enabled: true;
+    background: #f8f7eff7;
+    border-radius: 24px;
+    private property <RoomFormView> form: Rooms.form;
+    FocusScope {
+        x: 0px; y: 0px; width: root.width; height: root.height; enabled: root.enabled;
+        HorizontalLayout {
+            x: 20px; y: 14px; width: parent.width - 40px; height: 48px; spacing: 10px;
+            VerticalLayout { alignment: center;
+                CircleIconButton { glyph: "\u{f060}"; accessible-label: "返回"; clicked => { Rooms.action("back-nav", ""); } }
+            }
+            Text { text: root.form.title; color: Theme.ink; font-size: 22px; font-weight: 600; vertical-alignment: center; overflow: elide; horizontal-stretch: 1; }
+            if root.form.loading: Text { text: "◌"; color: #446c49; font-size: 18px; vertical-alignment: center; }
+            if root.form.edit: VerticalLayout { alignment: center;
+                GlassButton { glyph: "\u{f03d5}"; label: "更新整合包"; busy: root.form.updating; clicked => { Rooms.action("update-pack", ""); } }
+            }
+            VerticalLayout { alignment: center;
+                CircleIconButton { glyph: "\u{f0a50}"; accessible-label: "提交"; filled: true; enabled: root.form.can-submit; busy: root.form.submitting;
+                    clicked => { Rooms.action("submit", ""); }
+                    Tooltip { text: @markdown("提交"); } }
+            }
+        }
+        ScrollView {
+            x: 20px; y: 70px; width: parent.width - 40px; height: parent.height - self.y - 36px;
+            content-height: body.preferred-height;
+            body := VerticalLayout { width: parent.width; height: self.preferred-height; spacing: 12px; padding-right: 14px; padding-bottom: 8px;
+                Text { text: root.form.pack-line; color: Theme.ink; font-size: 14px; overflow: elide; }
+                HorizontalLayout { spacing: 16px; alignment: start; height: 56px;
+                    TextField { width: 260px; label: "房间名称"; reserve-error: false; text <=> Rooms.form-name; }
+                    VerticalLayout { alignment: end;
+                        RoomCheck { text: "不允许陌生人游玩此房间"; checked: root.form.whitelist; toggled => { Rooms.action("whitelist", ""); }
+                            Tooltip { text: @markdown("仅限受邀玩家游玩"); } }
+                    }
+                    VerticalLayout { alignment: end;
+                        RoomCheck { text: "允许作弊"; checked: root.form.cheats; toggled => { Rooms.action("cheats", ""); } }
+                    }
+                    VerticalLayout { alignment: end;
+                        GlassButton { label: "修改游戏规则(" + root.form.rule-count + ")"; filled: true; enabled: !root.form.loading; clicked => { Rooms.action("rules", ""); } }
+                    }
+                }
+                HorizontalLayout { spacing: 24px; alignment: start;
+                    VerticalLayout { spacing: 12px; alignment: start;
+                        SectionTitle { text: "难度"; }
+                        HorizontalLayout { spacing: 4px; alignment: start;
+                            for title[i] in ["和平", "简单", "普通", "困难"]: OptionCard { title: title; icon: Rooms.icons[i]; selected: root.form.difficulty == i;
+                                clicked => { Rooms.action("difficulty", i); } }
+                        }
+                        SectionTitle { text: "模式"; }
+                        HorizontalLayout { spacing: 4px; alignment: start;
+                            for title[i] in ["生存", "创造"]: OptionCard { title: title; icon: Rooms.icons[4 + i]; selected: root.form.mode == i;
+                                clicked => { Rooms.action("mode", i); } }
+                        }
+                        SectionTitle { text: "地形"; }
+                        if root.form.required: Text { text: "此版本强制使用指定的地图模板"; color: #ba3434; font-size: 13px; }
+                        if root.form.required && root.form.binding-error != "": Text { text: root.form.binding-error; color: #ba3434; font-size: 13px; wrap: word-wrap; }
+                        HorizontalLayout { spacing: 4px; alignment: start;
+                            for title[i] in ["普通", "超平坦", "空岛", "自定义"]: OptionCard { title: title; icon: Rooms.icons[i == 1 ? 7 : i == 2 ? 8 : 6];
+                                selected: root.form.level == i; enabled: !root.form.required; clicked => { Rooms.action("level", i); } }
+                            if root.form.create: OptionCard { title: root.form.template-title; icon: Rooms.icons[6]; selected: root.form.level == -1;
+                                enabled: !root.form.required; clicked => { Rooms.action("template", ""); } }
+                        }
+                        if !root.form.required && root.form.binding-error != "": Text { text: root.form.binding-error; color: #ba3434; font-size: 13px; wrap: word-wrap; }
+                    }
+                    if root.form.create: VerticalLayout { spacing: 8px; alignment: start; min-width: 280px;
+                        HorizontalLayout { spacing: 8px; alignment: start; height: 40px;
+                            SectionTitle { text: "拉朋友玩"; vertical-alignment: center; }
+                            Text { text: "请至少添加一个房间成员"; color: #5b625b; font-size: 13px; vertical-alignment: center; }
+                            VerticalLayout { alignment: center;
+                                CircleIconButton { glyph: "\u{f012c}"; accessible-label: "添加"; enabled: !root.form.submitting; clicked => { Rooms.action("friend", ""); }
+                                    Tooltip { text: @markdown("添加"); } }
+                            }
+                        }
+                        for friend in Rooms.friends: HorizontalLayout { spacing: 8px; height: 40px;
+                            VerticalLayout { alignment: center; PlayerHead { width: 24px; height: 24px; source: friend.head; } }
+                            Text { text: friend.name; color: Theme.ink; font-size: 14px; vertical-alignment: center; overflow: elide; horizontal-stretch: 1; }
+                            VerticalLayout { alignment: center;
+                                CircleIconButton { glyph: "\u{f0156}"; accessible-label: "移除"; enabled: !root.form.submitting; clicked => { Rooms.action("friend-remove", friend.id); } }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        Text { x: parent.width - self.width - 24px; y: parent.height - 28px; text: "注意，一个月没人玩房间就自动删了"; color: Theme.ink; font-size: 13px; }
+    }
+}
+
+component DialogCard inherits Rectangle {
+    background: #f7faf0; border-radius: 24px;
+    drop-shadow-blur: 12px; drop-shadow-offset-y: 3px; drop-shadow-color: #00000030;
+    // Clicks on the card never reach the backdrop below.
+    TouchArea {}
+}
+
+component DialogTitle inherits Text { font-size: 22px; font-weight: 600; color: Theme.ink; }
+
+// One rule row of the game rule dialog.
+component RuleRow inherits Rectangle {
+    in property <RoomRule> rule;
+    // Names keep up to two lines, as Compose (maxLines 2).
+    height: max(44px, desc.preferred-height + 12px, min(name.preferred-height, 40px) + 12px) + (root.rule.invalid ? 14px : 0px);
+    Rectangle { x: 0px; y: parent.height - 1px; width: parent.width; height: 1px; background: #d9ddd5; }
+    if root.rule.boolean: RoomCheck { x: 4px; y: (parent.height - self.height) / 2; width: 24px; checked: root.rule.checked;
+        accessible-label: root.rule.name; toggled => { Rooms.action("rule-toggle", root.rule.id); } }
+    if !root.rule.boolean: field := Rectangle { x: 0px; y: (parent.height - 32px - (root.rule.invalid ? 14px : 0px)) / 2; width: 96px; height: 32px; border-radius: 8px;
+        background: #ffffffc0; border-width: number.has-focus ? 2px : 1px;
+        border-color: root.rule.invalid ? #ba3434 : number.has-focus ? #446c49 : #8e948c;
+        number := TextInput { x: 10px; width: parent.width - 20px; height: parent.height; text: root.rule.text; single-line: true;
+            vertical-alignment: center; font-size: 14px; color: Theme.ink; accessible-label: root.rule.name;
+            edited => { self.text = Rooms.rule-edited(root.rule.id, self.text); } }
+    }
+    if !root.rule.boolean && root.rule.invalid: Text { x: 4px; y: (parent.height - 32px - 14px) / 2 + 34px; text: "请输入整数"; color: #ba3434; font-size: 11px; }
+    private property <length> rest: root.width - 112px;
+    name := Text { x: 112px; y: 6px; width: root.rest * 0.22 - 8px; height: parent.height - 12px; text: root.rule.name; wrap: word-wrap; overflow: elide; vertical-alignment: center;
+        font-size: 14px; color: root.rule.changed ? #446c49 : Theme.ink; font-weight: root.rule.changed ? 600 : 400; }
+    Text { x: 112px + root.rest * 0.22; y: 6px; width: root.rest * 0.23 - 8px; height: parent.height - 12px; text: root.rule.id; wrap: word-wrap; overflow: elide;
+        vertical-alignment: center; font-size: 12px; color: #5b625b; }
+    desc := Text { x: 112px + root.rest * 0.45; y: 6px; width: root.rest * 0.55; text: root.rule.description; wrap: word-wrap; font-size: 12px; color: #5b625b; }
+}
+
+// Every room dialog; placed above the window's modal backdrop.
+export component RoomDialogs inherits Rectangle {
+    if Rooms.guide: Rectangle { x: 0px; y: 0px; width: root.width; height: root.height;
+        TouchArea { clicked => { Rooms.guide = false; } }
+        DialogCard { width: min(420px, root.width - 48px); height: guide-body.preferred-height; x: (parent.width - self.width) / 2; y: (parent.height - self.height) / 2;
+            guide-body := VerticalLayout { padding: 24px; spacing: 12px;
+                DialogTitle { text: "创建多人房间"; }
+                Text { text: "1.前往整合广场"; color: Theme.ink; }
+                Text { text: "2.选择喜欢玩的包"; color: Theme.ink; }
+                Text { text: "3.在最新版本上点创建房间"; color: Theme.ink; }
+                HorizontalLayout { alignment: end; padding-top: 4px;
+                    GlassButton { label: "立刻前往"; filled: true; clicked => { Rooms.action("guide-go", ""); } }
+                }
+            }
+        }
+    }
+    if Rooms.rules-open: rules := DialogCard {
+        width: root.width * 0.9; height: min(560px, root.height - 48px); x: (root.width - self.width) / 2; y: (root.height - self.height) / 2;
+        HorizontalLayout { x: 16px; y: 12px; width: parent.width - 32px; height: 44px; spacing: 8px;
+            VerticalLayout { alignment: center; CircleIconButton { glyph: "\u{f060}"; accessible-label: "返回"; clicked => { Rooms.action("rules-close", ""); } } }
+            Text { text: Rooms.rules-title; font-size: 20px; font-weight: 600; color: Theme.ink; vertical-alignment: center; horizontal-stretch: 1; overflow: elide; }
+            VerticalLayout { alignment: center; CircleIconButton { glyph: "\u{f0450}"; accessible-label: "重置"; clicked => { Rooms.action("rules-reset", ""); }
+                Tooltip { text: @markdown("重置"); } } }
+            VerticalLayout { alignment: center; CircleIconButton { glyph: "\u{f0c7}"; accessible-label: "保存"; filled: true; enabled: Rooms.rules-valid;
+                clicked => { Rooms.action("rules-save", ""); } Tooltip { text: @markdown("保存"); } } }
+        }
+        ListView { x: 12px; y: 64px; width: parent.width - 24px; height: parent.height - 76px;
+            for rule in Rooms.rules: Rectangle { height: rule.header ? 36px : row.height;
+                if rule.header: Text { x: 0px; y: 10px; text: rule.name; font-size: 15px; font-weight: 600; color: #446c49; }
+                row := RuleRow { x: 0px; y: 0px; width: parent.width - 14px; visible: !rule.header; rule: rule; }
+            }
+        }
+    }
+    if Rooms.world-open: DialogCard {
+        width: root.width * 0.9; height: min(600px, root.height - 48px); x: (root.width - self.width) / 2; y: (root.height - self.height) / 2;
+        HorizontalLayout { x: 16px; y: 12px; width: parent.width - 32px; height: 44px; spacing: 8px;
+            VerticalLayout { alignment: center; CircleIconButton { glyph: "\u{f060}"; accessible-label: "返回"; clicked => { Rooms.action("world-close", ""); } } }
+            Text { text: "选择地图模板"; font-size: 20px; font-weight: 600; color: Theme.ink; vertical-alignment: center; horizontal-stretch: 1; }
+            VerticalLayout { alignment: center; CircleIconButton { glyph: "\u{f0a50}"; accessible-label: "确定"; filled: true; enabled: Rooms.world-can-confirm;
+                clicked => { Rooms.action("world-ok", ""); } Tooltip { text: @markdown("确定"); } } }
+        }
+        if Rooms.world-loading: LoadingState { x: 16px; y: 64px; width: parent.width - 32px; height: parent.height - 80px; }
+        if !Rooms.world-loading && Rooms.world-error != "": ErrorState { x: 16px; y: 64px; width: parent.width - 32px; height: parent.height - 80px;
+            message: Rooms.world-error; retry => { Rooms.action("world-retry", ""); } }
+        if !Rooms.world-loading && Rooms.world-error == "" && Rooms.worlds.length == 0: EmptyState { x: 16px; y: 64px; width: parent.width - 32px; height: parent.height - 80px;
+            label: "没有可用的地图模板"; }
+        if !Rooms.world-loading && Rooms.world-error == "": grid := Flickable {
+            x: 16px; y: 68px; width: parent.width - 32px; height: parent.height - 84px;
+            private property <int> columns: max(1, floor((self.width + 10px) / 230px));
+            private property <length> card-width: (self.width + 10px) / self.columns - 10px;
+            content-height: ceil(Rooms.worlds.length / self.columns) * 74px;
+            for world[i] in Rooms.worlds: Rectangle {
+                x: mod(i, grid.columns) * (grid.card-width + 10px); y: floor(i / grid.columns) * 74px; width: grid.card-width; height: 64px;
+                border-radius: 12px; background: Rooms.world-draft == world.id ? #cfe3c6 : world-touch.has-hover ? #e6eae2 : #eceee8;
+                border-width: Rooms.world-draft == world.id ? 2px : 0px; border-color: #446c49;
+                accessible-role: button; accessible-label: world.name; accessible-checked: Rooms.world-draft == world.id;
+                accessible-action-default => { Rooms.action("world-pick", world.id); }
+                Text { x: 16px; y: 10px; width: parent.width - 32px; text: world.name; font-size: 15px; color: Theme.ink; overflow: elide; }
+                PlayerHead { x: 16px; y: 38px; width: 16px; height: 16px; source: world.owner-head; }
+                Text { x: 38px; y: 37px; width: parent.width - 54px; text: world.owner-name; font-size: 12px; color: #5b625b; overflow: elide; }
+                world-touch := TouchArea { mouse-cursor: pointer; clicked => { Rooms.action("world-pick", world.id); } }
+            }
+        }
+    }
+    if Rooms.friend-open: DialogCard { width: min(420px, root.width - 48px); height: friend-body.preferred-height;
+        x: (root.width - self.width) / 2; y: (root.height - self.height) / 2;
+        friend-body := VerticalLayout { padding: 24px; spacing: 12px;
+            DialogTitle { text: "添加好友"; }
+            TextField { label: "好友的QQ号"; enabled: !Rooms.friend-loading; text <=> Rooms.friend-qq;
+                error: Rooms.friend-error; init => { self.focus(); }
+                edited(t) => { Rooms.action("friend-qq", t); } accepted => { if Rooms.friend-can-add { Rooms.action("friend-add", ""); } } }
+            HorizontalLayout { alignment: end; spacing: 12px;
+                GlassButton { label: "取消"; clicked => { Rooms.action("friend-cancel", ""); } }
+                GlassButton { label: Rooms.friend-loading ? "添加中…" : "添加"; filled: true; enabled: Rooms.friend-can-add; clicked => { Rooms.action("friend-add", ""); } }
+            }
+        }
+    }
+    if Rooms.custom-open: DialogCard { width: min(420px, root.width - 48px); height: custom-body.preferred-height;
+        x: (root.width - self.width) / 2; y: (root.height - self.height) / 2;
+        custom-body := VerticalLayout { padding: 24px; spacing: 12px;
+            DialogTitle { text: "自定义地形"; }
+            TextField { label: "level type"; text <=> Rooms.custom-text; error: Rooms.custom-error; init => { self.focus(); }
+                edited(t) => { Rooms.action("custom-text", t); } accepted => { Rooms.action("custom-ok", ""); } }
+            HorizontalLayout { alignment: end; spacing: 12px;
+                GlassButton { label: "取消"; clicked => { Rooms.action("custom-cancel", ""); } }
+                GlassButton { label: "确定"; filled: true; clicked => { Rooms.action("custom-ok", ""); } }
+            }
+        }
+    }
+    if Rooms.invite-open: DialogCard { width: min(420px, root.width - 48px); height: invite-body.preferred-height;
+        x: (root.width - self.width) / 2; y: (root.height - self.height) / 2;
+        invite-body := VerticalLayout { padding: 24px; spacing: 12px;
+            DialogTitle { text: "邀请成员"; }
+            Text { text: "请输入对方QQ号："; color: Theme.ink; }
+            TextField { reserve-error: false; text <=> Rooms.invite-qq; init => { self.focus(); } accepted => { Rooms.action("invite-ok", ""); } }
+            HorizontalLayout { alignment: end; spacing: 12px;
+                GlassButton { label: "取消"; clicked => { Rooms.action("invite-cancel", ""); } }
+                GlassButton { label: "邀请"; filled: true; clicked => { Rooms.action("invite-ok", ""); } }
+            }
+        }
+    }
+    if Rooms.delete-open: DialogCard { width: min(460px, root.width - 48px); height: delete-body.preferred-height;
+        x: (root.width - self.width) / 2; y: (root.height - self.height) / 2;
+        delete-body := VerticalLayout { padding: 24px; spacing: 12px;
+            DialogTitle { text: "确认删除"; }
+            Text { text: "确认删除房间吗？所有的数据，包括存档都会丢失（不可恢复）"; color: Theme.ink; wrap: word-wrap; }
+            if Rooms.info.needs-name: Text { text: "请输入房间名称确认。"; color: Theme.ink; }
+            if Rooms.info.needs-name: TextField { label: Rooms.info.name; reserve-error: false; text <=> Rooms.delete-name; init => { self.focus(); } }
+            if !Rooms.info.needs-name: RoomCheck { text: "同时删除关联存档"; checked: Rooms.delete-world; toggled => { Rooms.delete-world = !Rooms.delete-world; } }
+            HorizontalLayout { alignment: end; spacing: 12px;
+                GlassButton { label: "取消"; clicked => { Rooms.action("delete-cancel", ""); } }
+                GlassButton { label: "删除"; destructive: true; filled: true;
+                    enabled: !Rooms.deleting && (!Rooms.info.needs-name || Rooms.delete-name == Rooms.info.name);
+                    clicked => { Rooms.action("delete-confirm", ""); } }
+            }
+        }
+    }
+    if Rooms.menu-open: Rectangle { x: 0px; y: 0px; width: root.width; height: root.height;
+        TouchArea { clicked => { Rooms.action("menu-close", ""); } }
+        Rectangle {
+            width: 150px; height: menu-items.preferred-height;
+            x: max(8px, min(Rooms.menu-x - root.absolute-position.x, root.width - self.width - 8px));
+            y: min(Rooms.menu-y - root.absolute-position.y + 4px, root.height - self.height - 8px);
+            border-radius: 12px; background: #eef1f5;
+            drop-shadow-blur: 10px; drop-shadow-offset-y: 3px; drop-shadow-color: #00000026;
+            TouchArea {}
+            menu-items := VerticalLayout { padding-top: 6px; padding-bottom: 6px;
+                for entry in Rooms.menu-entries: Rectangle { height: 36px;
+                    accessible-role: button; accessible-label: entry.label;
+                    accessible-action-default => { Rooms.action("menu-pick", entry.key); }
+                    Rectangle { x: 4px; y: 2px; width: parent.width - 8px; height: parent.height - 4px; border-radius: 8px; background: entry-touch.has-hover ? #0000000f : transparent; }
+                    Text { x: 12px; width: 24px; height: parent.height; text: entry.glyph; font-family: Theme.symbols; font-size: 17px;
+                        color: entry.danger ? #ba3434 : Theme.ink; horizontal-alignment: center; vertical-alignment: center; }
+                    Text { x: 44px; width: parent.width - self.x - 12px; height: parent.height; text: entry.label; font-size: 14px;
+                        color: entry.danger ? #ba3434 : Theme.ink; vertical-alignment: center; }
+                    entry-touch := TouchArea { mouse-cursor: pointer; clicked => { Rooms.action("menu-pick", entry.key); } }
+                }
+            }
+        }
+    }
+    if Rooms.rules-confirm: Rectangle { x: 0px; y: 0px; width: root.width; height: root.height; background: #0006;
+        TouchArea {}
+        DialogCard { width: min(520px, root.width - 48px); height: min(root.height - 48px, rules-body.preferred-height);
+            x: (parent.width - self.width) / 2; y: (parent.height - self.height) / 2;
+            rules-body := VerticalLayout { padding: 24px; spacing: 12px;
+                DialogTitle { text: "确认保存游戏规则"; }
+                if Rooms.rules-changes.length == 0: Text { text: "没有游戏规则发生变化。"; color: Theme.ink; }
+                if Rooms.rules-changes.length > 0: ScrollView { min-height: min(320px, Rooms.rules-changes.length * 24px); max-height: 320px;
+                    VerticalLayout { spacing: 6px;
+                        for line in Rooms.rules-changes: Text { text: line; color: Theme.ink; wrap: word-wrap; }
+                    }
+                }
+                HorizontalLayout { alignment: end; spacing: 12px;
+                    GlassButton { label: "继续修改"; clicked => { Rooms.rules-confirm = false; } }
+                    GlassButton { label: "确认保存"; filled: true; clicked => { Rooms.action("rules-confirm", ""); } }
+                }
+            }
+        }
+    }
+    if Rooms.confirm-title != "": Rectangle { x: 0px; y: 0px; width: root.width; height: root.height; background: Rooms.under ? #0006 : transparent;
+        TouchArea {}
+        DialogCard { width: min(460px, root.width - 48px); height: confirm-body.preferred-height;
+            x: (parent.width - self.width) / 2; y: (parent.height - self.height) / 2;
+            confirm-body := VerticalLayout { padding: 24px; spacing: 16px;
+                DialogTitle { text: Rooms.confirm-title; }
+                Text { text: Rooms.confirm-message; color: Theme.ink; wrap: word-wrap; }
+                HorizontalLayout { alignment: end; spacing: 12px;
+                    GlassButton { label: "取消"; clicked => { Rooms.action("confirm-cancel", ""); } }
+                    GlassButton { label: "确定"; filled: true; clicked => { Rooms.action("confirm", ""); } }
+                }
+            }
+        }
+    }
+    if Rooms.alert-title != "": Rectangle { x: 0px; y: 0px; width: root.width; height: root.height; background: Rooms.under || Rooms.confirm-title != "" ? #0006 : transparent;
+        TouchArea {}
+        DialogCard { width: min(460px, root.width - 48px); height: alert-body.preferred-height;
+            x: (parent.width - self.width) / 2; y: (parent.height - self.height) / 2;
+            alert-body := VerticalLayout { padding: 24px; spacing: 16px;
+                HorizontalLayout { spacing: 10px; alignment: start;
+                    Text { text: Rooms.alert-title == "成功" ? "\u{f00c}" : "\u{ea87}"; font-family: Theme.symbols; font-size: 22px;
+                        color: Rooms.alert-title == "成功" ? #3a9d5d : #d64545; vertical-alignment: center; }
+                    DialogTitle { text: Rooms.alert-title; }
+                }
+                Text { text: Rooms.alert-message; color: Theme.ink; wrap: word-wrap; }
+                HorizontalLayout { alignment: end;
+                    alert-ok := GlassButton { label: "确定"; filled: true; init => { self.focus(); } clicked => { Rooms.action("alert-ok", ""); } }
+                }
+            }
+        }
+    }
+}

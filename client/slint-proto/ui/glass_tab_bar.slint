@@ -5,16 +5,13 @@ export component GlassTabBar inherits GlassSurface {
     in property <float> tab-position;
     out property <GlassShape> selected-shape: selected-surface.shape;
     callback select(int);
-    callback create-room();
     callback press(int,bool,float,float);
     width: 292px; height: 56px;
     selected-surface := GlassSurface { x: 6px + 158px * root.tab-position; y: 6px; width: 154px - 32px * root.tab-position; height: 44px; }
     rooms-tab := GlassButton {
         x: 6px; y: 6px; width: 154px; height: 44px; label: "多人房间"; glyph: "\u{f0c0}";
         clicked => {root.select(0);}
-        right-clicked => {root.create-room();}
         press(on,x,y) => {root.press(0,on,x,y);}
-        Tooltip { text: @markdown("右键创建新房间"); }
     }
     GlassButton { x: 164px; y: 6px; width: 122px; height: 44px; label: "整合包"; glyph: "\u{f1b2}"; clicked => {root.select(1);} press(on,x,y) => {root.press(1,on,x,y);} }
 }

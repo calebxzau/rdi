@@ -398,6 +398,8 @@ For each screen: move logic to `ui-logic`, expose it through the service, write 
 
 `FriendsScreen` is not ported: the friend system is archived in Compose (owner, 2026-11-06).
 
+Owner decisions, 2026-11-22: `ModpackUploadScreen` gets no Slint screen; uploading a modpack is left to an agent through the launcher MCP, so its logic must be callable without UI. Batch c is split: c1 (create a room, room details, members) is planned in `U4C1-PLAN.md`; GU4c1 passed 2026-11-23. c2 holds the remaining room screens.
+
 `WardrobeScreen` and `SkinPreviewScreen` need a 3D avatar view. Build it from `rdi-renderer`'s player mesh as a texture shown through `slint::Image`. Round corners in the shader, not with `clip`.
 
 File pickers need a native dialog; prefer the `rfd` crate on the Rust side, returning a path to the service. Confirm that `ui-service` needs no AWT dialogs.

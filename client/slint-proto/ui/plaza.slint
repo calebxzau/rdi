@@ -177,6 +177,10 @@ export component ModpackDetails inherits Rectangle {
                 text: root.version-page ? root.pack.name + " · " + root.version.name : root.pack.name != "" ? root.pack.name : "整合包详情";
                 color: Theme.ink; font-size: 22px; font-weight: 600; vertical-alignment: center; overflow: elide; horizontal-stretch: 1;
             }
+            // U4c1 D1(b): a room is created from a built version.
+            if root.version-page && !root.loading && root.error == "": GlassButton {
+                label: "创建房间"; glyph: "\u{f0c0}"; enabled: root.version.available; clicked => { root.action("create-room", ""); }
+            }
             if root.version-page && root.install-state > 0 && !root.loading && root.error == "": GlassButton {
                 label: root.install-state == 2 ? "安装中" : root.install-state == 3 ? "重新安装" : "安装";
                 glyph: "\u{f019}"; filled: root.install-state == 1; clicked => { root.action("install", ""); }

@@ -417,3 +417,19 @@ and owner acceptance items. Implementation parity remains incomplete; GJ4b not r
   install. Rooms, RDI packs, online play, Fabric and GTNH still use the service.
 - See `evidence/jvm-removal/j5a/gate-summary.md` and `owner-checklist.md`. Stopped at GJ5a; no
   commit, no J5b.
+
+## 2026-11-22/23 U4 batch c1: rooms (stopped at GU4c1)
+
+- Create a room, room details and members, per `U4C1-PLAN.md` (D1-D7). Logic in `src/rooms/`
+  (no Slint types), wiring in `src/rooms_ui.rs`, screens and dialogs in `ui/rooms.slint` behind a
+  `Rooms` global; small wiring edits in shared files on top of the uncommitted J5a work.
+- Owner follow-up: no right click on the 多人房间 tab; plain members do not see 踢出成员; screenshots
+  archived to `DEL/` after testing.
+- Kotlin `HostRequestFixtureTest` writes `protocol/fixtures/game_rules.json` (60 rules, not 61 as
+  the plan said) and `room_requests.json`; Rust request bodies match it.
+- clippy, `cargo test --workspace` (29 new room tests), release build, zigbuild checks for macOS
+  arm64 and Linux x64 and the Kotlin fixture check pass. Live: read-only on the real server; every
+  write (create incl. a required template, edit, 更新整合包, delete for both generations, all member
+  operations and their refusals) on a local master. Seven UI bugs found live were fixed.
+- See `evidence/ui-port/u4c1/gate-summary.md` and `owner-checklist.md`.
+- GU4c1 passed 2026-11-23; template cards now show the author (owner's review). Committed.

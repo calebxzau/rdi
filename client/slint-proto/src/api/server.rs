@@ -222,16 +222,35 @@ impl ServerApi {
     }
     /// A JSON POST whose `data` may be absent, as Kotlin `response.data.orEmpty()` allows.
     pub async fn post<T: DeserializeOwned + Default>(&self, path: &str, body: &Value) -> Result<T> {
+        self.request(reqwest::Method::POST, path, Some(body)).await
+    }
+    /// A POST without a body, as Kotlin `makeRequest(method = Post)` without `setBody`.
+    pub async fn post_empty<T: DeserializeOwned + Default>(&self, path: &str) -> Result<T> {
+        self.request(reqwest::Method::POST, path, None).await
+    }
+    /// A PUT with an optional JSON body; `data` may be absent.
+    pub async fn put<T: DeserializeOwned + Default>(&self, path: &str, body: Option<&Value>) -> Result<T> {
+        self.request(reqwest::Method::PUT, path, body).await
+    }
+    /// A DELETE with an optional JSON body; `data` may be absent.
+    pub async fn delete<T: DeserializeOwned + Default>(&self, path: &str, body: Option<&Value>) -> Result<T> {
+        self.request(reqwest::Method::DELETE, path, body).await
+    }
+    async fn request<T: DeserializeOwned + Default>(
+        &self,
+        method: reqwest::Method,
+        path: &str,
+        body: Option<&Value>,
+    ) -> Result<T> {
         let jwt = self.jwt.as_deref().context("请先登录")?;
-        let envelope = self
-            .send(
-                self.http
-                    .post(format!("{}{path}", self.base))
-                    .bearer_auth(jwt)
-                    .json(body),
-                path,
-            )
-            .await?;
+        let mut request = self
+            .http
+            .request(method, format!("{}{path}", self.base))
+            .bearer_auth(jwt);
+        if let Some(body) = body {
+            request = request.json(body);
+        }
+        let envelope = self.send(request, path).await?;
         match envelope.get("data").filter(|v| !v.is_null()) {
             Some(data) => serde_json::from_value(data.clone())
                 .map_err(|_| anyhow::anyhow!("服务器数据格式不兼容")),
@@ -290,9 +309,35 @@ async fn decode(response: Response) -> Result<Value> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    /// Reads one request, including a body that arrives after the headers.
+    pub(crate) async fn read_request(socket: &mut tokio::net::TcpStream) -> String {
+        let mut bytes = Vec::new();
+        let mut chunk = vec![0; 16384];
+        loop {
+            let n = socket.read(&mut chunk).await.unwrap();
+            bytes.extend_from_slice(&chunk[..n]);
+            let text = String::from_utf8_lossy(&bytes).into_owned();
+            if let Some(end) = text.find("\r\n\r\n") {
+                let length = text[..end]
+                    .lines()
+                    .find_map(|line| {
+                        let (name, value) = line.split_once(':')?;
+                        name.eq_ignore_ascii_case("content-length")
+                            .then(|| value.trim().parse::<usize>().ok())?
+                    })
+                    .unwrap_or(0);
+                if bytes.len() >= end + 4 + length {
+                    return text;
+                }
+            }
+            if n == 0 {
+                return text;
+            }
+        }
+    }
     async fn mock(
         status: &str,
         content_type: Option<&str>,
@@ -311,10 +356,9 @@ mod tests {
         );
         let task = tokio::spawn(async move {
             let (mut socket, _) = listener.accept().await.unwrap();
-            let mut bytes = vec![0; 16384];
-            let n = socket.read(&mut bytes).await.unwrap();
+            let request = read_request(&mut socket).await;
             socket.write_all(response.as_bytes()).await.unwrap();
-            String::from_utf8_lossy(&bytes[..n]).into_owned()
+            request
         });
         (
             ServerApi {
@@ -457,6 +501,49 @@ mod tests {
             let request = task.await.unwrap();
             assert!(request.starts_with("POST /player/login "));
         }
+    }
+    #[tokio::test]
+    async fn put_delete_and_empty_post_share_the_envelope() {
+        let ok = r#"{"code":0}"#;
+        let (api, task) = mock("200 OK", Some("application/json"), ok, None).await;
+        api.post_empty::<()>("/host/a/update").await.unwrap();
+        let request = task.await.unwrap();
+        assert!(request.starts_with("POST /host/a/update "));
+        assert!(request.to_lowercase().contains("authorization: bearer fake-token"));
+        assert!(!request.to_lowercase().contains("content-type"));
+
+        let (api, task) = mock("200 OK", Some("application/json"), ok, None).await;
+        api.put::<()>("/host/a/options", Some(&json!({"name":"房间"}))).await.unwrap();
+        let request = task.await.unwrap();
+        assert!(request.starts_with("PUT /host/a/options "));
+        assert!(request.to_lowercase().contains("content-type: application/json"));
+        assert!(request.ends_with(r#"{"name":"房间"}"#));
+
+        let (api, task) = mock("200 OK", Some("application/json"), ok, None).await;
+        api.put::<()>("/host/a/quit", None).await.unwrap();
+        assert!(task.await.unwrap().starts_with("PUT /host/a/quit "));
+
+        let (api, task) = mock("200 OK", Some("application/json"), ok, None).await;
+        api.delete::<()>("/host/a", Some(&json!({}))).await.unwrap();
+        let request = task.await.unwrap();
+        assert!(request.starts_with("DELETE /host/a "));
+        assert!(request.ends_with("{}"));
+
+        let (api, task) = mock(
+            "200 OK",
+            Some("application/json"),
+            r#"{"code":-1,"msg":"无权限"}"#,
+            None,
+        )
+        .await;
+        let error = api.delete::<()>("/host/a/member/b", None).await.unwrap_err();
+        assert_eq!(error.to_string(), "无权限");
+        task.await.unwrap();
+
+        let (api, task) =
+            mock("200 OK", Some("application/json"), r#"{"code":0,"data":[1]}"#, None).await;
+        assert_eq!(api.put::<Vec<i32>>("/x", None).await.unwrap(), [1]);
+        task.await.unwrap();
     }
     #[tokio::test]
     async fn timeout_maps_to_connection_message() {

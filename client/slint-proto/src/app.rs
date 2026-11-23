@@ -57,6 +57,8 @@ enum Event {
     Page(u64, Result<Vec<HostBrief>>),
     Online(u64, Result<Vec<String>>),
     Art(u64, String, Art),
+    /// U4c1: `/host/my` again after a room was created, deleted or left.
+    Mine(u64, Result<Vec<HostBrief>>),
 }
 #[derive(Default)]
 pub struct Interaction {
@@ -213,6 +215,7 @@ pub struct App {
     login_ui: Rc<RefCell<crate::login::LoginUi>>,
     pack_ui: Rc<RefCell<crate::packs::PackUi>>,
     plaza: Rc<RefCell<crate::plaza::Plaza>>,
+    rooms: Rc<RefCell<crate::rooms_ui::RoomsUi>>,
     heads: HeadCache,
     cache: lru::LruCache<String, CachedArt>,
     jobs: HashMap<String, JoinHandle<()>>,
@@ -259,6 +262,7 @@ impl App {
         crate::java_runtime::start(&runtime);
         let plaza = crate::plaza::Plaza::wire(ui, runtime.clone(), pack_ui.borrow().tasks());
         let login_ui = crate::login::LoginUi::wire(ui, runtime.clone(), config.server.clone());
+        let rooms = crate::rooms_ui::RoomsUi::wire(ui, runtime.clone());
         let app = Rc::new(RefCell::new(Self {
             ui: ui.as_weak(),
             runtime,
@@ -271,6 +275,7 @@ impl App {
             session: None,
             pack_ui,
             plaza,
+            rooms,
             login_ui,
             running_processes: vec![],
             service_running: false,
@@ -410,6 +415,8 @@ impl App {
                     a.borrow().pack_ui.borrow_mut().open_pack(id, &entry.name, &version, right);
                 } else if tab == 0 && !right {
                     a.borrow().play_host(id);
+                } else if tab == 0 && let Some(ui) = a.borrow().ui.upgrade() {
+                    ui.global::<crate::Rooms>().invoke_action("open".into(), id.as_str().into());
                 } else if let Some(ui) = a.borrow().ui.upgrade() {
                     ui.invoke_stub(if tab == 0 { "房间详情".into() } else { "整合包详情".into() });
                 }
@@ -543,6 +550,7 @@ impl App {
         self.session = None;
         self.pack_ui.borrow_mut().connect(None);
         self.plaza.borrow_mut().connect(None);
+        self.rooms.borrow_mut().connect(None);
         self.login_ui.borrow_mut().start();
     }
     /// Stopping the service force-stops the game and tasks, so logging out waits for them.
@@ -579,6 +587,7 @@ impl App {
         ui.invoke_navigate("home".into());
         self.pack_ui.borrow_mut().connect(None);
         self.plaza.borrow_mut().connect(None);
+        self.rooms.borrow_mut().connect(None);
         ui.set_player_name("未登录".into());
         ui.set_player_head(self.fallback.clone());
         self.login_ui.borrow_mut().sign_out(session);
@@ -607,6 +616,7 @@ impl App {
         self.stop_jobs();
         self.session = Some(api.clone());
         self.plaza.borrow_mut().connect(Some(api.clone()));
+        self.rooms.borrow_mut().connect(Some(api.clone()));
         self.player_appearance = if self.player_enabled() && !self.crowd_enabled() {
             match Appearance::steve() {
                 Ok(appearance) => Some(appearance),
@@ -800,6 +810,7 @@ impl App {
                 .enumerate()
                 .map(|(index, host)| {
                     let mut row = HostListRow {
+                        id: host.id.as_str().into(),
                         name: host.name.as_str().into(),
                         modpack: match host.pack_ver.as_deref().map(str::trim) {
                             Some(version) if !version.is_empty() => {
@@ -1030,6 +1041,15 @@ impl App {
         }
         self.pack_ui.borrow_mut().tick();
         self.plaza.borrow_mut().tick();
+        self.rooms.borrow_mut().tick();
+        if self.rooms.borrow_mut().take_hosts_changed()
+            && let Some(api) = self.api.clone()
+        {
+            let (tx, epoch) = (self.tx.clone(), self.epoch);
+            self.runtime.spawn(async move {
+                let _ = tx.send(Event::Mine(epoch, api.get("/host/my").await));
+            });
+        }
         let mut dirty = false;
         if let Some(packs) = self.pack_ui.borrow_mut().take_packs() {
             self.packs = packs;
@@ -1212,6 +1232,22 @@ impl App {
                         Err(error) => tracing::warn!(?error, "Online player poll failed"),
                     }
                 }
+                Event::Mine(epoch, result) if epoch == self.epoch => match result {
+                    Ok(mine) => {
+                        // A deleted or left room must disappear, so the list starts over.
+                        if let Some(job) = self.page_job.take() {
+                            job.abort();
+                        }
+                        ui.set_loading_more(false);
+                        self.hosts = Hosts::default();
+                        self.hosts.merge(mine);
+                        dirty = true;
+                        if ui.get_host_list_near_end() {
+                            self.load_page();
+                        }
+                    }
+                    Err(error) => tracing::warn!(error = ?error, "刷新我的房间失败"),
+                },
                 Event::Art(epoch, key, art)
                     if epoch == self.epoch && self.jobs.remove(&key).is_some() =>
                 {
