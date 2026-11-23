@@ -71,7 +71,7 @@ enum Reply {
     Exported(Result<bool>),
     Opened(Result<()>),
     Mods(u64, Result<(HostDetail, Vec<crate::pack_install::mods::Mod>)>),
-    Cards(u64, std::collections::HashMap<String, mods_page::Card>),
+    Cards(u64, std::collections::HashMap<String, crate::mod_cards::Card>),
     ModIcon(String, Option<image::RgbaImage>),
     ModsChanged(u64, mods_page::ModsOp, Result<Vec<crate::pack_install::mods::Mod>>),
     Github(u64, mods_page::GithubReply),

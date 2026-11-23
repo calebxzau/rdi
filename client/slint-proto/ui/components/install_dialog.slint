@@ -1,33 +1,81 @@
 import { CheckBox } from "std-widgets.slint";
 import { Theme } from "../theme.slint";
-import { GlassButton } from "glass_button.slint";
+import { CircleIconButton, GlassButton } from "glass_button.slint";
 import { GlassSurface } from "surfaces.slint";
 
-// J4c: confirm installing a room modpack. Used by the plaza version page and by a room click.
+// Batch d: Compose `ModpackDownloadMethodDialog` with the plaza's 「确认重新下载」 step in front.
+// Used by the plaza version page and by a room whose pack is missing. step: 0 确认重新下载,
+// 1 选择下载方式, 2 让朋友发我, 3 从群文件下载. 2 and 3 end in the rdipack2 import.
 export component InstallPackDialog inherits GlassSurface {
     in property <string> pack-name;
+    in property <string> pack-title;
     in property <string> detail;
+    in-out property <int> step: 1;
     in-out property <bool> include-extras;
     callback confirmed();
+    callback imported();
     callback dismissed();
     width: 480px; height: content.preferred-height; tint: #f3f4ecf2; background: #f3f4ec; border-radius: 24px;
-    out property <bool> contains-focus: confirm.focused || cancel.focused;
-    public function focus-dialog() { confirm.focus(); }
+    out property <bool> contains-focus: main.focused || second.focused || third.focused || close.focused;
+    public function focus-dialog() { main.focus(); }
+    private property <string> title-or-pack: root.pack-title != "" ? root.pack-title : root.pack-name;
+
     FocusScope {
-        forward-focus: confirm;
+        forward-focus: main;
         key-pressed(e) => {
             if e.text == Key.Escape {root.dismissed(); return accept;}
-            if e.text == Key.Tab {if confirm.focused {cancel.focus();} else {confirm.focus();} return accept;}
+            if e.text == Key.Tab {
+                if main.focused {second.focus();} else if second.focused && root.step == 1 {third.focus();} else {main.focus();}
+                return accept;
+            }
             return reject;
         }
-        content := VerticalLayout { padding: 24px; spacing: 16px;
-            Text { text: "安装整合包"; font-size: 22px; font-weight: 600; color: Theme.ink; }
-            Text { text: root.pack-name; color: Theme.ink; font-size: 16px; wrap: word-wrap; }
-            if root.detail != "": Text { text: root.detail; color: #526050; font-size: 14px; wrap: word-wrap; }
-            CheckBox { text: "下载此包材质光影"; checked <=> root.include-extras; }
-            HorizontalLayout { alignment: end; spacing: 12px;
-                cancel := GlassButton { label: "取消"; clicked => {root.dismissed();} }
-                confirm := GlassButton { filled: true; label: "安装"; clicked => {root.confirmed();} }
+        content := VerticalLayout { padding: 24px; padding-bottom: root.step == 1 ? 24px : 16px; spacing: 12px;
+            HorizontalLayout { spacing: 8px;
+                Text {
+                    text: root.step == 0 ? "确认重新下载" : root.step == 2 ? "让朋友发我" : root.step == 3 ? "从群文件下载" : "选择下载方式";
+                    font-size: 22px; font-weight: 600; color: Theme.ink; vertical-alignment: center; horizontal-stretch: 1;
+                }
+                close := CircleIconButton { glyph: "\u{f00d}"; accessible-label: "关闭"; clicked => {root.dismissed();} }
+            }
+            if root.step == 0: Text { text: "整合包版本" + root.title-or-pack + "已存在，是否重新下载？"; color: Theme.ink; font-size: 15px; wrap: word-wrap; }
+            if root.step == 1: Text { text: "请选择" + root.title-or-pack + "下载方式"; color: Theme.ink; font-size: 16px; wrap: word-wrap; }
+            if root.step == 1 && root.detail != "": Text { text: root.detail; color: #526050; font-size: 14px; wrap: word-wrap; }
+            if root.step == 1: CheckBox { text: "下载此包材质光影"; checked <=> root.include-extras; }
+            if root.step == 2: VerticalLayout { spacing: 6px;
+                Text { text: "1.让他打开整合包页面"; color: Theme.ink; font-size: 15px; wrap: word-wrap; }
+                Text { text: "2.点" + (root.title-or-pack != "" ? root.title-or-pack : "这个整合包"); color: Theme.ink; font-size: 15px; wrap: word-wrap; }
+                Text { text: "3.点分享或导出"; color: Theme.ink; font-size: 15px; wrap: word-wrap; }
+                Text { text: "4.让他通过QQ等工具把包发给你"; color: Theme.ink; font-size: 15px; wrap: word-wrap; }
+            }
+            if root.step == 3: VerticalLayout { spacing: 6px;
+                Text { text: "1.打开rdi群文件"; color: Theme.ink; font-size: 15px; }
+                Text { text: "2.点击热门包"; color: Theme.ink; font-size: 15px; }
+                Text { text: "3.下载想玩的"; color: Theme.ink; font-size: 15px; }
+            }
+            // One set of three buttons; their labels and actions follow the step so focus and Tab
+            // keep working when the step changes inside the dialog.
+            VerticalLayout { spacing: 8px; padding-top: 4px;
+                main := GlassButton {
+                    height: 42px; filled: root.step != 1;
+                    label: root.step == 0 ? "重新下载" : root.step == 1 ? "1.让朋友分享我(非常快)" : root.step == 2 ? "5.导入朋友发来的整合包" : "4.点此导入";
+                    clicked => {
+                        if root.step == 0 {root.step = 1;}
+                        else if root.step == 1 {root.step = 2;}
+                        else {root.imported();}
+                    }
+                }
+                second := GlassButton {
+                    height: 42px;
+                    label: root.step == 1 ? "2.直接下载(很慢)" : "取消";
+                    clicked => { if root.step == 1 {root.confirmed();} else {root.dismissed();} }
+                }
+                // Hidden elements still take layout space, so it collapses to 0px; the bottom
+                // padding below takes back the spacing it leaves.
+                third := GlassButton {
+                    visible: root.step == 1; height: root.step == 1 ? 42px : 0px; label: "3.从群文件下载(非常快)";
+                    clicked => { root.step = 3; }
+                }
             }
         }
     }

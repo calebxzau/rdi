@@ -1,17 +1,23 @@
 //! Authenticated browse flow for the RDI modpack plaza.
 use crate::{
-    AppWindow, PlazaCard, PlazaContent, PlazaFilters, PlazaPack, PlazaVersion, api::Client,
-    app::name_placeholder, images, local_packs, packs::human_file_size,
+    AppWindow, PlazaCard, PlazaFilters, PlazaMod, PlazaPack, PlazaVersion,
+    api::Client,
+    app::name_placeholder,
+    images, local_packs,
+    mod_cards::{self, ModCards, initial},
+    pack_install::mods::Mod,
+    packs::human_file_size,
+    rooms::mods,
 };
 use anyhow::{Context, Result};
 use serde::Deserialize;
 use slint::{ComponentHandle, Model, SharedString, VecModel};
 use std::{
     cell::RefCell,
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     rc::Rc,
     sync::{Arc, mpsc},
-    time::{SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 use tokio::{
     runtime::Handle,
@@ -135,15 +141,10 @@ struct Version {
     #[serde(default)]
     changelog: String,
     #[serde(default)]
-    mods: Vec<ModEntry>,
+    mods: Vec<Mod>,
     #[serde(default)]
     client_extras: Vec<Extra>,
     base_world: Option<BaseWorld>,
-}
-#[derive(Deserialize)]
-struct ModEntry {
-    slug: String,
-    side: Option<String>,
 }
 #[derive(Deserialize)]
 struct Extra {
@@ -188,6 +189,26 @@ fn ago(millis: u64) -> String {
     "刚刚".into()
 }
 
+/// `Modpack.Status` as 0 可用, 1 构建中, 2 构建失败, 3 等待构建 or unknown; the page picks the
+/// icon and colour of `ModpackVersionCard` from it.
+fn status_state(status: &str) -> i32 {
+    match status {
+        "OK" => 0,
+        "BUILDING" => 1,
+        "FAIL" => 2,
+        _ => 3,
+    }
+}
+
+/// `millisToHumanDateTime` (`yyyy-MM-dd HH:mm:ss`, local time).
+fn date_time(millis: u64) -> String {
+    i64::try_from(millis)
+        .ok()
+        .and_then(chrono::DateTime::from_timestamp_millis)
+        .map(|time| time.with_timezone(&chrono::Local).format("%Y-%m-%d %H:%M:%S").to_string())
+        .unwrap_or_default()
+}
+
 fn status_text(status: &str) -> &str {
     match status {
         "OK" => "可用",
@@ -207,36 +228,36 @@ impl Version {
         PlazaVersion {
             name: self.name.as_str().into(),
             status: status_text(&self.status).into(),
+            state: status_state(&self.status),
             available: self.status == "OK",
             metadata: metadata.join(" · ").into(),
         }
     }
 
-    fn contents(&self) -> Vec<PlazaContent> {
-        self.mods
-            .iter()
-            .map(|entry| PlazaContent {
-                name: entry.slug.as_str().into(),
-                detail: match entry.side.as_deref() {
-                    None | Some("BOTH") => "客+服通用",
-                    Some("CLIENT") => "客户端",
-                    Some("SERVER") => "服务端",
-                    _ => "未知",
-                }
-                .into(),
-            })
-            .chain(self.client_extras.iter().map(|entry| {
-                PlazaContent {
-                    name: entry.slug.as_str().into(),
-                    detail: match entry.kind.as_str() {
-                        "ResPack" => "资源包",
-                        "ShaderPack" => "光影",
-                        _ => "客户端附加内容",
-                    }
-                    .into(),
-                }
-            }))
-            .collect()
+    /// 「上传 time · size」 before the uploader on the version page.
+    fn uploaded(&self) -> String {
+        let mut text = format!("上传 {}", date_time(self.time));
+        if let Some(size) = self.total_size.filter(|size| *size > 0) {
+            text.push_str(&format!(" · {}", human_file_size(size)));
+        }
+        text
+    }
+
+    /// The client extras by kind, e.g. 「资源包：a、b · 光影：c」; empty without any.
+    fn extras(&self) -> String {
+        let mut groups: Vec<(&str, Vec<&str>)> = Vec::new();
+        for entry in &self.client_extras {
+            let kind = match entry.kind.as_str() {
+                "ResPack" => "资源包",
+                "ShaderPack" => "光影",
+                _ => "附加内容",
+            };
+            match groups.iter_mut().find(|(k, _)| *k == kind) {
+                Some((_, names)) => names.push(entry.slug.as_str()),
+                None => groups.push((kind, vec![entry.slug.as_str()])),
+            }
+        }
+        groups.iter().map(|(kind, names)| format!("{kind}：{}", names.join("、"))).collect::<Vec<_>>().join(" · ")
     }
 }
 
@@ -258,6 +279,9 @@ enum Reply {
     Page(u64, usize, Result<Page>),
     Detail(u64, Result<Detail>),
     Icon(u64, usize, image::RgbaImage),
+    Cards(u64, HashMap<String, mod_cards::Card>),
+    ModIcon(String, Option<image::RgbaImage>),
+    Uploader(String, Result<(String, image::RgbaImage)>),
 }
 
 pub struct Plaza {
@@ -284,6 +308,15 @@ pub struct Plaza {
     /// The version page's (name, built) for the install button.
     shown_version: Option<(String, bool)>,
     install_checked: std::time::Instant,
+    /// The version page's mods, their catalog cards and when the rows were last rebuilt.
+    version_mods: Vec<Mod>,
+    version_epoch: u64,
+    mod_cards: ModCards,
+    mods_dirty: bool,
+    mods_rendered: Option<Instant>,
+    /// Uploader id -> name and head; 「未知玩家」 and Steve after a failed request.
+    players: HashMap<String, (String, slint::Image)>,
+    uploader: String,
 }
 
 impl Plaza {
@@ -321,6 +354,13 @@ impl Plaza {
             tasks,
             shown_version: None,
             install_checked: std::time::Instant::now(),
+            version_mods: Vec::new(),
+            version_epoch: 0,
+            mod_cards: ModCards::default(),
+            mods_dirty: false,
+            mods_rendered: None,
+            players: HashMap::new(),
+            uploader: String::new(),
         }));
         let weak = Rc::downgrade(&plaza);
         ui.on_plaza_action(move |action, value| {
@@ -338,6 +378,10 @@ impl Plaza {
         self.detail = None;
         self.detail_id.clear();
         self.shown_version = None;
+        self.version_epoch += 1;
+        self.version_mods.clear();
+        self.uploader.clear();
+        self.players.clear();
         self.keyword.clear();
         self.filters = PlazaFilters::default();
         self.next = None;
@@ -354,7 +398,9 @@ impl Plaza {
             ui.set_plaza_pack(PlazaPack::default());
             ui.set_plaza_versions(Default::default());
             ui.set_plaza_version(PlazaVersion::default());
-            ui.set_plaza_contents(Default::default());
+            ui.set_plaza_mods(Default::default());
+            ui.set_plaza_mod_query("".into());
+            ui.set_plaza_extras("".into());
             ui.set_plaza_changelog("".into());
             ui.set_plaza_base_world("".into());
         }
@@ -468,32 +514,9 @@ impl Plaza {
                 ui.global::<crate::Rooms>().invoke_action("create".into(), value.to_string().into());
             }
             "retry-detail" if ui.get_pack_screen() == 4 => self.request_detail(&ui),
-            "version" if ui.get_pack_screen() == 4 => {
-                let Some((detail, api)) = self.detail.as_ref().zip(self.api.as_ref()) else {
-                    return;
-                };
-                let Ok(uid) = api.uid() else { return };
-                let Some(version) = detail.versions.iter().find(|version| {
-                    version.name == value
-                        && visible(version, &uid, api.is_dav || detail.author_id == uid)
-                }) else {
-                    return;
-                };
-                ui.set_plaza_version(version.summary());
-                ui.set_plaza_changelog(version.changelog.trim().into());
-                ui.set_plaza_base_world(
-                    match &version.base_world {
-                        Some(world) if world.required => "必须使用预设世界",
-                        Some(_) => "可使用预设世界",
-                        None => "",
-                    }
-                    .into(),
-                );
-                ui.set_plaza_contents(VecModel::from_slice(&version.contents()));
-                self.shown_version = Some((version.name.clone(), version.status == "OK"));
-                self.update_install(&ui);
-                ui.invoke_navigate("plaza-version".into());
-            }
+            "version" if ui.get_pack_screen() == 4 => self.show_version(&ui, value),
+            "mods-search" if ui.get_pack_screen() == 5 => self.render_mods(&ui),
+            "copied" if ui.get_pack_screen() == 4 => ui.invoke_notify(format!("已复制{value}").into()),
             "install" if ui.get_pack_screen() == 5 => {
                 let Some(((name, true), detail)) = self.shown_version.clone().zip(self.detail.as_ref())
                 else {
@@ -503,14 +526,15 @@ impl Plaza {
                     crate::pack_install::State::Installing(run) => {
                         ui.invoke_pack_action("install.open".into(), run.into())
                     }
-                    _ => {
+                    state => {
                         let size = detail
                             .versions
                             .iter()
                             .find(|v| v.name == name)
                             .and_then(|v| v.total_size);
+                        let reinstall = state == crate::pack_install::State::Installed;
                         let value = serde_json::json!({"modpackId":self.detail_id,"version":name,
-                            "name":detail.name,"size":size});
+                            "name":detail.name,"size":size,"reinstall":reinstall});
                         ui.invoke_pack_action("install.prompt".into(), value.to_string().into());
                     }
                 }
@@ -534,6 +558,92 @@ impl Plaza {
             }
             _ => {}
         }
+    }
+
+    /// The version page (`ModpackVersionInfoScreen` as a player sees it).
+    fn show_version(&mut self, ui: &AppWindow, name: &str) {
+        let Some((detail, api)) = self.detail.as_ref().zip(self.api.clone()) else {
+            return;
+        };
+        let Ok(uid) = api.uid() else { return };
+        let Some(version) = detail
+            .versions
+            .iter()
+            .find(|version| version.name == name && visible(version, &uid, api.is_dav || detail.author_id == uid))
+        else {
+            return;
+        };
+        ui.set_plaza_version(version.summary());
+        ui.set_plaza_changelog(version.changelog.trim().into());
+        ui.set_plaza_base_world(
+            match &version.base_world {
+                Some(world) if world.required => "必须使用预设世界",
+                Some(_) => "可使用预设世界",
+                None => "",
+            }
+            .into(),
+        );
+        ui.set_plaza_uploaded(version.uploaded().into());
+        ui.set_plaza_extras(version.extras().into());
+        ui.set_plaza_mod_query("".into());
+        self.uploader = version.uploader_id.clone().filter(|id| !id.trim().is_empty()).unwrap_or_else(|| detail.author_id.clone());
+        self.version_epoch += 1;
+        self.version_mods = version.mods.clone();
+        self.shown_version = Some((version.name.clone(), version.status == "OK"));
+        let lookup = self.mod_cards.lookup(&api, &self.version_mods);
+        ui.set_plaza_mods_hydrating(lookup.is_some());
+        if let Some(lookup) = lookup {
+            let (epoch, tx) = (self.version_epoch, self.tx.clone());
+            self.runtime.spawn(async move {
+                let _ = tx.send(Reply::Cards(epoch, lookup.await));
+            });
+        }
+        self.show_uploader(ui, &api);
+        self.render_mods(ui);
+        self.update_install(ui);
+        ui.invoke_navigate("plaza-version".into());
+    }
+
+    /// 「by」 the uploader's head and name (`HeadButton(uploaderId, showName = true)`).
+    fn show_uploader(&mut self, ui: &AppWindow, api: &Client) {
+        if let Some((name, head)) = self.players.get(&self.uploader) {
+            ui.set_plaza_uploader_name(name.as_str().into());
+            ui.set_plaza_uploader_head(head.clone());
+            return;
+        }
+        ui.set_plaza_uploader_name("…".into());
+        ui.set_plaza_uploader_head(steve());
+        let (api, uid, tx) = (api.clone(), self.uploader.clone(), self.tx.clone());
+        self.runtime.spawn(async move {
+            let result = crate::rooms_ui::player(&api, &uid).await;
+            let _ = tx.send(Reply::Uploader(uid, result));
+        });
+    }
+
+    /// The version's mods as cards, filtered by 「搜索Mod」.
+    fn render_mods(&mut self, ui: &AppWindow) {
+        self.mods_dirty = false;
+        self.mods_rendered = Some(Instant::now());
+        let query = ui.get_plaza_mod_query().trim().to_lowercase();
+        let rows: Vec<PlazaMod> = self
+            .version_mods
+            .iter()
+            .filter(|m| self.mod_cards.matches(m, &query))
+            .map(|m| {
+                let name = self.mod_cards.name(m);
+                let icon = self.mod_cards.icon(m);
+                PlazaMod {
+                    key: mods::key(m).into(),
+                    initial: initial(&name).into(),
+                    detail: self.mod_cards.intro(m).into(),
+                    name: name.into(),
+                    has_icon: icon.is_some(),
+                    icon: icon.unwrap_or_default(),
+                }
+            })
+            .collect();
+        ui.set_plaza_mod_count(self.version_mods.len() as i32);
+        ui.set_plaza_mods(VecModel::from_slice(&rows));
     }
 
     fn show_page(&mut self, ui: &AppWindow, offset: usize, page: Page) {
@@ -625,6 +735,8 @@ impl Plaza {
             loader => loader,
         };
         ui.set_plaza_pack(PlazaPack {
+            id: self.detail_id.as_str().into(),
+            minecraft: minecraft.into(),
             name: detail.name.as_str().into(),
             author: detail.author_name.as_str().into(),
             intro: detail.info.as_deref().unwrap_or_default().trim().into(),
@@ -668,6 +780,10 @@ impl Plaza {
         {
             self.update_install(&ui);
         }
+        // Icons arrive one by one; the rows are rebuilt at most every 150ms.
+        if self.mods_dirty && self.mods_rendered.is_none_or(|t| t.elapsed() >= Duration::from_millis(150)) {
+            self.render_mods(&ui);
+        }
         while let Ok(reply) = self.rx.try_recv() {
             match reply {
                 Reply::Page(epoch, offset, result) if epoch == self.search_epoch => {
@@ -683,6 +799,34 @@ impl Plaza {
                     ui.set_plaza_detail_loading(false);
                     if let Err(error) = result.and_then(|detail| self.show_pack(&ui, detail)) {
                         ui.set_plaza_detail_error(format!("加载整合包详情失败：{error}").into());
+                    }
+                }
+                Reply::Cards(epoch, cards) if epoch == self.version_epoch => {
+                    ui.set_plaza_mods_hydrating(false);
+                    let Some(api) = self.api.clone() else { continue };
+                    let size = (40.0 * ui.window().scale_factor()).ceil().max(1.0) as u32;
+                    for job in self.mod_cards.add_cards(&api, size, cards) {
+                        let tx = self.tx.clone();
+                        self.runtime.spawn(async move {
+                            let (url, icon) = job.await;
+                            let _ = tx.send(Reply::ModIcon(url, icon));
+                        });
+                    }
+                    self.mods_dirty = true;
+                }
+                Reply::ModIcon(url, icon) => self.mods_dirty |= self.mod_cards.add_icon(url, icon),
+                Reply::Uploader(uid, result) => {
+                    let (name, head) = match result {
+                        Ok((name, head)) => (name, images::to_slint(&head)),
+                        Err(error) => {
+                            tracing::warn!(error = %format!("{error:#}"), "加载上传者信息失败");
+                            ("未知玩家".to_owned(), steve())
+                        }
+                    };
+                    self.players.insert(uid.clone(), (name.clone(), head.clone()));
+                    if uid == self.uploader {
+                        ui.set_plaza_uploader_name(name.into());
+                        ui.set_plaza_uploader_head(head);
                     }
                 }
                 Reply::Icon(epoch, index, image) if epoch == self.search_epoch => {
@@ -703,6 +847,11 @@ impl Drop for Plaza {
         self.cancel_search();
         abort(&mut self.detail_job);
     }
+}
+
+/// The default head while the uploader loads or when it cannot be loaded.
+fn steve() -> slint::Image {
+    images::steve().map(|head| images::to_slint(&head)).unwrap_or_default()
 }
 
 fn abort(job: &mut Option<JoinHandle<()>>) {
@@ -790,5 +939,29 @@ mod tests {
         assert_eq!(names("mine", false), ["1.0", "2.0"]);
         assert_eq!(names("other", false), ["1.0"]);
         assert_eq!(names("author", true), ["1.0", "2.0", "3.0"]);
+    }
+
+    #[test]
+    fn version_page_texts_follow_compose() {
+        let version: Version = serde_json::from_value(json!({
+            "name":"1.0", "status":"OK", "time":0, "totalSize":1536,
+            "mods":[{"platform":"cf","projectId":"238222","slug":"jei","fileId":"1","hash":"h"}],
+            "clientExtras":[
+                {"slug":"faithful","type":"ResPack"},
+                {"slug":"bsl","type":"ShaderPack"},
+                {"slug":"stay-true","type":"ResPack"}
+            ]
+        }))
+        .unwrap();
+        assert_eq!(version.mods.len(), 1);
+        assert!(version.uploaded().starts_with("上传 19"), "{}", version.uploaded());
+        assert!(version.uploaded().ends_with(" · 1.5KB"), "{}", version.uploaded());
+        assert_eq!(version.extras(), "资源包：faithful、stay-true · 光影：bsl");
+        assert_eq!(version.summary().state, 0);
+        assert_eq!(
+            ["BUILDING", "FAIL", "WAIT", "?"].map(status_state),
+            [1, 2, 3, 3]
+        );
+        assert_eq!(date_time(u64::MAX), "");
     }
 }

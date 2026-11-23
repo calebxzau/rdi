@@ -3,8 +3,7 @@
 use super::{Page, Pending, Reply, RoomPagesUi, pages, text};
 use crate::{
     AppWindow, GithubAssetRow, RoomModRow,
-    catalog::{Catalog, models::{Platform, ProjectRef}},
-    images,
+    mod_cards::{Card, ModCards},
     pack_install::mods::{Mod, Side},
     rooms::{
         github::{self, Release, Repo},
@@ -19,16 +18,8 @@ use anyhow::Result;
 use slint::{ComponentHandle, SharedString, VecModel};
 use std::{
     collections::{HashMap, HashSet},
-    sync::Arc,
     time::{Duration, Instant},
 };
-
-#[derive(Clone, Debug)]
-pub(super) struct Card {
-    name: String,
-    intro: String,
-    icon: Option<String>,
-}
 
 #[derive(Clone, Copy, Debug)]
 pub(super) enum ModsOp {
@@ -54,11 +45,10 @@ pub(super) enum GithubReply {
     Added(Result<()>),
 }
 
+#[derive(Default)]
 pub(super) struct ModsView {
     areas: Option<Areas>,
-    cards: HashMap<String, Card>,
-    icons: HashMap<String, slint::Image>,
-    requested: HashSet<String>,
+    cards: ModCards,
     /// `area|key` of the selected rows.
     selected: HashSet<String>,
     busy: bool,
@@ -68,38 +58,6 @@ pub(super) struct ModsView {
     gh_repo: Option<Repo>,
     gh_releases: Vec<Release>,
     gh_selected: Option<String>,
-    catalog: Arc<tokio::sync::OnceCell<Arc<Catalog>>>,
-    icon_slots: Arc<tokio::sync::Semaphore>,
-}
-impl Default for ModsView {
-    fn default() -> Self {
-        Self {
-            areas: None,
-            cards: HashMap::new(),
-            icons: HashMap::new(),
-            requested: HashSet::new(),
-            selected: HashSet::new(),
-            busy: false,
-            dirty: false,
-            rendered: None,
-            gh_epoch: 0,
-            gh_repo: None,
-            gh_releases: Vec::new(),
-            gh_selected: None,
-            catalog: Arc::new(tokio::sync::OnceCell::new()),
-            icon_slots: Arc::new(tokio::sync::Semaphore::new(6)),
-        }
-    }
-}
-
-fn reference(m: &Mod) -> Option<ProjectRef> {
-    let platform = match m.platform.as_str() {
-        "mr" => Platform::Modrinth,
-        "cf" => Platform::CurseForge,
-        _ => return None,
-    };
-    let id = m.project_id.trim();
-    (!id.is_empty()).then(|| ProjectRef { platform, id: id.to_owned() })
 }
 
 fn side_of(index: i32) -> Side {
@@ -169,42 +127,13 @@ impl RoomPagesUi {
     fn hydrate(&mut self, ui: &AppWindow) {
         let Some(areas) = &self.mods.areas else { return };
         let Some(api) = self.api.clone() else { return };
-        let all: Vec<Mod> = areas.version.iter().chain(&areas.disabled).chain(&areas.extra).cloned().collect();
-        let missing: Vec<Mod> = all.into_iter().filter(|m| !self.mods.cards.contains_key(&mods::key(m))).collect();
-        let refs: Vec<ProjectRef> = missing.iter().filter_map(reference).collect::<HashSet<_>>().into_iter().collect();
-        if refs.is_empty() {
+        let Some(lookup) = self.mods.cards.lookup(&api, areas.version.iter().chain(&areas.disabled).chain(&areas.extra)) else {
             return;
-        }
+        };
         pages(ui).set_mods_hydrating(true);
-        let (epoch, tx, cell) = (self.epoch, self.tx.clone(), self.mods.catalog.clone());
+        let (epoch, tx) = (self.epoch, self.tx.clone());
         self.runtime.spawn(async move {
-            let result = async {
-                let catalog = cell
-                    .get_or_try_init(|| async {
-                        let http = api.http.clone();
-                        anyhow::Ok(Arc::new(tokio::task::spawn_blocking(move || Catalog::new(http, &crate::paths::data_dir())).await?))
-                    })
-                    .await?
-                    .clone();
-                catalog.get_mods(&refs).await
-            }
-            .await;
-            let mut cards = HashMap::new();
-            match result {
-                Ok(outcome) => {
-                    for m in &missing {
-                        if let Some(found) = reference(m).and_then(|r| outcome.value.get(&r)) {
-                            let name = found.name_cn.clone().filter(|n| !n.trim().is_empty()).unwrap_or_else(|| found.name.clone());
-                            cards.insert(
-                                mods::key(m),
-                                Card { name: name.trim().to_owned(), intro: found.summary.clone(), icon: found.icons.first().cloned() },
-                            );
-                        }
-                    }
-                }
-                Err(error) => tracing::warn!(error = %format!("{error:#}"), "加载房间Mod展示信息失败，将使用基础Mod数据"),
-            }
-            let _ = tx.send(Reply::Cards(epoch, cards));
+            let _ = tx.send(Reply::Cards(epoch, lookup.await));
         });
     }
 
@@ -212,49 +141,31 @@ impl RoomPagesUi {
         pages(ui).set_mods_hydrating(false);
         let Some(api) = self.api.clone() else { return };
         let size = (36.0 * ui.window().scale_factor()).ceil().max(1.0) as u32;
-        for card in cards.values() {
-            let Some(url) = card.icon.clone().filter(|u| !u.trim().is_empty()) else { continue };
-            if !self.mods.requested.insert(url.clone()) {
-                continue;
-            }
-            let (tx, http, slots) = (self.tx.clone(), api.http.clone(), self.mods.icon_slots.clone());
+        for job in self.mods.cards.add_cards(&api, size, cards) {
+            let tx = self.tx.clone();
             self.runtime.spawn(async move {
-                let _slot = slots.acquire_owned().await;
-                let icon = match images::icon(&http, url.trim(), size).await {
-                    Ok(icon) => Some(icon),
-                    Err(error) => {
-                        tracing::debug!(%error, "Mod图标加载失败");
-                        None
-                    }
-                };
+                let (url, icon) = job.await;
                 let _ = tx.send(Reply::ModIcon(url, icon));
             });
         }
-        self.mods.cards.extend(cards);
         self.mods.dirty = true;
     }
 
     pub(super) fn icon_loaded(&mut self, url: String, icon: Option<image::RgbaImage>) {
-        if let Some(icon) = icon {
-            self.mods.icons.insert(url, images::to_slint(&icon));
+        if self.mods.cards.add_icon(url, icon) {
             self.mods.dirty = true;
         }
     }
 
     fn row(&self, m: &Mod, area: &str, side_detail: bool) -> RoomModRow {
         let key = mods::key(m);
-        let card = self.mods.cards.get(&key);
-        let name = card.map(|c| c.name.clone()).filter(|n| !n.is_empty()).unwrap_or_else(|| mods::display_slug(m));
-        let detail = match card {
-            _ if side_detail => mods::side_text(m.side).to_owned(),
-            Some(c) if !c.intro.trim().is_empty() => c.intro.clone(),
-            _ => "暂无简介".to_owned(),
-        };
-        let icon = card.and_then(|c| c.icon.as_ref()).and_then(|u| self.mods.icons.get(u)).cloned();
+        let name = self.mods.cards.name(m);
+        let detail = if side_detail { mods::side_text(m.side).to_owned() } else { self.mods.cards.intro(m) };
+        let icon = self.mods.cards.icon(m);
         let (client, server) = mods::side_flags(m.side);
         RoomModRow {
             key: key.as_str().into(),
-            initial: name.chars().next().map(|c| c.to_uppercase().to_string()).unwrap_or_default().into(),
+            initial: crate::mod_cards::initial(&name).into(),
             name: name.into(),
             detail: detail.into(),
             has_icon: icon.is_some(),
@@ -276,13 +187,7 @@ impl RoomPagesUi {
             return;
         };
         let query = g.get_enabled_query().trim().to_lowercase();
-        let matches = |m: &Mod| {
-            if query.is_empty() {
-                return true;
-            }
-            let card = self.mods.cards.get(&mods::key(m));
-            [card.map(|c| c.name.as_str()).unwrap_or(""), m.slug.as_str(), m.project_id.as_str()].iter().any(|t| t.to_lowercase().contains(&query))
-        };
+        let matches = |m: &Mod| self.mods.cards.matches(m, &query);
         let enabled: Vec<RoomModRow> = areas.enabled.iter().filter(|m| matches(m)).map(|m| self.row(m, "enabled", false)).collect();
         let disabled: Vec<RoomModRow> = areas.disabled.iter().map(|m| self.row(m, "disabled", false)).collect();
         let extra: Vec<RoomModRow> = areas.extra.iter().map(|m| self.row(m, "extra", true)).collect();
@@ -588,14 +493,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn catalog_refs_only_for_catalog_platforms() {
-        let m = |platform: &str, id: &str| -> Mod {
-            serde_json::from_value(serde_json::json!({"platform":platform,"projectId":id,"slug":"s","fileId":"f","hash":"h"})).unwrap()
-        };
-        assert_eq!(reference(&m("mr", " AANobbMI ")).unwrap(), ProjectRef { platform: Platform::Modrinth, id: "AANobbMI".into() });
-        assert_eq!(reference(&m("cf", "238222")).unwrap().platform, Platform::CurseForge);
-        assert!(reference(&m("github", "o/r")).is_none());
-        assert!(reference(&m("cf", " ")).is_none());
+    fn side_index_maps_to_side() {
         assert_eq!(side_of(1), Side::Client);
         assert_eq!(side_of(9), Side::Both);
     }

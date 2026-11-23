@@ -17,6 +17,7 @@ mod hwspec;
 mod packs;
 mod tasks;
 mod plaza;
+mod mod_cards;
 mod rooms;
 mod rooms_ui;
 mod room_pages_ui;

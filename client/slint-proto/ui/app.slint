@@ -21,14 +21,14 @@ import { UiProof, ProofRow, ProofRect } from "ui_proof.slint";
 import { ResizeHandles } from "resize_handles.slint";
 import { HostList, HostListRow } from "host_list.slint";
 import { WardrobeScreen, WardrobeItem } from "wardrobe.slint";
-import { ModpackPlaza, ModpackDetails, PlazaCard, PlazaFilters, PlazaPack, PlazaVersion, PlazaContent } from "plaza.slint";
+import { ModpackPlaza, ModpackDetails, PlazaCard, PlazaFilters, PlazaPack, PlazaVersion, PlazaMod } from "plaza.slint";
 import { Rooms, RoomDetails, RoomForm, RoomDialogs, RoomInfo, RoomMember, RoomMenuEntry, RoomFriend, RoomFormView, RoomRule, RoomWorld } from "rooms.slint";
 import { Account, AccountForm, PlayerInfoPage, AccountDialogs } from "account.slint";
 import { Inbox, MailRow, MailPage, MailDialogs } from "mail.slint";
 import { Settings, SettingsPage, SettingsDialogs } from "settings.slint";
 import { RoomPages, RoomBackend, RoomWorldPage, RoomRollbackPage, RoomModsPage, RoomPageDialogs, RollbackRow, RoomModRow, GithubAssetRow } from "room_pages.slint";
 export { Account, Inbox, MailRow, Settings, Rooms, RoomInfo, RoomMember, RoomMenuEntry, RoomFriend, RoomFormView, RoomRule, RoomWorld, RoomPages, RollbackRow, RoomModRow, GithubAssetRow }
-export { LoginAccount, CandidateRow, OptionDraft, TileData, NameInitial, ProofRow, ProofRect, GlassShape, ContentRow, LogRow, TaskRow, WardrobeItem, HostListRow, PlazaCard, PlazaFilters, PlazaPack, PlazaVersion, PlazaContent }
+export { LoginAccount, CandidateRow, OptionDraft, TileData, NameInitial, ProofRow, ProofRect, GlassShape, ContentRow, LogRow, TaskRow, WardrobeItem, HostListRow, PlazaCard, PlazaFilters, PlazaPack, PlazaVersion, PlazaMod }
 
 component MenuTileGrid inherits TileGrid {
     row-major: true;
@@ -69,7 +69,14 @@ export component AppWindow inherits Window {
     in property <PlazaVersion> plaza-version;
     in property <string> plaza-changelog;
     in property <string> plaza-base-world;
-    in property <[PlazaContent]> plaza-contents;
+    in property <string> plaza-uploaded;
+    in property <string> plaza-uploader-name;
+    in property <image> plaza-uploader-head;
+    in property <string> plaza-extras;
+    in property <[PlazaMod]> plaza-mods;
+    in property <int> plaza-mod-count;
+    in property <bool> plaza-mods-hydrating;
+    in-out property <string> plaza-mod-query;
     callback plaza-action(string, string);
     in property <bool> host-list-visible;
     in property <[HostListRow]> all-hosts;
@@ -116,6 +123,9 @@ export component AppWindow inherits Window {
     in-out property <bool> install-prompt;
     in property <string> install-prompt-name;
     in property <string> install-prompt-detail;
+    // 「名称 版本」 for 请选择…下载方式; install-prompt-step is InstallPackDialog's `step`.
+    in property <string> install-prompt-title;
+    in-out property <int> install-prompt-step: 1;
     in-out property <bool> install-prompt-extras;
     in property <int> plaza-install;
     in property <string> install-missing-text;
@@ -431,7 +441,10 @@ export component AppWindow inherits Window {
         version-page: root.pack-screen == 5;
         loading: root.plaza-detail-loading; error: root.plaza-detail-error; pack: root.plaza-pack;
         versions: root.plaza-versions; version: root.plaza-version; changelog: root.plaza-changelog;
-        base-world: root.plaza-base-world; contents: root.plaza-contents; install-state: root.plaza-install;
+        base-world: root.plaza-base-world; install-state: root.plaza-install;
+        uploaded: root.plaza-uploaded; uploader-name: root.plaza-uploader-name; uploader-head: root.plaza-uploader-head;
+        extras: root.plaza-extras; mods: root.plaza-mods; mod-count: root.plaza-mod-count;
+        mods-hydrating: root.plaza-mods-hydrating; mod-query <=> root.plaza-mod-query;
         action(a, v) => { if a == "back" { root.navigate("back"); } else { root.plaza-action(a, v); } }
     }
     host-list-view := HostList {
@@ -622,9 +635,12 @@ export component AppWindow inherits Window {
         confirmed => {root.pack-action("installer.confirmMissing", "");} dismissed => {root.pack-action("installer.dismissMissing", "");}
     }
     if root.install-prompt: InstallPackDialog { x: (root.width - self.width) / 2; y: (root.height - self.height) / 2; width: min(480px, root.width - 48px);
-        pack-name: root.install-prompt-name; detail: root.install-prompt-detail; include-extras <=> root.install-prompt-extras;
+        pack-name: root.install-prompt-name; pack-title: root.install-prompt-title; detail: root.install-prompt-detail;
+        step <=> root.install-prompt-step; include-extras <=> root.install-prompt-extras;
         init => {self.focus-dialog();}
         confirmed => {root.pack-action("install.confirm", "");} dismissed => {root.pack-action("install.cancel", "");}
+        // 让朋友发我 / 从群文件下载 end in the 导入rdipack2 file picker.
+        imported => {root.pack-action("install.cancel", ""); root.rdipack2("import", "");}
     }
     if root.picked-candidates.length > 0: Rectangle { x: (root.width - 560px) / 2; y: 80px; width: 560px; height: root.height - 160px; background: #f7faf0f5; border-radius: 24px;
         VerticalLayout { padding: 24px; spacing: 12px;

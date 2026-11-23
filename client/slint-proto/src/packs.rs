@@ -18,6 +18,11 @@ use std::{
 };
 
 /// Same units and rounding as Kotlin `Long.humanFileSize`, which the Compose screen shows.
+/// `ModpackDownloadMethodDialog`'s `packTitle`: the non-blank of name and version.
+fn prompt_title(name: &str, version: &str) -> String {
+    [name.trim(), version.trim()].into_iter().filter(|s| !s.is_empty()).collect::<Vec<_>>().join(" ")
+}
+
 pub(crate) fn human_file_size(bytes: u64) -> String {
     if bytes < 1024 {
         return format!("{bytes}B");
@@ -345,7 +350,8 @@ impl PackUi {
         self.render_task();
         self.navigate("tasks");
     }
-    /// The install confirmation; `value` is `{modpackId, version, name, size}` from the plaza or a room.
+    /// The download method dialog; `value` is `{modpackId, version, name, size, reinstall}` from
+    /// the plaza or a room. `reinstall` (an installed version) asks 「确认重新下载」 first.
     fn prompt_install(&mut self, ui: &AppWindow, value: &str) {
         let Ok(v) = serde_json::from_str::<Value>(value) else {
             tracing::error!("安装整合包参数无效");
@@ -361,7 +367,9 @@ impl PackUi {
             detail.push_str(&format!(" · {}", human_file_size(size)));
         }
         ui.set_install_prompt_name(text(&v, "name").into());
+        ui.set_install_prompt_title(prompt_title(text(&v, "name"), &version).into());
         ui.set_install_prompt_detail(detail.into());
+        ui.set_install_prompt_step(if v["reinstall"].as_bool() == Some(true) { 0 } else { 1 });
         ui.set_install_prompt_extras(false);
         ui.set_install_prompt(true);
         self.install_prompt = Some((id, version));
@@ -1562,6 +1570,13 @@ fn standard_name(name: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn prompt_title_joins_non_blank_name_and_version() {
+        assert_eq!(prompt_title("测试包", "1.0"), "测试包 1.0");
+        assert_eq!(prompt_title(" 测试包 ", ""), "测试包");
+        assert_eq!(prompt_title("", ""), "");
+    }
 
     #[test]
     fn file_size_matches_kotlin_units() {

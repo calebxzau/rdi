@@ -3,6 +3,7 @@ import { TextField } from "components/fields.slint";
 import { CircleIconButton, GlassButton } from "components/glass_button.slint";
 import { EmptyState, ErrorState, LoadingState, RScrollbar } from "components/shared.slint";
 import { NameInitial, NameInitialIcon } from "components/name_initial_icon.slint";
+import { PlayerHead } from "components/player_head.slint";
 import { Theme } from "theme.slint";
 
 export struct PlazaFilters { category: int, minecraft: int, sort: int, mine: bool }
@@ -10,9 +11,81 @@ export struct PlazaCard {
     id: string, name: string, intro: string, metadata: string, play-count: string,
     initial: NameInitial, icon: image, has-icon: bool,
 }
-export struct PlazaPack { name: string, author: string, intro: string, metadata: string, categories: string, has-source: bool }
-export struct PlazaVersion { name: string, status: string, available: bool, metadata: string }
-export struct PlazaContent { name: string, detail: string }
+export struct PlazaPack { id: string, name: string, minecraft: string, author: string, intro: string, metadata: string, categories: string, has-source: bool }
+// state: 0 可用, 1 构建中, 2 构建失败, 3 等待构建 (src/plaza.rs `status_state`).
+export struct PlazaVersion { name: string, status: string, state: int, available: bool, metadata: string }
+export struct PlazaMod { key: string, name: string, detail: string, icon: image, has-icon: bool, initial: string }
+
+// `ModpackVersionCard`: the status icon and colour, then the version.
+global VersionStatus {
+    pure public function glyph(state: int) -> string {
+        return state == 0 ? "\u{f0a50}" : state == 1 ? "\u{eeff}" : state == 2 ? "\u{ea87}" : "\u{e641}";
+    }
+    pure public function color(state: int) -> color {
+        return state == 0 ? #446c49 : state == 1 ? #8a572b : state == 2 ? #ba3434 : #616c5f;
+    }
+}
+
+component VersionCard inherits Rectangle {
+    in property <PlazaVersion> version;
+    in property <bool> enabled: true;
+    callback clicked();
+    accessible-role: button;
+    accessible-label: root.version.status + " " + root.version.name;
+    accessible-action-default => { root.clicked(); }
+    forward-focus: focus;
+    height: 44px;
+    border-radius: 12px;
+    border-width: 1px;
+    border-color: focus.has-focus ? #446c49 : #cdd7c9;
+    background: hit.has-hover ? #ffffff : #ffffffb8;
+    focus := FocusScope {
+        enabled: root.enabled;
+        key-pressed(event) => {
+            if event.text == Key.Return || event.text == Key.Space { root.clicked(); return accept; }
+            return reject;
+        }
+    }
+    HorizontalLayout { padding-left: 14px; padding-right: 14px; spacing: 8px;
+        Text { text: VersionStatus.glyph(root.version.state); font-family: Theme.symbols; font-size: 18px;
+            color: VersionStatus.color(root.version.state); vertical-alignment: center; }
+        Text { text: root.version.name; color: VersionStatus.color(root.version.state); font-size: 15px; font-weight: 600;
+            vertical-alignment: center; overflow: elide; }
+        Text { text: root.version.metadata; color: #616c5f; font-size: 13px; vertical-alignment: center;
+            overflow: elide; horizontal-stretch: 1; }
+    }
+    hit := TouchArea { enabled: root.enabled; mouse-cursor: pointer; clicked => { focus.focus(); root.clicked(); } }
+}
+
+// `TinyClickCopyText("mid", id)`: clicking copies the id. Slint has no clipboard API in Rust,
+// so a hidden TextInput selects the id and copies it.
+component CopyText inherits Rectangle {
+    in property <string> label;
+    in property <string> value;
+    callback copied();
+    accessible-role: button;
+    accessible-label: "复制" + root.label;
+    width: shown.preferred-width;
+    shown := Text { text: root.label + " " + root.value; color: #9aa197; font-size: 11px; vertical-alignment: center; }
+    clip-source := TextInput { x: 0px; y: 0px; width: 1px; height: 1px; text: root.value; color: transparent; read-only: true; }
+    TouchArea { mouse-cursor: pointer;
+        clicked => { clip-source.select-all(); clip-source.copy(); clip-source.clear-selection(); root.copied(); }
+    }
+}
+
+// One mod of the version page (`rememberModGridItems`): catalog icon, name and intro.
+component ModCard inherits Rectangle {
+    in property <PlazaMod> item;
+    border-radius: 12px;
+    background: #ffffffb0;
+    accessible-role: text;
+    accessible-label: root.item.name;
+    if root.item.has-icon: Image { x: 10px; y: (parent.height - 40px) / 2; width: 40px; height: 40px; source: root.item.icon; image-fit: contain; }
+    if !root.item.has-icon: Rectangle { x: 10px; y: (parent.height - 40px) / 2; width: 40px; height: 40px; border-radius: 8px; background: #dfe5d8;
+        Text { text: root.item.initial; color: #446c49; font-size: 17px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; } }
+    Text { x: 60px; y: 8px; width: parent.width - self.x - 10px; text: root.item.name; color: Theme.ink; font-size: 14px; font-weight: 600; overflow: elide; }
+    Text { x: 60px; y: 30px; width: parent.width - self.x - 10px; text: root.item.detail; color: #667064; font-size: 12px; overflow: elide; }
+}
 
 component PlazaPackCard inherits Rectangle {
     in property <PlazaCard> item;
@@ -159,7 +232,15 @@ export component ModpackDetails inherits Rectangle {
     in property <PlazaVersion> version;
     in property <string> changelog;
     in property <string> base-world;
-    in property <[PlazaContent]> contents;
+    // The version page (`ModpackVersionInfoScreen` as a player sees it).
+    in property <string> uploaded;
+    in property <string> uploader-name;
+    in property <image> uploader-head;
+    in property <string> extras;
+    in property <[PlazaMod]> mods;
+    in property <int> mod-count;
+    in property <bool> mods-hydrating;
+    in-out property <string> mod-query;
     // 0 hidden, 1 安装, 2 安装中 (opens the task), 3 重新安装.
     in property <int> install-state;
     callback action(string, string);
@@ -176,6 +257,9 @@ export component ModpackDetails inherits Rectangle {
             Text {
                 text: root.version-page ? root.pack.name + " · " + root.version.name : root.pack.name != "" ? root.pack.name : "整合包详情";
                 color: Theme.ink; font-size: 22px; font-weight: 600; vertical-alignment: center; overflow: elide; horizontal-stretch: 1;
+            }
+            if root.version-page && !root.loading && root.error == "": Text {
+                text: root.version.status; color: VersionStatus.color(root.version.state); font-size: 15px; vertical-alignment: center;
             }
             // U4c1 D1(b): a room is created from a built version.
             if root.version-page && !root.loading && root.error == "": GlassButton {
@@ -204,37 +288,66 @@ export component ModpackDetails inherits Rectangle {
                     color: #526050; wrap: word-wrap; font-size: 14px;
                 }
                 if root.pack.categories != "": Text { text: root.pack.categories; color: #446c49; wrap: word-wrap; font-size: 13px; }
-                Text { text: "版本"; color: Theme.ink; font-size: 18px; font-weight: 600; }
+                HorizontalLayout { spacing: 10px; alignment: start;
+                    Text { text: "请选择版本"; color: Theme.ink; font-size: 18px; font-weight: 600; vertical-alignment: center; }
+                    if root.pack.minecraft != "": Text { text: root.pack.minecraft; color: #9aa197; font-size: 14px; vertical-alignment: center; }
+                    CopyText { label: "mid"; value: root.pack.id; copied => { root.action("copied", "mid"); } }
+                }
                 if root.versions.length == 0: Text { text: "暂无可用版本"; color: #616c5f; font-size: 14px; }
-                for version in root.versions: GlassButton {
-                    height: 42px; max-width: 440px;
-                    label: version.name + " · " + version.status + " · " + version.metadata;
-                    background: self.hovered ? #ffffff : #ffffffb8;
-                    border-width: 1px; border-color: self.focused ? #446c49 : #cdd7c9;
+                for version in root.versions: VersionCard {
+                    max-width: 520px; version: version; enabled: root.enabled;
                     clicked => { root.action("version", version.name); }
                 }
-                if root.pack.intro != "": Text { text: "简介"; color: Theme.ink; font-size: 18px; font-weight: 600; }
-                if root.pack.intro != "": Text { text: root.pack.intro; color: Theme.ink; wrap: word-wrap; font-size: 14px; }
+                Text { text: "简介"; color: Theme.ink; font-size: 18px; font-weight: 600; }
+                Text { text: root.pack.intro != "" ? root.pack.intro : "无"; color: Theme.ink; wrap: word-wrap; font-size: 14px; }
             }
         }
-        if !root.loading && root.error == "" && root.version-page: ScrollView {
+        if !root.loading && root.error == "" && root.version-page: Rectangle {
             x: 20px; y: 68px; width: parent.width - 40px; height: parent.height - self.y - 18px;
-            content-height: version-body.preferred-height;
-            version-body := VerticalLayout { width: parent.width; height: self.preferred-height; spacing: 10px; padding-right: 14px; padding-bottom: 6px;
-                Text {
-                    text: root.version.status + " · " + root.pack.metadata + " · " + root.version.metadata;
-                    color: root.version.available ? #446c49 : #8a572b; wrap: word-wrap; font-size: 14px;
+            version-flick := Flickable {
+                x: 0px; y: 0px; width: parent.width - 14px; height: parent.height;
+                private property <length> gap: 10px;
+                private property <length> row-height: 66px;
+                private property <int> columns: max(1, floor((self.width + self.gap) / (260px + self.gap)));
+                private property <length> card-width: (self.width + self.gap) / self.columns - self.gap;
+                private property <length> grid-y: version-head.preferred-height;
+                content-width: self.width;
+                content-height: max(self.height, self.grid-y + ceil(root.mods.length / self.columns) * self.row-height + 6px);
+                version-head := VerticalLayout { x: 0px; y: 0px; width: parent.width; height: self.preferred-height; spacing: 10px; padding-bottom: 12px;
+                    HorizontalLayout { spacing: 6px; alignment: start; height: 28px;
+                        Text { text: root.uploaded; color: #526050; font-size: 14px; vertical-alignment: center; }
+                        Text { text: " by"; color: #526050; font-size: 14px; vertical-alignment: center; }
+                        VerticalLayout { alignment: center; PlayerHead { width: 22px; height: 22px; source: root.uploader-head; } }
+                        Text { text: root.uploader-name; color: Theme.ink; font-size: 14px; vertical-alignment: center; }
+                    }
+                    if root.base-world != "": Text { text: root.base-world; color: #526050; font-size: 14px; }
+                    if root.changelog != "": Text { text: "更新日志"; color: Theme.ink; font-size: 18px; font-weight: 600; }
+                    if root.changelog != "": Text { text: root.changelog; color: Theme.ink; font-size: 14px; wrap: word-wrap; }
+                    if root.extras != "": Text { text: "材质光影  " + root.extras; color: #526050; font-size: 13px; wrap: word-wrap; }
+                    HorizontalLayout { spacing: 10px; height: 40px;
+                        Text { text: "当前版本Mod(" + root.mod-count + ")"; color: Theme.ink; font-size: 18px; font-weight: 600; vertical-alignment: center; }
+                        Rectangle { horizontal-stretch: 1; }
+                        if root.mod-count > 0: TextField { width: 220px; hint: "搜索Mod"; reserve-error: false; text <=> root.mod-query;
+                            edited => { root.action("mods-search", ""); }
+                        }
+                    }
+                    if root.mods-hydrating: Text { text: root.mods.length == 0 ? "正在载入Mod信息..." : "正在补充Mod详细信息..."; color: #616c5f; font-size: 13px; }
+                    if root.mods.length == 0 && !root.mods-hydrating: Text {
+                        text: root.mod-count == 0 ? "当前版本没有Mod" : "没有匹配的Mod"; color: #616c5f; font-size: 14px;
+                    }
                 }
-                if root.base-world != "": Text { text: root.base-world; color: #526050; font-size: 14px; }
-                if root.changelog != "": Text { text: "更新日志"; color: Theme.ink; font-size: 18px; font-weight: 600; }
-                if root.changelog != "": Text { text: root.changelog; color: Theme.ink; font-size: 14px; wrap: word-wrap; }
-                Text { text: "版本内容"; color: Theme.ink; font-size: 18px; font-weight: 600; }
-                if root.contents.length == 0: Text { text: "暂无内容"; color: #616c5f; font-size: 14px; }
-                for entry in root.contents: HorizontalLayout {
-                    padding-left: 8px; padding-right: 8px; spacing: 8px;
-                    Text { text: entry.name; color: Theme.ink; overflow: elide; font-size: 14px; horizontal-stretch: 1; }
-                    Text { text: entry.detail; color: #526050; font-size: 13px; }
+                for item[i] in root.mods: ModCard {
+                    x: mod(i, version-flick.columns) * (version-flick.card-width + version-flick.gap);
+                    y: version-flick.grid-y + floor(i / version-flick.columns) * version-flick.row-height;
+                    width: version-flick.card-width; height: version-flick.row-height - version-flick.gap;
+                    visible: self.y + version-flick.content-y + self.height > 0px && self.y + version-flick.content-y < version-flick.height;
+                    item: item;
                 }
+            }
+            RScrollbar {
+                x: parent.width - 6px; y: 0px; width: 6px; height: parent.height;
+                viewport: version-flick.height; extent: version-flick.content-height; position: -version-flick.content-y;
+                scrolled(offset) => { version-flick.content-y = -offset; }
             }
         }
     }

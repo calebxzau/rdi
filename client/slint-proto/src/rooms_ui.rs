@@ -129,7 +129,7 @@ fn message(error: &anyhow::Error) -> String {
 }
 
 /// `/player/{uid}/info` plus the head from the player's skin; Steve without one.
-async fn player(api: &Client, uid: &str) -> Result<(String, image::RgbaImage)> {
+pub(crate) async fn player(api: &Client, uid: &str) -> Result<(String, image::RgbaImage)> {
     let info: PlayerInfo = api.get(&format!("/player/{uid}/info")).await?;
     let head = match info.cloth.and_then(|c| c.skin).filter(|s| !s.trim().is_empty()) {
         Some(url) => images::head(&images::decode(&images::download(&api.http, &url).await?)?.to_rgba8())?,
