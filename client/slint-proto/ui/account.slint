@@ -1,0 +1,324 @@
+// U4 batch b1: 注册, 忘记密码 and 个人信息 (Compose RegisterScreen, ResetPasswordScreen,
+// PlayerInfoScreen, MailOperationDialogs). Rust drives them through the `Account` global
+// (src/account_ui.rs).
+import { TextField, PasswordField } from "components/fields.slint";
+import { CircleIconButton, GlassButton } from "components/glass_button.slint";
+import { GlassSurface } from "components/surfaces.slint";
+import { PlayerHead } from "components/player_head.slint";
+import { Theme } from "theme.slint";
+
+export global Account {
+    // Before sign-in, in place of the login panel: 0 none, 1 注册 with Microsoft,
+    // 2 注册 with QQ mail, 3 忘记密码.
+    in-out property <int> page;
+    // 1 while 个人信息 is shown; set by the shell from navigation.
+    in-out property <int> screen;
+    in-out property <bool> busy;
+    in-out property <string> error;
+    // Microsoft sign-in: 0 idle, 1 waiting for the browser, 2 signed in.
+    in-out property <int> msa-state;
+    in-out property <string> msa-link;
+    in-out property <string> msa-line;
+    in-out property <string> name;
+    in-out property <string> qq;
+    in-out property <string> pwd;
+    in-out property <string> pwd2;
+    // 忘记密码: 0 微软账号, 1 QQ邮箱.
+    in-out property <int> reset-mode;
+    // The mail guide dialog.
+    in-out property <bool> guide-open;
+    in-out property <string> guide-title;
+    in-out property <string> guide-code;
+    in-out property <string> guide-qq;
+    // The receipt lookup and its result.
+    in-out property <bool> receipt-open;
+    in-out property <string> receipt-title;
+    in-out property <string> receipt-error;
+    in-out property <bool> receipt-busy;
+    in-out property <bool> result-open;
+    in-out property <string> result-title;
+    in-out property <string> result-text;
+    in-out property <bool> reset-done;
+    // 个人信息.
+    in-out property <string> me-name;
+    in-out property <string> me-qq;
+    in-out property <string> me-id;
+    in-out property <bool> me-bound;
+    in-out property <image> me-head;
+    in-out property <bool> profile-open;
+    in-out property <string> profile-name;
+    in-out property <string> profile-pwd;
+    in-out property <string> profile-error;
+    in-out property <bool> profile-busy;
+    out property <bool> modal: root.guide-open || root.receipt-open || root.result-open || root.reset-done || root.profile-open;
+    callback action(string, string);
+}
+
+// A round copy button; the clipboard is reached through a hidden text input's copy().
+component CopyButton inherits Rectangle {
+    in property <string> value;
+    in property <string> what;
+    width: 28px; height: 28px;
+    clipboard := TextInput { x: 0px; y: 0px; width: 1px; height: 1px; text: root.value; read-only: true; color: transparent; single-line: true; font-size: 1px; }
+    CircleIconButton { x: 0px; y: 0px; height: 28px; glyph: "\u{f0c5}"; accessible-label: "复制" + root.what;
+        clicked => { clipboard.select-all(); clipboard.copy(); clipboard.clear-selection(); Account.action("copied", root.what); } }
+}
+
+// The device-code link, copied on click as Compose does; the browser was opened already.
+component MsaLink inherits Rectangle {
+    in property <string> link;
+    height: max(24px, link-text.preferred-height);
+    clipboard := TextInput { x: 0px; y: 0px; width: 1px; height: 1px; text: root.link; read-only: true; color: transparent; single-line: true; font-size: 1px; }
+    link-text := Text { width: parent.width; text: root.link == "" ? "正在获取登录链接…" : root.link; color: #2f6b3a; wrap: word-wrap; font-size: 13px; }
+    TouchArea { enabled: root.link != ""; mouse-cursor: pointer;
+        clicked => { clipboard.select-all(); clipboard.copy(); clipboard.clear-selection(); Account.action("copied", "链接"); } }
+}
+
+// Compose's three lines while the player signs in to Microsoft.
+component MsaWaiting inherits VerticalLayout {
+    spacing: 6px;
+    Text { text: "即将登录微软账号，点击复制浏览器中打开链接，请在10分钟内登录"; color: Theme.ink; wrap: word-wrap; }
+    Text { text: "不要切换到其他页面！"; color: Theme.ink; font-weight: 700; }
+    Text { text: "登录完成后稍等10秒，会自动读取账号信息以进行下一步"; color: Theme.ink; wrap: word-wrap; }
+    MsaLink { link: Account.msa-link; }
+}
+
+component ErrorLine inherits Text {
+    color: #ba3434; wrap: word-wrap;
+}
+
+// 昵称, QQ号 and the two passwords of both register flows.
+component CredentialFields inherits VerticalLayout {
+    in property <bool> enabled: true;
+    callback accepted();
+    spacing: 4px;
+    name-field := TextField { label: "昵称 支持中文"; enabled: root.enabled; reserve-error: false; text <=> Account.name;
+        init => { self.focus(); } edited => { Account.error = ""; } accepted => { qq-field.focus(); } }
+    qq-field := TextField { label: "QQ号"; enabled: root.enabled; reserve-error: false; text <=> Account.qq;
+        edited => { Account.error = ""; } accepted => { pwd-field.focus(); } }
+    pwd-field := PasswordField { label: "密码"; enabled: root.enabled; reserve-error: false; text <=> Account.pwd;
+        edited => { Account.error = ""; } accepted => { pwd2-field.focus(); } }
+    pwd2-field := PasswordField { label: "确认密码"; enabled: root.enabled; reserve-error: false; text <=> Account.pwd2;
+        edited => { Account.error = ""; } accepted => { root.accepted(); } }
+}
+
+// 注册 and 忘记密码, drawn on the login panel's glass in its place.
+export component AccountForm inherits GlassSurface {
+    in property <bool> enabled: true;
+    tint: #ffffffb0;
+    FocusScope { x: 0px; y: 0px; width: root.width; height: root.height; enabled: root.enabled;
+        HorizontalLayout { x: 20px; y: 14px; width: parent.width - 40px; height: 44px; spacing: 10px;
+            VerticalLayout { alignment: center;
+                CircleIconButton { glyph: "\u{f060}"; accessible-label: "返回"; clicked => { Account.action("back-nav", ""); } }
+            }
+            Text { text: Account.page == 3 ? "重置密码" : "注册"; color: Theme.ink; font-size: 22px; font-weight: 600; vertical-alignment: center; horizontal-stretch: 1; }
+        }
+        Flickable { x: 28px; y: 68px; width: parent.width - 56px; height: parent.height - 84px;
+            content-height: max(self.height, body.preferred-height);
+            body := VerticalLayout { width: parent.width; spacing: 12px; alignment: start;
+                // 注册 with Microsoft (RegisterScreen useMsa).
+                if Account.page == 1 && Account.msa-state != 2: VerticalLayout { spacing: 8px;
+                    MsaWaiting {}
+                    if Account.msa-state == 0 && Account.error != "": HorizontalLayout { alignment: end;
+                        GlassButton { label: "重新登录微软账号"; glyph: "\u{e70f}"; clicked => { Account.action("msa-start", ""); } }
+                    }
+                }
+                if Account.page == 1 && Account.msa-state == 2: VerticalLayout { spacing: 8px;
+                    Text { text: Account.msa-line; color: Theme.ink; wrap: word-wrap; }
+                    CredentialFields { enabled: !Account.busy; accepted => { Account.action("register-submit", ""); } }
+                }
+                // 注册 with QQ mail.
+                if Account.page == 2: VerticalLayout { spacing: 8px;
+                    Text { text: "填写信息"; color: Theme.ink; }
+                    CredentialFields { accepted => { Account.action("register-submit", ""); } }
+                }
+                // 忘记密码 (ResetPasswordScreen).
+                if Account.page == 3: VerticalLayout { spacing: 10px;
+                    Text { text: "选择验证方式"; color: Theme.ink; font-size: 18px; font-weight: 700; }
+                    HorizontalLayout { spacing: 8px; alignment: start;
+                        GlassButton { label: "微软账号"; checked: Account.reset-mode == 0; enabled: !Account.busy; clicked => { Account.action("reset-mode", "0"); } }
+                        GlassButton { label: "QQ邮箱"; checked: Account.reset-mode == 1; enabled: !Account.busy; clicked => { Account.action("reset-mode", "1"); } }
+                    }
+                    if Account.reset-mode == 1: TextField { label: "QQ号"; reserve-error: false; text <=> Account.qq;
+                        init => { self.focus(); } edited => { Account.error = ""; } }
+                    PasswordField { label: "新密码"; reserve-error: false; enabled: !Account.busy; text <=> Account.pwd;
+                        edited => { Account.error = ""; } accepted => { Account.action("reset-submit", ""); } }
+                    PasswordField { label: "确认新密码"; reserve-error: false; enabled: !Account.busy; text <=> Account.pwd2;
+                        edited => { Account.error = ""; } accepted => { Account.action("reset-submit", ""); } }
+                    if Account.reset-mode == 0 && Account.msa-state == 1: VerticalLayout { spacing: 6px;
+                        Text { text: "已打开微软验证页面，请在浏览器完成登录"; color: Theme.ink; wrap: word-wrap; }
+                        MsaLink { link: Account.msa-link; }
+                    }
+                }
+                if Account.error != "": ErrorLine { text: Account.error; }
+                if (Account.page == 1 && Account.msa-state == 2) || Account.page == 2: HorizontalLayout { alignment: end; spacing: 8px;
+                    if Account.page == 2: GlassButton { label: "注册进度查询"; glyph: "\u{f002}"; clicked => { Account.action("receipt-open", ""); } }
+                    GlassButton { label: Account.busy ? "注册中..." : "注册"; filled: true; enabled: !Account.busy; clicked => { Account.action("register-submit", ""); } }
+                }
+                if Account.page == 3: HorizontalLayout { alignment: end; spacing: 8px;
+                    if Account.reset-mode == 1: GlassButton { label: "查询进度"; enabled: !Account.busy; clicked => { Account.action("receipt-open", ""); } }
+                    GlassButton { label: Account.busy ? "处理中..." : "重置密码"; glyph: Account.reset-mode == 0 ? "\u{e70f}" : "\u{f0e0}"; filled: true;
+                        enabled: !Account.busy; clicked => { Account.action("reset-submit", ""); } }
+                }
+            }
+        }
+    }
+}
+
+component InfoRow inherits HorizontalLayout {
+    in property <string> label;
+    in property <string> value;
+    spacing: 16px; height: 40px;
+    Text { text: root.label; width: 72px; color: #5b625b; font-size: 14px; vertical-alignment: center; }
+    Text { text: root.value; color: Theme.ink; font-size: 17px; vertical-alignment: center; overflow: elide; horizontal-stretch: 1; }
+    @children
+}
+
+// 个人信息 (PlayerInfoScreen, own account only: no Compose screen opens another player's).
+export component PlayerInfoPage inherits Rectangle {
+    in property <bool> enabled: true;
+    background: #f8f7eff7;
+    border-radius: 24px;
+    FocusScope { x: 0px; y: 0px; width: root.width; height: root.height; enabled: root.enabled;
+        HorizontalLayout { x: 20px; y: 14px; width: parent.width - 40px; height: 48px; spacing: 10px;
+            VerticalLayout { alignment: center;
+                CircleIconButton { glyph: "\u{f060}"; accessible-label: "返回"; clicked => { Account.action("back-nav", ""); } }
+            }
+            Text { text: "个人信息"; color: Theme.ink; font-size: 22px; font-weight: 600; vertical-alignment: center; horizontal-stretch: 1; }
+        }
+        HorizontalLayout { x: 32px; y: 76px; width: parent.width - 64px; height: parent.height - 96px; spacing: 40px;
+            VerticalLayout { alignment: center; width: 160px;
+                PlayerHead { width: 160px; height: 160px; source: Account.me-head; }
+            }
+            Flickable { horizontal-stretch: 1;
+                content-height: max(self.height, rows.preferred-height);
+                rows := VerticalLayout { width: parent.width; spacing: 14px; alignment: center;
+                    InfoRow { label: "昵称"; value: Account.me-name;
+                        VerticalLayout { alignment: center;
+                            CircleIconButton { height: 30px; glyph: "\u{f040}"; accessible-label: "修改个人信息"; enabled: !Account.busy;
+                                clicked => { Account.action("profile-open", ""); }
+                                Tooltip { text: @markdown("修改个人信息"); } }
+                        }
+                    }
+                    InfoRow { label: "QQ"; value: Account.me-qq; }
+                    InfoRow { label: "RDID"; value: Account.me-id;
+                        VerticalLayout { alignment: center; CopyButton { value: Account.me-id; what: "RDID"; } }
+                    }
+                    InfoRow { label: "微软账号"; value: Account.me-bound ? "已绑定" : "未绑定";
+                        if !Account.me-bound && Account.msa-state == 0: VerticalLayout { alignment: center;
+                            GlassButton { label: "绑定微软MC账号"; glyph: "\u{e70f}"; enabled: !Account.busy; clicked => { Account.action("bind-start", ""); } }
+                        }
+                    }
+                    if Account.msa-state == 1: MsaWaiting {}
+                    if Account.msa-state == 2: VerticalLayout { spacing: 8px;
+                        Text { text: Account.msa-line; color: Theme.ink; wrap: word-wrap; }
+                        Text { text: "绑定后将不能修改，如果确定账号信息正确，请点击确认。"; color: Theme.ink; wrap: word-wrap; }
+                        HorizontalLayout { alignment: start;
+                            GlassButton { label: Account.busy ? "绑定中..." : "确认绑定"; glyph: "\u{f0c1}"; filled: true; enabled: !Account.busy;
+                                clicked => { Account.action("bind-confirm", ""); } }
+                        }
+                    }
+                    if Account.error != "": ErrorLine { text: Account.error; }
+                }
+            }
+        }
+    }
+}
+
+component DialogCard inherits Rectangle {
+    background: #f7faf0; border-radius: 24px;
+    drop-shadow-blur: 12px; drop-shadow-offset-y: 3px; drop-shadow-color: #00000030;
+    // Clicks on the card never reach the backdrop below.
+    TouchArea {}
+}
+component DialogTitle inherits Text { font-size: 22px; font-weight: 600; color: Theme.ink; wrap: word-wrap; }
+
+// The dialogs of these pages; the shell dims the window behind them.
+export component AccountDialogs inherits Rectangle {
+    // MailOperationGuideDialog.
+    if Account.guide-open: DialogCard { width: min(600px, root.width - 48px); height: guide-body.preferred-height;
+        x: (root.width - self.width) / 2; y: (root.height - self.height) / 2;
+        guide-body := VerticalLayout { padding: 24px; spacing: 12px;
+            DialogTitle { text: "请登录QQ邮箱，发邮件"; }
+            HorizontalLayout { spacing: 8px;
+                Text { text: "收件人 rdibot@qq.com"; color: Theme.ink; vertical-alignment: center; horizontal-stretch: 1; }
+                CopyButton { value: "rdibot@qq.com"; what: "收件人"; }
+            }
+            HorizontalLayout { spacing: 8px;
+                Text { text: "标题"; color: Theme.ink; vertical-alignment: center; }
+                Text { text: Account.guide-title; color: Theme.ink; font-size: 12px; vertical-alignment: center; overflow: elide; horizontal-stretch: 1; }
+                CopyButton { value: Account.guide-title; what: "标题"; }
+            }
+            HorizontalLayout { spacing: 8px;
+                Text { text: "内容"; color: Theme.ink; vertical-alignment: center; }
+                Text { text: Account.guide-code; color: #8e948c; font-size: 9px; vertical-alignment: center; overflow: elide; horizontal-stretch: 1; }
+                CopyButton { value: Account.guide-code; what: "内容"; }
+            }
+            HorizontalLayout { spacing: 4px; alignment: start;
+                Text { text: "发件人"; color: Theme.ink; }
+                Text { text: " " + Account.guide-qq + "@qq.com "; color: Theme.ink; font-weight: 700; }
+                Text { text: "必须为纯数字QQ号"; color: Theme.ink; font-weight: 700; }
+            }
+            Text { text: "发送两分钟后生效"; color: Theme.ink; }
+            HorizontalLayout { spacing: 12px;
+                GlassButton { label: "关闭"; glyph: "\u{f00d}"; clicked => { Account.action("guide-close", ""); } }
+                Rectangle { horizontal-stretch: 1; }
+                GlassButton { label: "打开邮箱"; glyph: "\u{f42f}"; filled: true; clicked => { Account.action("open-mail", ""); } }
+            }
+        }
+    }
+    // ReceiptQueryDialogs: the lookup.
+    if Account.receipt-open: DialogCard { width: min(480px, root.width - 48px); height: receipt-body.preferred-height;
+        x: (root.width - self.width) / 2; y: (root.height - self.height) / 2;
+        receipt-body := VerticalLayout { padding: 24px; spacing: 12px;
+            DialogTitle { text: "请打开QQ邮箱“已发送”界面"; }
+            Text { text: "复制已发邮件标题，粘贴到下方"; color: Theme.ink; wrap: word-wrap; }
+            TextField { label: "邮件标题"; reserve-error: false; enabled: !Account.receipt-busy; text <=> Account.receipt-title;
+                init => { self.focus(); } edited => { Account.receipt-error = ""; } accepted => { Account.action("receipt-submit", ""); } }
+            if Account.receipt-error != "": ErrorLine { text: Account.receipt-error; }
+            HorizontalLayout { alignment: end; spacing: 12px;
+                GlassButton { label: "取消"; enabled: !Account.receipt-busy; clicked => { Account.action("receipt-cancel", ""); } }
+                GlassButton { label: Account.receipt-busy ? "查询中..." : "查询"; filled: true; enabled: !Account.receipt-busy;
+                    clicked => { Account.action("receipt-submit", ""); } }
+            }
+        }
+    }
+    // ReceiptQueryDialogs: the result.
+    if Account.result-open: DialogCard { width: min(480px, root.width - 48px); height: result-body.preferred-height;
+        x: (root.width - self.width) / 2; y: (root.height - self.height) / 2;
+        result-body := VerticalLayout { padding: 24px; spacing: 12px;
+            DialogTitle { text: Account.result-title; }
+            Text { text: Account.result-text; color: Theme.ink; wrap: word-wrap; }
+            HorizontalLayout { alignment: end;
+                GlassButton { label: "关闭"; filled: true; clicked => { Account.action("result-close", ""); } }
+            }
+        }
+    }
+    if Account.reset-done: DialogCard { width: min(420px, root.width - 48px); height: done-body.preferred-height;
+        x: (root.width - self.width) / 2; y: (root.height - self.height) / 2;
+        done-body := VerticalLayout { padding: 24px; spacing: 12px;
+            DialogTitle { text: "密码重置完成"; }
+            Text { text: "请使用新密码登录"; color: Theme.ink; }
+            HorizontalLayout { alignment: end;
+                GlassButton { label: "去登录"; filled: true; clicked => { Account.action("reset-done-close", ""); } }
+            }
+        }
+    }
+    // ChangeProfileDialog.
+    if Account.profile-open: DialogCard { width: min(440px, root.width - 48px); height: profile-body.preferred-height;
+        x: (root.width - self.width) / 2; y: (root.height - self.height) / 2;
+        profile-body := VerticalLayout { padding: 24px; spacing: 12px;
+            DialogTitle { text: "修改信息"; }
+            TextField { label: "昵称"; reserve-error: false; enabled: !Account.profile-busy; text <=> Account.profile-name;
+                init => { self.focus(); } edited => { Account.profile-error = ""; } accepted => { Account.action("profile-submit", ""); } }
+            PasswordField { label: "新密码 留空则不修改"; reserve-error: false; enabled: !Account.profile-busy; text <=> Account.profile-pwd;
+                edited => { Account.profile-error = ""; } accepted => { Account.action("profile-submit", ""); } }
+            if Account.profile-error != "": ErrorLine { text: Account.profile-error; }
+            HorizontalLayout { alignment: end; spacing: 12px;
+                GlassButton { label: "取消"; enabled: !Account.profile-busy; clicked => { Account.action("profile-cancel", ""); } }
+                GlassButton { label: Account.profile-busy ? "修改中..." : "修改"; filled: true; enabled: !Account.profile-busy;
+                    clicked => { Account.action("profile-submit", ""); } }
+            }
+        }
+    }
+}

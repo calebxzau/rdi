@@ -217,6 +217,7 @@ pub struct App {
     plaza: Rc<RefCell<crate::plaza::Plaza>>,
     rooms: Rc<RefCell<crate::rooms_ui::RoomsUi>>,
     room_pages: Rc<RefCell<crate::room_pages_ui::RoomPagesUi>>,
+    account_ui: Rc<RefCell<crate::account_ui::AccountUi>>,
     heads: HeadCache,
     cache: lru::LruCache<String, CachedArt>,
     jobs: HashMap<String, JoinHandle<()>>,
@@ -275,6 +276,7 @@ impl App {
         let login_ui = crate::login::LoginUi::wire(ui, runtime.clone(), config.server.clone());
         let rooms = crate::rooms_ui::RoomsUi::wire(ui, runtime.clone());
         let room_pages = crate::room_pages_ui::RoomPagesUi::wire(ui, runtime.clone(), pack_ui.borrow().tasks());
+        let account_ui = crate::account_ui::AccountUi::wire(ui, runtime.clone(), config.server.clone());
         let app = Rc::new(RefCell::new(Self {
             ui: ui.as_weak(),
             runtime,
@@ -289,6 +291,7 @@ impl App {
             plaza,
             rooms,
             room_pages,
+            account_ui,
             login_ui,
             running_processes: vec![],
             service_running: false,
@@ -559,6 +562,7 @@ impl App {
         self.plaza.borrow_mut().connect(None);
         self.rooms.borrow_mut().connect(None);
         self.room_pages.borrow_mut().connect(None);
+        self.account_ui.borrow_mut().connect(None);
         self.login_ui.borrow_mut().start();
     }
     /// Stopping the service force-stops the game and tasks, so logging out waits for them.
@@ -597,6 +601,7 @@ impl App {
         self.plaza.borrow_mut().connect(None);
         self.rooms.borrow_mut().connect(None);
         self.room_pages.borrow_mut().connect(None);
+        self.account_ui.borrow_mut().connect(None);
         ui.set_player_name("未登录".into());
         ui.set_player_head(self.fallback.clone());
         self.login_ui.borrow_mut().sign_out(session);
@@ -627,6 +632,7 @@ impl App {
         self.plaza.borrow_mut().connect(Some(api.clone()));
         self.rooms.borrow_mut().connect(Some(api.clone()));
         self.room_pages.borrow_mut().connect(Some(api.clone()));
+        self.account_ui.borrow_mut().connect(Some(api.clone()));
         self.player_appearance = if self.player_enabled() && !self.crowd_enabled() {
             match Appearance::steve() {
                 Ok(appearance) => Some(appearance),
@@ -1098,6 +1104,7 @@ impl App {
         self.plaza.borrow_mut().tick();
         self.rooms.borrow_mut().tick();
         self.room_pages.borrow_mut().tick();
+        self.account_ui.borrow_mut().tick();
         if self.rooms.borrow_mut().take_hosts_changed()
             && let Some(api) = self.api.clone()
         {

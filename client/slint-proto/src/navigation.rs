@@ -21,6 +21,8 @@ pub enum Screen {
     RoomRollback,
     /// U4c2b: a room's 模组 page.
     RoomMods,
+    /// U4b1: 个人信息.
+    PlayerInfo,
 }
 #[derive(Default, Debug)]
 pub struct Navigation {

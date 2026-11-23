@@ -48,7 +48,10 @@ impl Shell {
                     return;
                 };
                 if ui.get_login_visible() {
-                    if action == "back" {
+                    let account = ui.global::<crate::Account>();
+                    if action == "back" && (account.get_modal() || account.get_page() != 0) {
+                        account.invoke_action(if account.get_modal() { "dismiss" } else { "back-nav" }.into(), "".into());
+                    } else if action == "back" {
                         ui.set_login_register(false);
                         ui.set_login_history(false);
                         ui.set_action_error("".into());
@@ -63,6 +66,7 @@ impl Shell {
                         else if !ui.get_action_error().is_empty() { ui.set_action_error("".into()); ui.invoke_pack_action("installer.dismissError".into(), "".into()); }
                         else if ui.global::<crate::Rooms>().get_modal() { ui.global::<crate::Rooms>().invoke_action("dismiss".into(), "".into()); }
                         else if ui.global::<crate::RoomPages>().get_modal() { ui.global::<crate::RoomPages>().invoke_action("dismiss".into(), "".into()); }
+                        else if ui.global::<crate::Account>().get_modal() { ui.global::<crate::Account>().invoke_action("dismiss".into(), "".into()); }
                         else { ui.set_pack_menu(false); ui.set_discard_options(false); ui.set_duplicate_host("".into()); ui.set_java_missing(false); ui.set_confirm_exit(false); ui.set_gallery_dialog(false); }
                     }
                     return;
@@ -100,6 +104,10 @@ impl Shell {
                         ui.set_activity_panel(0);
                     }
                     "host-list" if s.navigation.current() == Screen::Menu => s.navigation.push(Screen::HostList),
+                    "player-info" => {
+                        s.navigation.push(Screen::PlayerInfo);
+                        ui.global::<crate::Account>().invoke_action("info-open".into(), "".into());
+                    }
                     "gallery" if ui.get_gallery_enabled() => s.navigation.push(Screen::Gallery),
                     "wardrobe" => {
                         s.navigation.push(Screen::Wardrobe);
@@ -152,6 +160,7 @@ impl Shell {
             Screen::RoomMods => 4,
             _ => 0,
         });
+        ui.global::<crate::Account>().set_screen((self.navigation.current() == Screen::PlayerInfo) as i32);
         ui.set_can_back(self.navigation.can_back());
     }
     pub fn scene_frozen(&self, ui: &AppWindow) -> bool {
@@ -243,6 +252,7 @@ pub fn frame(
         && !ui.get_host_list_visible()
         && ui.global::<crate::Rooms>().get_screen() == 0
         && ui.global::<crate::RoomPages>().get_screen() == 0
+        && ui.global::<crate::Account>().get_screen() == 0
     {
         if !ui.get_loading() && ui.get_error().is_empty() {
             let row_pitch = ui.get_menu_grid_row_pitch();

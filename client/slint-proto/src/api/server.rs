@@ -273,17 +273,33 @@ impl ServerApi {
     pub async fn delete<T: DeserializeOwned + Default>(&self, path: &str, body: Option<&Value>) -> Result<T> {
         self.request(reqwest::Method::DELETE, path, body).await
     }
+    /// U4b1: a JSON POST before sign-in (注册, 忘记密码); `data` may be absent.
+    pub async fn post_public<T: DeserializeOwned + Default>(&self, path: &str, body: &Value) -> Result<T> {
+        self.request_as(reqwest::Method::POST, path, Some(body), false).await
+    }
+    /// U4b1: a GET before sign-in (`/receipt/{id}`); `data` may be absent.
+    pub async fn get_public<T: DeserializeOwned + Default>(&self, path: &str) -> Result<T> {
+        self.request_as(reqwest::Method::GET, path, None, false).await
+    }
     async fn request<T: DeserializeOwned + Default>(
         &self,
         method: reqwest::Method,
         path: &str,
         body: Option<&Value>,
     ) -> Result<T> {
-        let jwt = self.jwt.as_deref().context("请先登录")?;
-        let mut request = self
-            .http
-            .request(method, format!("{}{path}", self.base))
-            .bearer_auth(jwt);
+        self.request_as(method, path, body, true).await
+    }
+    async fn request_as<T: DeserializeOwned + Default>(
+        &self,
+        method: reqwest::Method,
+        path: &str,
+        body: Option<&Value>,
+        authenticated: bool,
+    ) -> Result<T> {
+        let mut request = self.http.request(method, format!("{}{path}", self.base));
+        if authenticated {
+            request = request.bearer_auth(self.jwt.as_deref().context("请先登录")?);
+        }
         if let Some(body) = body {
             request = request.json(body);
         }

@@ -2,6 +2,8 @@ mod anim;
 mod api;
 mod app;
 mod login;
+mod account;
+mod account_ui;
 mod paths;
 mod credentials;
 mod msa_sessions;

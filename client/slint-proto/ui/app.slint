@@ -23,8 +23,9 @@ import { HostList, HostListRow } from "host_list.slint";
 import { WardrobeScreen, WardrobeItem } from "wardrobe.slint";
 import { ModpackPlaza, ModpackDetails, PlazaCard, PlazaFilters, PlazaPack, PlazaVersion, PlazaContent } from "plaza.slint";
 import { Rooms, RoomDetails, RoomForm, RoomDialogs, RoomInfo, RoomMember, RoomMenuEntry, RoomFriend, RoomFormView, RoomRule, RoomWorld } from "rooms.slint";
+import { Account, AccountForm, PlayerInfoPage, AccountDialogs } from "account.slint";
 import { RoomPages, RoomBackend, RoomWorldPage, RoomRollbackPage, RoomModsPage, RoomPageDialogs, RollbackRow, RoomModRow, GithubAssetRow } from "room_pages.slint";
-export { Rooms, RoomInfo, RoomMember, RoomMenuEntry, RoomFriend, RoomFormView, RoomRule, RoomWorld, RoomPages, RollbackRow, RoomModRow, GithubAssetRow }
+export { Account, Rooms, RoomInfo, RoomMember, RoomMenuEntry, RoomFriend, RoomFormView, RoomRule, RoomWorld, RoomPages, RollbackRow, RoomModRow, GithubAssetRow }
 export { LoginAccount, CandidateRow, OptionDraft, TileData, NameInitial, ProofRow, ProofRect, GlassShape, ContentRow, LogRow, TaskRow, WardrobeItem, HostListRow, PlazaCard, PlazaFilters, PlazaPack, PlazaVersion, PlazaContent }
 
 component MenuTileGrid inherits TileGrid {
@@ -44,7 +45,7 @@ export component AppWindow inherits Window {
     in-out property <bool> login-history;
     in-out property <bool> login-register;
     in property <[LoginAccount]> login-accounts;
-    out property <GlassShape> login-panel: login-view.shape;
+    out property <GlassShape> login-panel: Account.page != 0 ? account-form.shape : login-view.shape;
     callback login-submit();
     callback login-select(string);
     out property <[GlassShape]> pack-panels: [install-view.shape, options-view.shape];
@@ -181,7 +182,7 @@ export component AppWindow inherits Window {
     callback toggle-task(int);
     out property <bool> dialog-focused: dialog.contains-focus;
     out property <bool> gallery-password-revealed: gallery-view.password-revealed;
-    out property <bool> modal-open: root.login-register || root.action-error != "" || root.duplicate-host != "" || root.java-missing || root.confirm-exit || root.gallery-dialog || root.local-play || root.pack-menu || root.discard-options || root.install-missing || root.install-prompt || root.picked-candidates.length > 0 || Rooms.modal || RoomPages.modal;
+    out property <bool> modal-open: root.login-register || root.action-error != "" || root.duplicate-host != "" || root.java-missing || root.confirm-exit || root.gallery-dialog || root.local-play || root.pack-menu || root.discard-options || root.install-missing || root.install-prompt || root.picked-candidates.length > 0 || Rooms.modal || RoomPages.modal || Account.modal;
     out property <[GlassShape]> menu-grids: [host-grid.shape, pack-grid.shape];
     out property <[GlassShape]> menu-pills: [tabs.shape, tabs.selected-shape, first-shortcut.shape, second-shortcut.shape, third-shortcut.shape];
     out property <[GlassShape]> glass-panels: [gallery-view.surfaces[0], gallery-view.surfaces[1], dialog.shape];
@@ -274,7 +275,7 @@ export component AppWindow inherits Window {
     private property <int> room-screen: Rooms.screen * 10 + RoomPages.screen;
     changed room-screen => { if !root.modal-open {shell-focus.focus();} }
     // Room dialogs focus their own fields; Escape then reaches shell-focus, which dismisses them.
-    changed modal-open => { if root.modal-open && !Rooms.modal && !RoomPages.modal {dialog.focus-dialog();} else if root.login-visible {login-view.focus-account();} else {shell-focus.focus();} }
+    changed modal-open => { if root.modal-open && !Rooms.modal && !RoomPages.modal && !Account.modal {dialog.focus-dialog();} else if root.login-visible && Account.page == 0 {login-view.focus-account();} else {shell-focus.focus();} }
     changed logical-width => {root.scroll-changed();}
     changed logical-height => {root.scroll-changed();}
     forward-focus: shell-focus;
@@ -291,7 +292,7 @@ export component AppWindow inherits Window {
         }
     Image { width: parent.width; height: parent.height; source: root.backdrop-revision >= 0 ? root.backdrop : root.backdrop; image-fit: fill; }
     title-bar := TitleBar { y: 0px; width: parent.width; player-name: root.player-name; head: root.player-head; account => {if !root.login-visible {root.account-menu = !root.account-menu;}} action(a) => {root.window-action(a);} can-back: root.can-back; host-list-visible: root.host-list-visible; gallery-enabled: root.gallery-enabled; navigate(s) => {root.navigate(s);} }
-    menu := FocusScope { x: 0px; y: 40px; width: parent.width; height: parent.height - 40px; visible: !root.login-visible && !root.ui-proof && !root.gallery && root.pack-screen == 0 && !root.wardrobe-visible && !root.host-list-visible && Rooms.screen == 0 && RoomPages.screen == 0; enabled: !root.modal-open && root.activity-panel == 0;
+    menu := FocusScope { x: 0px; y: 40px; width: parent.width; height: parent.height - 40px; visible: !root.login-visible && !root.ui-proof && !root.gallery && root.pack-screen == 0 && !root.wardrobe-visible && !root.host-list-visible && Rooms.screen == 0 && RoomPages.screen == 0 && Account.screen == 0; enabled: !root.modal-open && root.activity-panel == 0;
     tabs := GlassTabBar {
         x: (parent.width - self.width) / 2; y: 16px; tab-position: root.tab-position; selected: root.selected;
         select(t) => {root.select-tab(t);}
@@ -380,14 +381,18 @@ export component AppWindow inherits Window {
         available-height: home-shortcuts.y;
     }
     }
-    login-view := LoginScreen { visible: root.login-visible; enabled: !root.modal-open;
+    login-view := LoginScreen { visible: root.login-visible && Account.page == 0; enabled: !root.modal-open;
         x: (root.width - self.width) / 2; y: 40px + (root.height - 40px - self.height) / 2;
         width: min(480px, root.width - 32px); height: min(520px, root.height - 72px);
         version: root.login-version;
         account <=> root.login-account; password <=> root.login-password; saved-id <=> root.login-saved-id;
         history <=> root.login-history; busy: root.login-busy; accounts: root.login-accounts;
         submit => {root.login-submit();} select(id) => {root.login-select(id);}
-        register => {root.login-register = true;} forgot => {root.stub("忘记密码");}
+        register => {root.login-register = true;} forgot => {Account.action("open-reset", "");}
+    }
+    account-form := AccountForm { visible: root.login-visible && Account.page != 0; enabled: !root.modal-open;
+        x: (root.width - self.width) / 2; y: 40px + (root.height - 40px - self.height) / 2;
+        width: min(560px, root.width - 32px); height: min(640px, root.height - 72px);
     }
     install-view := LocalModpackInstall { visible: root.pack-screen == 1;
         x: root.width * 0.05; y: 40px + (root.height - 40px) * 0.05; width: root.width * 0.9; height: (root.height - 40px) * 0.9; enabled: !root.modal-open && root.activity-panel == 0;
@@ -470,6 +475,12 @@ export component AppWindow inherits Window {
         visible: RoomPages.screen == 4 && !root.login-visible;
         enabled: self.visible && !root.modal-open && root.activity-panel == 0;
     }
+    PlayerInfoPage {
+        x: (root.width - self.width) / 2; y: 56px; width: min(820px, root.width - 48px);
+        height: min(460px, root.height - self.y - (root.game-running || root.game-status != "" ? 60px : 16px));
+        visible: Account.screen == 1 && !root.login-visible;
+        enabled: self.visible && !root.modal-open && root.activity-panel == 0;
+    }
     wardrobe-view := WardrobeScreen {
         x: 24px; y: 56px; width: root.width - 48px; height: root.height - self.y - (root.game-running ? 60px : 16px);
         visible: root.wardrobe-visible && !root.login-visible;
@@ -533,7 +544,7 @@ export component AppWindow inherits Window {
         x: 0px; y: 0px; width: parent.width; height: parent.height;
         anchor-x: title-bar.account-x; anchor-y: 44px;
         dismiss => {root.account-menu = false;}
-        player-info => {root.account-menu = false; root.stub("个人信息");}
+        player-info => {root.account-menu = false; root.navigate("player-info");}
         mail => {root.account-menu = false; root.stub("邮件");}
         settings => {root.account-menu = false; root.stub("设置");}
         logout => {root.account-menu = false; root.logout();}
@@ -541,7 +552,7 @@ export component AppWindow inherits Window {
     if root.modal-open && !(Rooms.menu-open && !Rooms.dialog): Rectangle { x: 0px; y: 0px; width: parent.width; height: parent.height; background: #0009; TouchArea {} }
     dialog := SharedDialog {
         width: min(480px, root.width - 48px);
-        x: (parent.width - self.width) / 2; y: (parent.height - self.height) / 2; visible: root.modal-open && !Rooms.modal && !RoomPages.modal && !root.login-register && !root.local-play && !root.pack-menu && !root.discard-options && !root.install-missing && !root.install-prompt && root.picked-candidates.length == 0;
+        x: (parent.width - self.width) / 2; y: (parent.height - self.height) / 2; visible: root.modal-open && !Rooms.modal && !RoomPages.modal && !Account.modal && !root.login-register && !root.local-play && !root.pack-menu && !root.discard-options && !root.install-missing && !root.install-prompt && root.picked-candidates.length == 0;
         title: root.confirm-exit ? "退出启动器" : root.duplicate-host != "" ? "重复启动" : root.java-missing ? "缺少Java25" : root.action-error != "" ? "错误" : "与朋友一起冒险";
         message: root.confirm-exit ? (root.tasks-running ? "任务仍在进行，退出将终止任务和正在运行的游戏。是否继续？" : "游戏仍在运行，退出将终止游戏。是否继续？") : root.duplicate-host != "" ? "该整合包已在运行。再次启动可能造成存档、配置、日志或Mod缓存冲突。是否继续？" : root.java-missing ? "没找到可用的完整版64位JDK25，游戏需要它才能启动。是否自动下载安装？安装时需要允许管理员授权。" : root.action-error != "" ? root.action-error : "准备好探索Minecraft世界了吗？这段较长的中文说明会自动换行。";
         confirm-label: root.confirm-exit ? (root.tasks-running ? "终止并退出" : "终止游戏并退出") : root.duplicate-host != "" ? "继续启动" : root.java-missing ? "自动下载安装" : root.login-visible ? "明白" : "确定";
@@ -551,12 +562,13 @@ export component AppWindow inherits Window {
     }
     if Rooms.modal: RoomDialogs { x: 0px; y: 0px; width: parent.width; height: parent.height; }
     if RoomPages.modal: RoomPageDialogs { x: 0px; y: 0px; width: parent.width; height: parent.height; }
+    if Account.modal: AccountDialogs { x: 0px; y: 0px; width: parent.width; height: parent.height; }
     if root.login-register: Rectangle { x: (root.width - self.width) / 2; y: (root.height - self.height) / 2; width: min(560px, root.width - 48px); height: 192px; border-radius: 24px; background: #f7faf0ff;
         VerticalLayout { padding: 24px; spacing: 16px;
             Text { text: "请选择注册方式"; font-size: 22px; color: Theme.ink; }
             HorizontalLayout { spacing: 8px;
-                GlassButton { label: "用微软MC正版号注册"; filled: true; clicked => {root.login-register = false; root.stub("用微软MC正版号注册");} }
-                GlassButton { label: "用QQ邮箱注册"; clicked => {root.login-register = false; root.stub("用QQ邮箱注册");} }
+                GlassButton { label: "用微软MC正版号注册"; filled: true; clicked => {root.login-register = false; Account.action("open-register", "msa");} }
+                GlassButton { label: "用QQ邮箱注册"; clicked => {root.login-register = false; Account.action("open-register", "qq");} }
             }
             GlassButton { label: "取消"; clicked => {root.login-register = false;} }
         }
