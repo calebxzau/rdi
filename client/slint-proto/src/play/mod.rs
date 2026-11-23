@@ -1,10 +1,13 @@
 //! J5a: game sessions in Rust (`McPlayStore`, `McGameSession`, `RunningGameGuard`) and the local
 //! pack start of `McPlayController.startSession` for `withRdiCore = false` with an offline
-//! identity. Rooms, RDI packs and Microsoft online play still start through the service; their
-//! sessions are mirrored in from `game.state` by the app so one list covers both.
+//! identity. Forge 1.20.1 and NeoForge 1.21.1 rooms start here too (`room`, J5b). GTNH, Fabric and
+//! Microsoft online play still start through the service; their sessions are mirrored in from
+//! `game.state` by the app so one list covers both. Rust games survive a launcher crash
+//! (`recovery`) and are never handed to the service's `game.restore`.
 //! No Slint types here, so the planned launcher MCP can call these functions.
 pub mod core;
 pub mod mods_sync;
+pub mod recovery;
 pub mod room;
 pub mod runtime;
 pub mod thin;
@@ -20,6 +23,14 @@ use std::sync::{Arc, Mutex};
 
 const MAX_LOG_LINES: usize = 5000;
 
+/// A game process: started by this launcher, or recovered after a launcher crash.
+#[derive(Clone)]
+enum Proc {
+    Child(Arc<Mutex<std::process::Child>>),
+    /// Only the identity is known: no output, no exit code (`RecoveredGameProcess`).
+    Recovered { pid: u32, started_at: u64 },
+}
+
 /// One game: preparing until its process is attached, then running until it exits.
 struct Session {
     id: String,
@@ -27,12 +38,14 @@ struct Session {
     version_id: String,
     preparing: bool,
     stop_requested: bool,
-    child: Option<Arc<Mutex<std::process::Child>>>,
+    child: Option<Proc>,
     exit_message: Option<String>,
     console: std::collections::VecDeque<String>,
     cancel: Cancellation,
     /// A room game: it needs the room connection while it is alive.
     room: bool,
+    /// What `running_games.json` keeps while the process lives.
+    record: Option<recovery::Entry>,
 }
 
 impl Session {
@@ -57,6 +70,8 @@ struct Inner {
     revision: u64,
     /// Called once no room game is alive any more (`stopLocalMcProxy`).
     rooms_idle: Option<Arc<dyn Fn() + Send + Sync>>,
+    /// `running_games.json`; `None` keeps nothing (tests).
+    journal: Option<PathBuf>,
 }
 
 /// The Rust session store; cheap to clone.
@@ -105,6 +120,7 @@ impl Sessions {
                 console: Default::default(),
                 cancel: Cancellation::default(),
                 room,
+                record: None,
             });
             Some(id)
         })
@@ -154,17 +170,33 @@ impl Sessions {
     }
 
     /// `McGameSession.attachProcess`: a session stopped meanwhile kills the new process instead.
-    fn attach(&self, id: &str, child: std::process::Child) -> Option<Arc<Mutex<std::process::Child>>> {
+    /// The process is recorded for recovery; `room_port` is the room connection it uses.
+    fn attach(&self, id: &str, child: std::process::Child, room_port: Option<u16>) -> Option<Arc<Mutex<std::process::Child>>> {
+        let pid = child.id();
         let child = Arc::new(Mutex::new(child));
+        let identity = recovery::identity(pid);
+        if identity.is_none() {
+            tracing::warn!(pid, "读取游戏进程身份失败，启动器崩溃后无法找回此游戏");
+        }
         let attached = self.with(|inner| match inner.list.iter_mut().find(|s| s.id == id) {
             Some(s) if !s.stop_requested => {
-                s.child = Some(child.clone());
+                s.child = Some(Proc::Child(child.clone()));
                 s.preparing = false;
+                s.record = identity.map(|(started_at, _)| recovery::Entry {
+                    session_id: s.id.clone(),
+                    title: s.title.clone(),
+                    version_id: s.version_id.clone(),
+                    pid,
+                    started_at,
+                    room: s.room,
+                    room_port: room_port.filter(|_| s.room),
+                });
                 true
             }
             _ => false,
         });
         if attached {
+            self.persist();
             Some(child)
         } else {
             kill(&child, true);
@@ -172,15 +204,111 @@ impl Sessions {
         }
     }
 
-    /// `McGameSession.markExited`.
-    pub fn mark_exited(&self, id: &str, message: Option<String>) {
-        self.with(|inner| {
-            if let Some(s) = inner.list.iter_mut().find(|s| s.id == id) {
-                s.preparing = false;
-                s.child = None;
-                s.exit_message = message;
+    /// Uses `path` for `running_games.json` from now on.
+    pub fn set_journal(&self, path: PathBuf) {
+        self.0.lock().unwrap().journal = Some(path);
+    }
+
+    /// Rewrites `running_games.json` with every live process. A failure only costs recovery.
+    fn persist(&self) {
+        let (path, games) = {
+            let inner = self.0.lock().unwrap();
+            let Some(path) = inner.journal.clone() else {
+                return;
+            };
+            (path, inner.list.iter().filter(|s| s.child.is_some()).filter_map(|s| s.record.clone()).collect::<Vec<_>>())
+        };
+        if let Err(error) = recovery::write(&path, &games) {
+            tracing::warn!(error = %format!("{error:#}"), "保存运行中的游戏记录失败");
+        }
+    }
+
+    /// Takes the games in `running_games.json` that still run back into the list, then rewrites
+    /// the file with only those. Each one is watched until it exits. Returns how many came back.
+    pub fn recover(&self) -> usize {
+        self.recover_matching(recovery::matches)
+    }
+
+    fn recover_matching(&self, matches: impl Fn(&recovery::Entry) -> bool) -> usize {
+        let Some(path) = self.0.lock().unwrap().journal.clone() else {
+            return 0;
+        };
+        let entries = recovery::read(&path).unwrap_or_else(|error| {
+            tracing::warn!(error = %format!("{error:#}"), "读取运行中的游戏记录失败，跳过找回游戏");
+            vec![]
+        });
+        let mut recovered = vec![];
+        for entry in entries {
+            if self.contains(&entry.session_id) || !matches(&entry) {
+                continue;
+            }
+            let (pid, started_at) = (entry.pid, entry.started_at);
+            self.with(|inner| {
+                let mut console = std::collections::VecDeque::new();
+                console.push_back("[RDI] 已恢复对此游戏的管理，之前的游戏输出无法显示".to_owned());
+                inner.list.push(Session {
+                    id: entry.session_id.clone(),
+                    title: entry.title.clone(),
+                    version_id: entry.version_id.clone(),
+                    preparing: false,
+                    stop_requested: false,
+                    child: Some(Proc::Recovered { pid, started_at }),
+                    exit_message: None,
+                    console,
+                    cancel: Cancellation::default(),
+                    room: entry.room,
+                    record: Some(entry.clone()),
+                });
+            });
+            tracing::info!(pid, version = %entry.version_id, room = entry.room, "已找回运行中的游戏");
+            recovered.push(entry);
+        }
+        self.persist();
+        for entry in &recovered {
+            self.watch_recovered(entry.session_id.clone(), entry.pid, entry.started_at);
+        }
+        recovered.len()
+    }
+
+    /// The port a recovered, still running room game connects to.
+    pub fn recovered_room_port(&self) -> Option<u16> {
+        let inner = self.0.lock().unwrap();
+        inner
+            .list
+            .iter()
+            .filter(|s| s.room && matches!(s.child, Some(Proc::Recovered { .. })))
+            .find_map(|s| s.record.as_ref().and_then(|r| r.room_port))
+    }
+
+    fn watch_recovered(&self, id: String, pid: u32, started_at: u64) {
+        let sessions = self.clone();
+        let spawned = std::thread::Builder::new().name("mc-recovered-watch".into()).spawn(move || {
+            while sessions.contains(&id) && recovery::identity(pid).is_some_and(|(started, _)| started == started_at) {
+                std::thread::sleep(std::time::Duration::from_secs(1));
+            }
+            // No exit code is known; Kotlin's recovered process reports 0.
+            let line = mc_launch::exit_line(Some(0));
+            sessions.append(&id, line.clone());
+            if !sessions.stop_requested(&id) {
+                sessions.mark_exited(&id, Some(line));
             }
         });
+        if let Err(error) = spawned {
+            tracing::warn!(%error, "启动找回游戏的状态监视失败");
+        }
+    }
+
+    /// `McGameSession.markExited`.
+    pub fn mark_exited(&self, id: &str, message: Option<String>) {
+        let had_process = self.with(|inner| {
+            let s = inner.list.iter_mut().find(|s| s.id == id)?;
+            s.preparing = false;
+            s.exit_message = message;
+            Some(s.child.take().is_some())
+        });
+        if had_process == Some(true) {
+            self.persist();
+        }
         self.check_rooms_idle();
     }
 
@@ -192,8 +320,10 @@ impl Sessions {
             Ok::<_, anyhow::Error>((s.child.clone(), s.cancel.clone()))
         })?;
         cancel.cancel();
-        if let Some(child) = &child {
-            kill(child, force);
+        match &child {
+            Some(Proc::Child(child)) => kill(child, force),
+            Some(Proc::Recovered { pid, started_at }) => recovery::kill(*pid, *started_at, force),
+            None => {}
         }
         self.mark_exited(id, Some(if force { "已强制结束" } else { "已停止" }.into()));
         Ok(())
@@ -475,12 +605,12 @@ async fn run(deps: &Deps, session: &str, request: &LocalStart, account: &Account
     if stopped() {
         return Ok(());
     }
-    spawn_and_watch(sessions, session, &command, &request.version_dir, &request.version_id)
+    spawn_and_watch(sessions, session, &command, &request.version_dir, &request.version_id, None)
 }
 
 /// Starts the command, attaches the process to the session and adds the exit line when it ends
 /// (`readProcessOutput`). A session stopped meanwhile kills the new process instead.
-fn spawn_and_watch(sessions: &Sessions, session: &str, command: &[String], version_dir: &Path, version_id: &str) -> Result<()> {
+fn spawn_and_watch(sessions: &Sessions, session: &str, command: &[String], version_dir: &Path, version_id: &str, room_port: Option<u16>) -> Result<()> {
     let (lines, id) = (sessions.clone(), session.to_owned());
     let started = mc_launch::spawn(command, version_dir, move |line| {
         if !line.is_empty() {
@@ -488,7 +618,7 @@ fn spawn_and_watch(sessions: &Sessions, session: &str, command: &[String], versi
         }
     })?;
     let pid = started.child.id();
-    let Some(child) = sessions.attach(session, started.child) else {
+    let Some(child) = sessions.attach(session, started.child, room_port) else {
         return Ok(());
     };
     tracing::info!(pid, version = %version_id, "游戏已启动");

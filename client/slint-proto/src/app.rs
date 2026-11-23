@@ -258,6 +258,16 @@ impl App {
         let host_list_rows = Rc::new(VecModel::default());
         ui.set_all_hosts(ModelRc::from(host_list_rows.clone()));
         let pack_ui = crate::packs::PackUi::wire(ui, runtime.clone());
+        // J5b B5: games this launcher started before a crash come back into the game list.
+        {
+            let play = pack_ui.borrow().play.clone();
+            play.set_journal(crate::play::recovery::path());
+            let idle = runtime.clone();
+            play.set_rooms_idle(std::sync::Arc::new(move || {
+                idle.spawn(crate::route::link::stop());
+            }));
+            play.recover();
+        }
         // J5 D5: look for Java 25 once, in the background, as the updater does.
         crate::java_runtime::start(&runtime);
         let plaza = crate::plaza::Plaza::wire(ui, runtime.clone(), pack_ui.borrow().tasks());
@@ -1193,8 +1203,10 @@ impl App {
                             self.pack_ui.borrow_mut().connect(Some(data.api.clone()));
                             // J5b B3: the node entry at sign-in; a failure keeps the current route.
                             let (server, endpoint) = (data.api.server().clone(), crate::route::Endpoint::new(&self.config.server));
+                            let play = self.pack_ui.borrow().play.clone();
                             self.runtime.spawn(async move {
                                 let _ = crate::route::refresh(&server, &endpoint).await;
+                                reconnect_recovered_room(&play, &endpoint).await;
                             });
                             if ui.get_host_list_visible() {
                                 self.refresh();
@@ -1488,6 +1500,28 @@ struct RoomPack {
 #[serde(rename_all = "camelCase")]
 struct RoomVersion {
     total_size: Option<u64>,
+}
+/// J5b B5 (`GameRecovery.restore`): a room game recovered after a crash gets its room connection
+/// back on the port it was started with, so the player can reconnect from the game.
+async fn reconnect_recovered_room(play: &crate::play::Sessions, endpoint: &crate::route::Endpoint) {
+    let Some(port) = play.recovered_room_port() else {
+        return;
+    };
+    let nodes = endpoint.proxy_nodes(&crate::route::state());
+    let lines = play.clone();
+    match crate::route::link::start_on(Some(port), nodes, move |line| lines.append_alive(line)).await {
+        Ok(address) if address.ends_with(&format!(":{port}")) => {
+            play.append_alive("[RDI] 房间连接已恢复，可在游戏中重新连接房间");
+        }
+        Ok(address) => {
+            tracing::warn!(%address, port, "房间连接原端口被占用");
+            play.append_alive("[RDI] 房间连接无法使用原来的端口，请结束游戏后重新进入房间");
+        }
+        Err(error) => {
+            tracing::warn!(error = %format!("{error:#}"), "游戏已找回，但房间连接恢复失败");
+            play.append_alive("[RDI] 房间连接恢复失败，请结束游戏后重新进入房间");
+        }
+    }
 }
 /// `None` when the pack is installed; otherwise the running install or the confirmation data.
 async fn room_pack(

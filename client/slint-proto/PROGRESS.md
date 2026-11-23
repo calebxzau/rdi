@@ -448,3 +448,15 @@ and owner acceptance items. Implementation parity remains incomplete; GJ4b not r
 - GJ5b1 accepted by the owner 2026-11-23, committed. Owner direction: drop the Kotlin class path
   mount and thinning later (KFF supplies Kotlin); see `J5B-PLAN.md`.
 
+
+## 2026-11-23 J5b steps 8-10 (stopped at GJ5b2)
+
+- Owner shelved `KFF-KOTLIN-PLAN.md`: Kotlin stays on the class path, thinning stays.
+- Window icon for room games (`play/window.rs` `prepare_icon`, `<version>/icon.png` shared with
+  Compose, AVIF through `images::decode`, undecodable file archived under `<data>/DEL/`).
+- Recovery after a launcher crash (`play/recovery.rs`, `<data>/running_games.json`): room and local
+  games come back into the game list; a recovered room game gets its room connection back on its
+  old port after sign-in. Step 10 removed nothing: `host.start` stays for GTNH/Fabric (J5c).
+- clippy, `cargo test --workspace` (11 new), zigbuild macOS/Linux pass. Live: crash, recovery,
+  rejoin through the recovered connection, stop, window icon in the title bar.
+- See `evidence/jvm-removal/j5b2/gate-summary.md` and `owner-checklist.md`. No commit.

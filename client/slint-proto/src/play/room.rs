@@ -22,9 +22,8 @@ pub struct Brief {
     pub mc_ver: String,
     #[serde(default = "default_loader")]
     pub modloader: String,
-    /// The pack icon; the window icon comes with GJ5b2.
+    /// The pack icon's address, also the game's window icon.
     #[serde(default)]
-    #[allow(dead_code)]
     pub icon: Option<String>,
 }
 fn default_name() -> String {
@@ -319,8 +318,20 @@ async fn run(deps: &RoomDeps, session: &str, p: &Prepared, window: (u32, u32)) -
         tracing::warn!(error = %format!("{error:#}"), version = %p.version_id, "旧版加载界面清理失败");
         sessions.append(session, format!("[RDI] 旧版加载界面清理失败: {error}"));
     }
-    // The icon arrives with GJ5b2; until then the game keeps its default icon.
-    let window_args = vec![super::window::title_jvm_arg(&p.detail.modpack.name, Some(&p.detail.name), &p.version_name)];
+    let mut window_args = vec![super::window::title_jvm_arg(&p.detail.modpack.name, Some(&p.detail.name), &p.version_name)];
+    let http = deps.play.install.downloader.http.clone();
+    let icon = super::window::prepare_icon(&p.version_dir, &crate::paths::data_dir(), p.detail.modpack.icon.as_deref(), |url| async move {
+        crate::images::download(&http, &url).await
+    })
+    .await;
+    match icon {
+        Ok(Some(icon)) => window_args.push(super::window::icon_jvm_arg(&icon)),
+        Ok(None) => {}
+        Err(error) => {
+            tracing::warn!(error = %format!("{error:#}"), version = %p.version_id, "整合包图标准备失败");
+            sessions.append(session, "[RDI] 整合包图标准备失败，将使用游戏默认图标");
+        }
+    }
     if stopped() {
         return Ok(());
     }
@@ -398,7 +409,8 @@ async fn run(deps: &RoomDeps, session: &str, p: &Prepared, window: (u32, u32)) -
     if stopped() {
         return Ok(());
     }
-    super::spawn_and_watch(sessions, session, &command, &p.version_dir, &p.version_id)
+    let room_port = address.rsplit_once(':').and_then(|(_, port)| port.parse().ok());
+    super::spawn_and_watch(sessions, session, &command, &p.version_dir, &p.version_id, room_port)
 }
 
 #[cfg(test)]

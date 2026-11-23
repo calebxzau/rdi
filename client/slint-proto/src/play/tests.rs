@@ -39,14 +39,71 @@ fn stop_kills_a_running_process_and_attach_after_stop_kills_it_too() {
         }
     };
     let id = s.admit("t", "v", false, 0).unwrap();
-    let child = s.attach(&id, sleeper()).unwrap();
+    let child = s.attach(&id, sleeper(), None).unwrap();
     assert!(s.views()[0].running);
     s.stop(&id, true).unwrap();
     assert!(child.lock().unwrap().wait().is_ok());
     assert_eq!(s.alive_count("v"), 0);
     let late = s.admit("t", "v", false, 0).unwrap();
     s.stop(&late, false).unwrap();
-    assert!(s.attach(&late, sleeper()).is_none());
+    assert!(s.attach(&late, sleeper(), None).is_none());
+}
+
+fn sleeper() -> std::process::Child {
+    if cfg!(windows) {
+        std::process::Command::new("cmd").args(["/c", "ping -n 30 127.0.0.1 >NUL"]).spawn().unwrap()
+    } else {
+        std::process::Command::new("sleep").arg("30").spawn().unwrap()
+    }
+}
+
+/// The same process, without the Java image check (the test processes are not Java).
+fn same_process(entry: &recovery::Entry) -> bool {
+    recovery::identity(entry.pid).is_some_and(|(started, _)| started == entry.started_at)
+}
+
+#[test]
+fn running_games_are_recorded_recovered_and_stopped() {
+    let dir = std::env::temp_dir().join(format!("rdi-recovery-{}", uuid::Uuid::now_v7()));
+    let journal = dir.join("running_games.json");
+    let first = Sessions::default();
+    first.set_journal(journal.clone());
+    let room = first.admit_room("游玩 房间", "pack_1", false, 0).unwrap();
+    let child = first.attach(&room, sleeper(), Some(55668)).unwrap();
+    let local = first.admit("单机 - A", "local_a", false, 0).unwrap();
+    first.attach(&local, sleeper(), Some(1)).unwrap();
+    let recorded = recovery::read(&journal).unwrap();
+    assert_eq!(recorded.len(), 2);
+    assert_eq!((recorded[0].room, recorded[0].room_port), (true, Some(55668)));
+    assert_eq!((recorded[1].room, recorded[1].room_port), (false, None), "a local game has no room port");
+
+    // A launcher started after a crash: the old store is gone, the processes still run.
+    let second = Sessions::default();
+    second.set_journal(journal.clone());
+    assert_eq!(second.recover_matching(same_process), 2);
+    assert_eq!(second.recover_matching(same_process), 0, "already in the list");
+    let views = second.views();
+    assert!(views.iter().all(|v| v.running && !v.preparing));
+    assert_eq!(second.alive_count("pack_1"), 1);
+    assert_eq!(second.recovered_room_port(), Some(55668));
+    assert!(second.lines(&room)[0].starts_with("[RDI] 已恢复对此游戏的管理"));
+    assert!(second.admit_room("游玩 房间", "pack_1", false, 0).is_none(), "a recovered game counts as running");
+
+    second.stop(&room, true).unwrap();
+    assert!(child.lock().unwrap().wait().is_ok());
+    assert_eq!(recovery::read(&journal).unwrap().len(), 1);
+    assert_eq!(second.recovered_room_port(), None);
+    second.stop(&local, true).unwrap();
+    assert!(recovery::read(&journal).unwrap().is_empty());
+    first.stop_all(true);
+
+    // Nothing matches any more: the next launcher finds nothing and keeps the file empty.
+    let third = Sessions::default();
+    third.set_journal(journal.clone());
+    recovery::write(&journal, &recorded).unwrap();
+    assert_eq!(third.recover_matching(same_process), 0);
+    assert!(recovery::read(&journal).unwrap().is_empty());
+    std::fs::remove_dir_all(dir).unwrap();
 }
 
 #[test]

@@ -13,7 +13,11 @@ Forgeguard path are ported (the agent comes from the `game-runtime` folder, buil
 
 **GJ5b1 accepted by the owner on 2026-11-23** and committed.
 
-**Owner direction, 2026-11-23 (not started; the next conversation researches the concrete plan):**
+**2026-11-23: steps 8-10 implemented, stopped at GJ5b2** (`evidence/jvm-removal/j5b2/`), uncommitted. Step 10 removed nothing: `host.start` is still needed for GTNH/Fabric rooms until J5c.
+
+**2026-11-23, later: shelved.** The owner decided to keep Kotlin on the class path and the thinning for now (see `KFF-KOTLIN-PLAN.md`); GJ5b2 (steps 8-10) comes next.
+
+**Owner direction, 2026-11-23 (shelved, see above):**
 drop the Kotlin runtime on the game's class path and the Kotlin-mod thinning. The RDI core mod
 keeps Kotlin as a compile-time dependency only and does not declare Kotlin for Forge in
 `mods.toml`; every room must have Kotlin for Forge, which the server already enforces

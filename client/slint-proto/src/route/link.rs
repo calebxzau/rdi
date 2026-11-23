@@ -30,6 +30,12 @@ fn last_attached() -> &'static Mutex<Option<String>> {
 /// Starts the connection, or gives a running one the new node list. Returns the address the
 /// game connects to. Must run inside the launcher's tokio runtime.
 pub async fn start(nodes: Vec<String>, sink: impl Fn(String) + Send + Sync + 'static) -> Result<String> {
+    start_on(None, nodes, sink).await
+}
+
+/// `start` that first tries `port` instead of 55667: a recovered room game reconnects to the port
+/// it was started with.
+pub async fn start_on(port: Option<u16>, nodes: Vec<String>, sink: impl Fn(String) + Send + Sync + 'static) -> Result<String> {
     let sink: Sink = Arc::new(sink);
     let mut running = running().lock().await;
     if let Some(current) = running.as_ref() {
@@ -39,7 +45,10 @@ pub async fn start(nodes: Vec<String>, sink: impl Fn(String) + Send + Sync + 'st
     }
     let shared_sink = Arc::new(Mutex::new(sink));
     let events = shared_sink.clone();
-    let config = LocalProxyConfig { nodes, ..Default::default() };
+    let mut config = LocalProxyConfig { nodes, ..Default::default() };
+    if let Some(port) = port {
+        config.preferred_port = port;
+    }
     let proxy = LocalProxy::start(
         config,
         Arc::new(move |session, event| {
