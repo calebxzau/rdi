@@ -163,6 +163,13 @@ fn valid_ipv4(text: &str) -> bool {
         .is_match(text)
 }
 
+/// U4b2 设置: 临时备用节点 (`gameBackup`) or 临时主用节点 (`forceMain`). Unlike Compose, which
+/// only moves a running game, the choice is kept for later room starts until 自动节点.
+static MANUAL: std::sync::Mutex<(bool, bool)> = std::sync::Mutex::new((false, false));
+pub fn set_manual(game_backup: bool, force_main: bool) {
+    *MANUAL.lock().unwrap() = (game_backup, force_main);
+}
+
 /// `refreshNodeSettings`: the public IPv4, then `server-entry` on the primary address. Updates
 /// the route state and, outside test mode, moves every server request to the address it names.
 pub async fn refresh(server: &ServerApi, endpoint: &Endpoint) -> Result<ServerEntry> {
@@ -172,7 +179,15 @@ pub async fn refresh(server: &ServerApi, endpoint: &Endpoint) -> Result<ServerEn
         let ip = ip.trim().to_owned();
         ensure!(valid_ipv4(&ip), "无效IPv4: {ip}");
         let lookup = server.at(&endpoint.primary);
-        let entry: ServerEntry = lookup.get_query("/server-entry", &[("myIp", ip)]).await.context("获取游戏节点失败")?;
+        let (game_backup, force_main) = *MANUAL.lock().unwrap();
+        let mut query = vec![("myIp", ip)];
+        if game_backup {
+            query.push(("gameBackup", "true".into()));
+        }
+        if force_main {
+            query.push(("forceMain", "true".into()));
+        }
+        let entry: ServerEntry = lookup.get_query("/server-entry", &query).await.context("获取游戏节点失败")?;
         Ok(entry)
     }
     .await;

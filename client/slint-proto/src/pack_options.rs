@@ -154,6 +154,14 @@ fn upsert(connection: &Connection, r: &Record) -> Result<()> {
     Ok(())
 }
 
+/// Blocking: forgets a removed pack's options, as Kotlin `ModpackLaunchOptionsService.delete`.
+/// A missing database has nothing to forget.
+pub fn forget(db: &Path, version_id: &str) -> Result<()> {
+    if !db.exists() {
+        return Ok(());
+    }
+    delete(&open(db)?, version_id)
+}
 fn delete(connection: &Connection, version_id: &str) -> Result<()> {
     connection.execute("DELETE FROM modpack_launch_options WHERE version_id = ?1", [version_id])?;
     Ok(())
@@ -359,7 +367,7 @@ fn normalize(path: &Path) -> PathBuf {
 }
 
 /// Kotlin `OperatingSystemMXBean.totalPhysicalMemorySize` in MiB; 0, as in Kotlin, when unknown.
-fn total_memory_mb() -> i32 {
+pub(crate) fn total_memory_mb() -> i32 {
     match sysinfo::System::new() {
         Ok(mut system) => {
             system.refresh_memory();

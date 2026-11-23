@@ -23,6 +23,10 @@ pub enum Screen {
     RoomMods,
     /// U4b1: 个人信息.
     PlayerInfo,
+    /// U4b2: 信箱.
+    Mail,
+    /// U4b2: 设置.
+    Settings,
 }
 #[derive(Default, Debug)]
 pub struct Navigation {

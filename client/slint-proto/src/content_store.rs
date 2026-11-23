@@ -50,6 +50,30 @@ fn locks(digests: &[Digest], target: Option<&Path>) -> Vec<Arc<tokio::sync::Mute
         })
         .collect()
 }
+/// U4b2: the lock downloads hold on a digest, so 清除下载缓存 never removes an entry in use.
+pub fn digest_lock(digest: &Digest) -> Arc<tokio::sync::Mutex<()>> {
+    locks(std::slice::from_ref(digest), None).remove(0)
+}
+/// U4b2 导入rdipack2: blocking. Puts an already verified file into the cache under each digest
+/// it lacks, linked when possible, as `materialize` would after a download. Each entry is
+/// written under its digest lock and renamed into place, so readers never see a partial file.
+pub fn adopt(root: &Path, file: &Path, digests: &[Digest]) -> Result<()> {
+    no_symlink(root)?;
+    std::fs::create_dir_all(root.join(".tmp"))?;
+    for digest in digests {
+        let lock = digest_lock(digest);
+        let _guard = lock.blocking_lock();
+        let path = root.join(format!("{}.{}", digest.value, digest.algorithm.suffix()));
+        no_symlink(&path)?;
+        if path.try_exists()? {
+            continue;
+        }
+        let temp = Temp(root.join(".tmp").join(format!("adopt-{}", uuid::Uuid::now_v7())));
+        link_or_copy(file, &temp.0)?;
+        std::fs::rename(&temp.0, &path)?;
+    }
+    Ok(())
+}
 pub fn no_symlink(path: &Path) -> Result<()> {
     let mut current = PathBuf::new();
     for part in std::path::absolute(path)?.components() {

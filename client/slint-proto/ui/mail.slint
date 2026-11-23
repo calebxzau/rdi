@@ -1,0 +1,131 @@
+// U4 batch b2: 信箱 (Compose MailScreen, MailDetailScreen). Rust drives it through the
+// `Inbox` global (src/mail_ui.rs).
+import { ListView } from "std-widgets.slint";
+import { CircleIconButton, GlassButton } from "components/glass_button.slint";
+import { EmptyState, ErrorState, LoadingState } from "components/shared.slint";
+import { Theme } from "theme.slint";
+
+export struct MailRow { id: string, title: string, intro: string, sender: string, time: string, unread: bool, selected: bool }
+
+export global Inbox {
+    // 1 while 信箱 is shown; set by the shell from navigation.
+    in-out property <int> screen;
+    in-out property <bool> loading;
+    // A failed load (with 重试) and a failed delete (a line above the list).
+    in-out property <string> error;
+    in-out property <string> notice;
+    in-out property <[MailRow]> rows;
+    in-out property <int> selected-count;
+    in-out property <bool> deleting;
+    in-out property <bool> confirm-open;
+    in-out property <bool> detail-open;
+    in-out property <bool> detail-loading;
+    in-out property <string> detail-error;
+    in-out property <string> detail-title;
+    in-out property <string> detail-sender;
+    in-out property <string> detail-time;
+    in-out property <string> detail-content;
+    out property <bool> modal: root.confirm-open || root.detail-open;
+    callback action(string, string);
+}
+
+component MailItem inherits Rectangle {
+    in property <MailRow> mail;
+    height: 52px; border-radius: 12px;
+    background: touch.has-hover ? #ffffffe6 : root.mail.selected ? #dce8d4e6 : #ffffffb8;
+    touch := TouchArea { mouse-cursor: pointer; clicked => { Inbox.action("open", root.mail.id); } }
+    CircleIconButton { x: 8px; y: (parent.height - self.height) / 2; height: 32px; glyph: root.mail.selected ? "\u{f00c}" : "";
+        checked: root.mail.selected; accessible-label: "选择邮件"; clicked => { Inbox.action("toggle", root.mail.id); } }
+    if root.mail.unread: Rectangle { x: 46px; y: (parent.height - 8px) / 2; width: 8px; height: 8px; border-radius: 4px; background: #ba3434; }
+    HorizontalLayout { x: 60px; y: 0px; width: parent.width - 72px; height: parent.height; spacing: 8px;
+        Text { text: root.mail.title; max-width: 220px; font-size: 16px; font-weight: 600; color: Theme.ink; overflow: elide; vertical-alignment: center; }
+        Text { text: root.mail.intro; horizontal-stretch: 1; min-width: 40px; font-size: 14px; color: #5b625b; overflow: elide; vertical-alignment: center; }
+        Text { text: root.mail.sender; font-size: 12px; color: #5b625b; vertical-alignment: center; }
+        Text { text: root.mail.time; font-size: 12px; color: #5b625b; vertical-alignment: center; }
+    }
+}
+
+// 信箱 (MailListScreen).
+export component MailPage inherits Rectangle {
+    in property <bool> enabled: true;
+    private property <bool> all: Inbox.rows.length > 0 && Inbox.selected-count == Inbox.rows.length;
+    background: #f8f7eff7;
+    border-radius: 24px;
+    FocusScope { x: 0px; y: 0px; width: root.width; height: root.height; enabled: root.enabled;
+        HorizontalLayout { x: 20px; y: 14px; width: parent.width - 40px; height: 48px; spacing: 10px;
+            VerticalLayout { alignment: center;
+                CircleIconButton { glyph: "\u{f060}"; accessible-label: "返回"; clicked => { Inbox.action("back-nav", ""); } }
+            }
+            Text { text: "信箱"; color: Theme.ink; font-size: 22px; font-weight: 600; vertical-alignment: center; horizontal-stretch: 1; }
+            if Inbox.notice != "": Text { text: Inbox.notice; color: #ba3434; vertical-alignment: center; overflow: elide; max-width: 320px; }
+            VerticalLayout { alignment: center;
+                GlassButton { label: "全选"; glyph: root.all ? "\u{f14a}" : "\u{f0c8}"; enabled: Inbox.rows.length > 0;
+                    clicked => { Inbox.action("select-all", root.all ? "0" : "1"); } }
+            }
+            VerticalLayout { alignment: center;
+                GlassButton { label: Inbox.deleting ? "删除中..." : "删除所选邮件"; glyph: "\u{ea81}"; destructive: true;
+                    enabled: !Inbox.deleting; clicked => { Inbox.action("delete-selected", ""); } }
+            }
+        }
+        if Inbox.loading && Inbox.rows.length == 0: LoadingState { x: 20px; y: 72px; width: parent.width - 40px; height: parent.height - 88px; }
+        if Inbox.error != "": ErrorState { x: 20px; y: 72px; width: parent.width - 40px; height: parent.height - 88px;
+            message: Inbox.error; retry => { Inbox.action("reload", ""); } }
+        if !Inbox.loading && Inbox.error == "" && Inbox.rows.length == 0: EmptyState { x: 20px; y: 72px; width: parent.width - 40px; height: parent.height - 88px; label: "什么都没有~"; }
+        if Inbox.error == "" && Inbox.rows.length > 0: ListView { x: 20px; y: 72px; width: parent.width - 40px; height: parent.height - 88px;
+            for mail in Inbox.rows: Rectangle { height: 54px;
+                MailItem { x: 0px; y: 0px; width: parent.width - 12px; mail: mail; }
+            }
+        }
+    }
+}
+
+component DialogCard inherits Rectangle {
+    background: #f7faf0; border-radius: 24px;
+    drop-shadow-blur: 12px; drop-shadow-offset-y: 3px; drop-shadow-color: #00000030;
+    TouchArea {}
+}
+
+// The delete confirmation and the mail itself (MailDetailOverlay); the shell dims behind them.
+export component MailDialogs inherits Rectangle {
+    if Inbox.detail-open: Rectangle { x: 0px; y: 0px; width: root.width; height: root.height;
+        TouchArea { clicked => { Inbox.action("detail-close", ""); } }
+        DialogCard { width: root.width * 0.8; height: root.height * 0.8; x: (root.width - self.width) / 2; y: (root.height - self.height) / 2;
+            HorizontalLayout { x: 20px; y: 16px; width: parent.width - 40px; height: 44px; spacing: 10px;
+                VerticalLayout { alignment: center;
+                    CircleIconButton { glyph: "\u{f060}"; accessible-label: "返回"; clicked => { Inbox.action("detail-close", ""); } }
+                }
+                Text { text: Inbox.detail-title == "" ? "邮件详情" : Inbox.detail-title; color: Theme.ink; font-size: 20px; font-weight: 600;
+                    vertical-alignment: center; overflow: elide; horizontal-stretch: 1; }
+                VerticalLayout { alignment: center;
+                    GlassButton { label: "删除邮件"; glyph: "\u{ea81}"; destructive: true; enabled: !Inbox.deleting && !Inbox.detail-loading;
+                        clicked => { Inbox.action("delete-one", ""); } }
+                }
+            }
+            if Inbox.detail-loading: LoadingState { x: 20px; y: 72px; width: parent.width - 40px; height: parent.height - 92px; }
+            if !Inbox.detail-loading && Inbox.detail-error != "": ErrorState { x: 20px; y: 72px; width: parent.width - 40px; height: parent.height - 92px;
+                message: Inbox.detail-error; retry => { Inbox.action("detail-reload", ""); } }
+            if !Inbox.detail-loading && Inbox.detail-error == "": VerticalLayout { x: 24px; y: 68px; width: parent.width - 48px; height: parent.height - 88px; spacing: 4px;
+                Text { text: "发件人: " + Inbox.detail-sender; color: Theme.ink; }
+                Text { text: "时间: " + Inbox.detail-time; color: Theme.ink; }
+                Rectangle { height: 8px; }
+                Rectangle { vertical-stretch: 1; background: #ffffff90; border-radius: 12px; clip: true;
+                    Flickable { x: 12px; y: 8px; width: parent.width - 24px; height: parent.height - 16px;
+                        content-height: max(self.height, body.preferred-height);
+                        body := Text { width: parent.width; text: Inbox.detail-content; color: Theme.ink; wrap: word-wrap; }
+                    }
+                }
+            }
+        }
+    }
+    if Inbox.confirm-open: DialogCard { width: min(420px, root.width - 48px); height: confirm-body.preferred-height;
+        x: (root.width - self.width) / 2; y: (root.height - self.height) / 2;
+        confirm-body := VerticalLayout { padding: 24px; spacing: 12px;
+            Text { text: "确认删除"; font-size: 22px; font-weight: 600; color: Theme.ink; }
+            Text { text: "要删除所选的邮件吗？"; color: Theme.ink; wrap: word-wrap; }
+            HorizontalLayout { alignment: end; spacing: 12px;
+                GlassButton { label: "取消"; clicked => { Inbox.action("delete-cancel", ""); } }
+                GlassButton { label: "删除"; destructive: true; filled: true; clicked => { Inbox.action("delete-confirm", ""); } }
+            }
+        }
+    }
+}

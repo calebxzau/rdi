@@ -263,6 +263,11 @@ impl Manager {
             .map(Entry::snapshot)
             .collect()
     }
+    /// A context for a task body run directly by a test; its progress goes nowhere.
+    #[cfg(test)]
+    pub fn test_context(&self) -> Context {
+        Context { manager: self.clone(), id: String::new(), cancel: Cancellation::default() }
+    }
     pub fn running(&self) -> bool {
         self.0.lock().unwrap().iter().any(|e| e.status < 2)
     }

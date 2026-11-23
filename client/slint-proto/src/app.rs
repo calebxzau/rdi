@@ -218,6 +218,9 @@ pub struct App {
     rooms: Rc<RefCell<crate::rooms_ui::RoomsUi>>,
     room_pages: Rc<RefCell<crate::room_pages_ui::RoomPagesUi>>,
     account_ui: Rc<RefCell<crate::account_ui::AccountUi>>,
+    mail_ui: Rc<RefCell<crate::mail_ui::MailUi>>,
+    settings_ui: Rc<RefCell<crate::settings_ui::SettingsUi>>,
+    rdipack2_ui: Rc<RefCell<crate::rdipack2_ui::Rdipack2Ui>>,
     heads: HeadCache,
     cache: lru::LruCache<String, CachedArt>,
     jobs: HashMap<String, JoinHandle<()>>,
@@ -277,6 +280,9 @@ impl App {
         let rooms = crate::rooms_ui::RoomsUi::wire(ui, runtime.clone());
         let room_pages = crate::room_pages_ui::RoomPagesUi::wire(ui, runtime.clone(), pack_ui.borrow().tasks());
         let account_ui = crate::account_ui::AccountUi::wire(ui, runtime.clone(), config.server.clone());
+        let mail_ui = crate::mail_ui::MailUi::wire(ui, runtime.clone());
+        let rdipack2_ui = crate::rdipack2_ui::Rdipack2Ui::wire(ui, runtime.clone(), pack_ui.borrow().tasks(), pack_ui.borrow().play.clone());
+        let settings_ui = crate::settings_ui::SettingsUi::wire(ui, runtime.clone(), pack_ui.borrow().tasks(), pack_ui.borrow().play.clone(), config.server.clone());
         let app = Rc::new(RefCell::new(Self {
             ui: ui.as_weak(),
             runtime,
@@ -292,6 +298,9 @@ impl App {
             rooms,
             room_pages,
             account_ui,
+            mail_ui,
+            settings_ui,
+            rdipack2_ui,
             login_ui,
             running_processes: vec![],
             service_running: false,
@@ -563,6 +572,9 @@ impl App {
         self.rooms.borrow_mut().connect(None);
         self.room_pages.borrow_mut().connect(None);
         self.account_ui.borrow_mut().connect(None);
+        self.mail_ui.borrow_mut().connect(None);
+        self.settings_ui.borrow_mut().connect(None);
+        self.rdipack2_ui.borrow_mut().connect(None);
         self.login_ui.borrow_mut().start();
     }
     /// Stopping the service force-stops the game and tasks, so logging out waits for them.
@@ -602,6 +614,9 @@ impl App {
         self.rooms.borrow_mut().connect(None);
         self.room_pages.borrow_mut().connect(None);
         self.account_ui.borrow_mut().connect(None);
+        self.mail_ui.borrow_mut().connect(None);
+        self.settings_ui.borrow_mut().connect(None);
+        self.rdipack2_ui.borrow_mut().connect(None);
         ui.set_player_name("未登录".into());
         ui.set_player_head(self.fallback.clone());
         self.login_ui.borrow_mut().sign_out(session);
@@ -633,6 +648,9 @@ impl App {
         self.rooms.borrow_mut().connect(Some(api.clone()));
         self.room_pages.borrow_mut().connect(Some(api.clone()));
         self.account_ui.borrow_mut().connect(Some(api.clone()));
+        self.mail_ui.borrow_mut().connect(Some(api.clone()));
+        self.settings_ui.borrow_mut().connect(Some(api.clone()));
+        self.rdipack2_ui.borrow_mut().connect(Some(api.clone()));
         self.player_appearance = if self.player_enabled() && !self.crowd_enabled() {
             match Appearance::steve() {
                 Ok(appearance) => Some(appearance),
@@ -1105,6 +1123,9 @@ impl App {
         self.rooms.borrow_mut().tick();
         self.room_pages.borrow_mut().tick();
         self.account_ui.borrow_mut().tick();
+        self.mail_ui.borrow_mut().tick();
+        self.settings_ui.borrow_mut().tick();
+        self.rdipack2_ui.borrow_mut().tick();
         if self.rooms.borrow_mut().take_hosts_changed()
             && let Some(api) = self.api.clone()
         {

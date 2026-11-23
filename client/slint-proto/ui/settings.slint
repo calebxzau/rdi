@@ -1,0 +1,210 @@
+// U4 batch b2: 设置 (Compose SettingScreen). Rust drives it through the `Settings` global
+// (src/settings_ui.rs).
+import { TextField, PasswordField } from "components/fields.slint";
+import { CircleIconButton, GlassButton } from "components/glass_button.slint";
+import { LoadingState } from "components/shared.slint";
+import { Theme } from "theme.slint";
+
+export global Settings {
+    // 1 while 设置 is shown; set by the shell from navigation.
+    in-out property <int> screen;
+    // 0 常用, 1 Java, 2 网络.
+    in-out property <int> category;
+    in-out property <bool> loading;
+    in-out property <bool> saving;
+    in-out property <string> error;
+    in-out property <bool> prefer-mod-mirror;
+    in-out property <bool> prefer-mc-mirror;
+    in-out property <bool> solid-window;
+    in-out property <string> max-memory;
+    in-out property <int> total-memory;
+    // 0 无代理, 1 系统代理, 2 自定义代理.
+    in-out property <int> proxy-mode;
+    in-out property <string> proxy-host;
+    in-out property <string> proxy-port;
+    in-out property <string> proxy-usr;
+    in-out property <string> proxy-pwd;
+    in-out property <string> quota-text;
+    in-out property <bool> quota-failed;
+    in-out property <bool> quota-loading;
+    in-out property <string> route-line;
+    in-out property <bool> switching;
+    in-out property <bool> invalid-busy;
+    in-out property <int> invalid-count;
+    in-out property <bool> cache-confirm;
+    // The result of 清除无效整合包, shown as a dialog as Compose's AlertOk and AlertErr.
+    in-out property <string> invalid-message;
+    in-out property <bool> invalid-failed;
+    out property <bool> modal: root.cache-confirm || root.invalid-count > 0 || root.invalid-message != "";
+    callback action(string, string);
+}
+
+// A two-state switch (Compose RSwitch).
+component Switch inherits Rectangle {
+    in-out property <bool> checked;
+    in property <string> label;
+    in property <bool> enabled: true;
+    callback toggled();
+    width: 44px; height: 24px; border-radius: 12px;
+    background: !root.enabled ? #c4c8bc : root.checked ? #446c49 : #b9beb4;
+    accessible-role: checkbox;
+    accessible-checked: root.checked;
+    accessible-label: root.label;
+    Rectangle { x: root.checked ? parent.width - self.width - 3px : 3px; y: 3px; width: 18px; height: 18px; border-radius: 9px; background: white;
+        animate x { duration: 120ms; } }
+    TouchArea { enabled: root.enabled; mouse-cursor: pointer; clicked => { root.checked = !root.checked; root.toggled(); } }
+}
+
+component Row inherits HorizontalLayout {
+    spacing: 12px; alignment: start; height: 44px;
+}
+component Label inherits Text {
+    color: Theme.ink; font-size: 14px; vertical-alignment: center;
+}
+
+component NavItem inherits Rectangle {
+    in property <string> glyph;
+    in property <string> label;
+    in property <bool> selected;
+    callback clicked();
+    height: 64px; border-radius: 16px;
+    background: root.selected ? #dce8d4 : touch.has-hover ? #ffffff80 : transparent;
+    accessible-role: tab;
+    accessible-label: root.label;
+    VerticalLayout { alignment: center; spacing: 2px;
+        Text { text: root.glyph; font-family: Theme.symbols; font-size: 24px; color: Theme.ink; horizontal-alignment: center; }
+        Text { text: root.label; font-size: 12px; color: Theme.ink; horizontal-alignment: center; }
+    }
+    touch := TouchArea { mouse-cursor: pointer; clicked => { root.clicked(); } }
+}
+
+export component SettingsPage inherits Rectangle {
+    in property <bool> enabled: true;
+    background: #f8f7eff7;
+    border-radius: 24px;
+    FocusScope { x: 0px; y: 0px; width: root.width; height: root.height; enabled: root.enabled;
+        HorizontalLayout { x: 20px; y: 14px; width: parent.width - 40px; height: 48px; spacing: 10px;
+            VerticalLayout { alignment: center;
+                CircleIconButton { glyph: "\u{f060}"; accessible-label: "返回"; clicked => { Settings.action("back-nav", ""); } }
+            }
+            Text { text: "设置"; color: Theme.ink; font-size: 22px; font-weight: 600; vertical-alignment: center; horizontal-stretch: 1; }
+            VerticalLayout { alignment: center;
+                GlassButton { label: Settings.saving ? "保存中..." : "保存"; glyph: "\u{f0c7}"; filled: true; busy: Settings.saving;
+                    enabled: !Settings.loading && !Settings.saving; clicked => { Settings.action("save", ""); } }
+            }
+        }
+        if Settings.loading: LoadingState { x: 20px; y: 72px; width: parent.width - 40px; height: parent.height - 88px; }
+        if !Settings.loading: HorizontalLayout { x: 16px; y: 72px; width: parent.width - 32px; height: parent.height - 88px; spacing: 16px;
+            VerticalLayout { width: 96px; spacing: 8px; alignment: start;
+                NavItem { glyph: "\u{f013}"; label: "常用"; selected: Settings.category == 0; clicked => { Settings.category = 0; } }
+                NavItem { glyph: "\u{edaf}"; label: "Java"; selected: Settings.category == 1; clicked => { Settings.category = 1; } }
+                NavItem { glyph: "\u{ef09}"; label: "网络"; selected: Settings.category == 2; clicked => { Settings.category = 2; } }
+            }
+            Flickable { horizontal-stretch: 1;
+                content-height: max(self.height, body.preferred-height);
+                body := VerticalLayout { width: parent.width; spacing: 8px; alignment: start; padding-right: 12px;
+                    // 常用
+                    if Settings.category == 0: Row {
+                        VerticalLayout { alignment: center; Switch { checked <=> Settings.solid-window; label: "实心窗口"; } }
+                        Label { text: "使用实心窗口解决窗口不显示的问题（重启启动器后生效）"; wrap: word-wrap; }
+                    }
+                    if Settings.category == 0: Row {
+                        VerticalLayout { alignment: center;
+                            GlassButton { label: "清除下载缓存"; glyph: "\u{f1f8}"; clicked => { Settings.cache-confirm = true; } } }
+                    }
+                    if Settings.category == 0: Row {
+                        VerticalLayout { alignment: center;
+                            GlassButton { label: "清除无效整合包"; glyph: "\u{f1f8}"; busy: Settings.invalid-busy; enabled: !Settings.invalid-busy;
+                                clicked => { Settings.action("invalid-check", ""); } } }
+                    }
+                    // Java
+                    if Settings.category == 1: Row {
+                        Label { text: "总内存 " + Settings.total-memory + "MB"; }
+                        TextField { width: 140px; label: "限制MC内存"; reserve-error: false; text <=> Settings.max-memory; edited => { Settings.error = ""; } }
+                        Label { text: "MB"; }
+                    }
+                    if Settings.category == 1: Text { text: "留空或填0表示不限制，必须大于4096MB且小于总内存"; color: #5b625b; font-size: 12px; wrap: word-wrap; }
+                    // 网络
+                    if Settings.category == 2: Row {
+                        Label { text: "使用BMCL-API国内镜像"; }
+                        VerticalLayout { alignment: center; Switch { checked <=> Settings.prefer-mc-mirror; label: "镜像下载MC资源"; } }
+                        Label { text: "下载MC资源"; }
+                        VerticalLayout { alignment: center; Switch { checked <=> Settings.prefer-mod-mirror; label: "镜像下载Mod"; } }
+                        Label { text: "下载Mod"; }
+                    }
+                    if Settings.category == 2: Row {
+                        Label { text: "RDI CDN下载额度"; }
+                        Label { text: Settings.quota-text; color: Settings.quota-failed ? #ba3434 : Theme.ink; }
+                        VerticalLayout { alignment: center;
+                            CircleIconButton { glyph: "\u{f021}"; accessible-label: Settings.quota-loading ? "刷新中" : "刷新下载额度"; enabled: !Settings.quota-loading;
+                                clicked => { Settings.action("quota-refresh", ""); } Tooltip { text: @markdown("刷新下载额度"); } } }
+                    }
+                    if Settings.category == 2: Row {
+                        Label { text: Settings.route-line; }
+                        VerticalLayout { alignment: center;
+                            GlassButton { label: "自动节点"; glyph: "\u{f0002}"; enabled: !Settings.switching; clicked => { Settings.action("node", "auto"); } } }
+                        VerticalLayout { alignment: center;
+                            GlassButton { label: "临时备用节点"; glyph: "\u{f0002}"; enabled: !Settings.switching; clicked => { Settings.action("node", "backup"); } } }
+                        VerticalLayout { alignment: center;
+                            GlassButton { label: "临时主用节点"; glyph: "\u{f0002}"; enabled: !Settings.switching; clicked => { Settings.action("node", "main"); } } }
+                    }
+                    if Settings.category == 2: Row {
+                        Label { text: "代理"; }
+                        for label[i] in ["无代理", "系统代理", "自定义代理"]: VerticalLayout { alignment: center;
+                            GlassButton { label: label; checked: Settings.proxy-mode == i; clicked => { Settings.proxy-mode = i; } } }
+                    }
+                    if Settings.category == 2 && Settings.proxy-mode == 2: HorizontalLayout { spacing: 12px; alignment: start;
+                        TextField { width: 200px; label: "主机"; reserve-error: false; text <=> Settings.proxy-host; edited => { Settings.error = ""; } }
+                        TextField { width: 100px; label: "端口"; reserve-error: false; text <=> Settings.proxy-port; edited => { Settings.error = ""; } }
+                        TextField { width: 160px; label: "用户名（可选）"; reserve-error: false; text <=> Settings.proxy-usr; }
+                        PasswordField { width: 160px; label: "密码（可选）"; reserve-error: false; text <=> Settings.proxy-pwd; }
+                    }
+                    if Settings.category == 2: Text { text: "代理设置在重新登录后生效"; color: #5b625b; font-size: 12px; }
+                    if Settings.error != "": Text { text: Settings.error; color: #ba3434; wrap: word-wrap; }
+                }
+            }
+        }
+    }
+}
+
+component DialogCard inherits Rectangle {
+    background: #f7faf0; border-radius: 24px;
+    drop-shadow-blur: 12px; drop-shadow-offset-y: 3px; drop-shadow-color: #00000030;
+    TouchArea {}
+}
+
+// ConfirmDialog, AlertOk and AlertErr of the settings page; the shell dims behind them.
+export component SettingsDialogs inherits Rectangle {
+    if Settings.cache-confirm: DialogCard { width: min(460px, root.width - 48px); height: cache-body.preferred-height;
+        x: (root.width - self.width) / 2; y: (root.height - self.height) / 2;
+        cache-body := VerticalLayout { padding: 24px; spacing: 12px;
+            Text { text: "清除下载缓存？"; font-size: 22px; font-weight: 600; color: Theme.ink; }
+            Text { text: "只有硬盘空间不足时才应该清除缓存。\n否则会严重拖慢后续下载速度，可能降至几十KB/s。确定要继续吗？"; color: Theme.ink; wrap: word-wrap; }
+            HorizontalLayout { alignment: end; spacing: 12px;
+                GlassButton { label: "取消"; clicked => { Settings.cache-confirm = false; } }
+                GlassButton { label: "确定"; destructive: true; filled: true; clicked => { Settings.action("cache-clear", ""); } }
+            }
+        }
+    }
+    if Settings.invalid-count > 0: DialogCard { width: min(420px, root.width - 48px); height: invalid-body.preferred-height;
+        x: (root.width - self.width) / 2; y: (root.height - self.height) / 2;
+        invalid-body := VerticalLayout { padding: 24px; spacing: 12px;
+            Text { text: "清除无效整合包？"; font-size: 22px; font-weight: 600; color: Theme.ink; }
+            Text { text: "有" + Settings.invalid-count + "个无效整合包，立刻清理吗？"; color: Theme.ink; wrap: word-wrap; }
+            HorizontalLayout { alignment: end; spacing: 12px;
+                GlassButton { label: "取消"; clicked => { Settings.action("invalid-cancel", ""); } }
+                GlassButton { label: "确定"; destructive: true; filled: true; clicked => { Settings.action("invalid-clean", ""); } }
+            }
+        }
+    }
+    if Settings.invalid-message != "": DialogCard { width: min(460px, root.width - 48px); height: message-body.preferred-height;
+        x: (root.width - self.width) / 2; y: (root.height - self.height) / 2;
+        message-body := VerticalLayout { padding: 24px; spacing: 12px;
+            Text { text: Settings.invalid-failed ? "错误" : "完成"; font-size: 22px; font-weight: 600; color: Theme.ink; }
+            Text { text: Settings.invalid-message; color: Settings.invalid-failed ? #ba3434 : Theme.ink; wrap: word-wrap; }
+            HorizontalLayout { alignment: end;
+                GlassButton { label: "明白"; filled: true; clicked => { Settings.invalid-message = ""; } }
+            }
+        }
+    }
+}

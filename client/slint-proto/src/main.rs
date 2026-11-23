@@ -4,6 +4,12 @@ mod app;
 mod login;
 mod account;
 mod account_ui;
+mod mail;
+mod mail_ui;
+mod settings;
+mod settings_ui;
+mod rdipack2;
+mod rdipack2_ui;
 mod paths;
 mod credentials;
 mod msa_sessions;
@@ -90,7 +96,8 @@ fn main() -> anyhow::Result<()> {
                 scale_factor: scale,
             });
     }
-    if config.solid {
+    // 实心窗口 from 设置 applies from the next start, as in Compose.
+    if config.solid || settings::solid_window(&settings::config_path()) {
         ui.window().with_winit_window(|w| w.set_transparent(false));
     }
     let runtime = tokio::runtime::Builder::new_multi_thread()

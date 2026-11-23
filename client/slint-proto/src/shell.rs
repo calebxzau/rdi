@@ -67,6 +67,8 @@ impl Shell {
                         else if ui.global::<crate::Rooms>().get_modal() { ui.global::<crate::Rooms>().invoke_action("dismiss".into(), "".into()); }
                         else if ui.global::<crate::RoomPages>().get_modal() { ui.global::<crate::RoomPages>().invoke_action("dismiss".into(), "".into()); }
                         else if ui.global::<crate::Account>().get_modal() { ui.global::<crate::Account>().invoke_action("dismiss".into(), "".into()); }
+                        else if ui.global::<crate::Inbox>().get_modal() { ui.global::<crate::Inbox>().invoke_action("dismiss".into(), "".into()); }
+                        else if ui.global::<crate::Settings>().get_modal() { ui.global::<crate::Settings>().invoke_action("dismiss".into(), "".into()); }
                         else { ui.set_pack_menu(false); ui.set_discard_options(false); ui.set_duplicate_host("".into()); ui.set_java_missing(false); ui.set_confirm_exit(false); ui.set_gallery_dialog(false); }
                     }
                     return;
@@ -107,6 +109,14 @@ impl Shell {
                     "player-info" => {
                         s.navigation.push(Screen::PlayerInfo);
                         ui.global::<crate::Account>().invoke_action("info-open".into(), "".into());
+                    }
+                    "mail" => {
+                        s.navigation.push(Screen::Mail);
+                        ui.global::<crate::Inbox>().invoke_action("open-page".into(), "".into());
+                    }
+                    "settings" => {
+                        s.navigation.push(Screen::Settings);
+                        ui.global::<crate::Settings>().invoke_action("open-page".into(), "".into());
                     }
                     "gallery" if ui.get_gallery_enabled() => s.navigation.push(Screen::Gallery),
                     "wardrobe" => {
@@ -161,6 +171,8 @@ impl Shell {
             _ => 0,
         });
         ui.global::<crate::Account>().set_screen((self.navigation.current() == Screen::PlayerInfo) as i32);
+        ui.global::<crate::Inbox>().set_screen((self.navigation.current() == Screen::Mail) as i32);
+        ui.global::<crate::Settings>().set_screen((self.navigation.current() == Screen::Settings) as i32);
         ui.set_can_back(self.navigation.can_back());
     }
     pub fn scene_frozen(&self, ui: &AppWindow) -> bool {
@@ -253,6 +265,8 @@ pub fn frame(
         && ui.global::<crate::Rooms>().get_screen() == 0
         && ui.global::<crate::RoomPages>().get_screen() == 0
         && ui.global::<crate::Account>().get_screen() == 0
+        && ui.global::<crate::Inbox>().get_screen() == 0
+        && ui.global::<crate::Settings>().get_screen() == 0
     {
         if !ui.get_loading() && ui.get_error().is_empty() {
             let row_pitch = ui.get_menu_grid_row_pitch();

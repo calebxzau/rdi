@@ -53,6 +53,8 @@ tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 
 # U4b1: QQ mail operation codes, the same AES-256-GCM as Kotlin CryptoManager.
 aes-gcm = "=0.10.3"
+# U4b2: 清除无效整合包 moves folders to the system recycle bin, as Compose moveToOsTrash.
+trash = "=5.4.0"
 
 toml = "=0.9.12"
 sysinfo = "=0.40.1"

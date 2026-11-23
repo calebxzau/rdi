@@ -242,7 +242,7 @@ impl mods::SourceHeaders for Headers<'_> {
 }
 
 /// Percent-encodes one URL path segment, as Ktor `encodeURLPathPart` does for file names.
-fn encode_segment(value: &str) -> String {
+pub(crate) fn encode_segment(value: &str) -> String {
     let mut out = String::new();
     for b in value.bytes() {
         if b.is_ascii_alphanumeric() || b"-._~!$&'()*+,;=:@".contains(&b) {
