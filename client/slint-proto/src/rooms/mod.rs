@@ -1,10 +1,15 @@
 //! Rooms (U4 batch c1): create, details and members. No Slint types here, so the launcher MCP
 //! can call this without any UI (`J5-PLAN.md` section 5). The wiring lives in `rooms_ui.rs`.
+pub mod backend;
 pub mod form;
 pub mod game_rules;
+pub mod github;
 pub mod model;
+pub mod mods;
 pub mod permissions;
 pub mod requests;
+pub mod rollback;
+pub mod world;
 
 #[cfg(test)]
 mod tests {

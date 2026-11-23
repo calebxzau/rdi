@@ -8,6 +8,7 @@ import { EmptyState, ErrorState, LoadingState } from "components/shared.slint";
 import { NameInitial, NameInitialIcon } from "components/name_initial_icon.slint";
 import { PlayerHead } from "components/player_head.slint";
 import { Theme } from "theme.slint";
+import { RoomPages } from "room_pages.slint";
 
 export struct RoomInfo {
     name: string, pack-name: string, pack-meta: string, pack-initial: NameInitial, pack-icon: image, has-pack-icon: bool,
@@ -196,7 +197,8 @@ export component RoomDetails inherits Rectangle {
             if Rooms.members-loading && Rooms.members.length == 0: LoadingState { x: 0px; y: 36px; width: parent.width; height: 48px; }
             if Rooms.members-note != "": Text { x: 0px; y: 40px; text: Rooms.members-note; color: #ba3434; font-size: 14px; }
             chips := Flickable {
-                x: 0px; y: 36px; width: parent.width; height: parent.height - self.y;
+                // As tall as the chips, so Compose's page row sits right under them.
+                x: 0px; y: 36px; width: parent.width; height: min(self.content-height, parent.height - self.y - 76px);
                 private property <length> chip-width: 210px;
                 private property <length> gap: 8px;
                 private property <int> columns: max(1, floor((self.width + self.gap) / (self.chip-width + self.gap)));
@@ -223,6 +225,17 @@ export component RoomDetails inherits Rectangle {
                     y: floor(Rooms.members.length / chips.columns) * 52px + 4px;
                     glyph: "\u{f067}"; accessible-label: "邀请"; clicked => { Rooms.action("invite", ""); }
                     Tooltip { text: @markdown("邀请"); }
+                }
+            }
+            // Compose's row under the members: 模组, 存档, 后台; 文件 is cut.
+            HorizontalLayout {
+                x: 0px; y: chips.y + chips.height + 12px; height: 64px; spacing: 16px; alignment: start;
+                for page in [{ glyph: "\u{f14d3}", label: "模组", key: "mods" }, { glyph: "\u{f145b}", label: "存档", key: "world" }, { glyph: "\u{f018d}", label: "后台", key: "backend" }]: VerticalLayout {
+                    spacing: 4px; alignment: start;
+                    HorizontalLayout { alignment: center;
+                        CircleIconButton { glyph: page.glyph; accessible-label: page.label; height: 40px; clicked => { RoomPages.action("open-" + page.key, root.info.hid); } }
+                    }
+                    Text { text: page.label; color: Theme.ink; font-size: 13px; horizontal-alignment: center; }
                 }
             }
         }

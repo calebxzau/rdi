@@ -15,6 +15,12 @@ pub enum Screen {
     RoomDetail,
     /// U4c1: the create or edit form of a room.
     RoomForm,
+    /// U4c2a: a room's 后台, 存档 and 回档 pages.
+    RoomBackend,
+    RoomWorld,
+    RoomRollback,
+    /// U4c2b: a room's 模组 page.
+    RoomMods,
 }
 #[derive(Default, Debug)]
 pub struct Navigation {
@@ -81,6 +87,10 @@ mod tests {
             Screen::ModpackLocalAdvanceOption,
             Screen::RoomDetail,
             Screen::RoomForm,
+            Screen::RoomBackend,
+            Screen::RoomWorld,
+            Screen::RoomRollback,
+            Screen::RoomMods,
         ] {
             let mut navigation = Navigation::default();
             navigation.push(screen);

@@ -1,0 +1,497 @@
+// U4 batch c2a: the room's 后台, 存档 and 回档 pages (Compose HostBackendScreen + HostConsolePane,
+// HostWorldScreen, HostRollbackScreen). Rust drives them through the `RoomPages` global
+// (src/room_pages_ui.rs).
+import { ListView } from "std-widgets.slint";
+import { TextField } from "components/fields.slint";
+import { CircleIconButton, GlassButton } from "components/glass_button.slint";
+import { ErrorState, LoadingState, LogRow, RScrollbar } from "components/shared.slint";
+import { Console } from "components/activity.slint";
+import { Theme } from "theme.slint";
+
+// One mod row of the 模组 page; `selected` follows the player's clicks (owner decision D2).
+export struct RoomModRow { key: string, name: string, detail: string, icon: image, has-icon: bool, initial: string, selected: bool, client: bool, server: bool }
+// One row of the GitHub dialog: a release header, or a jar of it.
+export struct GithubAssetRow { header: bool, label: string, key: string, detail: string, selected: bool }
+
+// One row of the 回档 list: a day header, or a point.
+export struct RollbackRow { header: bool, label: string, id: string, time: string, ago: string, before: bool, changes: string }
+
+export global RoomPages {
+    // 0 none, 1 后台, 2 存档, 3 回档, 4 模组; set by the shell from navigation.
+    in-out property <int> screen;
+    in-out property <string> title;
+    in-out property <bool> loading;
+    // A failed load, with 重试.
+    in-out property <string> error;
+    // Room members only (后台) and admins (后台 buttons).
+    in-out property <bool> can-view;
+    in-out property <bool> can-manage;
+    in-out property <[LogRow]> logs;
+    in-out property <string> all-logs;
+    in-out property <string> selected-log;
+    in-out property <bool> command-open;
+    in-out property <string> command-text;
+    in-out property <bool> command-sending;
+    in-out property <string> command-result;
+    // 存档 and 回档: the running action, the last error and the last success.
+    in-out property <string> busy;
+    in-out property <string> fail;
+    in-out property <string> notice;
+    in-out property <bool> can-reset;
+    in-out property <bool> can-download;
+    in-out property <bool> can-rollback;
+    in-out property <bool> download-enabled;
+    in-out property <string> download-hint;
+    in-out property <string> download-today;
+    in-out property <bool> has-saves;
+    in-out property <string> host-name;
+    in-out property <bool> reset-open;
+    in-out property <string> reset-name;
+    in-out property <bool> banner-visible;
+    in-out property <string> banner-title;
+    in-out property <string> banner-text;
+    in-out property <bool> banner-error;
+    in-out property <string> banner-key;
+    in-out property <string> banner-label;
+    in-out property <string> banner-glyph;
+    in-out property <bool> banner-enabled;
+    in-out property <bool> rollback-loaded;
+    in-out property <string> usage-line;
+    in-out property <float> usage-fraction;
+    in-out property <[RollbackRow]> rollback-rows;
+    in-out property <string> confirm-title;
+    in-out property <[string]> confirm-lines;
+    in-out property <string> confirm-label: "确定";
+    in-out property <string> confirm-cancel: "取消";
+    in-out property <bool> confirm-danger;
+    in-out property <string> alert-title;
+    in-out property <string> alert-message;
+    in-out property <bool> mods-loaded;
+    in-out property <bool> mods-busy;
+    in-out property <bool> mods-hydrating;
+    in-out property <[RoomModRow]> enabled-rows;
+    in-out property <[RoomModRow]> disabled-rows;
+    in-out property <[RoomModRow]> extra-rows;
+    in-out property <int> enabled-count;
+    in-out property <int> disabled-count;
+    in-out property <int> extra-count;
+    in-out property <int> enabled-selected;
+    in-out property <int> disabled-selected;
+    in-out property <int> extra-selected;
+    in-out property <string> enabled-query;
+    in-out property <bool> gh-open;
+    in-out property <string> gh-url;
+    in-out property <bool> gh-loaded;
+    in-out property <string> gh-project;
+    in-out property <[GithubAssetRow]> gh-rows;
+    // 0 客+服通用, 1 客户端, 2 服务端.
+    in-out property <int> gh-side;
+    in-out property <bool> gh-loading;
+    in-out property <string> gh-status;
+    in-out property <string> gh-error;
+    out property <bool> modal: self.command-open || self.reset-open || self.gh-open || self.confirm-title != "" || self.alert-title != "";
+    callback action(string, string);
+}
+
+component PageCard inherits Rectangle {
+    background: #f8f7eff7;
+    border-radius: 24px;
+}
+
+component PageTitle inherits HorizontalLayout {
+    in property <string> text;
+    spacing: 10px;
+    VerticalLayout { alignment: center;
+        CircleIconButton { glyph: "\u{f060}"; accessible-label: "返回"; clicked => { RoomPages.action("back-nav", ""); } }
+    }
+    Text { text: root.text; color: Theme.ink; font-size: 22px; font-weight: 600; vertical-alignment: center; overflow: elide; horizontal-stretch: 1; min-width: 80px; }
+    @children
+}
+
+// A round button with a text label under it, as Compose CircleIconButton(showText = true).
+component LabeledButton inherits VerticalLayout {
+    in property <string> glyph;
+    in property <string> label;
+    in property <bool> enabled: true;
+    in property <bool> destructive;
+    callback clicked();
+    spacing: 4px; alignment: start;
+    HorizontalLayout { alignment: center;
+        CircleIconButton { glyph: root.glyph; accessible-label: root.label; enabled: root.enabled; destructive: root.destructive; height: 44px; clicked => { root.clicked(); } }
+    }
+    Text { text: root.label; color: root.enabled ? Theme.ink : #777b77; font-size: 13px; horizontal-alignment: center; }
+}
+
+component Busy inherits HorizontalLayout {
+    in property <string> text;
+    spacing: 8px; alignment: center;
+    Text { text: "◌"; color: #446c49; font-size: 18px; vertical-alignment: center; }
+    Text { text: root.text; color: Theme.ink; font-size: 14px; vertical-alignment: center; }
+}
+
+// 后台: the room log and the start/stop buttons (HostBackendScreen).
+export component RoomBackend inherits PageCard {
+    in property <bool> enabled: true;
+    FocusScope { x: 0px; y: 0px; width: root.width; height: root.height; enabled: root.enabled;
+        PageTitle { x: 20px; y: 14px; width: parent.width - 40px; height: 48px; text: RoomPages.title; }
+        if RoomPages.loading: LoadingState { x: 20px; y: 72px; width: parent.width - 40px; height: parent.height - 88px; }
+        if !RoomPages.loading && RoomPages.error != "": ErrorState { x: 20px; y: 72px; width: parent.width - 40px; height: parent.height - 88px;
+            message: RoomPages.error; retry => { RoomPages.action("retry", ""); } }
+        if !RoomPages.loading && RoomPages.error == "" && !RoomPages.can-view: Text { x: 20px; y: 72px; width: parent.width - 40px; height: parent.height - 88px;
+            text: "仅房间成员可查看后台"; color: #ba3434; horizontal-alignment: center; vertical-alignment: center; }
+        if !RoomPages.loading && RoomPages.error == "" && RoomPages.can-view: Rectangle { x: 16px; y: 68px; width: parent.width - 32px; height: parent.height - 84px;
+            Console { x: 0px; y: 0px; width: parent.width; height: parent.height; title-visible: false;
+                lines: RoomPages.logs; selected-text: RoomPages.selected-log; all-text: RoomPages.all-logs;
+                copy-all => { RoomPages.action("console-copied", ""); }
+                export => { RoomPages.action("console-export", ""); }
+                clear => { RoomPages.action("console-clear", ""); }
+                select-line(i) => { RoomPages.action("console-select", i); }
+            }
+            VerticalLayout { x: parent.width - 60px; y: parent.height - self.preferred-height - 16px; width: 44px; spacing: 8px;
+                CircleIconButton { glyph: "\u{f04b}"; accessible-label: "启动"; filled: true; clicked => { RoomPages.action("runtime", "start"); }
+                    Tooltip { text: @markdown("启动"); } }
+                if RoomPages.can-manage: CircleIconButton { glyph: "\u{f120}"; accessible-label: "发送命令"; clicked => { RoomPages.action("command", ""); }
+                    Tooltip { text: @markdown("发送命令"); } }
+                if RoomPages.can-manage: CircleIconButton { glyph: "\u{f01e}"; accessible-label: "重启"; clicked => { RoomPages.action("runtime", "restart"); }
+                    Tooltip { text: @markdown("重启"); } }
+                if RoomPages.can-manage: CircleIconButton { glyph: "\u{f04d}"; accessible-label: "停止"; destructive: true; clicked => { RoomPages.action("runtime", "stop"); }
+                    Tooltip { text: @markdown("停止"); } }
+                if RoomPages.can-manage: CircleIconButton { glyph: "\u{f05e}"; accessible-label: "强制停止"; destructive: true; clicked => { RoomPages.action("runtime", "force-stop"); }
+                    Tooltip { text: @markdown("强制停止"); } }
+            }
+        }
+    }
+}
+
+// 房间存档管理 (HostWorldScreen).
+export component RoomWorldPage inherits PageCard {
+    in property <bool> enabled: true;
+    private property <bool> busy: RoomPages.busy != "";
+    FocusScope { x: 0px; y: 0px; width: root.width; height: root.height; enabled: root.enabled;
+        PageTitle { x: 20px; y: 14px; width: parent.width - 40px; height: 48px; text: "房间存档管理";
+            if RoomPages.can-reset: VerticalLayout { alignment: center;
+                GlassButton { glyph: "\u{f145e}"; label: "重置存档"; destructive: true; enabled: !root.busy; clicked => { RoomPages.action("reset", ""); } }
+            }
+        }
+        if RoomPages.loading && RoomPages.host-name == "": LoadingState { x: 20px; y: 72px; width: parent.width - 40px; height: parent.height - 88px; }
+        if RoomPages.error != "": ErrorState { x: 20px; y: 72px; width: parent.width - 40px; height: parent.height - 88px;
+            message: RoomPages.error; retry => { RoomPages.action("retry", ""); } }
+        if RoomPages.error == "" && RoomPages.host-name != "": VerticalLayout { x: 24px; y: 72px; width: parent.width - 48px; height: parent.height - 88px;
+            spacing: 12px; alignment: center;
+            Text { text: "需要使用/syncchunk指令设置“同步区块”才能自动备份/下载地图"; color: Theme.ink; font-size: 13px; horizontal-alignment: center; wrap: word-wrap; }
+            if root.busy: Busy { text: RoomPages.busy; }
+            if RoomPages.fail != "": Text { text: RoomPages.fail; color: #ba3434; horizontal-alignment: center; wrap: word-wrap; }
+            if RoomPages.notice != "": Text { text: RoomPages.notice; color: #446c49; horizontal-alignment: center; wrap: word-wrap; }
+            if RoomPages.has-saves: HorizontalLayout { alignment: center;
+                LabeledButton { glyph: "\u{eaed}"; label: "打开单人存档文件夹"; clicked => { RoomPages.action("open-saves", ""); } }
+            }
+            HorizontalLayout { spacing: 16px; alignment: center;
+                if RoomPages.can-download: LabeledButton { glyph: "\u{eac2}"; label: "下载房间存档"; enabled: !root.busy && RoomPages.download-enabled;
+                    clicked => { RoomPages.action("download", ""); } }
+                if RoomPages.can-rollback: LabeledButton { glyph: "\u{f1da}"; label: "回档"; clicked => { RoomPages.action("rollback", ""); } }
+            }
+            if RoomPages.can-download && RoomPages.download-hint != "": Text { text: RoomPages.download-hint; color: #5b625b; font-size: 12px; horizontal-alignment: center; wrap: word-wrap; }
+            if RoomPages.can-download && RoomPages.download-today != "": Text { text: RoomPages.download-today; color: #5b625b; font-size: 12px; horizontal-alignment: center; wrap: word-wrap; }
+        }
+    }
+}
+
+// 回档 (HostRollbackScreen).
+export component RoomRollbackPage inherits PageCard {
+    in property <bool> enabled: true;
+    private property <bool> busy: RoomPages.busy != "";
+    private property <length> top: 72px + (root.busy ? 30px : 0px) + (RoomPages.fail != "" ? 26px : 0px) + (RoomPages.notice != "" ? 26px : 0px);
+    FocusScope { x: 0px; y: 0px; width: root.width; height: root.height; enabled: root.enabled;
+        PageTitle { x: 20px; y: 14px; width: parent.width - 40px; height: 48px; text: "回档";
+            VerticalLayout { alignment: center;
+                CircleIconButton { glyph: "\u{f021}"; accessible-label: "刷新"; enabled: !root.busy; clicked => { RoomPages.action("rollback-reload", ""); }
+                    Tooltip { text: @markdown("刷新"); } }
+            }
+        }
+        VerticalLayout { x: 24px; y: 68px; width: parent.width - 48px; spacing: 6px;
+            if root.busy: Busy { text: RoomPages.busy; alignment: start; }
+            if RoomPages.fail != "": Text { text: RoomPages.fail; color: #ba3434; overflow: elide; }
+            if RoomPages.notice != "": Text { text: RoomPages.notice; color: #446c49; overflow: elide; }
+        }
+        if RoomPages.rollback-loaded: VerticalLayout { x: 24px; y: root.top; width: parent.width - 48px; height: parent.height - self.y - 20px; spacing: 12px;
+            if RoomPages.banner-visible: Rectangle { height: 64px; vertical-stretch: 0; border-radius: 12px; background: RoomPages.banner-error ? #f9dedc : #dce8d4;
+                Text { x: 14px; y: 10px; width: parent.width - 28px - (RoomPages.banner-key != "" ? 150px : 0px); text: RoomPages.banner-title; font-weight: 600; overflow: elide;
+                    color: RoomPages.banner-error ? #410e0b : #1b2a1c; }
+                Text { x: 14px; y: 34px; width: parent.width - 28px - (RoomPages.banner-key != "" ? 150px : 0px); text: RoomPages.banner-text; font-size: 13px; overflow: elide;
+                    color: RoomPages.banner-error ? #410e0b : #1b2a1c; }
+                if RoomPages.banner-key != "": GlassButton { x: parent.width - self.width - 12px; y: (parent.height - self.height) / 2; width: 140px;
+                    glyph: RoomPages.banner-glyph; label: RoomPages.banner-label; enabled: !root.busy && RoomPages.banner-enabled;
+                    clicked => { RoomPages.action("banner", RoomPages.banner-key); } }
+            }
+            VerticalLayout { spacing: 4px; vertical-stretch: 0;
+                Text { text: RoomPages.usage-line; color: #5b625b; font-size: 12px; overflow: elide; }
+                Rectangle { height: 4px; border-radius: 2px; background: #dce5d4;
+                    Rectangle { x: 0px; y: 0px; height: parent.height; border-radius: 2px; width: parent.width * clamp(RoomPages.usage-fraction, 0, 1); background: #446c49; }
+                }
+            }
+            if RoomPages.rollback-rows.length == 0: Text { text: "还没有回档点。房间运行时，每5分钟自动保存一个回档点。"; color: #5b625b; wrap: word-wrap; }
+            // Keeps the lines above at the top when there is no list to fill the page.
+            if RoomPages.rollback-rows.length == 0: Rectangle { vertical-stretch: 1; }
+            if RoomPages.rollback-rows.length > 0: Text { text: "选择要回档到的时间"; color: Theme.ink; font-weight: 600; }
+            if RoomPages.rollback-rows.length > 0: Rectangle { vertical-stretch: 1;
+                list := ListView { x: 0px; y: 0px; width: parent.width - 12px; height: parent.height;
+                    vertical-scrollbar-policy: always-off; horizontal-scrollbar-policy: always-off;
+                    for row in RoomPages.rollback-rows: Rectangle { height: row.header ? 32px : 44px;
+                        if row.header: Text { x: 2px; y: 8px; text: row.label; color: #446c49; font-size: 14px; font-weight: 600; }
+                        if !row.header: Rectangle { x: 0px; y: 3px; width: parent.width; height: 38px; border-radius: 8px;
+                            background: point-touch.has-hover && !root.busy ? #e3e8dd : #eceee8;
+                            accessible-role: button; accessible-label: "回档到" + row.time;
+                            accessible-action-default => { if !root.busy { RoomPages.action("point", row.id); } }
+                            HorizontalLayout { padding-left: 12px; padding-right: 12px; spacing: 12px;
+                                Text { text: row.time; color: Theme.ink; font-size: 16px; vertical-alignment: center; }
+                                Text { text: row.ago; color: #5b625b; vertical-alignment: center; }
+                                if row.before: VerticalLayout { alignment: center;
+                                    Rectangle { width: before-text.preferred-width + 12px; height: 20px; border-radius: 4px; background: #e8def8;
+                                        before-text := Text { text: "回档前"; color: #1d192b; font-size: 11px; horizontal-alignment: center; vertical-alignment: center; }
+                                    }
+                                }
+                                Text { text: row.changes; color: #5b625b; font-size: 12px; vertical-alignment: center; overflow: elide; horizontal-stretch: 1; }
+                            }
+                            point-touch := TouchArea { enabled: !root.busy; mouse-cursor: pointer; clicked => { RoomPages.action("point", row.id); } }
+                        }
+                    }
+                }
+                RScrollbar { x: parent.width - 6px; y: 0px; width: 6px; height: list.height; viewport: list.height; extent: list.content-height; position: -list.content-y;
+                    scrolled(offset) => { list.content-y = -offset; } }
+            }
+        }
+    }
+}
+
+
+// One area of the 模组 page: title, count, selection and its rows.
+component ModArea inherits Rectangle {
+    in property <string> title;
+    in property <string> area;
+    in property <int> count;
+    in property <int> selected;
+    in property <[RoomModRow]> rows;
+    in property <string> empty;
+    in property <bool> manage;
+    in property <bool> sides;
+    background: #ffffff70; border-radius: 16px;
+    header := HorizontalLayout { x: 14px; y: 8px; width: parent.width - 28px; height: 40px; spacing: 8px;
+        Text { text: root.title + " · " + root.count; color: Theme.ink; font-size: 16px; font-weight: 600; vertical-alignment: center; }
+        if root.selected > 0: Text { text: "(" + root.selected + "已选)"; color: #5b625b; vertical-alignment: center; }
+        Rectangle { horizontal-stretch: 1; }
+        @children
+    }
+    if root.rows.length == 0: Text { x: 14px; y: 56px; width: parent.width - 28px; text: root.empty; color: #5b625b; }
+    list := ListView { x: 8px; y: 52px; width: parent.width - 22px; height: parent.height - 60px;
+        vertical-scrollbar-policy: always-off; horizontal-scrollbar-policy: always-off;
+        for row in root.rows: Rectangle { height: 52px;
+            Rectangle { x: 0px; y: 2px; width: parent.width; height: 48px; border-radius: 10px;
+                background: row.selected ? #dce8d4 : row-touch.has-hover && root.manage ? #ffffffd0 : #ffffff90;
+                border-width: row.selected ? 2px : 0px; border-color: #446c49;
+                accessible-role: button; accessible-label: row.name; accessible-checked: row.selected;
+                accessible-action-default => { if root.manage { RoomPages.action("mod-select", root.area + "|" + row.key); } }
+                row-touch := TouchArea { enabled: root.manage; mouse-cursor: root.manage ? pointer : default;
+                    clicked => { RoomPages.action("mod-select", root.area + "|" + row.key); } }
+                if row.has-icon: Image { x: 8px; y: 6px; width: 36px; height: 36px; source: row.icon; image-fit: contain; }
+                if !row.has-icon: Rectangle { x: 8px; y: 6px; width: 36px; height: 36px; border-radius: 8px; background: #dfe5d8;
+                    Text { text: row.initial; color: #446c49; font-size: 16px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; } }
+                Text { x: 54px; y: 5px; width: parent.width - self.x - (root.sides ? 96px : 10px); text: row.name; color: Theme.ink; font-size: 14px; overflow: elide; }
+                Text { x: 54px; y: 26px; width: parent.width - self.x - (root.sides ? 96px : 10px); text: row.detail; color: #667064; font-size: 12px; overflow: elide; }
+                if root.sides: HorizontalLayout { x: parent.width - 90px; y: 8px; width: 82px; height: 32px; spacing: 6px;
+                    CircleIconButton { height: 32px; glyph: "\u{f108}"; checked: row.client; enabled: root.manage; accessible-label: "客户端";
+                        clicked => { RoomPages.action("mod-side", row.key + "|client"); } Tooltip { text: @markdown("客户端"); } }
+                    CircleIconButton { height: 32px; glyph: "\u{f233}"; checked: row.server; enabled: root.manage; accessible-label: "服务端";
+                        clicked => { RoomPages.action("mod-side", row.key + "|server"); } Tooltip { text: @markdown("服务端"); } }
+                }
+            }
+        }
+    }
+    RScrollbar { x: parent.width - 12px; y: 52px; width: 6px; height: list.height; viewport: list.height; extent: list.content-height; position: -list.content-y;
+        scrolled(offset) => { list.content-y = -offset; } }
+}
+
+// 模组 (HostModsScreen): enabled, disabled and extra mods.
+export component RoomModsPage inherits PageCard {
+    in property <bool> enabled: true;
+    private property <bool> wide: self.width >= 900px;
+    FocusScope { x: 0px; y: 0px; width: root.width; height: root.height; enabled: root.enabled;
+        PageTitle { x: 20px; y: 14px; width: parent.width - 40px; height: 48px; text: RoomPages.title;
+            Text { text: "增删mod可能会导致整合包bug！"; color: Theme.ink; font-weight: 600; vertical-alignment: center; }
+        }
+        if RoomPages.loading: LoadingState { x: 20px; y: 72px; width: parent.width - 40px; height: parent.height - 88px; }
+        if !RoomPages.loading && RoomPages.error != "": ErrorState { x: 20px; y: 72px; width: parent.width - 40px; height: parent.height - 88px;
+            message: RoomPages.error; retry => { RoomPages.action("retry", ""); } }
+        if !RoomPages.loading && RoomPages.error == "" && RoomPages.mods-loaded && !RoomPages.can-view: Text { x: 20px; y: 72px; width: parent.width - 40px; height: parent.height - 88px;
+            text: "仅房间成员可查看模组"; color: #ba3434; horizontal-alignment: center; vertical-alignment: center; }
+        if !RoomPages.loading && RoomPages.error == "" && RoomPages.mods-loaded && RoomPages.can-view: Rectangle { x: 16px; y: 68px; width: parent.width - 32px; height: parent.height - 84px;
+            private property <length> gap: 12px;
+            private property <length> left-w: root.wide ? (self.width - self.gap) / 2 : self.width;
+            private property <length> right-x: root.wide ? self.left-w + self.gap : 0px;
+            private property <length> unit: root.wide ? (self.height - self.gap) / 2 : (self.height - 2 * self.gap) / 4;
+            ModArea { x: 0px; y: 0px; width: parent.left-w; height: root.wide ? parent.height : parent.unit * 2;
+                title: "启用Mod"; area: "enabled"; count: RoomPages.enabled-count; selected: RoomPages.enabled-selected;
+                rows: RoomPages.enabled-rows; manage: RoomPages.can-manage;
+                empty: RoomPages.enabled-query != "" ? "没有匹配的Mod" : RoomPages.enabled-count == 0 ? "没有Mod" : "";
+                TextField { width: 180px; hint: "搜索已启用的Mod"; reserve-error: false; text <=> RoomPages.enabled-query; edited => { RoomPages.action("mods-search", ""); } }
+                if RoomPages.can-manage: VerticalLayout { alignment: center;
+                    GlassButton { glyph: "\u{f05e}"; label: "停用"; enabled: RoomPages.enabled-selected > 0 && !RoomPages.mods-busy; clicked => { RoomPages.action("mods-disable", ""); } }
+                }
+            }
+            ModArea { x: parent.right-x; y: root.wide ? 0px : parent.unit * 2 + parent.gap; width: parent.left-w; height: parent.unit;
+                title: "停用"; area: "disabled"; count: RoomPages.disabled-count; selected: RoomPages.disabled-selected;
+                rows: RoomPages.disabled-rows; manage: RoomPages.can-manage; empty: "没有停用mod";
+                if RoomPages.can-manage: VerticalLayout { alignment: center;
+                    GlassButton { glyph: "\u{f00c}"; label: "启用"; enabled: RoomPages.disabled-selected > 0 && !RoomPages.mods-busy; clicked => { RoomPages.action("mods-enable", ""); } }
+                }
+            }
+            ModArea { x: parent.right-x; y: root.wide ? parent.unit + parent.gap : parent.unit * 3 + parent.gap * 2; width: parent.left-w; height: parent.unit;
+                title: "附加Mod"; area: "extra"; count: RoomPages.extra-count; selected: RoomPages.extra-selected;
+                rows: RoomPages.extra-rows; manage: RoomPages.can-manage; sides: true;
+                empty: RoomPages.mods-hydrating ? "正在载入附加Mod信息..." : "当前没有附加Mod";
+                if RoomPages.can-manage: VerticalLayout { alignment: center;
+                    CircleIconButton { glyph: "\u{ea81}"; accessible-label: "删除"; destructive: true; enabled: RoomPages.extra-selected > 0 && !RoomPages.mods-busy;
+                        clicked => { RoomPages.action("mods-remove", ""); } Tooltip { text: @markdown("删除"); } }
+                }
+                if RoomPages.can-manage: VerticalLayout { alignment: center;
+                    GlassButton { glyph: "\u{f067}"; label: "附加Mod"; enabled: !RoomPages.mods-busy; clicked => { RoomPages.action("gh-open", ""); } }
+                }
+            }
+        }
+    }
+}
+
+component DialogCard inherits Rectangle {
+    background: #f7faf0; border-radius: 24px;
+    drop-shadow-blur: 12px; drop-shadow-offset-y: 3px; drop-shadow-color: #00000030;
+    TouchArea {}
+}
+component DialogTitle inherits Text { font-size: 22px; font-weight: 600; color: Theme.ink; wrap: word-wrap; }
+
+// The page dialogs; the shell dims the window behind them.
+export component RoomPageDialogs inherits Rectangle {
+    if RoomPages.command-open: DialogCard { width: min(480px, root.width - 48px); height: command-body.preferred-height;
+        x: (root.width - self.width) / 2; y: (root.height - self.height) / 2;
+        command-body := VerticalLayout { padding: 24px; spacing: 10px;
+            DialogTitle { text: "发送服务器命令"; }
+            Text { text: "命令会以服务器控制台身份执行，不需要输入开头的/"; color: Theme.ink; wrap: word-wrap; }
+            TextField { label: "命令"; hint: "say hello"; reserve-error: false; enabled: !RoomPages.command-sending; text <=> RoomPages.command-text;
+                init => { self.focus(); } edited => { RoomPages.action("command-edited", ""); } accepted => { RoomPages.action("command-send", ""); } }
+            if RoomPages.command-result != "": Text { text: "命令返回："; color: Theme.ink; }
+            if RoomPages.command-result != "": Rectangle { background: #1b1d1f; border-radius: 8px; height: min(200px, result.preferred-height + 24px);
+                result := Text { x: 12px; y: 12px; width: parent.width - 24px; text: RoomPages.command-result; color: #e0e0e0; font-size: 14px; wrap: word-wrap; }
+            }
+            HorizontalLayout { alignment: end; spacing: 12px;
+                GlassButton { label: "取消"; enabled: !RoomPages.command-sending; clicked => { RoomPages.action("command-cancel", ""); } }
+                GlassButton { label: RoomPages.command-sending ? "发送中..." : "发送"; filled: true;
+                    enabled: !RoomPages.command-sending && RoomPages.command-text != "";
+                    clicked => { RoomPages.action("command-send", ""); } }
+            }
+        }
+    }
+    if RoomPages.gh-open: DialogCard { width: root.width * 0.72; height: root.height * 0.86;
+        x: (root.width - self.width) / 2; y: (root.height - self.height) / 2;
+        VerticalLayout { padding: 24px; spacing: 12px;
+            Text { text: "添加附加Mod（高级模式）"; font-size: 18px; font-weight: 600; color: Theme.ink; }
+            Text { text: "仅供高级玩家使用。通常情况不建议使用此功能"; color: Theme.ink; }
+            if !RoomPages.gh-loaded: TextField { label: "GitHub仓库链接"; reserve-error: false; enabled: !RoomPages.gh-loading; text <=> RoomPages.gh-url;
+                init => { self.focus(); } accepted => { RoomPages.action("gh-submit", ""); } }
+            if RoomPages.gh-loaded: HorizontalLayout { spacing: 8px;
+                VerticalLayout { horizontal-stretch: 1; spacing: 2px;
+                    Text { text: RoomPages.gh-project; font-size: 18px; color: Theme.ink; overflow: elide; }
+                    Text { text: "选择正确的jar文件，否则房间将无法启动。"; color: #5b625b; }
+                }
+                VerticalLayout { alignment: center;
+                    GlassButton { label: "重新输入"; enabled: !RoomPages.gh-loading; clicked => { RoomPages.action("gh-reset", ""); } }
+                }
+            }
+            Rectangle { vertical-stretch: 1;
+                assets := ListView { x: 0px; y: 0px; width: parent.width - 12px; height: parent.height;
+                    vertical-scrollbar-policy: always-off; horizontal-scrollbar-policy: always-off;
+                    for row in RoomPages.gh-rows: Rectangle { height: row.header ? 34px : 56px;
+                        if row.header: Text { x: 2px; y: 8px; text: row.label; font-size: 17px; color: Theme.ink; }
+                        if !row.header: Rectangle { x: 0px; y: 3px; width: parent.width; height: 50px; border-radius: 8px;
+                            background: row.selected ? #dce8d4 : asset-touch.has-hover ? #ffffffd0 : #ffffff90;
+                            accessible-role: button; accessible-label: row.label; accessible-checked: row.selected;
+                            accessible-action-default => { RoomPages.action("gh-select", row.key); }
+                            Text { x: 14px; y: 6px; width: parent.width - 70px; text: row.label; font-size: 16px; color: Theme.ink; overflow: elide; }
+                            Text { x: 14px; y: 28px; width: parent.width - 70px; text: row.detail; font-size: 13px; color: #5b625b; overflow: elide; }
+                            if row.selected: Text { x: parent.width - 48px; width: 40px; height: parent.height; text: "已选"; color: #446c49; vertical-alignment: center; }
+                            asset-touch := TouchArea { enabled: !RoomPages.gh-loading; mouse-cursor: pointer; clicked => { RoomPages.action("gh-select", row.key); } }
+                        }
+                    }
+                }
+                RScrollbar { x: parent.width - 6px; y: 0px; width: 6px; height: assets.height; viewport: assets.height; extent: assets.content-height; position: -assets.content-y;
+                    scrolled(offset) => { assets.content-y = -offset; } }
+            }
+            HorizontalLayout { spacing: 18px; height: 32px; alignment: start;
+                Text { text: "使用侧"; color: #5b625b; vertical-alignment: center; }
+                for label[i] in ["客+服通用", "客户端", "服务端"]: HorizontalLayout { spacing: 6px; horizontal-stretch: 0;
+                    accessible-role: radio-button; accessible-label: label; accessible-checked: RoomPages.gh-side == i;
+                    accessible-action-default => { if !RoomPages.gh-loading { RoomPages.gh-side = i; } }
+                    Rectangle { width: 20px; height: 20px; y: 6px; border-radius: 10px; border-width: 2px; border-color: RoomPages.gh-side == i ? #446c49 : #5b625b;
+                        if RoomPages.gh-side == i: Rectangle { width: 10px; height: 10px; border-radius: 5px; background: #446c49; }
+                        TouchArea { enabled: !RoomPages.gh-loading; mouse-cursor: pointer; clicked => { RoomPages.gh-side = i; } }
+                    }
+                    Text { text: label; color: Theme.ink; vertical-alignment: center;
+                        TouchArea { enabled: !RoomPages.gh-loading; mouse-cursor: pointer; clicked => { RoomPages.gh-side = i; } } }
+                }
+                Rectangle { horizontal-stretch: 1; }
+            }
+            HorizontalLayout { spacing: 12px; alignment: end;
+                Text { horizontal-stretch: 1; text: RoomPages.gh-error != "" ? RoomPages.gh-error : RoomPages.gh-status; wrap: word-wrap;
+                    color: RoomPages.gh-error != "" ? #ba3434 : #5b625b; vertical-alignment: center; }
+                VerticalLayout { alignment: center;
+                    GlassButton { label: "取消"; enabled: !RoomPages.gh-loading; clicked => { RoomPages.action("gh-cancel", ""); } } }
+                VerticalLayout { alignment: center;
+                    GlassButton { label: RoomPages.gh-loaded ? "添加" : "下一步"; filled: true; busy: RoomPages.gh-loading; clicked => { RoomPages.action("gh-submit", ""); } } }
+            }
+        }
+    }
+    if RoomPages.reset-open: DialogCard { width: min(460px, root.width - 48px); height: reset-body.preferred-height;
+        x: (root.width - self.width) / 2; y: (root.height - self.height) / 2;
+        reset-body := VerticalLayout { padding: 24px; spacing: 12px;
+            DialogTitle { text: "重置存档"; }
+            Text { text: "这会删除房间存档且不可恢复。下次启动时将生成新存档。请输入房间名称确认。"; color: Theme.ink; wrap: word-wrap; }
+            TextField { label: RoomPages.host-name; reserve-error: false; text <=> RoomPages.reset-name; init => { self.focus(); } }
+            HorizontalLayout { alignment: end; spacing: 12px;
+                GlassButton { label: "取消"; clicked => { RoomPages.action("reset-cancel", ""); } }
+                GlassButton { label: "重置"; destructive: true; filled: true; enabled: RoomPages.reset-name == RoomPages.host-name;
+                    clicked => { RoomPages.action("reset-confirm", ""); } }
+            }
+        }
+    }
+    if RoomPages.confirm-title != "": Rectangle { x: 0px; y: 0px; width: root.width; height: root.height;
+        TouchArea {}
+        DialogCard { width: min(500px, root.width - 48px); height: confirm-body.preferred-height;
+            x: (parent.width - self.width) / 2; y: (parent.height - self.height) / 2;
+            confirm-body := VerticalLayout { padding: 24px; spacing: 12px;
+                DialogTitle { text: RoomPages.confirm-title; }
+                VerticalLayout { spacing: 6px;
+                    for line in RoomPages.confirm-lines: Text { text: line; color: Theme.ink; wrap: word-wrap; }
+                }
+                HorizontalLayout { alignment: end; spacing: 12px;
+                    GlassButton { label: RoomPages.confirm-cancel; clicked => { RoomPages.action("confirm-cancel", ""); } }
+                    GlassButton { label: RoomPages.confirm-label; filled: true; destructive: RoomPages.confirm-danger; init => { self.focus(); }
+                        clicked => { RoomPages.action("confirm", ""); } }
+                }
+            }
+        }
+    }
+    if RoomPages.alert-title != "": Rectangle { x: 0px; y: 0px; width: root.width; height: root.height;
+        background: RoomPages.command-open || RoomPages.reset-open || RoomPages.gh-open || RoomPages.confirm-title != "" ? #0006 : transparent;
+        TouchArea {}
+        DialogCard { width: min(460px, root.width - 48px); height: alert-body.preferred-height;
+            x: (parent.width - self.width) / 2; y: (parent.height - self.height) / 2;
+            alert-body := VerticalLayout { padding: 24px; spacing: 16px;
+                HorizontalLayout { spacing: 10px; alignment: start;
+                    Text { text: "\u{ea87}"; font-family: Theme.symbols; font-size: 22px; color: #d64545; vertical-alignment: center; }
+                    DialogTitle { text: RoomPages.alert-title; }
+                }
+                Text { text: RoomPages.alert-message; color: Theme.ink; wrap: word-wrap; }
+                HorizontalLayout { alignment: end;
+                    GlassButton { label: "确定"; filled: true; init => { self.focus(); } clicked => { RoomPages.action("alert-ok", ""); } }
+                }
+            }
+        }
+    }
+}

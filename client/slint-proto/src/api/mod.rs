@@ -1,5 +1,6 @@
 pub mod model;
 pub mod server;
+pub mod sse;
 use anyhow::{Context, Result, ensure};
 use rdi_slint_proto::{lazy_service::LazyService, service::Service};
 use serde::de::DeserializeOwned;

@@ -11,6 +11,7 @@ mod tasks;
 mod plaza;
 mod rooms;
 mod rooms_ui;
+mod room_pages_ui;
 mod digests;
 mod download;
 mod download_policy;

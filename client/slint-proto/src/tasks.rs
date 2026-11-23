@@ -42,6 +42,8 @@ struct Entry {
     fraction: Option<f32>,
     error: String,
     rows: Vec<Row>,
+    /// Shown instead of 安装完成 once the task succeeds (`Context::finish`).
+    done_message: Option<String>,
     /// The row that `Context::progress` updates; 0 for single-leaf tasks.
     current: usize,
     cancel: Cancellation,
@@ -80,6 +82,13 @@ impl Context {
                 e.rows[0].fraction =
                     Some(((current - 1) as f32 + fraction.unwrap_or(0.).clamp(0., 1.)) / steps);
             }
+        }
+    }
+    /// The message the task keeps once it succeeds, such as where a download was saved.
+    pub fn finish(&self, message: impl Into<String>) {
+        let mut entries = self.manager.0.lock().unwrap();
+        if let Some(e) = entries.iter_mut().find(|e| e.id == self.id) {
+            e.done_message = Some(message.into());
         }
     }
     /// Starts visible step `index` of a task created by `submit_steps`; earlier steps are done.
@@ -159,6 +168,7 @@ impl Manager {
                 done: false,
             }))
             .collect(),
+            done_message: None,
             current: 0,
             cancel: cancel.clone(),
         });
@@ -193,7 +203,7 @@ impl Manager {
                 Ok(()) => {
                     e.status = 2;
                     e.fraction = Some(1.);
-                    e.message = "安装完成".into();
+                    e.message = e.done_message.take().unwrap_or_else(|| "安装完成".into());
                     for row in &mut e.rows {
                         row.done = true;
                     }
@@ -287,6 +297,7 @@ mod tests {
             fraction: Some(0.4),
             error: String::new(),
             cancel: Cancellation::default(),
+            done_message: None,
             current: 0,
             rows: vec![
                 Row {

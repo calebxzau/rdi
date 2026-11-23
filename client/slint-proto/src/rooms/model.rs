@@ -101,6 +101,11 @@ pub struct HostDetail {
     pub allow_cheats: bool,
     #[serde(default)]
     pub members: Vec<Member>,
+    /// The room's own mods (附加Mod) and the version mods it turned off (停用).
+    #[serde(default)]
+    pub extra_mods: Vec<crate::pack_install::mods::Mod>,
+    #[serde(default)]
+    pub disabled_mods: Vec<crate::pack_install::mods::Mod>,
 }
 
 /// Kotlin `BaseWorld` (map template). Ids are UUID strings.

@@ -6,7 +6,7 @@ use anyhow::Result;
 use serde_json::Value;
 
 /// Ids go into paths; reject anything that could change the path.
-fn segment(value: &str) -> Result<&str> {
+pub(crate) fn segment(value: &str) -> Result<&str> {
     anyhow::ensure!(
         !value.is_empty() && value.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-'),
         "房间数据格式错误"
