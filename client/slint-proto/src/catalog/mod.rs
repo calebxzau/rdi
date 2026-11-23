@@ -2,6 +2,7 @@
 #![allow(dead_code)]
 mod adapter;
 mod cache;
+pub mod disk;
 mod identity;
 pub mod models;
 pub mod transport;
@@ -31,6 +32,8 @@ pub struct Catalog {
     changelogs: MemoryCache<FileRef, String>,
     file_loads: BTreeMap<Platform, tokio::sync::Mutex<()>>,
     project_loads: BTreeMap<Platform, tokio::sync::Mutex<()>>,
+    /// Found projects for 15 days across launcher starts; `None` in tests and when it cannot open.
+    disk: Option<disk::ProjectDiskCache>,
     http: transport::HttpTransport,
 }
 impl Catalog {
@@ -43,12 +46,26 @@ impl Catalog {
         let mut network = transport::HttpTransport::new(http.http.clone(), http.prefer_mirror);
         network.preference_file = http.preference_file.clone();
         let tr: Arc<dyn transport::Transport> = Arc::new(network);
-        Self::with_transport(
+        let mut catalog = Self::with_transport(
             tr,
             http,
             Path::new(env!("CARGO_MANIFEST_DIR"))
                 .join("../ui/mod-catalog/src/main/resources/mod_catalog.db"),
-        )
+        );
+        catalog.disk = match disk::ProjectDiskCache::open(&disk::path(data)) {
+            Ok(cache) => Some(cache),
+            Err(error) => {
+                tracing::warn!(error = %format!("{error:#}"), "Mod资料缓存不可用，仅使用内存缓存");
+                None
+            }
+        };
+        catalog
+    }
+    /// Tests: a disk cache at `path`.
+    #[cfg(test)]
+    pub fn with_disk_cache(mut self, path: &Path) -> Self {
+        self.disk = Some(disk::ProjectDiskCache::open(path).unwrap());
+        self
     }
     pub fn with_transport(
         tr: Arc<dyn transport::Transport>,
@@ -103,6 +120,7 @@ impl Catalog {
                 Duration::from_secs(30),
                 usize::MAX,
             ),
+            disk: None,
             http,
         }
     }
@@ -233,10 +251,25 @@ impl Catalog {
                     missing.push(r.id.clone());
                 }
             }
+            if let Some(disk) = self.disk.as_ref().filter(|_| !missing.is_empty()) {
+                let wanted: Vec<_> = missing.iter().map(|id| ProjectRef { platform, id: id.clone() }).collect();
+                let stored = disk.get_many(&wanted, std::time::SystemTime::now());
+                missing.retain(|id| {
+                    let r = ProjectRef { platform, id: id.clone() };
+                    let Some(p) = stored.get(&r) else { return true };
+                    successes += 1;
+                    self.projects.put(r, Some(p.clone()));
+                    sources.push(p.clone());
+                    false
+                });
+            }
             if !missing.is_empty() {
                 match self.adapters[&platform].projects(&missing).await {
                     Ok(found) => {
                         successes += 1;
+                        if let Some(disk) = &self.disk {
+                            disk.put_many(found.values(), std::time::SystemTime::now());
+                        }
                         let mut absent = vec![];
                         for id in missing {
                             let r = ProjectRef {
@@ -1220,5 +1253,78 @@ mod domain_tests {
             .unwrap()
             .value;
         assert_eq!(updates.updates[0].1.reference.id, "beta");
+    }
+}
+
+#[cfg(test)]
+mod disk_tests {
+    use super::*;
+    use serde_json::{Value, json};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    /// Answers Modrinth `projects` with one project per requested id and counts the calls.
+    #[derive(Default)]
+    struct Projects(AtomicUsize);
+    impl transport::Transport for Projects {
+        fn request<'a>(&'a self, _: Platform, _: reqwest::Method, path: &'a str, query: Vec<(String, String)>, _: Option<Value>) -> transport::TransportFuture<'a> {
+            Box::pin(async move {
+                assert_eq!(path, "projects");
+                self.0.fetch_add(1, Ordering::SeqCst);
+                let ids: Vec<String> = serde_json::from_str(&query[0].1).unwrap();
+                Ok(Value::Array(
+                    ids.iter()
+                        .map(|id| json!({"id": id, "slug": format!("slug-{id}"), "title": format!("Mod {id}"), "project_type": "mod", "description": "intro", "icon_url": "https://cdn.modrinth.com/i.png"}))
+                        .collect(),
+                ))
+            })
+        }
+    }
+    fn catalog(tr: Arc<Projects>, db: &Path) -> Catalog {
+        let http = reqwest::Client::builder().no_proxy().build().unwrap();
+        Catalog::with_transport(tr, transport::HttpTransport::new(http, false), std::env::temp_dir().join(format!("missing-{}", uuid::Uuid::now_v7())))
+            .with_disk_cache(db)
+    }
+    fn refs() -> Vec<ProjectRef> {
+        ["AANobbMI", "P7dR8mSH"].map(|id| ProjectRef { platform: Platform::Modrinth, id: id.into() }).to_vec()
+    }
+
+    #[tokio::test]
+    async fn projects_survive_a_restart_for_15_days() {
+        let dir = std::env::temp_dir().join(format!("rdi-catalog-disk-{}", uuid::Uuid::now_v7().simple()));
+        let db = disk::path(&dir);
+        let tr = Arc::new(Projects::default());
+        let first = catalog(tr.clone(), &db).get_mods(&refs()).await.unwrap();
+        assert_eq!(first.value.len(), 2);
+        assert_eq!(tr.0.load(Ordering::SeqCst), 1);
+
+        // A new catalog (the launcher restarted) reads the same file without a request.
+        let again = catalog(tr.clone(), &db).get_mods(&refs()).await.unwrap();
+        assert_eq!(tr.0.load(Ordering::SeqCst), 1);
+        assert_eq!(again.value[&refs()[0]].name, "Mod AANobbMI");
+
+        // 16 days later the rows are expired and the network is asked again.
+        rusqlite::Connection::open(&db).unwrap().execute("UPDATE projects SET stored = stored - 16*24*3600", []).unwrap();
+        catalog(tr.clone(), &db).get_mods(&refs()).await.unwrap();
+        assert_eq!(tr.0.load(Ordering::SeqCst), 2);
+
+        // 清理缓存 empties it.
+        assert_eq!(disk::clear(&db).unwrap(), 2);
+        catalog(tr.clone(), &db).get_mods(&refs()).await.unwrap();
+        assert_eq!(tr.0.load(Ordering::SeqCst), 3);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn unreadable_rows_count_as_missing() {
+        let dir = std::env::temp_dir().join(format!("rdi-catalog-disk-{}", uuid::Uuid::now_v7().simple()));
+        let db = disk::path(&dir);
+        let cache = disk::ProjectDiskCache::open(&db).unwrap();
+        rusqlite::Connection::open(&db)
+            .unwrap()
+            .execute("INSERT INTO projects VALUES('MODRINTH', 'AANobbMI', ?1, '{broken')", [i64::MAX / 2])
+            .unwrap();
+        assert!(cache.get_many(&refs(), std::time::SystemTime::now()).is_empty());
+        drop(cache);
+        std::fs::remove_dir_all(&dir).ok();
     }
 }

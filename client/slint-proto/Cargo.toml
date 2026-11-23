@@ -56,6 +56,8 @@ aes-gcm = "=0.10.3"
 # U4b2: 清除无效整合包 moves folders to the system recycle bin, as Compose moveToOsTrash.
 trash = "=5.4.0"
 
+# Image disk cache: RFC 9111 freshness and revalidation rules (IMAGE-CACHE-PLAN.md D5).
+http-cache-semantics = { version = "=3.0.0", default-features = false, features = ["serde", "reqwest"] }
 toml = "=0.9.12"
 sysinfo = "=0.40.1"
 # Compiles SQLite from source, so data.db needs no system library (J2 D2).

@@ -109,9 +109,9 @@ impl LittleSkin {
         url.query_pairs_mut()
             .append_pair("height", "150")
             .append_pair("png", "");
-        let bytes = images::download(&self.http, url.as_str()).await?;
+        let image = images::download_image(&self.http, url.as_str()).await?;
         tokio::task::spawn_blocking(move || {
-            Ok(images::decode(&bytes)?.thumbnail(300, 150).to_rgba8())
+            Ok(image.thumbnail(300, 150).to_rgba8())
         })
         .await?
     }

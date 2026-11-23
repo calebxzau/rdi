@@ -213,7 +213,14 @@ impl SettingsUi {
                 let versions = crate::local_packs::versions_dir();
                 self.tasks.submit(&self.runtime, "清除下载缓存".into(), "client-download-cache-cleanup".into(), move |ctx| {
                     let message = settings::clean_cache(&ctx, &data.join("dlc"), &versions)?;
-                    ctx.finish(message);
+                    // Owner decision D4 (IMAGE-CACHE-PLAN.md): 清理缓存 also empties the image and mod data caches.
+                    ctx.progress("正在清除图片缓存", Some(1.));
+                    let (images, bytes) = crate::image_cache::clear(&crate::image_cache::dir(&data))?;
+                    let projects = crate::catalog::disk::clear(&crate::catalog::disk::path(&data))?;
+                    ctx.finish(format!(
+                        "{message}；已清除{images}张图片缓存，释放{}；已清除{projects}条Mod资料缓存",
+                        crate::packs::human_file_size(bytes)
+                    ));
                     Ok(())
                 });
                 ui.invoke_notify("清除下载缓存任务已提交，可在任务中查看进度".into());

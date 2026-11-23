@@ -53,9 +53,8 @@ pub fn to_slint(image: &RgbaImage) -> slint::Image {
     )
 }
 /// media.forgecdn.net resets TLS handshakes beyond about five parallel connections from one address
-/// (curl behaves the same), so downloads are limited per host and connect errors are retried.
+/// (curl behaves the same), so downloads are limited per host; `image_cache` retries connect errors.
 const DOWNLOADS_PER_HOST: usize = 3;
-const CONNECT_RETRIES: u32 = 2;
 static HOST_LIMITS: LazyLock<std::sync::Mutex<HashMap<String, Arc<Semaphore>>>> =
     LazyLock::new(Default::default);
 fn host_limit(url: &str) -> Arc<Semaphore> {
@@ -69,36 +68,24 @@ fn host_limit(url: &str) -> Arc<Semaphore> {
         .or_insert_with(|| Arc::new(Semaphore::new(DOWNLOADS_PER_HOST)))
         .clone()
 }
+/// An image's bytes through the disk cache (`image_cache`), at most three requests per host.
 pub async fn download(http: &reqwest::Client, url: &str) -> Result<Vec<u8>> {
     let _permit = host_limit(url).acquire_owned().await?;
-    fetch(http, url).await
+    crate::image_cache::global().get(http, url).await
 }
-async fn fetch(http: &reqwest::Client, url: &str) -> Result<Vec<u8>> {
-    let mut attempt = 0;
-    let response = loop {
-        match http.get(url).send().await {
-            Err(e) if (e.is_connect() || e.is_timeout()) && attempt < CONNECT_RETRIES => {
-                attempt += 1;
-                tracing::debug!(attempt, error = %e.without_url(), "Image request retry");
-                tokio::time::sleep(std::time::Duration::from_millis(400 * u64::from(attempt)))
-                    .await;
-            }
-            result => break result,
+/// Downloads and decodes an image. Bytes that do not decode are dropped from the disk cache and
+/// downloaded once more, so a damaged cache entry heals by itself.
+pub async fn download_image(http: &reqwest::Client, url: &str) -> Result<DynamicImage> {
+    let bytes = download(http, url).await?;
+    match tokio::task::spawn_blocking(move || decode(&bytes)).await? {
+        Ok(image) => Ok(image),
+        Err(error) => {
+            tracing::debug!(error = %format!("{error:#}"), "图片解码失败，重新下载");
+            crate::image_cache::global().forget(url).await;
+            let bytes = download(http, url).await?;
+            tokio::task::spawn_blocking(move || decode(&bytes)).await?
         }
-    };
-    let mut r = response
-        .map_err(|e| anyhow::Error::new(e.without_url()).context("图片请求失败"))?
-        .error_for_status()
-        .map_err(|e| anyhow::Error::new(e.without_url()).context("图片HTTP错误"))?;
-    let mut bytes = Vec::new();
-    while let Some(chunk) = r.chunk().await? {
-        anyhow::ensure!(
-            bytes.len() + chunk.len() <= 16 * 1024 * 1024,
-            "图片超过16MiB"
-        );
-        bytes.extend_from_slice(&chunk);
     }
-    Ok(bytes)
 }
 /// Account appearance is independent of menu loading and uses the shared per-host limiter.
 pub async fn background_appearance(
@@ -112,9 +99,8 @@ pub async fn background_appearance(
     let skin = async {
         if let Some(url) = skin_url {
             let result = async {
-                let bytes = download(http, url.trim()).await?;
-                tokio::task::spawn_blocking(move || Skin::new(decode(&bytes)?.to_rgba8(), slim))
-                    .await?
+                let image = download_image(http, url.trim()).await?;
+                tokio::task::spawn_blocking(move || Skin::new(image.to_rgba8(), slim)).await?
             }
             .await;
             match result {
@@ -129,9 +115,8 @@ pub async fn background_appearance(
     let cape = async {
         if let Some(url) = cape_url {
             let result = async {
-                let bytes = download(http, url.trim()).await?;
-                tokio::task::spawn_blocking(move || normalize(decode(&bytes)?.to_rgba8(), true))
-                    .await?
+                let image = download_image(http, url.trim()).await?;
+                tokio::task::spawn_blocking(move || normalize(image.to_rgba8(), true)).await?
             }
             .await;
             match result {
@@ -152,7 +137,7 @@ const CROWD_TIMEOUT: Duration = Duration::from_secs(15);
 async fn crowd_skin(http: &reqwest::Client, url: &str, slim: Option<bool>) -> Result<Skin> {
     let bytes = {
         let _permit = host_limit(url).acquire_owned().await?;
-        tokio::time::timeout(CROWD_TIMEOUT, fetch(http, url))
+        tokio::time::timeout(CROWD_TIMEOUT, crate::image_cache::global().get(http, url))
             .await
             .context("皮肤下载超时")??
     };
@@ -238,9 +223,8 @@ const ICON_CORNER_RATIO: f32 = 13.0 / 108.0;
 /// Downloads an icon and returns it cropped to `size`² with rounded corners baked in, so the tile
 /// needs no rounded `clip` (femtovg renders each rounded clip through its own offscreen layer).
 pub async fn icon(http: &reqwest::Client, url: &str, size: u32) -> Result<RgbaImage> {
-    let bytes = download(http, url).await?;
+    let image = download_image(http, url).await?;
     tokio::task::spawn_blocking(move || {
-        let image = decode(&bytes)?;
         let mut icon = image
             .resize_to_fill(size, size, FilterType::CatmullRom)
             .to_rgba8();
@@ -310,8 +294,7 @@ impl HeadCache {
             .clone();
         let head = cell
             .get_or_try_init(|| async {
-                let bytes = download(&api.http, &url).await?;
-                head(&decode(&bytes)?.to_rgba8())
+                head(&download_image(&api.http, &url).await?.to_rgba8())
             })
             .await?;
         Ok(head.clone())

@@ -55,6 +55,35 @@ fn valid_url(value: &str, p: Platform) -> Result<String> {
     );
     Ok(value.into())
 }
+/// Modrinth takes id lists in the URL (`?ids=["a","b"]`), so a long list is split only to keep
+/// the URL short enough for the servers; there is no fixed number of ids per request. CurseForge
+/// and Modrinth `version_files` send ids in the body and are never split.
+const MAX_URL_IDS_BYTES: usize = 7000;
+
+/// Consecutive slices of `ids` whose URL-encoded JSON list (`%5B%22id%22%2C…%5D`) stays within
+/// `MAX_URL_IDS_BYTES`; a single id longer than that still gets its own batch.
+fn url_batches(ids: &[String]) -> Vec<&[String]> {
+    let mut batches = Vec::new();
+    let (mut start, mut size) = (0, 6);
+    for (i, id) in ids.iter().enumerate() {
+        // `"id"` plus a separating `,`, each special character percent-encoded to 3 bytes.
+        let cost = urlencoding_len(id) + 9;
+        if i > start && size + cost > MAX_URL_IDS_BYTES {
+            batches.push(&ids[start..i]);
+            (start, size) = (i, 6);
+        }
+        size += cost;
+    }
+    if start < ids.len() {
+        batches.push(&ids[start..]);
+    }
+    batches
+}
+
+fn urlencoding_len(id: &str) -> usize {
+    id.bytes().map(|b| if b.is_ascii_alphanumeric() || b"-._*".contains(&b) { 1 } else { 3 }).sum()
+}
+
 #[derive(Clone)]
 pub struct Adapter {
     pub platform: Platform,
@@ -343,7 +372,8 @@ impl Adapter {
     }
     pub async fn projects(&self, ids: &[String]) -> Result<BTreeMap<String, Project>> {
         let mut result = BTreeMap::new();
-        for ids in ids.chunks(100) {
+        let batches = if self.platform == Platform::CurseForge { vec![ids] } else { url_batches(ids) };
+        for ids in batches.into_iter().filter(|b| !b.is_empty()) {
             let response = if self.platform == Platform::CurseForge {
                 self.post("mods",json!({"modIds":ids.iter().filter_map(|s|s.parse::<u64>().ok()).collect::<Vec<_>>()})).await?
             } else {
@@ -368,7 +398,8 @@ impl Adapter {
     }
     pub async fn files(&self, ids: &[String]) -> Result<BTreeMap<String, File>> {
         let mut result = BTreeMap::new();
-        for ids in ids.chunks(100) {
+        let batches = if self.platform == Platform::CurseForge { vec![ids] } else { url_batches(ids) };
+        for ids in batches.into_iter().filter(|b| !b.is_empty()) {
             let response = if self.platform == Platform::CurseForge {
                 self.post("mods/files",json!({"fileIds":ids.iter().filter_map(|s|s.parse::<u64>().ok()).collect::<Vec<_>>()})).await?
             } else {
@@ -412,17 +443,16 @@ impl Adapter {
                 }
             }
         } else {
-            for hashes in hashes.chunks(100) {
-                let response=self.post("version_files",json!({"hashes":hashes.iter().map(|h|h.sha1.to_lowercase()).collect::<Vec<_>>()})).await?;
-                for (hash, v) in response
-                    .as_object()
-                    .context("MODRINTH returned an invalid response")?
-                {
-                    let file = self.file(v, Some(hash))?;
-                    for h in hashes {
-                        if h.sha1.eq_ignore_ascii_case(hash) {
-                            result.insert(h.key.clone(), file.clone());
-                        }
+            // One request: the hashes are in the body.
+            let response=self.post("version_files",json!({"hashes":hashes.iter().map(|h|h.sha1.to_lowercase()).collect::<Vec<_>>()})).await?;
+            for (hash, v) in response
+                .as_object()
+                .context("MODRINTH returned an invalid response")?
+            {
+                let file = self.file(v, Some(hash))?;
+                for h in hashes {
+                    if h.sha1.eq_ignore_ascii_case(hash) {
+                        result.insert(h.key.clone(), file.clone());
                     }
                 }
             }
@@ -665,5 +695,73 @@ fn cf_loader(loader: &str) -> u64 {
         "fabric" => 4,
         "neoforge" => 6,
         _ => 0,
+    }
+}
+
+#[cfg(test)]
+mod batch_tests {
+    use super::*;
+    use crate::catalog::transport::{Transport, TransportFuture};
+    use std::sync::Mutex;
+
+    /// Records (method, path, query `ids` length, body id count) and answers with no items.
+    #[derive(Default)]
+    struct Recorder(Mutex<Vec<(String, String, usize, usize)>>);
+    impl Transport for Recorder {
+        fn request<'a>(&'a self, _: Platform, method: Method, path: &'a str, query: Vec<(String, String)>, body: Option<Value>) -> TransportFuture<'a> {
+            Box::pin(async move {
+                let ids = query.iter().find(|(k, _)| k == "ids").map(|(_, v)| v.len()).unwrap_or(0);
+                let listed = body.as_ref().and_then(|b| b.as_object()).and_then(|o| o.values().next()).and_then(Value::as_array).map_or(0, Vec::len);
+                self.0.lock().unwrap().push((method.to_string(), path.to_owned(), ids, listed));
+                Ok(match path {
+                    "mods" | "mods/files" => json!({"data": []}),
+                    "version_files" => json!({}),
+                    _ => json!([]),
+                })
+            })
+        }
+    }
+    fn adapter(platform: Platform) -> (Adapter, Arc<Recorder>) {
+        let recorder = Arc::new(Recorder::default());
+        (Adapter { platform, transport: recorder.clone() }, recorder)
+    }
+    fn ids(n: usize) -> Vec<String> {
+        (0..n).map(|i| format!("{i:08}")).collect()
+    }
+
+    #[test]
+    fn url_batches_have_no_fixed_count_and_stay_under_the_url_budget() {
+        let few = ids(388);
+        assert_eq!(url_batches(&few).len(), 1, "388 Modrinth ids fit one URL, as the live API accepted");
+        let many = ids(2000);
+        let batches = url_batches(&many);
+        assert!(batches.len() > 1);
+        assert_eq!(batches.iter().map(|b| b.len()).sum::<usize>(), 2000);
+        for batch in &batches {
+            let encoded = reqwest::Url::parse_with_params("https://x/projects", &[("ids", json!(batch).to_string())]).unwrap();
+            assert!(encoded.query().unwrap().len() - "ids=".len() <= MAX_URL_IDS_BYTES, "{}", encoded.query().unwrap().len());
+        }
+        assert!(url_batches(&[]).is_empty());
+        assert_eq!(url_batches(&["x".repeat(MAX_URL_IDS_BYTES)]).len(), 1);
+    }
+
+    #[tokio::test]
+    async fn curseforge_and_hash_lookups_send_one_request() {
+        let (cf, calls) = adapter(Platform::CurseForge);
+        let many: Vec<String> = (0..500).map(|i| i.to_string()).collect();
+        cf.projects(&many).await.unwrap();
+        cf.files(&many).await.unwrap();
+        let (mr, mr_calls) = adapter(Platform::Modrinth);
+        let hashes: Vec<FileHashes> = (0..500)
+            .map(|i| FileHashes { key: i.to_string(), sha1: format!("{i:040}"), murmur2: None })
+            .collect();
+        mr.match_files(&hashes).await.unwrap();
+        mr.projects(&ids(388)).await.unwrap();
+        let calls = calls.0.lock().unwrap();
+        assert_eq!(calls.iter().map(|c| (c.1.as_str(), c.3)).collect::<Vec<_>>(), [("mods", 500), ("mods/files", 500)]);
+        let mr_calls = mr_calls.0.lock().unwrap();
+        assert_eq!(mr_calls.len(), 2);
+        assert_eq!((mr_calls[0].1.as_str(), mr_calls[0].3), ("version_files", 500));
+        assert_eq!(mr_calls[1].1, "projects");
     }
 }

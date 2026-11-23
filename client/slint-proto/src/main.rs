@@ -42,6 +42,7 @@ use rdi_renderer::background;
 mod gpu_setup;
 mod hosts;
 mod images;
+mod image_cache;
 mod avif;
 mod java_runtime;
 mod mc_install;
