@@ -439,3 +439,18 @@ Kotlin bugs found on the way are noted here and not fixed.
   mod and extra lists (`ModrinthService.loadParsedModpack`/`resolveManifestEntries`,
   `CurseForgeService.mapManifestEntriesToMods`/`...Contents`), embedded jar identification
   (`matchLocalModFiles` through `catalog::match_local_files`), embedded extras, server pack.
+- 2026-11-25 handoff for A2 part 2 (session stopped at a committed checkpoint, 74192f15):
+  the Kotlin upload works on raw platform data, while `crate::catalog` returns normalized
+  models. Port through raw requests on the catalog transport (mirror and API key handling come
+  with it): Modrinth `POST version_files` (sha1) and `GET projects?ids=`; CurseForge
+  fingerprint match, `POST mods` (with and without the Mod class filter, `getModsInfo` vs
+  `getModsInfoIncludingNonMods`) and `POST mods/files`. Then, in Kotlin order:
+  `ModrinthService.loadParsedModpack` + `resolveManifestEntries` (manifest path rules,
+  `manifestContentType`, download URL space encoding, CurseForge fallback through
+  `/files/<a>/<b>/` ids, Fabric env sides, `appendExtra`), `CurseForgeService.mapManifestEntriesToMods`
+  (side from `gameVersions`, else the Modrinth project of the file's SHA-1, else UNKNOWN) and
+  `resolveManifestEntriesToContents`, `getInfosFromHash` for embedded jars (Modrinth first, then
+  CurseForge, `serverModMergeKey`), `matchEmbeddedClientExtras` / `mergeEmbeddedClientExtras`
+  (`pack_install::extras` has `validateAndMergeClientExtras`), staging into the content store,
+  `containsExcludedMcaFiles` (`SaveRegionPaths`), and `loadServerPack`. Compare the resulting
+  mod and extra lists with Kotlin on the owner's sample pack before A3.
