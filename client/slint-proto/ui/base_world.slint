@@ -1,0 +1,276 @@
+// U4 batch e3: 地图模板 (Compose BaseWorldListScreen, BaseWorldUploadScreen and
+// ModpackVersionBaseWorldManageScreen). Rust drives the pages through the `Worlds` global
+// (src/base_world_ui.rs); the rules and the upload are in src/base_world/.
+import { ScrollView, TextEdit, Switch } from "std-widgets.slint";
+import { TextField } from "components/fields.slint";
+import { CircleIconButton, GlassButton } from "components/glass_button.slint";
+import { EmptyState, ErrorState, LoadingState, RScrollbar } from "components/shared.slint";
+import { PlayerHead } from "components/player_head.slint";
+import { PageCard, DialogCard, DialogTitle } from "room_pages.slint";
+import { Rooms, OptionCard } from "rooms.slint";
+import { Theme } from "theme.slint";
+
+// One template card: its name, a detail line, and for the version binding the author.
+export struct WorldCard { id: string, name: string, detail: string, owner-name: string, owner-head: image, has-owner: bool, selected: bool, unavailable: bool }
+export struct WorldDetailRow { label: string, value: string }
+
+export global Worlds {
+    // 0 none, 1 地图模板, 2 创建地图模板, 3 初始地图模板; set by the shell.
+    in-out property <int> screen;
+    // 地图模板.
+    in-out property <bool> loading;
+    // Nothing could be shown; with 重试.
+    in-out property <string> error;
+    // A rename or delete failed, or a reload failed while the cards stayed.
+    in-out property <string> notice;
+    in-out property <[WorldCard]> worlds;
+    in-out property <bool> detail-open;
+    in-out property <string> detail-title;
+    in-out property <[WorldDetailRow]> detail-rows;
+    in-out property <bool> rename-open;
+    in-out property <string> rename-text;
+    in-out property <string> rename-error;
+    in-out property <bool> rename-busy;
+    in-out property <bool> rename-valid;
+    in-out property <bool> delete-open;
+    in-out property <string> delete-name;
+    in-out property <string> delete-text;
+    in-out property <bool> delete-busy;
+    // 创建地图模板.
+    in-out property <string> directory;
+    in-out property <bool> picking;
+    in-out property <string> name;
+    // `LevelChoice`: 0 普通, 1 平坦, 2 空岛, 3 自定义.
+    in-out property <int> level-choice;
+    in-out property <string> level-type;
+    in-out property <string> settings;
+    in-out property <string> create-error;
+    in-out property <bool> can-create;
+    in-out property <bool> custom-open;
+    in-out property <string> custom-text;
+    in-out property <string> custom-error;
+    // 初始地图模板.
+    in-out property <string> bind-title;
+    in-out property <bool> bind-loading;
+    in-out property <bool> bind-loaded;
+    in-out property <string> bind-error;
+    in-out property <string> bind-notice;
+    in-out property <[WorldCard]> bind-worlds;
+    in-out property <bool> bind-has-draft;
+    in-out property <bool> bind-required;
+    in-out property <bool> bind-unavailable;
+    in-out property <bool> bind-saving;
+    in-out property <bool> bind-can-save;
+    out property <bool> modal: root.detail-open || root.rename-open || root.delete-open || root.custom-open;
+    callback action(string, string);
+}
+
+component PageTitle inherits HorizontalLayout {
+    in property <string> text;
+    spacing: 10px;
+    VerticalLayout { alignment: center;
+        CircleIconButton { glyph: "\u{f060}"; accessible-label: "返回"; clicked => { Worlds.action("back-nav", ""); } }
+    }
+    Text { text: root.text; color: Theme.ink; font-size: 22px; font-weight: 600; vertical-alignment: center; overflow: elide; horizontal-stretch: 1; min-width: 80px; }
+    @children
+}
+
+// `BaseWorldCard`: name, then the detail line or the author.
+component TemplateCard inherits Rectangle {
+    in property <WorldCard> item;
+    in property <bool> enabled: true;
+    in property <bool> menu;
+    callback clicked();
+    accessible-role: button;
+    accessible-label: root.item.name;
+    accessible-checked: root.item.selected;
+    accessible-action-default => { if root.enabled { root.clicked(); } }
+    border-radius: 12px;
+    background: root.item.unavailable ? #f6dcd8 : root.item.selected ? #cfe3c6 : touch.has-hover && root.enabled ? #ffffffe6 : #ffffffb8;
+    border-width: root.item.selected ? 2px : 1px;
+    border-color: root.item.selected ? #446c49 : root.item.unavailable ? #ba3434 : #dce2d8;
+    touch := TouchArea { enabled: root.enabled; mouse-cursor: pointer; clicked => { root.clicked(); } }
+    Text { x: 16px; y: 10px; width: parent.width - (root.menu ? 132px : 32px); text: root.item.name; font-size: 15px; font-weight: 600;
+        color: root.item.unavailable ? #ba3434 : Theme.ink; overflow: elide; }
+    if root.item.has-owner: PlayerHead { x: 16px; y: 38px; width: 16px; height: 16px; source: root.item.owner-head; }
+    Text { x: root.item.has-owner ? 38px : 16px; y: 37px; width: parent.width - self.x - (root.menu ? 116px : 16px);
+        text: root.item.has-owner ? root.item.owner-name : root.item.detail; font-size: 12px;
+        color: root.item.unavailable ? #ba3434 : #5b625b; overflow: elide; }
+    // `BaseWorldCard`'s menu, as three buttons on the card.
+    if root.menu: HorizontalLayout { x: parent.width - 116px; y: (parent.height - 36px) / 2; width: 108px; height: 36px; spacing: 0px;
+        CircleIconButton { glyph: "\u{f449}"; accessible-label: "查看详情"; height: 36px; enabled: root.enabled;
+            clicked => { Worlds.action("detail", root.item.id); } Tooltip { text: @markdown("查看详情"); } }
+        CircleIconButton { glyph: "\u{f4ce}"; accessible-label: "修改名称"; height: 36px; enabled: root.enabled;
+            clicked => { Worlds.action("rename", root.item.id); } Tooltip { text: @markdown("修改名称"); } }
+        CircleIconButton { glyph: "\u{ea81}"; accessible-label: "删除"; height: 36px; destructive: true; enabled: root.enabled && !Worlds.delete-busy;
+            clicked => { Worlds.action("delete", root.item.id); } Tooltip { text: @markdown("删除"); } }
+    }
+}
+
+component TemplateGrid inherits Rectangle {
+    in property <[WorldCard]> items;
+    in property <bool> enabled: true;
+    in property <bool> menu;
+    in property <string> pick-action;
+    grid := Flickable {
+        x: 0px; y: 0px; width: parent.width - 14px; height: parent.height;
+        private property <length> gap: 10px;
+        private property <int> columns: max(1, floor((self.width + self.gap) / ((root.menu ? 320px : 230px) + self.gap)));
+        private property <length> card-width: (self.width + self.gap) / self.columns - self.gap;
+        content-width: self.width;
+        content-height: max(self.height, ceil(root.items.length / self.columns) * 74px);
+        for item[i] in root.items: TemplateCard {
+            x: mod(i, grid.columns) * (grid.card-width + grid.gap); y: floor(i / grid.columns) * 74px;
+            width: grid.card-width; height: 64px; item: item; enabled: root.enabled; menu: root.menu;
+            clicked => { if root.pick-action != "" { Worlds.action(root.pick-action, item.id); } }
+        }
+    }
+    RScrollbar {
+        x: parent.width - 6px; y: 0px; width: 6px; height: parent.height;
+        viewport: grid.height; extent: grid.content-height; position: -grid.content-y;
+        scrolled(offset) => { grid.content-y = -offset; }
+    }
+}
+
+// 地图模板 (BaseWorldListScreen).
+export component BaseWorldListPage inherits PageCard {
+    in property <bool> enabled: true;
+    FocusScope { x: 0px; y: 0px; width: root.width; height: root.height; enabled: root.enabled;
+        PageTitle { x: 20px; y: 14px; width: parent.width - 40px; height: 48px; text: "地图模板";
+            VerticalLayout { alignment: center;
+                CircleIconButton { glyph: "\u{f067}"; accessible-label: "添加地图"; filled: true; clicked => { Worlds.action("open-create", ""); }
+                    Tooltip { text: @markdown("添加地图"); } }
+            }
+        }
+        if Worlds.notice != "": Text { x: 24px; y: 66px; width: parent.width - 48px; text: Worlds.notice; color: #ba3434; wrap: word-wrap; }
+        if Worlds.loading && Worlds.worlds.length == 0: LoadingState { x: 20px; y: 72px; width: parent.width - 40px; height: parent.height - 88px; }
+        if !Worlds.loading && Worlds.error != "" && Worlds.worlds.length == 0: ErrorState { x: 20px; y: 72px; width: parent.width - 40px; height: parent.height - 88px;
+            message: Worlds.error; retry => { Worlds.action("reload", ""); } }
+        if !Worlds.loading && Worlds.error == "" && Worlds.worlds.length == 0: EmptyState { x: 20px; y: 72px; width: parent.width - 40px; height: parent.height - 88px;
+            label: "还没有地图模板，上传一个世界开始使用"; }
+        if Worlds.worlds.length > 0: TemplateGrid { x: 20px; y: Worlds.notice != "" ? 96px : 72px; width: parent.width - 40px; height: parent.height - self.y - 16px;
+            items: Worlds.worlds; enabled: root.enabled && !Worlds.rename-busy; menu: true; }
+    }
+}
+
+// 创建地图模板 (BaseWorldUploadScreen).
+export component BaseWorldCreatePage inherits PageCard {
+    in property <bool> enabled: true;
+    FocusScope { x: 0px; y: 0px; width: root.width; height: root.height; enabled: root.enabled;
+        PageTitle { x: 20px; y: 14px; width: parent.width - 40px; height: 48px; text: "创建地图模板";
+            VerticalLayout { alignment: center;
+                GlassButton { label: "创建地图模板"; glyph: "\u{f058}"; filled: true; enabled: Worlds.can-create; clicked => { Worlds.action("create", ""); } }
+            }
+        }
+        ScrollView { x: 20px; y: 72px; width: parent.width - 40px; height: parent.height - self.y - 16px;
+            content-height: body.preferred-height;
+            body := VerticalLayout { width: parent.width; height: self.preferred-height; spacing: 12px; padding-right: 14px; padding-bottom: 8px;
+                HorizontalLayout { alignment: start;
+                    GlassButton { label: Worlds.picking ? "正在选择..." : "选择已有地图文件夹"; glyph: "\u{f07c}"; enabled: !Worlds.picking;
+                        clicked => { Worlds.action("pick", ""); } }
+                }
+                Text { text: Worlds.directory != "" ? "已选择：" + Worlds.directory : "未选择地图文件夹，将在房间首次启动时生成地图。";
+                    color: #526050; wrap: word-wrap; font-size: 14px; }
+                TextField { max-width: 360px; label: "名称"; reserve-error: false; text <=> Worlds.name; edited(t) => { Worlds.action("name", t); } }
+                Text { text: "地形类型"; color: Theme.ink; font-size: 16px; font-weight: 600; }
+                HorizontalLayout { spacing: 6px; alignment: start;
+                    for title[i] in ["普通", "平坦", "空岛", "自定义"]: OptionCard { title: title; icon: Rooms.icons[i == 1 ? 7 : i == 2 ? 8 : 6];
+                        selected: Worlds.level-choice == i; clicked => { Worlds.action("level", i); } }
+                }
+                if Worlds.level-choice == 3: Text { text: "自定义地形：" + Worlds.level-type; color: #526050; font-size: 13px; }
+                Text { text: "生成器json 可选"; color: #446c49; font-size: 12px; }
+                TextEdit { height: 120px; text <=> Worlds.settings; edited(t) => { Worlds.action("settings", t); } }
+                if Worlds.create-error != "": Text { text: Worlds.create-error; color: #ba3434; wrap: word-wrap; }
+            }
+        }
+    }
+}
+
+// 初始地图模板 (ModpackVersionBaseWorldManageScreen).
+export component VersionBaseWorldPage inherits PageCard {
+    in property <bool> enabled: true;
+    FocusScope { x: 0px; y: 0px; width: root.width; height: root.height; enabled: root.enabled;
+        PageTitle { x: 20px; y: 14px; width: parent.width - 40px; height: 48px; text: "初始地图模板";
+            Text { text: Worlds.bind-title; color: #526050; font-size: 15px; vertical-alignment: center; overflow: elide; max-width: 320px; }
+            VerticalLayout { alignment: center;
+                GlassButton { label: Worlds.bind-saving ? "保存中..." : "保存"; glyph: "\u{f00c}"; filled: true; enabled: Worlds.bind-can-save;
+                    clicked => { Worlds.action("bind-save", ""); } }
+            }
+        }
+        VerticalLayout { x: 20px; y: 72px; width: parent.width - 40px; height: parent.height - self.y - 16px; spacing: 10px;
+            if Worlds.bind-unavailable: Text { text: "当前选择的地图模板不可用。再次点击下方的失效模板卡片取消选择，或选择其他地图模板。";
+                color: #ba3434; wrap: word-wrap; }
+            HorizontalLayout { spacing: 10px; alignment: start; height: 36px;
+                Text { text: "建议使用"; color: Theme.ink; vertical-alignment: center; }
+                Switch { checked: Worlds.bind-required; enabled: Worlds.bind-loaded && !Worlds.bind-saving && Worlds.bind-has-draft;
+                    toggled => { Worlds.action("bind-required", self.checked ? "1" : "0"); } }
+                Text { text: "强制使用"; color: Theme.ink; vertical-alignment: center; }
+            }
+            if Worlds.bind-notice != "": Text { text: Worlds.bind-notice; color: #ba3434; wrap: word-wrap; }
+            Rectangle { vertical-stretch: 1;
+                if Worlds.bind-loading: LoadingState { width: parent.width; height: parent.height; }
+                if !Worlds.bind-loading && Worlds.bind-error != "": ErrorState { width: parent.width; height: parent.height;
+                    message: Worlds.bind-error; retry => { Worlds.action("bind-reload", ""); } }
+                if !Worlds.bind-loading && Worlds.bind-error == "" && Worlds.bind-worlds.length == 0: EmptyState { width: parent.width; height: parent.height;
+                    label: "暂无可用地图模板"; }
+                if !Worlds.bind-loading && Worlds.bind-error == "" && Worlds.bind-worlds.length > 0: TemplateGrid { width: parent.width; height: parent.height;
+                    items: Worlds.bind-worlds; enabled: root.enabled && !Worlds.bind-saving; pick-action: "bind-pick"; }
+            }
+        }
+    }
+}
+
+// Details, rename, delete and 自定义地形; the shell dims the window behind them.
+export component BaseWorldDialogs inherits Rectangle {
+    if Worlds.detail-open: DialogCard { width: min(440px, root.width - 48px); height: detail-body.preferred-height;
+        x: (root.width - self.width) / 2; y: (root.height - self.height) / 2;
+        detail-body := VerticalLayout { padding: 24px; spacing: 10px;
+            DialogTitle { text: Worlds.detail-title; }
+            for row in Worlds.detail-rows: VerticalLayout { spacing: 2px;
+                Text { text: row.label; color: #446c49; font-size: 12px; }
+                Text { text: row.value; color: Theme.ink; wrap: word-wrap; }
+            }
+            HorizontalLayout { alignment: end;
+                GlassButton { label: "关闭"; clicked => { Worlds.action("detail-close", ""); } }
+            }
+        }
+    }
+    if Worlds.rename-open: DialogCard { width: min(420px, root.width - 48px); height: rename-body.preferred-height;
+        x: (root.width - self.width) / 2; y: (root.height - self.height) / 2;
+        rename-body := VerticalLayout { padding: 24px; spacing: 12px;
+            DialogTitle { text: "修改地图模板名称"; }
+            TextField { label: "名称"; enabled: !Worlds.rename-busy; text <=> Worlds.rename-text; error: Worlds.rename-error; init => { self.focus(); }
+                edited(t) => { Worlds.action("rename-text", t); } accepted => { if Worlds.rename-valid { Worlds.action("rename-ok", ""); } } }
+            HorizontalLayout { alignment: end; spacing: 12px;
+                GlassButton { label: "取消"; enabled: !Worlds.rename-busy; clicked => { Worlds.action("rename-cancel", ""); } }
+                GlassButton { label: Worlds.rename-busy ? "保存中…" : "保存"; filled: true; enabled: !Worlds.rename-busy && Worlds.rename-valid;
+                    clicked => { Worlds.action("rename-ok", ""); } }
+            }
+        }
+    }
+    if Worlds.delete-open: DialogCard { width: min(440px, root.width - 48px); height: delete-body.preferred-height;
+        x: (root.width - self.width) / 2; y: (root.height - self.height) / 2;
+        delete-body := VerticalLayout { padding: 24px; spacing: 12px;
+            DialogTitle { text: "删除地图模板"; }
+            Text { text: "删除后将永久移除这个地图模板，且无法恢复。请输入地图名称确认删除："; color: Theme.ink; wrap: word-wrap; }
+            TextField { label: Worlds.delete-name; enabled: !Worlds.delete-busy; reserve-error: false; text <=> Worlds.delete-text; init => { self.focus(); } }
+            HorizontalLayout { alignment: end; spacing: 12px;
+                GlassButton { label: "取消"; enabled: !Worlds.delete-busy; clicked => { Worlds.action("delete-cancel", ""); } }
+                GlassButton { label: Worlds.delete-busy ? "删除中…" : "删除"; destructive: true; filled: true;
+                    enabled: !Worlds.delete-busy && Worlds.delete-text == Worlds.delete-name; clicked => { Worlds.action("delete-ok", ""); } }
+            }
+        }
+    }
+    if Worlds.custom-open: DialogCard { width: min(420px, root.width - 48px); height: custom-body.preferred-height;
+        x: (root.width - self.width) / 2; y: (root.height - self.height) / 2;
+        custom-body := VerticalLayout { padding: 24px; spacing: 12px;
+            DialogTitle { text: "自定义地形"; }
+            TextField { label: "地形ID"; text <=> Worlds.custom-text; error: Worlds.custom-error; init => { self.focus(); }
+                edited(t) => { Worlds.action("custom-text", t); } accepted => { Worlds.action("custom-ok", ""); } }
+            HorizontalLayout { alignment: end; spacing: 12px;
+                GlassButton { label: "取消"; clicked => { Worlds.action("custom-cancel", ""); } }
+                GlassButton { label: "确定"; filled: true; clicked => { Worlds.action("custom-ok", ""); } }
+            }
+        }
+    }
+}

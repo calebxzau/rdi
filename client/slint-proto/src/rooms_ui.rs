@@ -149,7 +149,7 @@ fn cached_player(players: &HashMap<String, (String, slint::Image)>, uid: &str, f
 
 /// Kotlin `UUID.toObjectId`: an ObjectId-derived UUID holds the 12 id bytes and four zero bytes.
 /// `None` for any other UUID, where Compose's `objectId` would throw.
-fn uuid_object_id(uuid: &str) -> Option<String> {
+pub(crate) fn uuid_object_id(uuid: &str) -> Option<String> {
     let hex: String = uuid.trim().chars().filter(|c| *c != '-').collect::<String>().to_lowercase();
     if hex.len() != 32 || !hex.chars().all(|c| c.is_ascii_hexdigit()) || &hex[24..] != "00000000" {
         return None;
@@ -400,6 +400,8 @@ impl RoomsUi {
             "dismiss" => self.dismiss(&ui),
             "back-nav" => self.navigate("back"),
             "create" => self.open_create(&ui, value),
+            // U4e3: 创建地图模板 shows the same terrain cards.
+            "icons" => self.ensure_icons(&ui),
             _ => self.form_action(&ui, action, value),
         }
     }

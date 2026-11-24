@@ -53,6 +53,8 @@ mod mc_install;
 mod mc_launch;
 mod play;
 mod save_import;
+mod base_world;
+mod base_world_ui;
 mod route;
 use rdi_slint_proto::scene;
 mod runtime_probe;

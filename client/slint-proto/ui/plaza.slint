@@ -137,6 +137,8 @@ export component ModpackPlaza inherits Rectangle {
     in-out property <PlazaFilters> filters;
     in-out property <string> keyword;
     in-out property <length> scroll;
+    // U4e3: 地图模板, for players with a Microsoft profile (Compose `loggedAccount.hasMsid`).
+    in property <bool> base-worlds;
     callback action(string, string);
 
     background: #f8f7eff7;
@@ -155,6 +157,10 @@ export component ModpackPlaza inherits Rectangle {
             }
             VerticalLayout { alignment: center;
                 CircleIconButton { glyph: "\u{f002}"; accessible-label: "搜索"; clicked => { root.action("search", ""); } }
+            }
+            if root.base-worlds: VerticalLayout { alignment: center;
+                CircleIconButton { glyph: "\u{f279}"; accessible-label: "地图模板"; clicked => { root.action("base-worlds", ""); }
+                    Tooltip { text: @markdown("地图模板"); } }
             }
         }
         HorizontalLayout {
@@ -232,6 +238,8 @@ export component ModpackDetails inherits Rectangle {
     in property <PlazaVersion> version;
     in property <string> changelog;
     in property <string> base-world;
+    // U4e3: the version's managers see 初始地图模板 with 配置初始地图 instead of base-world.
+    in property <bool> base-world-manage;
     // The version page (`ModpackVersionInfoScreen` as a player sees it).
     in property <string> uploaded;
     in property <string> uploader-name;
@@ -320,7 +328,13 @@ export component ModpackDetails inherits Rectangle {
                         VerticalLayout { alignment: center; PlayerHead { width: 22px; height: 22px; source: root.uploader-head; } }
                         Text { text: root.uploader-name; color: Theme.ink; font-size: 14px; vertical-alignment: center; }
                     }
-                    if root.base-world != "": Text { text: root.base-world; color: #526050; font-size: 14px; }
+                    if root.base-world != "" && !root.base-world-manage: Text { text: root.base-world; color: #526050; font-size: 14px; }
+                    if root.base-world-manage: HorizontalLayout { spacing: 10px; height: 40px;
+                        Text { text: root.base-world; color: #526050; font-size: 14px; vertical-alignment: center; horizontal-stretch: 1; }
+                        VerticalLayout { alignment: center;
+                            GlassButton { label: "配置初始地图"; glyph: "\u{ee69}"; clicked => { root.action("base-world-manage", ""); } }
+                        }
+                    }
                     if root.changelog != "": Text { text: "更新日志"; color: Theme.ink; font-size: 18px; font-weight: 600; }
                     if root.changelog != "": Text { text: root.changelog; color: Theme.ink; font-size: 14px; wrap: word-wrap; }
                     if root.extras != "": Text { text: "材质光影  " + root.extras; color: #526050; font-size: 13px; wrap: word-wrap; }

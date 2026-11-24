@@ -28,8 +28,9 @@ import { Inbox, MailRow, MailPage, MailDialogs } from "mail.slint";
 import { Settings, SettingsPage, SettingsDialogs } from "settings.slint";
 import { RoomPages, RoomBackend, RoomWorldPage, RoomRollbackPage, RoomModsPage, RoomPageDialogs, RollbackRow, RoomModRow, GithubAssetRow } from "room_pages.slint";
 import { SaveImport, SaveImportPage, SaveImportDialogs, SaveRoleRow, SaveMapRow } from "save_import.slint";
+import { Worlds, WorldCard, WorldDetailRow, BaseWorldListPage, BaseWorldCreatePage, VersionBaseWorldPage, BaseWorldDialogs } from "base_world.slint";
 import { Content, ContentCard, ContentFile, ResourceCard, GalleryItem, ContentModsPage, ContentResourcesPage, ContentModDetailPage, ContentResourceDetailPage, ContentDialogs, ContentSnack } from "content.slint";
-export { Account, Inbox, MailRow, Settings, Rooms, RoomInfo, RoomMember, RoomMenuEntry, RoomFriend, RoomFormView, RoomRule, RoomWorld, RoomPages, RollbackRow, RoomModRow, GithubAssetRow, SaveImport, SaveRoleRow, SaveMapRow, Content, ContentCard, ContentFile, ResourceCard, GalleryItem }
+export { Account, Inbox, MailRow, Settings, Rooms, RoomInfo, RoomMember, RoomMenuEntry, RoomFriend, RoomFormView, RoomRule, RoomWorld, RoomPages, RollbackRow, RoomModRow, GithubAssetRow, SaveImport, SaveRoleRow, SaveMapRow, Worlds, WorldCard, WorldDetailRow, Content, ContentCard, ContentFile, ResourceCard, GalleryItem }
 export { LoginAccount, CandidateRow, OptionDraft, TileData, NameInitial, ProofRow, ProofRect, GlassShape, ContentRow, LogRow, TaskRow, WardrobeItem, HostListRow, PlazaCard, PlazaFilters, PlazaPack, PlazaVersion, PlazaMod }
 
 component MenuTileGrid inherits TileGrid {
@@ -71,6 +72,9 @@ export component AppWindow inherits Window {
     in property <PlazaVersion> plaza-version;
     in property <string> plaza-changelog;
     in property <string> plaza-base-world;
+    // U4e3: 初始地图模板 on the version page for its managers, and the plaza's 地图模板 button.
+    in property <bool> plaza-base-world-manage;
+    in property <bool> plaza-base-worlds;
     in property <string> plaza-uploaded;
     in property <string> plaza-uploader-name;
     in property <image> plaza-uploader-head;
@@ -196,7 +200,7 @@ export component AppWindow inherits Window {
     callback toggle-task(int);
     out property <bool> dialog-focused: dialog.contains-focus;
     out property <bool> gallery-password-revealed: gallery-view.password-revealed;
-    out property <bool> modal-open: root.login-register || root.action-error != "" || root.duplicate-host != "" || root.java-missing || root.confirm-exit || root.gallery-dialog || root.local-play || root.pack-menu || root.discard-options || root.install-missing || root.install-prompt || root.picked-candidates.length > 0 || Rooms.modal || RoomPages.modal || SaveImport.modal || Account.modal || Inbox.modal || Settings.modal || Content.modal;
+    out property <bool> modal-open: root.login-register || root.action-error != "" || root.duplicate-host != "" || root.java-missing || root.confirm-exit || root.gallery-dialog || root.local-play || root.pack-menu || root.discard-options || root.install-missing || root.install-prompt || root.picked-candidates.length > 0 || Rooms.modal || RoomPages.modal || SaveImport.modal || Account.modal || Inbox.modal || Settings.modal || Content.modal || Worlds.modal;
     out property <[GlassShape]> menu-grids: [host-grid.shape, pack-grid.shape];
     out property <[GlassShape]> menu-pills: [tabs.shape, tabs.selected-shape, first-shortcut.shape, second-shortcut.shape, third-shortcut.shape];
     out property <[GlassShape]> glass-panels: [gallery-view.surfaces[0], gallery-view.surfaces[1], dialog.shape];
@@ -291,7 +295,7 @@ export component AppWindow inherits Window {
     private property <int> room-screen: Rooms.screen * 10 + RoomPages.screen;
     changed room-screen => { if !root.modal-open {shell-focus.focus();} }
     // Room dialogs focus their own fields; Escape then reaches shell-focus, which dismisses them.
-    changed modal-open => { if root.modal-open && !Rooms.modal && !RoomPages.modal && !SaveImport.modal && !Account.modal && !Inbox.modal && !Settings.modal && !Content.modal {dialog.focus-dialog();} else if root.login-visible && Account.page == 0 {login-view.focus-account();} else {shell-focus.focus();} }
+    changed modal-open => { if root.modal-open && !Rooms.modal && !RoomPages.modal && !SaveImport.modal && !Account.modal && !Inbox.modal && !Settings.modal && !Content.modal && !Worlds.modal {dialog.focus-dialog();} else if root.login-visible && Account.page == 0 {login-view.focus-account();} else {shell-focus.focus();} }
     changed logical-width => {root.scroll-changed();}
     changed logical-height => {root.scroll-changed();}
     forward-focus: shell-focus;
@@ -308,7 +312,7 @@ export component AppWindow inherits Window {
         }
     Image { width: parent.width; height: parent.height; source: root.backdrop-revision >= 0 ? root.backdrop : root.backdrop; image-fit: fill; }
     title-bar := TitleBar { y: 0px; width: parent.width; player-name: root.player-name; head: root.player-head; account => {if !root.login-visible {root.account-menu = !root.account-menu;}} action(a) => {root.window-action(a);} can-back: root.can-back; host-list-visible: root.host-list-visible; gallery-enabled: root.gallery-enabled; navigate(s) => {root.navigate(s);} }
-    menu := FocusScope { x: 0px; y: 40px; width: parent.width; height: parent.height - 40px; visible: !root.login-visible && !root.ui-proof && !root.gallery && root.pack-screen == 0 && !root.wardrobe-visible && !root.host-list-visible && Rooms.screen == 0 && RoomPages.screen == 0 && Account.screen == 0 && Inbox.screen == 0 && Settings.screen == 0 && Content.screen == 0; enabled: !root.modal-open && root.activity-panel == 0;
+    menu := FocusScope { x: 0px; y: 40px; width: parent.width; height: parent.height - 40px; visible: !root.login-visible && !root.ui-proof && !root.gallery && root.pack-screen == 0 && !root.wardrobe-visible && !root.host-list-visible && Rooms.screen == 0 && RoomPages.screen == 0 && Account.screen == 0 && Inbox.screen == 0 && Settings.screen == 0 && Content.screen == 0 && Worlds.screen == 0; enabled: !root.modal-open && root.activity-panel == 0;
     tabs := GlassTabBar {
         x: (parent.width - self.width) / 2; y: 16px; tab-position: root.tab-position; selected: root.selected;
         select(t) => {root.select-tab(t);}
@@ -432,7 +436,7 @@ export component AppWindow inherits Window {
         enabled: self.visible && !root.modal-open && root.activity-panel == 0;
         cards: root.plaza-cards; categories: root.plaza-categories; minecraft: root.plaza-minecraft; sorts: root.plaza-sorts;
         loading: root.plaza-loading; more: root.plaza-more; error: root.plaza-error;
-        keyword <=> root.plaza-query; filters <=> root.plaza-filters; scroll <=> root.plaza-scroll;
+        keyword <=> root.plaza-query; filters <=> root.plaza-filters; scroll <=> root.plaza-scroll; base-worlds: root.plaza-base-worlds;
         action(a, v) => { if a == "back" { root.navigate("back"); } else { root.plaza-action(a, v); } }
     }
     ModpackDetails {
@@ -443,7 +447,7 @@ export component AppWindow inherits Window {
         version-page: root.pack-screen == 5;
         loading: root.plaza-detail-loading; error: root.plaza-detail-error; pack: root.plaza-pack;
         versions: root.plaza-versions; version: root.plaza-version; changelog: root.plaza-changelog;
-        base-world: root.plaza-base-world; install-state: root.plaza-install;
+        base-world: root.plaza-base-world; base-world-manage: root.plaza-base-world-manage; install-state: root.plaza-install;
         uploaded: root.plaza-uploaded; uploader-name: root.plaza-uploader-name; uploader-head: root.plaza-uploader-head;
         extras: root.plaza-extras; mods: root.plaza-mods; mod-count: root.plaza-mod-count;
         mods-hydrating: root.plaza-mods-hydrating; mod-query <=> root.plaza-mod-query;
@@ -542,6 +546,24 @@ export component AppWindow inherits Window {
         visible: Content.screen == 4 && !root.login-visible;
         enabled: self.visible && !root.modal-open && root.activity-panel == 0;
     }
+    BaseWorldListPage {
+        x: (root.width - self.width) / 2; y: 56px; width: min(1100px, root.width - 48px);
+        height: root.height - self.y - (root.game-running || root.game-status != "" ? 60px : 16px);
+        visible: Worlds.screen == 1 && !root.login-visible;
+        enabled: self.visible && !root.modal-open && root.activity-panel == 0;
+    }
+    BaseWorldCreatePage {
+        x: (root.width - self.width) / 2; y: 56px; width: min(720px, root.width - 48px);
+        height: root.height - self.y - (root.game-running || root.game-status != "" ? 60px : 16px);
+        visible: Worlds.screen == 2 && !root.login-visible;
+        enabled: self.visible && !root.modal-open && root.activity-panel == 0;
+    }
+    VersionBaseWorldPage {
+        x: (root.width - self.width) / 2; y: 56px; width: min(1100px, root.width - 48px);
+        height: root.height - self.y - (root.game-running || root.game-status != "" ? 60px : 16px);
+        visible: Worlds.screen == 3 && !root.login-visible;
+        enabled: self.visible && !root.modal-open && root.activity-panel == 0;
+    }
     wardrobe-view := WardrobeScreen {
         x: 24px; y: 56px; width: root.width - 48px; height: root.height - self.y - (root.game-running ? 60px : 16px);
         visible: root.wardrobe-visible && !root.login-visible;
@@ -551,7 +573,7 @@ export component AppWindow inherits Window {
         search(query, cape) => {root.wardrobe-search(query, cape);}
         retry => {root.wardrobe-retry();}
     }
-    if root.selected == 1 && root.pack-screen == 0 && !root.wardrobe-visible && !root.host-list-visible && Content.screen == 0 && root.packs-error != "": GlassButton { x: 32px; y: root.height / 2; width: root.width - 64px; label: root.packs-error + " · 重试"; clicked => {root.pack-action("packs.refresh", "");} }
+    if root.selected == 1 && root.pack-screen == 0 && !root.wardrobe-visible && !root.host-list-visible && Content.screen == 0 && Worlds.screen == 0 && root.packs-error != "": GlassButton { x: 32px; y: root.height / 2; width: root.width - 64px; label: root.packs-error + " · 重试"; clicked => {root.pack-action("packs.refresh", "");} }
     if root.game-status != "": Text { x: 180px; y: parent.height - 34px; width: parent.width - 380px; text: root.game-status; overflow: elide; color: #30353c; }
     if root.game-running: GlassButton { x: parent.width - 180px; y: parent.height - 48px; width: 160px; label: "终止游戏"; clicked => { root.stop-games(); } }
     gallery-view := ComponentGallery {
@@ -613,7 +635,7 @@ export component AppWindow inherits Window {
     if root.modal-open && !(Rooms.menu-open && !Rooms.dialog): Rectangle { x: 0px; y: 0px; width: parent.width; height: parent.height; background: #0009; TouchArea {} }
     dialog := SharedDialog {
         width: min(480px, root.width - 48px);
-        x: (parent.width - self.width) / 2; y: (parent.height - self.height) / 2; visible: root.modal-open && !Rooms.modal && !RoomPages.modal && !SaveImport.modal && !Account.modal && !Inbox.modal && !Settings.modal && !Content.modal && !root.login-register && !root.local-play && !root.pack-menu && !root.discard-options && !root.install-missing && !root.install-prompt && root.picked-candidates.length == 0;
+        x: (parent.width - self.width) / 2; y: (parent.height - self.height) / 2; visible: root.modal-open && !Rooms.modal && !RoomPages.modal && !SaveImport.modal && !Account.modal && !Inbox.modal && !Settings.modal && !Content.modal && !Worlds.modal && !root.login-register && !root.local-play && !root.pack-menu && !root.discard-options && !root.install-missing && !root.install-prompt && root.picked-candidates.length == 0;
         title: root.confirm-exit ? "退出启动器" : root.duplicate-host != "" ? "重复启动" : root.java-missing ? "缺少Java25" : root.action-error != "" ? "错误" : "与朋友一起冒险";
         message: root.confirm-exit ? (root.tasks-running ? "任务仍在进行，退出将终止任务和正在运行的游戏。是否继续？" : "游戏仍在运行，退出将终止游戏。是否继续？") : root.duplicate-host != "" ? "该整合包已在运行。再次启动可能造成存档、配置、日志或Mod缓存冲突。是否继续？" : root.java-missing ? "没找到可用的完整版64位JDK25，游戏需要它才能启动。是否自动下载安装？安装时需要允许管理员授权。" : root.action-error != "" ? root.action-error : "准备好探索Minecraft世界了吗？这段较长的中文说明会自动换行。";
         confirm-label: root.confirm-exit ? (root.tasks-running ? "终止并退出" : "终止游戏并退出") : root.duplicate-host != "" ? "继续启动" : root.java-missing ? "自动下载安装" : root.login-visible ? "明白" : "确定";
@@ -628,6 +650,7 @@ export component AppWindow inherits Window {
     if Inbox.modal: MailDialogs { x: 0px; y: 0px; width: parent.width; height: parent.height; }
     if Settings.modal: SettingsDialogs { x: 0px; y: 0px; width: parent.width; height: parent.height; }
     if Content.modal: ContentDialogs { x: 0px; y: 0px; width: parent.width; height: parent.height; }
+    if Worlds.modal: BaseWorldDialogs { x: 0px; y: 0px; width: parent.width; height: parent.height; }
     if root.login-register: Rectangle { x: (root.width - self.width) / 2; y: (root.height - self.height) / 2; width: min(560px, root.width - 48px); height: 192px; border-radius: 24px; background: #f7faf0ff;
         VerticalLayout { padding: 24px; spacing: 16px;
             Text { text: "请选择注册方式"; font-size: 22px; color: Theme.ink; }

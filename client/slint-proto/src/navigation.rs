@@ -35,6 +35,10 @@ pub enum Screen {
     /// U4e1: 资源包/光影包 and one pack's details.
     ContentResources,
     ContentResourceDetail,
+    /// U4e3: 地图模板, 创建地图模板 and a version's 初始地图模板.
+    BaseWorlds,
+    BaseWorldCreate,
+    VersionBaseWorld,
 }
 #[derive(Default, Debug)]
 pub struct Navigation {
@@ -110,6 +114,9 @@ mod tests {
             Screen::ContentModDetail,
             Screen::ContentResources,
             Screen::ContentResourceDetail,
+            Screen::BaseWorlds,
+            Screen::BaseWorldCreate,
+            Screen::VersionBaseWorld,
         ] {
             let mut navigation = Navigation::default();
             navigation.push(screen);

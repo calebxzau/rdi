@@ -152,10 +152,31 @@ struct Extra {
     #[serde(rename = "type")]
     kind: String,
 }
-#[derive(Deserialize)]
+/// `Modpack.Version.BaseWorldBinding`.
+#[derive(Clone, Deserialize, serde::Serialize)]
 struct BaseWorld {
     #[serde(default)]
+    id: String,
+    #[serde(default)]
     required: bool,
+}
+
+/// `canManageModpackVersion`: davickk, the pack's author or the version's uploader.
+fn can_manage(version: &Version, uid: &str, is_dav: bool, author_id: &str) -> bool {
+    is_dav || author_id == uid || version.uploader_id.as_deref() == Some(uid)
+}
+
+/// The version page's base world line: the manager row of `ModpackVersionInfoScreen`, or what a
+/// player sees.
+fn base_world_text(binding: Option<&BaseWorld>, manager: bool) -> &'static str {
+    match (binding, manager) {
+        (Some(world), true) if world.required => "初始地图模板：已设置（必须使用）",
+        (Some(_), true) => "初始地图模板：已设置",
+        (None, true) => "初始地图模板 可设置",
+        (Some(world), false) if world.required => "必须使用预设世界",
+        (Some(_), false) => "可使用预设世界",
+        (None, false) => "",
+    }
 }
 
 fn visible(version: &Version, uid: &str, is_author: bool) -> bool {
@@ -403,6 +424,8 @@ impl Plaza {
             ui.set_plaza_extras("".into());
             ui.set_plaza_changelog("".into());
             ui.set_plaza_base_world("".into());
+            ui.set_plaza_base_world_manage(false);
+            ui.set_plaza_base_worlds(self.api.as_ref().is_some_and(|a| a.has_msid));
         }
     }
 
@@ -514,6 +537,28 @@ impl Plaza {
                 ui.global::<crate::Rooms>().invoke_action("create".into(), value.to_string().into());
             }
             "retry-detail" if ui.get_pack_screen() == 4 => self.request_detail(&ui),
+            // U4e3: 地图模板 from the plaza title bar.
+            "base-worlds" if ui.get_pack_screen() == 3 => {
+                ui.global::<crate::Worlds>().invoke_action("open-list".into(), "".into());
+            }
+            // U4e3: 配置初始地图 on the version page.
+            "base-world-manage" if ui.get_pack_screen() == 5 => {
+                let Some(((name, _), detail)) = self.shown_version.clone().zip(self.detail.as_ref()) else { return };
+                let binding = detail.versions.iter().find(|v| v.name == name).and_then(|v| v.base_world.clone());
+                let value = serde_json::json!({"modpackId": self.detail_id, "version": name, "binding": binding});
+                ui.global::<crate::Worlds>().invoke_action("open-binding".into(), value.to_string().into());
+            }
+            // The binding was saved: keep the version page in step without reloading it.
+            "base-world-saved" => {
+                let Ok(json) = serde_json::from_str::<serde_json::Value>(value) else { return };
+                let Some(name) = json["version"].as_str() else { return };
+                let binding = serde_json::from_value::<Option<BaseWorld>>(json["binding"].clone()).ok().flatten();
+                let Some(version) = self.detail.as_mut().and_then(|d| d.versions.iter_mut().find(|v| v.name == name)) else { return };
+                version.base_world = binding;
+                if self.shown_version.as_ref().is_some_and(|(shown, _)| shown == name) {
+                    ui.set_plaza_base_world(base_world_text(version.base_world.as_ref(), ui.get_plaza_base_world_manage()).into());
+                }
+            }
             "version" if ui.get_pack_screen() == 4 => self.show_version(&ui, value),
             "mods-search" if ui.get_pack_screen() == 5 => self.render_mods(&ui),
             "copied" if ui.get_pack_screen() == 4 => ui.invoke_notify(format!("已复制{value}").into()),
@@ -575,14 +620,9 @@ impl Plaza {
         };
         ui.set_plaza_version(version.summary());
         ui.set_plaza_changelog(version.changelog.trim().into());
-        ui.set_plaza_base_world(
-            match &version.base_world {
-                Some(world) if world.required => "必须使用预设世界",
-                Some(_) => "可使用预设世界",
-                None => "",
-            }
-            .into(),
-        );
+        let manager = can_manage(version, &uid, api.is_dav, &detail.author_id);
+        ui.set_plaza_base_world_manage(manager);
+        ui.set_plaza_base_world(base_world_text(version.base_world.as_ref(), manager).into());
         ui.set_plaza_uploaded(version.uploaded().into());
         ui.set_plaza_extras(version.extras().into());
         ui.set_plaza_mod_query("".into());

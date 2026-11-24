@@ -132,7 +132,7 @@ where
                     match (shared.upload_part)(index, bytes.clone(), sha1.clone()).await {
                         Ok(()) => break,
                         Err(error) if is_retryable(&error) && retries < shared.options.retries => {
-                            tracing::warn!(index, retries, error = %format!("{error:#}"), "上传存档分片失败，稍后重试");
+                            tracing::warn!(index, retries, error = %format!("{error:#}"), "上传分片失败，稍后重试");
                             retries += 1;
                             tokio::time::sleep(delay).await;
                             delay = if delay > shared.options.max_retry_delay / 2 { shared.options.max_retry_delay } else { delay * 2 };
