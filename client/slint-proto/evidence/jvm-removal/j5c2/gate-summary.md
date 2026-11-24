@@ -2,7 +2,7 @@
 
 Date: 2026-11-24. Plan: `J5C-PLAN.md` steps 6-8 (C2-C4 as approved). Owner decision 2026-11-24: the
 agent implements and tests everything except a real Microsoft sign-in; the owner tests online play
-by hand (`owner-checklist.md`). **At the gate, waiting for the owner's online-play check.**
+by hand (`owner-checklist.md`). **GJ5c2 passed 2026-11-24: the owner ran the online-play checklist and reported no problems.**
 
 ## What changed
 
