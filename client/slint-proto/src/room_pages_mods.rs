@@ -281,6 +281,13 @@ impl RoomPagesUi {
                 self.pending = Some(Pending::Side(m, side));
                 g.set_confirm_title("更改运行侧".into());
             }
+            // U4e1: 附加Mod opens the mod catalog for this room (Compose `onOpenResourceMods`).
+            "catalog-open" if manage => {
+                let Some(detail) = &self.detail else { return true };
+                let minecraft = crate::local_packs::mc_version_name(&detail.modpack.mc_ver).unwrap_or(&detail.modpack.mc_ver);
+                let room = serde_json::json!({"id": detail.id, "name": detail.name, "minecraft": minecraft, "loader": detail.modpack.modloader});
+                ui.global::<crate::Content>().invoke_action("open-room".into(), room.to_string().into());
+            }
             "gh-open" if manage => {
                 self.mods.gh_epoch += 1;
                 self.mods.gh_repo = None;

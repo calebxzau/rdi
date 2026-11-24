@@ -25,6 +25,10 @@ pub struct InstalledPack {
     pub version: String,
     pub local: bool,
     pub directory: PathBuf,
+    /// The game version as `McVersion.mcVer` (`1.20.1`) and the loader as `ModLoader.name`
+    /// (`forge`, `neoforge`, `Fabric`), as Kotlin `ModpackLocalDir.mcVersion`/`modLoader`.
+    pub minecraft: String,
+    pub loader: String,
     created_at: i64,
 }
 
@@ -49,7 +53,16 @@ struct LocalInfo {
     name: String,
     icon_url: Option<String>,
     mc_version: String,
+    #[serde(default = "default_loader")]
+    mod_loader: String,
     created_at: i64,
+}
+/// Kotlin `Modpack.BriefVo` defaults: `McVersion.V211` and `ModLoader.neoforge`.
+fn default_mc_version() -> String {
+    "V211".into()
+}
+fn default_loader() -> String {
+    "neoforge".into()
 }
 /// The fields of Kotlin `Modpack.BriefVo` this list needs.
 #[derive(Deserialize)]
@@ -57,6 +70,10 @@ struct Brief {
     id: String,
     name: String,
     icon: Option<String>,
+    #[serde(default = "default_mc_version", rename = "mcVer")]
+    mc_ver: String,
+    #[serde(default = "default_loader")]
+    modloader: String,
 }
 #[derive(Debug, PartialEq)]
 struct RemoteRef {
@@ -128,6 +145,8 @@ fn merge(scan: Scan, briefs: Result<Vec<Brief>>) -> PackList {
                 version: r.ver_name,
                 local: false,
                 directory: r.directory,
+                minecraft: mc_version_name(&brief.mc_ver).unwrap_or(&brief.mc_ver).to_owned(),
+                loader: brief.modloader.clone(),
                 created_at: r.created_at,
             })
         })
@@ -179,6 +198,8 @@ fn scan(root: &Path) -> Result<Scan> {
                     version: version.into(),
                     local: true,
                     directory: path,
+                    minecraft: version.into(),
+                    loader: info.mod_loader,
                     created_at: info.created_at,
                 }),
                 None => tracing::warn!(dir = %name, version = %info.mc_version, "本地整合包的游戏版本未知，将跳过该目录"),
@@ -298,6 +319,8 @@ mod tests {
         assert_eq!(scan.local.len(), 1);
         assert_eq!(scan.local[0].id, "local_good");
         assert_eq!(scan.local[0].version, "1.21.1");
+        assert_eq!(scan.local[0].minecraft, "1.21.1");
+        assert!(!scan.local[0].loader.is_empty());
         assert!(scan.local[0].local);
         std::fs::remove_dir_all(root).unwrap();
     }
@@ -325,6 +348,8 @@ mod tests {
                 version: "1.20.1".into(),
                 local: true,
                 directory: PathBuf::from("local_a"),
+                minecraft: "1.20.1".into(),
+                loader: "forge".into(),
                 created_at: 20,
             }],
         }
@@ -334,13 +359,14 @@ mod tests {
     fn merge_sorts_newest_first_and_skips_packs_the_server_does_not_know() {
         let list = merge(
             sample(),
-            Ok(vec![Brief { id: ID.to_uppercase(), name: "测试包".into(), icon: Some("i".into()) }]),
+            Ok(vec![serde_json::from_value(json!({"id": ID.to_uppercase(), "name": "测试包", "icon": "i", "mcVer": "V201", "modloader": "forge"})).unwrap()]),
         );
         assert_eq!(list.error, "");
         let ids: Vec<&str> = list.packs.iter().map(|p| p.id.as_str()).collect();
         assert_eq!(ids, ["local_a", "68b314bbadaf52ddab96b5ed_1.0"]);
         assert_eq!(list.packs[1].name, "测试包");
         assert_eq!(list.packs[1].version, "1.0");
+        assert_eq!((list.packs[1].minecraft.as_str(), list.packs[1].loader.as_str()), ("1.20.1", "forge"));
         assert!(!list.packs[1].local);
     }
 

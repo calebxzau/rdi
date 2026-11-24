@@ -14,6 +14,8 @@ export component GlassButton inherits Rectangle {
     out property <bool> hovered: touch.has-hover || root.preview-state == 1;
     out property <bool> pressed: touch.pressed || root.preview-state == 2;
     out property <bool> focused: focus.has-focus || root.preview-state == 3;
+    // U4e1: whether Shift was held when the left button went down (Compose's Shift+click).
+    out property <bool> shift-held;
     out property <GlassShape> shape: { x: root.absolute-position.x / 1px, y: root.absolute-position.y / 1px,
         w: root.width / 1px, h: root.height / 1px, radius: root.height / 2px, alpha: root.visible ? 1 : 0, tint: #ffffff65 };
     callback clicked();
@@ -38,6 +40,9 @@ export component GlassButton inherits Rectangle {
     touch := TouchArea { enabled: root.enabled && !root.busy; mouse-cursor: pointer;
         clicked => { focus.focus(); root.clicked(); }
         pointer-event(e) => {
+            if e.button == PointerEventButton.left && e.kind == PointerEventKind.down {
+                root.shift-held = e.modifiers.shift;
+            }
             if e.button == PointerEventButton.left {
                 root.press(e.kind == PointerEventKind.down,self.mouse-x / 1px,self.mouse-y / 1px);
             }

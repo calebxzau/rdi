@@ -355,7 +355,10 @@ export component RoomModsPage inherits PageCard {
                         clicked => { RoomPages.action("mods-remove", ""); } Tooltip { text: @markdown("删除"); } }
                 }
                 if RoomPages.can-manage: VerticalLayout { alignment: center;
-                    GlassButton { glyph: "\u{f067}"; label: "附加Mod"; enabled: !RoomPages.mods-busy; clicked => { RoomPages.action("gh-open", ""); } }
+                    // Compose: a click opens the mod catalog, Shift+click the GitHub dialog (高级模式).
+                    GlassButton { glyph: "\u{f067}"; label: "附加Mod"; enabled: !RoomPages.mods-busy;
+                        clicked => { RoomPages.action(self.shift-held ? "gh-open" : "catalog-open", ""); }
+                        Tooltip { text: @markdown("按住Shift点击：从GitHub添加（高级）"); } }
                 }
             }
         }

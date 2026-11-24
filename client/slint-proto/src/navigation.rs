@@ -29,6 +29,12 @@ pub enum Screen {
     Mail,
     /// U4b2: 设置.
     Settings,
+    /// U4e1: 模组 (the mod catalog) and a mod's details.
+    ContentMods,
+    ContentModDetail,
+    /// U4e1: 资源包/光影包 and one pack's details.
+    ContentResources,
+    ContentResourceDetail,
 }
 #[derive(Default, Debug)]
 pub struct Navigation {
@@ -100,6 +106,10 @@ mod tests {
             Screen::RoomRollback,
             Screen::RoomMods,
             Screen::RoomSaveImport,
+            Screen::ContentMods,
+            Screen::ContentModDetail,
+            Screen::ContentResources,
+            Screen::ContentResourceDetail,
         ] {
             let mut navigation = Navigation::default();
             navigation.push(screen);

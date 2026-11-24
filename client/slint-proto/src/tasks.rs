@@ -243,6 +243,11 @@ impl Manager {
             .find(|e| e.dedupe == dedupe && e.status < 2)
             .map(|e| e.id.clone())
     }
+    /// The status of the newest task with this dedupe key: 0 queued, 1 running, 2 done,
+    /// 3 failed, 4 cancelled (Compose reads the last `Task2Entry` with the key).
+    pub fn latest_status(&self, dedupe: &str) -> Option<u8> {
+        self.0.lock().unwrap().iter().rev().find(|e| e.dedupe == dedupe).map(|e| e.status)
+    }
     pub fn snapshot(&self, id: &str) -> Option<Value> {
         self.0
             .lock()

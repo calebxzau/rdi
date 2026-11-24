@@ -67,6 +67,7 @@ impl Shell {
                         else if ui.global::<crate::Rooms>().get_modal() { ui.global::<crate::Rooms>().invoke_action("dismiss".into(), "".into()); }
                         else if ui.global::<crate::RoomPages>().get_modal() { ui.global::<crate::RoomPages>().invoke_action("dismiss".into(), "".into()); }
                         else if ui.global::<crate::SaveImport>().get_modal() { ui.global::<crate::SaveImport>().invoke_action("dismiss".into(), "".into()); }
+                        else if ui.global::<crate::Content>().get_modal() { ui.global::<crate::Content>().invoke_action("dismiss".into(), "".into()); }
                         else if ui.global::<crate::Account>().get_modal() { ui.global::<crate::Account>().invoke_action("dismiss".into(), "".into()); }
                         else if ui.global::<crate::Inbox>().get_modal() { ui.global::<crate::Inbox>().invoke_action("dismiss".into(), "".into()); }
                         else if ui.global::<crate::Settings>().get_modal() { ui.global::<crate::Settings>().invoke_action("dismiss".into(), "".into()); }
@@ -90,6 +91,15 @@ impl Shell {
                     "room-mods" if s.navigation.current() == Screen::RoomDetail => s.navigation.push(Screen::RoomMods),
                     "room-save-import" if s.navigation.current() == Screen::RoomWorld => s.navigation.push(Screen::RoomSaveImport),
                     "plaza-version" if s.navigation.current() == Screen::ModpackDetail => s.navigation.push(Screen::ModpackVersionDetail),
+                    "content-mods" if matches!(s.navigation.current(), Screen::Menu | Screen::RoomMods) => s.navigation.push(Screen::ContentMods),
+                    "content-mod" if s.navigation.current() == Screen::ContentMods => s.navigation.push(Screen::ContentModDetail),
+                    "content-resources" if s.navigation.current() == Screen::Menu => s.navigation.push(Screen::ContentResources),
+                    "content-resource" if s.navigation.current() == Screen::ContentResources => s.navigation.push(Screen::ContentResourceDetail),
+                    // A dependency's details go back to the mod they were opened from.
+                    "back" if s.navigation.current() == Screen::ContentModDetail && ui.global::<crate::Content>().get_detail_depth() > 1 => {
+                        ui.global::<crate::Content>().invoke_action("detail-back".into(), "".into());
+                        return;
+                    }
                     "packs" => { s.navigation.home(); ui.invoke_select_tab(1); }
                     "back" | "home" if ui.get_pack_screen() == 2 && ui.get_options_dirty() => { ui.set_discard_options(true); return; }
                     "back" if ui.get_pack_screen() == 1 && ui.get_install_editor() => {ui.invoke_pack_action("installer.back".into(), "".into()); return;}
@@ -176,6 +186,13 @@ impl Shell {
         ui.global::<crate::Account>().set_screen((self.navigation.current() == Screen::PlayerInfo) as i32);
         ui.global::<crate::Inbox>().set_screen((self.navigation.current() == Screen::Mail) as i32);
         ui.global::<crate::Settings>().set_screen((self.navigation.current() == Screen::Settings) as i32);
+        ui.global::<crate::Content>().set_screen(match self.navigation.current() {
+            Screen::ContentMods => 1,
+            Screen::ContentModDetail => 2,
+            Screen::ContentResources => 3,
+            Screen::ContentResourceDetail => 4,
+            _ => 0,
+        });
         ui.set_can_back(self.navigation.can_back());
     }
     pub fn scene_frozen(&self, ui: &AppWindow) -> bool {
@@ -270,6 +287,7 @@ pub fn frame(
         && ui.global::<crate::Account>().get_screen() == 0
         && ui.global::<crate::Inbox>().get_screen() == 0
         && ui.global::<crate::Settings>().get_screen() == 0
+        && ui.global::<crate::Content>().get_screen() == 0
     {
         if !ui.get_loading() && ui.get_error().is_empty() {
             let row_pitch = ui.get_menu_grid_row_pitch();

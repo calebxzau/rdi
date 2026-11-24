@@ -460,3 +460,13 @@ and owner acceptance items. Implementation parity remains incomplete; GJ4b not r
 - clippy, `cargo test --workspace` (11 new), zigbuild macOS/Linux pass. Live: crash, recovery,
   rejoin through the recovered connection, stop, window icon in the title bar.
 - See `evidence/jvm-removal/j5b2/gate-summary.md` and `owner-checklist.md`. No commit.
+
+## 2026-11-24 U4 batch e1: 模组库, 资源包/光影包 (stopped at GU4e1)
+
+- Pack menu 「内容」 → 模组 / 材质 / 光影; mod catalog list + details + install dialog, Modrinth
+  资源包/光影包 list + details + gallery; room 附加Mod click → catalog, Shift+click → GitHub.
+- Logic in `src/content/` (records shared with Compose, staged install with rollback, per-file
+  state), wiring in `src/content_ui.rs`, screens in `ui/content.slint`.
+- clippy clean, 16 new tests; live on the real server with the J5a data folder (JEI and BSL
+  installed into a local pack). Room submit not live-tested (local master only).
+- See `evidence/ui-port/u4e1/gate-summary.md` and `owner-checklist.md`. No commit.

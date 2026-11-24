@@ -433,6 +433,14 @@ impl Catalog {
         })
     }
     /// `CurseForgeService.downloadHeadersFor`: the API key for HTTPS forgecdn and mirror hosts.
+    /// U4e1: one Modrinth v2 GET through the catalog transport (mirror race, retries), for the
+    /// 材质/光影 pages: `search`, `project/{id}` and `project/{id}/version`.
+    pub async fn modrinth_get(&self, path: &str, query: Vec<(String, String)>) -> Result<serde_json::Value> {
+        self.adapters[&Platform::Modrinth]
+            .transport
+            .request(Platform::Modrinth, reqwest::Method::GET, path, query, None)
+            .await
+    }
     pub fn download_headers_for(&self, url: &str) -> Result<reqwest::header::HeaderMap> {
         if !url.get(..8).is_some_and(|s| s.eq_ignore_ascii_case("https://")) {
             return Ok(Default::default());

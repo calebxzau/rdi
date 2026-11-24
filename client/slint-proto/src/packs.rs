@@ -106,6 +106,8 @@ pub struct PackUi {
     packs_generation: u64,
     loaded_packs: Option<Vec<InstalledPack>>,
     pack_dirs: HashMap<String, PathBuf>,
+    /// U4e1: the installed packs by version id, for the 模组/材质/光影 pages.
+    installed: HashMap<String, InstalledPack>,
     options: OptionsState,
     java_was_enabled: bool,
     candidates: Rc<VecModel<CandidateRow>>,
@@ -177,6 +179,7 @@ impl PackUi {
             packs_generation: 0,
             loaded_packs: None,
             pack_dirs: Default::default(),
+            installed: Default::default(),
             options: OptionsState::default(),
             java_was_enabled: false,
             candidates,
@@ -248,6 +251,7 @@ impl PackUi {
         self.packs_generation += 1;
         self.loaded_packs = None;
         self.pack_dirs.clear();
+        self.installed.clear();
         self.installer = Value::Null;
         self.archive_cancel.cancel();
         self.import_generation += 1;
@@ -578,6 +582,10 @@ impl PackUi {
             self.open_native_play(&ui, ui.get_pack_selected_id().as_str());
         }
     }
+    /// U4e1: an installed pack from the last list.
+    pub fn installed(&self, version_id: &str) -> Option<InstalledPack> {
+        self.installed.get(version_id).cloned()
+    }
     /// The app takes each finished list; `None` until the next refresh completes.
     pub fn take_packs(&mut self) -> Option<Vec<InstalledPack>> {
         self.loaded_packs.take()
@@ -794,7 +802,6 @@ impl PackUi {
                         None => ui.set_action_error("找不到这个整合包，请刷新列表".into()),
                     },
                     "3" => ui.invoke_plaza_action("installed".into(), ui.get_pack_selected_id()),
-                    "4" => ui.invoke_stub("整合包内容".into()),
                     _ => {}
                 }
             }
@@ -1022,6 +1029,7 @@ impl PackUi {
                         .iter()
                         .map(|p| (p.id.clone(), p.directory.clone()))
                         .collect();
+                    self.installed = list.packs.iter().map(|p| (p.id.clone(), p.clone())).collect();
                     self.loaded_packs = Some(list.packs);
                 }
                 Reply::OptionsLoaded(g, result) if g == self.options.generation => {

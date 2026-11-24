@@ -292,7 +292,7 @@ fn remove_leftovers(versions: &Path, version_id: &str, run: &str) {
     }
 }
 
-fn bytes_message(p: &Progress) -> (String, Option<f32>) {
+pub(crate) fn bytes_message(p: &Progress) -> (String, Option<f32>) {
     let mut message = format!("下载中 {}", human_file_size(p.bytes));
     if let Some(total) = p.total.filter(|t| *t > 0) {
         message.push_str(&format!("/{}", human_file_size(total)));

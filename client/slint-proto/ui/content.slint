@@ -1,0 +1,465 @@
+// U4 batch e1: 模组库 and 材质/光影 (Compose ModCatalogScreen, ModCatalogInfoScreen with its
+// CatalogDownloadDialog, ResourceListScreen and ResourceInfoScreen). Rust drives them through the
+// `Content` global (src/content_ui.rs); the logic is in src/content/.
+import { TextField } from "components/fields.slint";
+import { CircleIconButton, GlassButton } from "components/glass_button.slint";
+import { ErrorState, LoadingState, RScrollbar } from "components/shared.slint";
+import { PageCard, DialogCard, DialogTitle } from "room_pages.slint";
+import { Theme } from "theme.slint";
+
+// One catalog mod (`CatalogModCard`): icon, name, downloads and intro.
+export struct ContentCard { key: string, name: string, downloads: string, summary: string, icon: image, has-icon: bool, initial: string }
+// One file or version: its name, the size/date/state line, and whether a click installs it.
+export struct ContentFile { key: string, name: string, detail: string, enabled: bool }
+// One Modrinth search result (`ModrinthProjectCard`).
+export struct ResourceCard { key: string, title: string, follows: string, icon: image, has-icon: bool, banner: image, has-banner: bool, initial: string }
+export struct GalleryItem { key: string, image: image, loaded: bool }
+
+export global Content {
+    // 0 none, 1 模组, 2 模组详情, 3 资源包/光影包, 4 资源包/光影包详情; set by the shell.
+    in-out property <int> screen;
+    // Mod details opened from a dependency card; the back button returns to the one before.
+    in-out property <int> detail-depth;
+    in-out property <string> list-title;
+    in-out property <string> query;
+    in-out property <bool> loading;
+    in-out property <bool> loading-more;
+    in-out property <bool> has-more;
+    // A list error line; the cards that did load stay.
+    in-out property <string> error;
+    in-out property <string> empty;
+    in-out property <[ContentCard]> mods;
+    in-out property <[ResourceCard]> resources;
+    // Details.
+    in-out property <string> title;
+    in-out property <bool> detail-loading;
+    // Nothing could be shown; with 重试.
+    in-out property <string> detail-error;
+    // Something failed after the page loaded.
+    in-out property <string> notice;
+    // Files loading or a download being resolved.
+    in-out property <bool> busy;
+    in-out property <bool> include-alpha;
+    in-out property <bool> has-mcmod;
+    in-out property <bool> has-latest;
+    in-out property <ContentFile> latest;
+    in-out property <bool> latest-loading;
+    in-out property <bool> latest-has-details;
+    in-out property <string> latest-changelog;
+    in-out property <string> latest-dep-summary;
+    in-out property <[ContentCard]> latest-deps;
+    // The other versions, once 显示其他版本 was clicked.
+    in-out property <[ContentFile]> files;
+    in-out property <bool> show-other;
+    in-out property <bool> other-available;
+    in-out property <bool> files-more;
+    in-out property <bool> files-loading-more;
+    in-out property <bool> no-files;
+    // The install dialog (`CatalogDownloadDialog`).
+    in-out property <bool> install-open;
+    in-out property <string> install-title;
+    in-out property <bool> install-loading;
+    in-out property <string> install-error;
+    in-out property <string> install-dep-summary;
+    in-out property <[ContentCard]> install-deps;
+    in-out property <string> install-changelog;
+    in-out property <string> install-target;
+    in-out property <bool> install-submitting;
+    in-out property <bool> install-can-submit;
+    // 资源包/光影包 details.
+    in-out property <[ContentFile]> versions;
+    in-out property <bool> has-source;
+    in-out property <[GalleryItem]> gallery;
+    in-out property <bool> preview-open;
+    in-out property <bool> preview-loaded;
+    in-out property <image> preview-image;
+    in-out property <string> preview-name;
+    in-out property <string> preview-url;
+    // The page's own snackbar, with 查看任务 when a task was queued.
+    in-out property <string> snack;
+    in-out property <bool> snack-task;
+    out property <bool> modal: self.install-open || self.preview-open;
+    callback action(string, string);
+}
+
+component Title inherits HorizontalLayout {
+    in property <string> text;
+    spacing: 10px;
+    VerticalLayout { alignment: center;
+        CircleIconButton { glyph: "\u{f060}"; accessible-label: "返回"; clicked => { Content.action("back-nav", ""); } }
+    }
+    Text { text: root.text; color: Theme.ink; font-size: 22px; font-weight: 600; vertical-alignment: center; overflow: elide; horizontal-stretch: 1; min-width: 80px; }
+    @children
+}
+
+component ModCard inherits Rectangle {
+    in property <ContentCard> item;
+    in property <bool> compact;
+    callback clicked();
+    private property <length> icon-size: root.compact ? 40px : 52px;
+    private property <length> text-x: root.icon-size + 20px;
+    border-radius: 12px;
+    border-width: focus.has-focus ? 2px : 0px;
+    border-color: #446c49;
+    background: hit.has-hover ? #ffffff : #ffffffc0;
+    accessible-role: button;
+    accessible-label: root.item.name;
+    accessible-action-default => { root.clicked(); }
+    forward-focus: focus;
+    focus := FocusScope {
+        key-pressed(e) => {
+            if e.text == Key.Return || e.text == Key.Space { root.clicked(); return accept; }
+            return reject;
+        }
+    }
+    if root.item.has-icon: Image { x: 10px; y: (parent.height - root.icon-size) / 2; width: root.icon-size; height: root.icon-size; source: root.item.icon; image-fit: contain; }
+    if !root.item.has-icon: Rectangle { x: 10px; y: (parent.height - root.icon-size) / 2; width: root.icon-size; height: root.icon-size; border-radius: 8px; background: #dfe5d8;
+        Text { text: root.item.initial; color: #446c49; font-size: 20px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
+    }
+    Text { x: root.text-x; y: root.compact ? 6px : 9px; width: parent.width - self.x - 10px; text: root.item.name;
+        color: Theme.ink; font-size: root.compact ? 14px : 15px; font-weight: 700; overflow: elide; }
+    HorizontalLayout { x: root.text-x; y: root.compact ? 27px : 33px; width: parent.width - self.x - 10px; height: 20px; spacing: 4px;
+        Text { text: "\u{f019}"; font-family: Theme.symbols; color: #667064; font-size: 12px; vertical-alignment: center; }
+        Text { text: root.item.downloads + "    " + root.item.summary; color: #667064; font-size: 12px; overflow: elide; vertical-alignment: center; horizontal-stretch: 1; }
+    }
+    hit := TouchArea { mouse-cursor: pointer; clicked => { focus.focus(); root.clicked(); } }
+}
+
+component FileCard inherits Rectangle {
+    in property <ContentFile> file;
+    callback clicked();
+    border-radius: 12px;
+    background: !root.file.enabled ? #ffffff60 : hit.has-hover ? #ffffff : #ffffffb0;
+    accessible-role: button;
+    accessible-label: root.file.name + " " + root.file.detail;
+    accessible-action-default => { if root.file.enabled { root.clicked(); } }
+    // A version without a state line (资源包/光影包) keeps its name centred.
+    Text { x: 12px; y: root.file.detail == "" ? 0px : 7px; height: root.file.detail == "" ? parent.height : 20px; width: parent.width - 24px;
+        text: root.file.name; color: root.file.enabled ? Theme.ink : #777b77; font-size: 14px; font-weight: 700; overflow: elide; vertical-alignment: center; }
+    if root.file.detail != "": Text { x: 12px; y: 30px; width: parent.width - 24px; text: root.file.detail; color: #667064; font-size: 12px; overflow: elide; }
+    hit := TouchArea { enabled: root.file.enabled; mouse-cursor: pointer; clicked => { root.clicked(); } }
+}
+
+component ResourceTile inherits Rectangle {
+    in property <ResourceCard> item;
+    callback clicked();
+    private property <length> banner-h: (self.width - 16px) / 2.25;
+    border-radius: 14px;
+    background: hit.has-hover ? #ffffff : #ffffffd0;
+    accessible-role: button;
+    accessible-label: root.item.title;
+    accessible-action-default => { root.clicked(); }
+    // Banners and icons come with their corners rounded by Rust, so no clip is needed.
+    Rectangle { x: 8px; y: 8px; width: parent.width - 16px; height: root.banner-h; border-radius: 10px; background: #d9ddd4; }
+    if root.item.has-banner: Image { x: 8px; y: 8px; width: parent.width - 16px; height: root.banner-h; source: root.item.banner; image-fit: fill; }
+    if root.item.has-icon: Image { x: 16px; y: root.banner-h + 20px; width: 48px; height: 48px; source: root.item.icon; image-fit: contain; }
+    if !root.item.has-icon: Rectangle { x: 16px; y: root.banner-h + 20px; width: 48px; height: 48px; border-radius: 8px; background: #dfe5d8;
+        Text { text: root.item.initial; color: #446c49; font-size: 20px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
+    }
+    Text { x: 76px; y: root.banner-h + 20px; width: parent.width - self.x - 12px; text: root.item.title; color: Theme.ink; font-size: 15px; font-weight: 700; overflow: elide; }
+    HorizontalLayout { x: 76px; y: root.banner-h + 46px; width: parent.width - self.x - 12px; height: 18px; spacing: 4px;
+        Text { text: "\u{f02d1}"; font-family: Theme.symbols; color: #667064; font-size: 13px; vertical-alignment: center; }
+        Text { text: root.item.follows; color: #667064; font-size: 12px; vertical-alignment: center; horizontal-stretch: 1; }
+    }
+    hit := TouchArea { mouse-cursor: pointer; clicked => { root.clicked(); } }
+}
+
+component MoreButton inherits HorizontalLayout {
+    in property <bool> busy;
+    in property <string> label: "加载更多";
+    callback clicked();
+    alignment: center;
+    GlassButton { label: root.busy ? "加载中…" : root.label; busy: root.busy; clicked => { root.clicked(); } }
+}
+
+component SearchTitle inherits HorizontalLayout {
+    in property <string> text;
+    spacing: 10px;
+    VerticalLayout { alignment: center;
+        CircleIconButton { glyph: "\u{f060}"; accessible-label: "返回"; clicked => { Content.action("back-nav", ""); } }
+    }
+    Text { text: root.text; color: Theme.ink; font-size: 22px; font-weight: 600; vertical-alignment: center; overflow: elide; horizontal-stretch: 1; min-width: 80px; }
+    VerticalLayout { alignment: center;
+        TextField { width: 240px; hint: "搜索" + Content.list-title; reserve-error: false; text <=> Content.query;
+            accepted => { Content.action("search", ""); } }
+    }
+    VerticalLayout { alignment: center;
+        CircleIconButton { glyph: "\u{f002}"; accessible-label: "搜索"; busy: Content.loading; clicked => { Content.action("search", ""); } }
+    }
+}
+
+// 模组 (ModCatalogScreen).
+export component ContentModsPage inherits PageCard {
+    in property <bool> enabled: true;
+    private property <length> top: Content.error != "" ? 92px : 70px;
+    FocusScope { x: 0px; y: 0px; width: root.width; height: root.height; enabled: root.enabled;
+        SearchTitle { x: 20px; y: 14px; width: parent.width - 40px; height: 48px; text: Content.list-title; }
+        if Content.error != "": Text { x: 24px; y: 68px; width: parent.width - 48px; height: 20px; text: Content.error; color: #ba3434; overflow: elide; }
+        if Content.loading && Content.mods.length == 0: LoadingState { x: 20px; y: root.top; width: parent.width - 40px; height: parent.height - self.y - 16px; }
+        list := Flickable { x: 16px; y: root.top; width: parent.width - 42px; height: parent.height - self.y - 16px;
+            visible: !(Content.loading && Content.mods.length == 0);
+            property <length> gap: 10px;
+            property <length> pitch: 78px;
+            property <int> columns: max(1, floor((self.width + self.gap) / (360px + self.gap)));
+            property <length> card-w: (self.width + self.gap) / self.columns - self.gap;
+            property <int> rows: ceil(Content.mods.length / self.columns);
+            content-width: self.width;
+            content-height: max(self.height, self.rows * self.pitch + 56px);
+            for item[i] in Content.mods: ModCard {
+                x: mod(i, list.columns) * (list.card-w + list.gap);
+                y: floor(i / list.columns) * list.pitch;
+                width: list.card-w; height: list.pitch - list.gap;
+                visible: self.y + list.content-y + self.height > 0px && self.y + list.content-y < list.height;
+                item: item;
+                clicked => { Content.action("open", item.key); }
+            }
+            if !Content.loading && Content.mods.length == 0: Text { x: 4px; y: 8px; width: list.width - 8px; text: Content.empty; color: #616c5f; wrap: word-wrap; }
+            if Content.has-more: MoreButton { x: 0px; y: list.rows * list.pitch + 6px; width: list.width; height: 40px;
+                busy: Content.loading-more; clicked => { Content.action("more", ""); } }
+        }
+        RScrollbar { x: parent.width - 20px; y: list.y; width: 6px; height: list.height; visible: list.visible;
+            viewport: list.height; extent: list.content-height; position: -list.content-y;
+            scrolled(offset) => { list.content-y = -offset; } }
+    }
+}
+
+// 资源包 and 光影包 (ModrinthProjectListScreen).
+export component ContentResourcesPage inherits PageCard {
+    in property <bool> enabled: true;
+    private property <length> top: Content.error != "" ? 92px : 70px;
+    FocusScope { x: 0px; y: 0px; width: root.width; height: root.height; enabled: root.enabled;
+        SearchTitle { x: 20px; y: 14px; width: parent.width - 40px; height: 48px; text: Content.list-title; }
+        if Content.error != "": Text { x: 24px; y: 68px; width: parent.width - 48px; height: 20px; text: Content.error; color: #ba3434; overflow: elide; }
+        if Content.loading && Content.resources.length == 0: LoadingState { x: 20px; y: root.top; width: parent.width - 40px; height: parent.height - self.y - 16px; }
+        grid := Flickable { x: 16px; y: root.top; width: parent.width - 42px; height: parent.height - self.y - 16px;
+            visible: !(Content.loading && Content.resources.length == 0);
+            property <length> gap: 12px;
+            property <int> columns: max(1, floor((self.width + self.gap) / (260px + self.gap)));
+            property <length> card-w: min(320px, (self.width + self.gap) / self.columns - self.gap);
+            property <length> pitch: (self.card-w - 16px) / 2.25 + 88px;
+            property <int> rows: ceil(Content.resources.length / self.columns);
+            content-width: self.width;
+            content-height: max(self.height, self.rows * self.pitch + 56px);
+            for item[i] in Content.resources: ResourceTile {
+                x: mod(i, grid.columns) * (grid.card-w + grid.gap);
+                y: floor(i / grid.columns) * grid.pitch;
+                width: grid.card-w; height: grid.pitch - grid.gap;
+                visible: self.y + grid.content-y + self.height > 0px && self.y + grid.content-y < grid.height;
+                item: item;
+                clicked => { Content.action("open", item.key); }
+            }
+            if !Content.loading && Content.resources.length == 0: Text { x: 4px; y: 8px; width: grid.width - 8px; text: Content.empty; color: #616c5f; wrap: word-wrap; }
+            if Content.has-more: MoreButton { x: 0px; y: grid.rows * grid.pitch + 6px; width: grid.width; height: 40px;
+                busy: Content.loading-more; clicked => { Content.action("more", ""); } }
+        }
+        RScrollbar { x: parent.width - 20px; y: grid.y; width: 6px; height: grid.height; visible: grid.visible;
+            viewport: grid.height; extent: grid.content-height; position: -grid.content-y;
+            scrolled(offset) => { grid.content-y = -offset; } }
+    }
+}
+
+// 模组详情 (ModCatalogInfoScreen).
+export component ContentModDetailPage inherits PageCard {
+    in property <bool> enabled: true;
+    FocusScope { x: 0px; y: 0px; width: root.width; height: root.height; enabled: root.enabled;
+        Title { x: 20px; y: 14px; width: parent.width - 40px; height: 48px; text: Content.title;
+            if Content.busy: Text { text: "◌"; color: #446c49; font-size: 18px; vertical-alignment: center; }
+            VerticalLayout { alignment: center;
+                GlassButton { label: "显示内测版"; glyph: Content.include-alpha ? "\u{f00c}" : ""; checked: Content.include-alpha;
+                    enabled: !Content.detail-loading && Content.detail-error == ""; clicked => { Content.action("alpha", ""); } }
+            }
+            if Content.has-mcmod: VerticalLayout { alignment: center;
+                CircleIconButton { glyph: "\u{f02d}"; accessible-label: "打开百科"; clicked => { Content.action("mcmod", ""); } Tooltip { text: @markdown("打开百科"); } }
+            }
+        }
+        if Content.detail-loading: LoadingState { x: 20px; y: 70px; width: parent.width - 40px; height: parent.height - 86px; }
+        if !Content.detail-loading && Content.detail-error != "": ErrorState { x: 20px; y: 70px; width: parent.width - 40px; height: parent.height - 86px;
+            message: Content.detail-error; retry => { Content.action("retry", ""); } }
+        body := Flickable { x: 20px; y: 70px; width: parent.width - 46px; height: parent.height - self.y - 16px;
+            visible: !Content.detail-loading && Content.detail-error == "";
+            property <length> gap: 10px;
+            property <length> pitch: 68px;
+            property <int> columns: max(1, floor((self.width + self.gap) / (300px + self.gap)));
+            property <length> card-w: (self.width + self.gap) / self.columns - self.gap;
+            property <length> grid-y: head.preferred-height;
+            property <int> rows: ceil(Content.files.length / self.columns);
+            content-width: self.width;
+            content-height: max(self.height, self.grid-y + self.rows * self.pitch + 56px);
+            head := VerticalLayout { x: 0px; y: 0px; width: body.width; height: self.preferred-height; spacing: 10px; padding-bottom: 10px;
+                if Content.notice != "": Text { text: Content.notice; color: #ba3434; wrap: word-wrap; }
+                if Content.has-latest: Rectangle { background: #ffffffb0; border-radius: 12px; height: latest.preferred-height;
+                    latest := VerticalLayout { padding: 14px; spacing: 8px;
+                        HorizontalLayout { spacing: 8px; height: 40px;
+                            Text { text: "最新 " + Content.latest.name; color: Theme.ink; font-size: 16px; font-weight: 700; overflow: elide; vertical-alignment: center; }
+                            VerticalLayout { alignment: center;
+                                CircleIconButton { glyph: "\u{f019}"; accessible-label: "安装"; filled: Content.latest.enabled; enabled: Content.latest.enabled;
+                                    clicked => { Content.action("install", Content.latest.key); } Tooltip { text: @markdown("安装"); } }
+                            }
+                            Rectangle { horizontal-stretch: 1; }
+                        }
+                        Text { text: Content.latest.detail; color: #667064; font-size: 13px; }
+                        if Content.latest-loading: Text { text: "◌  加载依赖和更新说明..."; color: #446c49; font-size: 13px; }
+                        // Two equal columns; a wrapping text in a HorizontalLayout would claim the whole row.
+                        if !Content.latest-loading && Content.latest-has-details: latest-cols := Rectangle {
+                            height: max(log-col.preferred-height, dep-col.preferred-height);
+                            log-col := VerticalLayout { x: 0px; y: 0px; width: (latest-cols.width - 14px) / 2; height: self.preferred-height; spacing: 6px; alignment: start;
+                                Text { text: "更新说明"; color: Theme.ink; font-size: 14px; font-weight: 700; }
+                                Text { text: Content.latest-changelog != "" ? Content.latest-changelog : "没有更新说明";
+                                    color: Content.latest-changelog != "" ? Theme.ink : #667064; font-size: 13px; wrap: word-wrap; }
+                            }
+                            dep-col := VerticalLayout { x: log-col.width + 14px; y: 0px; width: log-col.width; height: self.preferred-height; spacing: 6px; alignment: start;
+                                if Content.latest-deps.length > 0: Text { text: Content.latest-dep-summary; color: Theme.ink; font-size: 14px; font-weight: 700; }
+                                for dep in Content.latest-deps: ModCard { compact: true; height: 56px; item: dep; clicked => { Content.action("dep", dep.key); } }
+                            }
+                        }
+                    }
+                }
+                if Content.no-files: Text { text: "没有兼容版本"; color: #616c5f; font-size: 14px; }
+            }
+            for file[i] in Content.files: FileCard {
+                x: mod(i, body.columns) * (body.card-w + body.gap);
+                y: body.grid-y + floor(i / body.columns) * body.pitch;
+                width: body.card-w; height: body.pitch - body.gap;
+                visible: self.y + body.content-y + self.height > 0px && self.y + body.content-y < body.height;
+                file: file;
+                clicked => { Content.action("install", file.key); }
+            }
+            if Content.other-available && !Content.show-other: MoreButton { x: 0px; y: body.grid-y; width: body.width; height: 40px;
+                label: "显示其他版本"; clicked => { Content.action("show-other", ""); } }
+            if Content.show-other && Content.files-more: MoreButton { x: 0px; y: body.grid-y + body.rows * body.pitch + 6px; width: body.width; height: 40px;
+                busy: Content.files-loading-more; clicked => { Content.action("more-files", ""); } }
+        }
+        RScrollbar { x: parent.width - 22px; y: body.y; width: 6px; height: body.height; visible: body.visible;
+            viewport: body.height; extent: body.content-height; position: -body.content-y;
+            scrolled(offset) => { body.content-y = -offset; } }
+    }
+}
+
+// 资源包/光影包详情 (ResourceInfoScreen).
+export component ContentResourceDetailPage inherits PageCard {
+    in property <bool> enabled: true;
+    FocusScope { x: 0px; y: 0px; width: root.width; height: root.height; enabled: root.enabled;
+        Title { x: 20px; y: 14px; width: parent.width - 40px; height: 48px; text: Content.title;
+            VerticalLayout { alignment: center;
+                GlassButton { label: "打开原帖"; glyph: "\u{f08e}"; enabled: Content.has-source; clicked => { Content.action("source", ""); } }
+            }
+        }
+        if Content.detail-loading: LoadingState { x: 20px; y: 70px; width: parent.width - 40px; height: parent.height - 86px; }
+        if !Content.detail-loading && Content.detail-error != "": ErrorState { x: 20px; y: 70px; width: parent.width - 40px; height: parent.height - 86px;
+            message: Content.detail-error; retry => { Content.action("retry", ""); } }
+        page := Flickable { x: 20px; y: 70px; width: parent.width - 46px; height: parent.height - self.y - 16px;
+            visible: !Content.detail-loading && Content.detail-error == "";
+            property <length> gap: 12px;
+            property <int> columns: max(1, floor((self.width + self.gap) / (220px + self.gap)));
+            property <length> card-w: (self.width + self.gap) / self.columns - self.gap;
+            property <length> pitch: self.card-w * 9 / 16 + self.gap;
+            property <length> grid-y: head.preferred-height;
+            property <int> rows: ceil(Content.gallery.length / self.columns);
+            content-width: self.width;
+            content-height: max(self.height, self.grid-y + self.rows * self.pitch + 16px);
+            head := VerticalLayout { x: 0px; y: 0px; width: page.width; height: self.preferred-height; spacing: 10px; padding-bottom: 10px;
+                if Content.notice != "": Text { text: Content.notice; color: #ba3434; wrap: word-wrap; }
+                HorizontalLayout { spacing: 12px; height: 40px;
+                    Text { text: "点击要安装的版本"; color: Theme.ink; font-size: 17px; font-weight: 600; vertical-alignment: center; horizontal-stretch: 1; }
+                    VerticalLayout { alignment: center;
+                        GlassButton { label: Content.include-alpha ? "隐藏Alpha" : "显示Alpha"; clicked => { Content.action("alpha", ""); } }
+                    }
+                }
+                if Content.versions.length == 0: Text { text: "没有兼容版本"; color: #616c5f; font-size: 14px; }
+                versions := Rectangle {
+                    property <int> columns: max(1, floor((self.width + 12px) / (180px + 12px)));
+                    property <length> chip-w: (self.width + 12px) / self.columns - 12px;
+                    height: ceil(Content.versions.length / self.columns) * 50px;
+                    for version[i] in Content.versions: FileCard {
+                        x: mod(i, versions.columns) * (versions.chip-w + 12px);
+                        y: floor(i / versions.columns) * 50px;
+                        width: versions.chip-w; height: 42px;
+                        file: version;
+                        clicked => { Content.action("version", version.key); }
+                    }
+                }
+                Text { text: "相册"; color: Theme.ink; font-size: 17px; font-weight: 600; }
+                if Content.gallery.length == 0: Text { text: "暂无相册图片"; color: #616c5f; font-size: 14px; }
+            }
+            for item[i] in Content.gallery: Rectangle {
+                x: mod(i, page.columns) * (page.card-w + page.gap);
+                y: page.grid-y + floor(i / page.columns) * page.pitch;
+                width: page.card-w; height: page.pitch - page.gap;
+                visible: self.y + page.content-y + self.height > 0px && self.y + page.content-y < page.height;
+                border-radius: 14px;
+                background: #d9ddd4;
+                accessible-role: button;
+                accessible-label: "查看大图";
+                accessible-action-default => { Content.action("gallery", item.key); }
+                if item.loaded: Image { width: parent.width; height: parent.height; source: item.image; image-fit: fill; }
+                if !item.loaded: Text { text: "◌"; color: #446c49; font-size: 18px; horizontal-alignment: center; vertical-alignment: center; }
+                TouchArea { mouse-cursor: pointer; clicked => { Content.action("gallery", item.key); } }
+            }
+        }
+        RScrollbar { x: parent.width - 22px; y: page.y; width: 6px; height: page.height; visible: page.visible;
+            viewport: page.height; extent: page.content-height; position: -page.content-y;
+            scrolled(offset) => { page.content-y = -offset; } }
+    }
+}
+
+// The snackbar under the pages (Compose BottomSnakebarM3 with 查看任务).
+export component ContentSnack inherits Rectangle {
+    height: 48px;
+    background: #303b30;
+    border-radius: 16px;
+    HorizontalLayout { padding-left: 16px; padding-right: 6px; spacing: 8px;
+        Text { text: Content.snack; color: white; vertical-alignment: center; overflow: elide; horizontal-stretch: 1; }
+        if Content.snack-task: VerticalLayout { alignment: center;
+            GlassButton { label: "查看任务"; filled: true; clicked => { Content.action("snack-task", ""); } }
+        }
+        VerticalLayout { alignment: center;
+            CircleIconButton { glyph: "\u{f00d}"; filled: true; accessible-label: "关闭提示"; clicked => { Content.action("snack-close", ""); } }
+        }
+    }
+}
+
+// The install dialog and the gallery preview; the shell dims the window behind them.
+export component ContentDialogs inherits Rectangle {
+    if Content.install-open: DialogCard { width: min(560px, root.width - 48px); height: min(root.height - 48px, install-body.preferred-height);
+        x: (root.width - self.width) / 2; y: (root.height - self.height) / 2;
+        install-body := VerticalLayout { padding: 22px; spacing: 12px;
+            DialogTitle { text: Content.install-title; }
+            info := Flickable { height: min(320px, info-body.preferred-height); content-height: info-body.preferred-height;
+                info-body := VerticalLayout { width: info.width; height: self.preferred-height; spacing: 10px;
+                    if Content.install-error != "": Text { text: Content.install-error; color: #ba3434; wrap: word-wrap; }
+                    if Content.install-loading: Text { text: "◌  正在加载…"; color: #446c49; }
+                    if !Content.install-loading && Content.install-dep-summary != "": Text { text: Content.install-dep-summary; color: #667064; }
+                    if !Content.install-loading: VerticalLayout { spacing: 8px;
+                        for dep in Content.install-deps: ModCard { compact: true; height: 56px; item: dep; clicked => { Content.action("dep", dep.key); } }
+                    }
+                    if !Content.install-loading && Content.install-changelog != "": Text { text: "更新说明"; color: Theme.ink; font-weight: 700; }
+                    if !Content.install-loading && Content.install-changelog != "": Text { text: Content.install-changelog; color: Theme.ink; font-size: 13px; wrap: word-wrap; }
+                    if !Content.install-loading && Content.install-changelog == "" && Content.install-deps.length == 0: Text { text: "没有更多说明"; color: #667064; }
+                }
+            }
+            Rectangle { height: 1px; background: #d0d5cc; }
+            Text { text: Content.install-target; color: Theme.ink; wrap: word-wrap; }
+            HorizontalLayout { alignment: end; spacing: 12px;
+                GlassButton { label: "取消"; enabled: !Content.install-submitting; clicked => { Content.action("install-cancel", ""); } }
+                GlassButton { label: Content.install-submitting ? "提交中..." : "开始安装"; filled: true; enabled: Content.install-can-submit;
+                    clicked => { Content.action("install-submit", ""); } }
+            }
+        }
+    }
+    if Content.preview-open: DialogCard { width: min(1100px, root.width - 48px); height: min(root.height - 48px, (self.width - 28px) * 9 / 16 + 76px);
+        x: (root.width - self.width) / 2; y: (root.height - self.height) / 2;
+        clip-source := TextInput { x: 0px; y: 0px; width: 1px; height: 1px; text: Content.preview-url; color: transparent; read-only: true; }
+        HorizontalLayout { x: 14px; y: 14px; width: parent.width - 28px; height: 40px; spacing: 8px;
+            Text { text: Content.preview-name; color: Theme.ink; overflow: elide; vertical-alignment: center; horizontal-stretch: 1; }
+            CircleIconButton { glyph: "\u{f0c5}"; accessible-label: "复制链接";
+                clicked => { clip-source.select-all(); clip-source.copy(); clip-source.clear-selection(); Content.action("preview-copied", ""); }
+                Tooltip { text: @markdown("复制链接"); } }
+            CircleIconButton { glyph: "\u{f08e}"; accessible-label: "浏览器打开"; filled: true; clicked => { Content.action("preview-browser", ""); }
+                Tooltip { text: @markdown("浏览器打开"); } }
+            CircleIconButton { glyph: "\u{f00d}"; accessible-label: "关闭"; destructive: true; clicked => { Content.action("preview-close", ""); } }
+        }
+        if !Content.preview-loaded: Text { x: 14px; y: 62px; width: parent.width - 28px; height: parent.height - 76px; text: "◌  正在加载…";
+            color: #446c49; horizontal-alignment: center; vertical-alignment: center; }
+        if Content.preview-loaded: Image { x: 14px; y: 62px; width: parent.width - 28px; height: parent.height - 76px; source: Content.preview-image; image-fit: contain; }
+    }
+}
