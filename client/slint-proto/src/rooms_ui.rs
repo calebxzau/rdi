@@ -225,6 +225,10 @@ impl RoomsUi {
     }
 
     /// A new sign-in or a sign-out: every room page and request is dropped.
+    /// U4e2: a player's head changed; the next card asks the server again.
+    pub fn forget_player(&mut self, uid: &str) {
+        self.players.remove(uid);
+    }
     pub fn connect(&mut self, api: Option<Client>) {
         self.detail_epoch += 1;
         self.members_epoch += 1;

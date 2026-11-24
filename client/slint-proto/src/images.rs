@@ -32,7 +32,13 @@ pub fn decode(bytes: &[u8]) -> Result<DynamicImage> {
 pub fn head(skin: &RgbaImage) -> Result<RgbaImage> {
     anyhow::ensure!(skin.width() >= 64 && skin.height() >= 32, "皮肤尺寸无效");
     let mut face = image::imageops::crop_imm(skin, 8, 8, 8, 8).to_image();
-    let hat = image::imageops::crop_imm(skin, 40, 8, 8, 8).to_image();
+    let mut hat = image::imageops::crop_imm(skin, 40, 8, 8, 8).to_image();
+    // A legacy skin's opaque hat layer is hidden, as Minecraft does (`notch_transparency`).
+    if skin.height() * 2 == skin.width() {
+        let mut top = image::imageops::crop_imm(skin, 0, 0, skin.width(), skin.height()).to_image();
+        rdi_slint_proto::scene::player::notch_transparency(&mut top);
+        hat = image::imageops::crop_imm(&top, 40, 8, 8, 8).to_image();
+    }
     image::imageops::overlay(&mut face, &hat, 0, 0);
     // The face layer is opaque in Minecraft; blending the hat must not leave 254-alpha pixels.
     for p in face.pixels_mut() {

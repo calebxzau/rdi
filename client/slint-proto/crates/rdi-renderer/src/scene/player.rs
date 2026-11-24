@@ -25,6 +25,23 @@ pub fn normalize(image: RgbaImage, cape: bool) -> Result<RgbaImage> {
         *image.get_pixel(x * w / 64, y * h / height)
     }))
 }
+/// Minecraft's `doNotchTransparencyHack` for a legacy 64x32 skin: when the hat layer (the right
+/// half of the top half) has no transparent pixel, old skin editors filled it, so it is hidden.
+pub fn notch_transparency(image: &mut RgbaImage) {
+    let (w, h) = image.dimensions();
+    if w == 0 || h * 2 != w {
+        return;
+    }
+    let (x0, y1) = (w / 2, h / 2);
+    let opaque = (0..y1).all(|y| (x0..w).all(|x| image.get_pixel(x, y)[3] >= 128));
+    if opaque {
+        for y in 0..y1 {
+            for x in x0..w {
+                image.get_pixel_mut(x, y)[3] = 0;
+            }
+        }
+    }
+}
 pub fn detect_slim(image: &RgbaImage) -> bool {
     if image.width() < 64 || image.height() < 64 {
         return false;
@@ -38,7 +55,8 @@ pub fn detect_slim(image: &RgbaImage) -> bool {
 }
 impl Skin {
     pub fn new(image: RgbaImage, slim: Option<bool>) -> Result<Self> {
-        let pixels = normalize(image, false)?;
+        let mut pixels = normalize(image, false)?;
+        notch_transparency(&mut pixels);
         let slim = slim.unwrap_or_else(|| detect_slim(&pixels));
         Ok(Self { pixels, slim })
     }

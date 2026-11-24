@@ -1,0 +1,87 @@
+// U4 batch e2: the skin preview (Compose SkinPreviewScreen) and 导入正版皮肤/披风
+// (MojangSkinDialog). Rust drives them through the `Closet` global (src/closet_ui.rs).
+import { CheckBox } from "std-widgets.slint";
+import { TextField } from "components/fields.slint";
+import { CircleIconButton, GlassButton } from "components/glass_button.slint";
+import { ErrorState, LoadingState } from "components/shared.slint";
+import { PageCard, DialogCard, DialogTitle } from "room_pages.slint";
+import { Theme } from "theme.slint";
+
+export global Closet {
+    // 1 while the preview is shown; set by the shell.
+    in-out property <int> screen;
+    in-out property <string> title: "预览：皮肤";
+    in-out property <bool> loading;
+    in-out property <string> error;
+    in-out property <bool> applying;
+    in-out property <bool> can-apply;
+    // 0 waiting, 1 the turning player, 2 the skin site's still picture.
+    in-out property <int> avatar-state;
+    in-out property <image> avatar;
+    in-out property <image> fallback;
+    // 导入正版皮肤/披风.
+    in-out property <bool> mojang-open;
+    in-out property <string> mojang-name;
+    in-out property <bool> mojang-skin: true;
+    in-out property <bool> mojang-cape;
+    in-out property <bool> mojang-busy;
+    in-out property <string> mojang-error;
+    out property <bool> modal: root.mojang-open;
+    callback action(string, string);
+}
+
+// 预览 (SkinPreviewScreen).
+export component SkinPreviewPage inherits PageCard {
+    in property <bool> enabled: true;
+    FocusScope { x: 0px; y: 0px; width: root.width; height: root.height; enabled: root.enabled;
+        HorizontalLayout { x: 20px; y: 14px; width: parent.width - 40px; height: 48px; spacing: 10px;
+            VerticalLayout { alignment: center;
+                CircleIconButton { glyph: "\u{f060}"; accessible-label: "返回"; clicked => { Closet.action("back-nav", ""); } }
+            }
+            Text { text: Closet.title; color: Theme.ink; font-size: 22px; font-weight: 600; vertical-alignment: center; overflow: elide; horizontal-stretch: 1; }
+            VerticalLayout { alignment: center;
+                GlassButton { label: Closet.applying ? "设置中…" : "确认使用"; glyph: "\u{f00c}"; filled: true;
+                    enabled: Closet.can-apply && !Closet.applying; clicked => { Closet.action("apply", ""); } }
+            }
+        }
+        Rectangle { x: 20px; y: 72px; width: parent.width - 40px; height: parent.height - self.y - 16px;
+            if Closet.loading: LoadingState { width: parent.width; height: parent.height; label: "正在加载预览…"; }
+            if !Closet.loading && Closet.error != "": ErrorState { width: parent.width; height: parent.height;
+                message: Closet.error; retry => { Closet.action("retry", ""); } }
+            if !Closet.loading && Closet.error == "" && Closet.avatar-state == 1: Image {
+                x: (parent.width - self.width) / 2; y: (parent.height - self.height) / 2;
+                height: parent.height * 0.9; width: self.height * 2 / 3;
+                source: Closet.avatar; image-fit: contain; accessible-role: image; accessible-label: Closet.title;
+            }
+            if !Closet.loading && Closet.error == "" && Closet.avatar-state == 2: Image {
+                x: (parent.width - self.width) / 2; y: (parent.height - self.height) / 2;
+                width: parent.width * 0.8; height: parent.height * 0.8;
+                source: Closet.fallback; image-fit: contain; image-rendering: pixelated;
+                accessible-role: image; accessible-label: Closet.title;
+            }
+            if !Closet.loading && Closet.error == "" && Closet.avatar-state == 0: LoadingState { width: parent.width; height: parent.height; label: "正在加载预览…"; }
+        }
+    }
+}
+
+// 导入正版皮肤/披风; the shell dims the window behind it.
+export component ClosetDialogs inherits Rectangle {
+    if Closet.mojang-open: DialogCard { width: min(440px, root.width - 48px); height: body.preferred-height;
+        x: (root.width - self.width) / 2; y: (root.height - self.height) / 2;
+        body := VerticalLayout { padding: 24px; spacing: 12px;
+            DialogTitle { text: "导入正版皮肤/披风"; }
+            TextField { label: "正版玩家名"; enabled: !Closet.mojang-busy; reserve-error: false; text <=> Closet.mojang-name; init => { self.focus(); }
+                edited(t) => { Closet.action("mojang-name", t); } accepted => { Closet.action("mojang-ok", ""); } }
+            HorizontalLayout { spacing: 12px; alignment: start;
+                CheckBox { text: "导入皮肤"; enabled: !Closet.mojang-busy; checked <=> Closet.mojang-skin; }
+                CheckBox { text: "导入披风"; enabled: !Closet.mojang-busy; checked <=> Closet.mojang-cape; }
+            }
+            if Closet.mojang-error != "": Text { text: Closet.mojang-error; color: #ba3434; wrap: word-wrap; font-size: 13px; }
+            HorizontalLayout { alignment: end; spacing: 12px;
+                GlassButton { label: "取消"; enabled: !Closet.mojang-busy; clicked => { Closet.action("mojang-cancel", ""); } }
+                GlassButton { label: Closet.mojang-busy ? "导入中…" : "导入"; filled: true; enabled: !Closet.mojang-busy;
+                    clicked => { Closet.action("mojang-ok", ""); } }
+            }
+        }
+    }
+}

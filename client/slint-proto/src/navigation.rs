@@ -39,6 +39,8 @@ pub enum Screen {
     BaseWorlds,
     BaseWorldCreate,
     VersionBaseWorld,
+    /// U4e2: a wardrobe card's preview.
+    SkinPreview,
 }
 #[derive(Default, Debug)]
 pub struct Navigation {
@@ -117,6 +119,7 @@ mod tests {
             Screen::BaseWorlds,
             Screen::BaseWorldCreate,
             Screen::VersionBaseWorld,
+            Screen::SkinPreview,
         ] {
             let mut navigation = Navigation::default();
             navigation.push(screen);

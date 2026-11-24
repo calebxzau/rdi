@@ -72,6 +72,7 @@ impl Shell {
                         else if ui.global::<crate::Inbox>().get_modal() { ui.global::<crate::Inbox>().invoke_action("dismiss".into(), "".into()); }
                         else if ui.global::<crate::Settings>().get_modal() { ui.global::<crate::Settings>().invoke_action("dismiss".into(), "".into()); }
                         else if ui.global::<crate::Worlds>().get_modal() { ui.global::<crate::Worlds>().invoke_action("dismiss".into(), "".into()); }
+                        else if ui.global::<crate::Closet>().get_modal() { ui.global::<crate::Closet>().invoke_action("dismiss".into(), "".into()); }
                         else { ui.set_pack_menu(false); ui.set_discard_options(false); ui.set_duplicate_host("".into()); ui.set_java_missing(false); ui.set_confirm_exit(false); ui.set_gallery_dialog(false); }
                     }
                     return;
@@ -99,6 +100,7 @@ impl Shell {
                     "base-worlds" if s.navigation.current() == Screen::ModpackPlaza => s.navigation.push(Screen::BaseWorlds),
                     "base-world-create" if s.navigation.current() == Screen::BaseWorlds => s.navigation.push(Screen::BaseWorldCreate),
                     "version-base-world" if s.navigation.current() == Screen::ModpackVersionDetail => s.navigation.push(Screen::VersionBaseWorld),
+                    "skin-preview" if s.navigation.current() == Screen::Wardrobe => s.navigation.push(Screen::SkinPreview),
                     // A dependency's details go back to the mod they were opened from.
                     "back" if s.navigation.current() == Screen::ContentModDetail && ui.global::<crate::Content>().get_detail_depth() > 1 => {
                         ui.global::<crate::Content>().invoke_action("detail-back".into(), "".into());
@@ -203,6 +205,7 @@ impl Shell {
             Screen::VersionBaseWorld => 3,
             _ => 0,
         });
+        ui.global::<crate::Closet>().set_screen((self.navigation.current() == Screen::SkinPreview) as i32);
         ui.set_can_back(self.navigation.can_back());
     }
     pub fn scene_frozen(&self, ui: &AppWindow) -> bool {
@@ -299,6 +302,7 @@ pub fn frame(
         && ui.global::<crate::Settings>().get_screen() == 0
         && ui.global::<crate::Content>().get_screen() == 0
         && ui.global::<crate::Worlds>().get_screen() == 0
+        && ui.global::<crate::Closet>().get_screen() == 0
     {
         if !ui.get_loading() && ui.get_error().is_empty() {
             let row_pitch = ui.get_menu_grid_row_pitch();

@@ -392,6 +392,10 @@ impl Plaza {
         plaza
     }
 
+    /// U4e2: a player's head changed; the next card asks the server again.
+    pub fn forget_player(&mut self, uid: &str) {
+        self.players.remove(uid);
+    }
     pub fn connect(&mut self, api: Option<Client>) {
         self.cancel_search();
         self.detail_epoch += 1;

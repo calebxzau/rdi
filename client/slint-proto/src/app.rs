@@ -58,6 +58,8 @@ enum Event {
     Art(u64, String, Art),
     /// U4c1: `/host/my` again after a room was created, deleted or left.
     Mine(u64, Result<Vec<HostBrief>>),
+    /// U4e2: the account's new skin and cape after 确认使用 or 导入正版皮肤.
+    Clothes(u64, Result<Appearance>),
 }
 #[derive(Default)]
 pub struct Interaction {
@@ -218,6 +220,7 @@ pub struct App {
     rdipack2_ui: Rc<RefCell<crate::rdipack2_ui::Rdipack2Ui>>,
     content_ui: Rc<RefCell<crate::content_ui::ContentUi>>,
     base_world_ui: Rc<RefCell<crate::base_world_ui::BaseWorldUi>>,
+    closet_ui: Rc<RefCell<crate::closet_ui::ClosetUi>>,
     heads: HeadCache,
     cache: lru::LruCache<String, CachedArt>,
     jobs: HashMap<String, JoinHandle<()>>,
@@ -282,6 +285,7 @@ impl App {
         let rdipack2_ui = crate::rdipack2_ui::Rdipack2Ui::wire(ui, runtime.clone(), pack_ui.borrow().tasks(), pack_ui.borrow().play.clone());
         let content_ui = crate::content_ui::ContentUi::wire(ui, runtime.clone(), pack_ui.clone());
         let base_world_ui = crate::base_world_ui::BaseWorldUi::wire(ui, runtime.clone(), pack_ui.borrow().tasks());
+        let closet_ui = crate::closet_ui::ClosetUi::wire(ui, runtime.clone(), config.renderer == "femtovg-wgpu" && !config.no_glass);
         let settings_ui = crate::settings_ui::SettingsUi::wire(ui, runtime.clone(), pack_ui.borrow().tasks(), pack_ui.borrow().play.clone(), config.server.clone());
         let app = Rc::new(RefCell::new(Self {
             ui: ui.as_weak(),
@@ -304,6 +308,7 @@ impl App {
             rdipack2_ui,
             content_ui,
             base_world_ui,
+            closet_ui,
             login_ui,
             play_revision: 0,
             heads: HeadCache::default(),
@@ -503,6 +508,24 @@ impl App {
         self.online_crowd.update(Vec::new());
         self.config.no_scene = true;
     }
+    /// The skin preview's player, drawn by the render loop.
+    pub fn avatar(&self) -> crate::closet_ui::Avatar {
+        self.closet_ui.borrow().avatar()
+    }
+    /// U4e2 D3: after a change of clothes, the title bar head, the account's player in the parade
+    /// and the cached player cards follow (Compose updates the session and `playerInfoCache`).
+    fn clothes_changed(&mut self, clothes: crate::closet::Clothes) {
+        let Some(api) = self.api.clone() else { return };
+        if let Ok(uid) = api.uid() {
+            self.plaza.borrow_mut().forget_player(&uid);
+            self.rooms.borrow_mut().forget_player(&uid);
+        }
+        let (tx, epoch, http) = (self.tx.clone(), self.epoch, api.http.clone());
+        self.runtime.spawn(async move {
+            let result = images::background_appearance(&http, Some(clothes.to_cloth())).await;
+            let _ = tx.send(Event::Clothes(epoch, result));
+        });
+    }
     pub fn take_player_appearance(&mut self) -> Option<Appearance> {
         self.player_appearance.take()
     }
@@ -569,6 +592,7 @@ impl App {
         self.rdipack2_ui.borrow_mut().connect(None);
         self.content_ui.borrow_mut().connect(None);
         self.base_world_ui.borrow_mut().connect(None);
+        self.closet_ui.borrow_mut().connect(None);
         self.login_ui.borrow_mut().start();
     }
     /// Games and tasks belong to the signed-in account, so logging out waits for them.
@@ -611,6 +635,7 @@ impl App {
         self.rdipack2_ui.borrow_mut().connect(None);
         self.content_ui.borrow_mut().connect(None);
         self.base_world_ui.borrow_mut().connect(None);
+        self.closet_ui.borrow_mut().connect(None);
         ui.set_player_name("未登录".into());
         ui.set_player_head(self.fallback.clone());
         self.login_ui.borrow_mut().sign_out(session);
@@ -648,6 +673,7 @@ impl App {
         self.rdipack2_ui.borrow_mut().connect(Some(api.clone()));
         self.content_ui.borrow_mut().connect(Some(api.clone()));
         self.base_world_ui.borrow_mut().connect(Some(api.clone()));
+        self.closet_ui.borrow_mut().connect(Some(api.clone()));
         self.player_appearance = if self.player_enabled() && !self.crowd_enabled() {
             match Appearance::steve() {
                 Ok(appearance) => Some(appearance),
@@ -1070,6 +1096,11 @@ impl App {
         self.rdipack2_ui.borrow_mut().tick();
         self.content_ui.borrow_mut().tick();
         self.base_world_ui.borrow_mut().tick();
+        self.closet_ui.borrow_mut().tick();
+        let changed = self.closet_ui.borrow_mut().take_changed();
+        if let Some(clothes) = changed {
+            self.clothes_changed(clothes);
+        }
         if self.rooms.borrow_mut().take_hosts_changed()
             && let Some(api) = self.api.clone()
         {
@@ -1190,6 +1221,25 @@ impl App {
                         }
                     }
                 }
+                Event::Clothes(epoch, result) if epoch == self.epoch => match result {
+                    Ok(appearance) => {
+                        match images::head(&appearance.skin.pixels) {
+                            Ok(head) => ui.set_player_head(images::to_slint(&head)),
+                            Err(error) => tracing::warn!(error = %format!("{error:#}"), "新皮肤头像生成失败"),
+                        }
+                        if self.crowd_enabled() {
+                            if let Some(uid) = self.api.as_ref().and_then(|a| a.uid().ok()) {
+                                let skin = Skin { pixels: appearance.skin.pixels.clone(), slim: appearance.skin.slim };
+                                self.crowd_skins.retain(|(id, _)| id != &uid);
+                                self.crowd_skins.push((uid, skin));
+                            }
+                        } else if self.player_enabled() {
+                            self.player_appearance = Some(appearance);
+                        }
+                        ui.window().request_redraw();
+                    }
+                    Err(error) => tracing::warn!(error = %format!("{error:#}"), "新皮肤加载失败"),
+                },
                 Event::CrowdSkin(epoch, id, skin)
                     if epoch == self.epoch && self.crowd_enabled() =>
                 {

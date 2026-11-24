@@ -2,6 +2,7 @@ import { TextField } from "components/fields.slint";
 import { CircleIconButton, GlassButton } from "components/glass_button.slint";
 import { EmptyState, ErrorState, HttpImage, LoadingState, RScrollbar } from "components/shared.slint";
 import { Theme } from "theme.slint";
+import { Closet } from "closet.slint";
 
 export struct WardrobeItem { id: int, name: string, likes: int, thumbnail: image, image-state: int }
 
@@ -44,6 +45,10 @@ export component WardrobeScreen inherits Rectangle {
             VerticalLayout { alignment: center;
                 GlassButton { label: "披风"; checked: root.cape; clicked => {if !root.cape {root.submit(true);} } }
             }
+            // U4e2: MojangSkinDialog.
+            VerticalLayout { alignment: center;
+                GlassButton { label: "导入正版皮肤"; glyph: "\u{f05b3}"; clicked => { Closet.action("mojang-open", ""); } }
+            }
         }
 
         grid := Flickable {
@@ -60,7 +65,11 @@ export component WardrobeScreen inherits Rectangle {
                 x: mod(i, grid.columns) * (grid.card-width + grid.gap); y: floor(i / grid.columns) * grid.row-height;
                 width: grid.card-width; height: grid.row-height - grid.gap;
                 visible: self.y + grid.content-y + self.height > 0px && self.y + grid.content-y < grid.height;
-                background: #ecefe7; border-radius: 12px;
+                background: card-touch.has-hover ? #f6f8f2 : #ecefe7; border-radius: 12px;
+                accessible-role: button; accessible-label: item.name;
+                accessible-action-default => { Closet.action("preview", item.id + "|" + item.name); }
+                // U4e2: a card opens its preview (SkinPreviewScreen).
+                card-touch := TouchArea { mouse-cursor: pointer; clicked => { Closet.action("preview", item.id + "|" + item.name); } }
                 HttpImage { x: 8px; y: 6px; width: parent.width - 16px; height: parent.height - 42px;
                     background: transparent; source: item.thumbnail; image-state: item.image-state;
                 }

@@ -55,6 +55,8 @@ mod play;
 mod save_import;
 mod base_world;
 mod base_world_ui;
+mod closet;
+mod closet_ui;
 mod route;
 use rdi_slint_proto::scene;
 mod runtime_probe;
@@ -156,6 +158,10 @@ fn main() -> anyhow::Result<()> {
     let weak = ui.as_weak();
     let state = Rc::downgrade(&app);
     let mut renderer = None;
+    // U4e2: the skin preview's player, created on first use with the window's device.
+    let mut gpu: Option<(slint::wgpu_30::wgpu::Device, slint::wgpu_30::wgpu::Queue)> = None;
+    let mut avatar_renderer: Option<rdi_renderer::avatar::Renderer> = None;
+    let avatar_clock = Instant::now();
     let mut failed = false;
     let mut first = true;
     let mut frame_pacing = scene::perf::FramePacing::default();
@@ -169,6 +175,7 @@ fn main() -> anyhow::Result<()> {
                         elapsed_ms = started.elapsed().as_millis(),
                         "Startup stage"
                     );
+                    gpu = Some((device.clone(), queue.clone()));
                     match glass::Renderer::new(device.clone(), queue.clone(), hosts::grid_metrics()) {
                         Ok(r) => {
                             tracing::info!(
@@ -286,6 +293,44 @@ fn main() -> anyhow::Result<()> {
                             ui.set_error(format!("玻璃绘制失败：{error:#}").into());
                         }
                     }
+                    {
+                        let avatar = app.borrow().avatar();
+                        let mut slot = avatar.borrow_mut();
+                        if slot.clear {
+                            if let Some(a) = &mut avatar_renderer { a.clear(); }
+                            slot.clear = false;
+                        }
+                        if slot.active && !slot.failed {
+                            let result = (|| -> anyhow::Result<Option<slint::Image>> {
+                                if avatar_renderer.is_none() {
+                                    let (device, queue) = gpu.clone().ok_or_else(|| anyhow::anyhow!("wgpu is unavailable"))?;
+                                    avatar_renderer = Some(rdi_renderer::avatar::Renderer::new(device, queue)?);
+                                    tracing::info!("皮肤预览渲染器已创建");
+                                }
+                                let a = avatar_renderer.as_mut().expect("avatar renderer");
+                                if let Some(appearance) = slot.pending.take() { a.set_appearance(appearance)?; }
+                                a.render(avatar_clock.elapsed().as_secs_f64(), 600, 900)?
+                                    .map(|texture| slint::Image::try_from(texture).map_err(|e| anyhow::anyhow!("预览纹理无法交给Slint：{e}")))
+                                    .transpose()
+                            })();
+                            match result {
+                                Ok(Some(image)) => {
+                                    let closet = ui.global::<Closet>();
+                                    closet.set_avatar(image);
+                                    if closet.get_avatar_state() == 0 {
+                                        tracing::info!("皮肤预览首帧已绘制");
+                                        closet.set_avatar_state(1);
+                                    }
+                                }
+                                Ok(None) => {}
+                                Err(error) => {
+                                    tracing::error!(error = %format!("{error:#}"), "皮肤预览绘制失败；改用静态预览图");
+                                    slot.failed = true;
+                                    avatar_renderer = None;
+                                }
+                            }
+                        }
+                    }
                     if let Some(proof) = &render_proof { proof.borrow_mut().underlay_done(); }
                     if scene_options.probe && last_snapshot.elapsed().as_secs() >= 5 {
                         r.device().poll(slint::wgpu_30::wgpu::PollType::Poll).ok();
@@ -322,6 +367,8 @@ fn main() -> anyhow::Result<()> {
             }
             slint::RenderingState::RenderingTeardown => {
                 renderer = None;
+                avatar_renderer = None;
+                gpu = None;
                 scene_renderer = None;
                 scene_loader = None;
                 scene_start = None;
