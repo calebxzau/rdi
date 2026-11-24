@@ -430,3 +430,12 @@ Kotlin bugs found on the way are noted here and not fixed.
   `real_pack_summary`). Not done live: the tools against the local master (needs a release build).
   Differences noted: Kotlin parses the icon address with `java.net.URI`; Rust uses `Url`, so an
   address Java accepts but `Url` rejects is 链接无效 here. Next: A2 (full pack reading).
+- 2026-11-25 M4 stage A2 part 1: `upload::jar_meta` (Kotlin `readModMeta`: neoforge.mods.toml,
+  mods.toml, fabric.mod.json, mcmod.info; mod id, version, Fabric side) and `upload::mods`
+  (`resolveClientPackEntryPath`, `distinctUploadMods`, `embeddedModUploadSide`,
+  `markRawManifestModReplacements`, `selectEmbeddedModPathWinners`, `selectPreferredModFiles` with
+  the loose version order, `postProcessModSides`), 4 more tests. Not wired yet (marked
+  `allow(dead_code)` until the reader lands). Next in A2: the Modrinth and CurseForge manifest to
+  mod and extra lists (`ModrinthService.loadParsedModpack`/`resolveManifestEntries`,
+  `CurseForgeService.mapManifestEntriesToMods`/`...Contents`), embedded jar identification
+  (`matchLocalModFiles` through `catalog::match_local_files`), embedded extras, server pack.

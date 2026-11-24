@@ -210,3 +210,89 @@ fn real_pack_summary() {
     let summary = source::summary(std::path::Path::new(&path)).unwrap();
     eprintln!("{summary:?}");
 }
+
+// ---- Stage A2: mod list rules ----
+
+use super::mods::{self as upload_mods, EntryPath};
+use crate::pack_install::mods::{Mod, Side};
+
+fn entry(path: &str, unprefixed: bool) -> Option<(String, u8)> {
+    upload_mods::client_entry_path(path, unprefixed).map(|EntryPath { relative, priority }| (relative, priority))
+}
+
+#[test]
+fn client_entry_paths_follow_the_layers() {
+    let some = |p: &str, n: u8| Some((p.to_owned(), n));
+    assert_eq!(entry("overrides/mods/a.jar", false), some("mods/a.jar", 1));
+    assert_eq!(entry("client-overrides/mods/a.jar", false), some("mods/a.jar", 2));
+    assert_eq!(entry("pack/overrides/config/x.toml", false), some("config/x.toml", 1));
+    assert_eq!(entry("client-overrides/overrides/x", false), some("overrides/x", 2));
+    assert_eq!(entry("server-overrides/mods/a.jar", false), None);
+    assert_eq!(entry("server/mods/a.jar", true), None);
+    assert_eq!(entry("a/server/overrides/x", false), None);
+    assert_eq!(entry("overrides", false), None);
+    assert_eq!(entry("mods/a.jar", false), None);
+    assert_eq!(entry("mods/a.jar", true), some("mods/a.jar", 0));
+    assert_eq!(entry("resourcepacks/a.zip", false), some("resourcepacks/a.zip", 0));
+    assert_eq!(entry("manifest.json", true), None);
+    assert_eq!(entry("../evil", true), None);
+}
+
+fn m(slug: &str, side: Side) -> Mod {
+    serde_json::from_value(json!({"platform": "cf", "projectId": format!("p-{slug}"), "slug": slug, "fileId": "1", "hash": "h", "side": side})).unwrap()
+}
+
+#[test]
+fn sides_merge_and_follow_the_kotlin_overrides() {
+    let merged = upload_mods::distinct(vec![m("a", Side::Unknown), m("a", Side::Client), m("b", Side::Client), m("b", Side::Server)]);
+    assert_eq!(merged.iter().map(|x| x.side).collect::<Vec<_>>(), [Side::Client, Side::Both]);
+    let mut mods = vec![m("ftb-quests", Side::Client), m("modern-ui", Side::Both), m("the-twilight-forest", Side::Server), m("jei", Side::Client)];
+    let mut over = m("x", Side::Both);
+    over.client_override_replaced = true;
+    mods.push(over);
+    mods.push(upload_mods::embedded_side(m("y", Side::Both), true));
+    upload_mods::post_process_sides(&mut mods);
+    assert_eq!(
+        mods.iter().map(|x| x.side).collect::<Vec<_>>(),
+        [Side::Both, Side::Client, Side::Both, Side::Client, Side::Server, Side::Client]
+    );
+    assert!(mods[5].client_only_override);
+}
+
+#[test]
+fn loose_versions_and_file_names() {
+    use std::cmp::Ordering::*;
+    assert_eq!(upload_mods::compare_loose("1.10", "1.9"), Greater);
+    assert_eq!(upload_mods::compare_loose("1.0", "1.0a"), Greater);
+    assert_eq!(upload_mods::compare_loose("1.0", "1.0.1"), Less);
+    assert_eq!(upload_mods::compare_loose("2.0", "2.0"), Equal);
+    assert_eq!(upload_mods::names_for_test("jei-1.20.1-15.2.0.27"), ("jei".into(), "1.20.1-15.2.0.27".into()));
+    assert_eq!(upload_mods::names_for_test("create"), ("create".into(), "0".into()));
+    // A name that starts with a digit is all version, as in Kotlin.
+    assert_eq!(upload_mods::names_for_test("1kmod"), ("1kmod".into(), "1kmod".into()));
+}
+
+#[test]
+fn jar_metadata_is_read_in_kotlin_order() {
+    use super::jar_meta::parse_for_test as parse;
+    let toml = parse("toml", "modLoader=\"javafml\"\n[[mods]]\nmodId=\"Create\"\nversion=\"0.5.1\"\n").unwrap();
+    assert_eq!((toml.mod_id.as_deref(), toml.version.as_deref()), (Some("create"), Some("0.5.1")));
+    assert_eq!(parse("toml", "[[mods]]\nmodId=\" \"\n"), None);
+    let fabric = parse("fabric", r#"{"id":"Sodium","version":"0.5","environment":"client"}"#).unwrap();
+    assert_eq!((fabric.mod_id.as_deref(), fabric.side), (Some("sodium"), Some(Side::Client)));
+    assert_eq!(parse("fabric", r#"{"id":"x","environment":"*"}"#).unwrap().side, None);
+    let legacy = parse("legacy", r#"{"modList":[{"modid":"NEI","version":"2.0"}]}"#).unwrap();
+    assert_eq!(legacy.mod_id.as_deref(), Some("nei"));
+
+    let dir = TestDir::new("rdi-upload-test");
+    let jar = |name: &str, files: &[(&str, &[u8])]| zip(&dir, name, files);
+    let old = jar("sodium-0.4.jar", &[("fabric.mod.json", br#"{"id":"sodium","version":"0.4.10"}"#)]);
+    let new = jar("sodium-0.5.jar", &[("fabric.mod.json", br#"{"id":"sodium","version":"0.5.3"}"#)]);
+    let other = jar("lithium.jar", &[("META-INF/mods.toml", b"[[mods]]\nmodId=\"lithium\"\nversion=\"1\"\n")]);
+    let (kept, dropped) = upload_mods::preferred(vec![old.clone(), new.clone(), other.clone()]);
+    assert_eq!(kept, [new, other]);
+    assert_eq!(dropped, [old]);
+    // The first mods.toml decides; neoforge.mods.toml comes first.
+    let both = jar("both.jar", &[("META-INF/mods.toml", b"[[mods]]\nmodId=\"forge_id\"\n"), ("META-INF/neoforge.mods.toml", b"[[mods]]\nmodId=\"neo_id\"\n")]);
+    assert_eq!(super::jar_meta::read(&both).unwrap().mod_id.as_deref(), Some("neo_id"));
+}
