@@ -77,6 +77,7 @@ export component AppWindow inherits Window {
     in property <bool> plaza-base-world-manage;
     in property <bool> plaza-base-worlds;
     in property <string> plaza-uploaded;
+    in property <image> plaza-author-head;
     in property <string> plaza-uploader-name;
     in property <image> plaza-uploader-head;
     in property <string> plaza-extras;
@@ -446,7 +447,7 @@ export component AppWindow inherits Window {
         visible: (root.pack-screen == 4 || root.pack-screen == 5) && !root.login-visible;
         enabled: self.visible && !root.modal-open && root.activity-panel == 0;
         version-page: root.pack-screen == 5;
-        loading: root.plaza-detail-loading; error: root.plaza-detail-error; pack: root.plaza-pack;
+        loading: root.plaza-detail-loading; error: root.plaza-detail-error; pack: root.plaza-pack; author-head: root.plaza-author-head;
         versions: root.plaza-versions; version: root.plaza-version; changelog: root.plaza-changelog;
         base-world: root.plaza-base-world; base-world-manage: root.plaza-base-world-manage; install-state: root.plaza-install;
         uploaded: root.plaza-uploaded; uploader-name: root.plaza-uploader-name; uploader-head: root.plaza-uploader-head;

@@ -282,6 +282,21 @@ impl Version {
     }
 }
 
+/// A short tag for the Minecraft version and loader, for players who need not know either:
+/// `mc` + the minor version + the loader's letter, such as `mc21n` for 1.21.1 NeoForge.
+fn short_code(minecraft: &str, loader: &str) -> String {
+    let minor = minecraft.split('.').nth(1).filter(|m| !m.is_empty() && m.bytes().all(|b| b.is_ascii_digit()));
+    let Some(minor) = minor else { return String::new() };
+    let loader = match loader.to_ascii_lowercase().as_str() {
+        "neoforge" => "n",
+        "forge" => "f",
+        "fabric" => "a",
+        other => &other[..other.len().min(1)],
+    }
+    .to_owned();
+    format!("mc{minor}{loader}")
+}
+
 fn pack_id(id: &str) -> bool {
     id.len() == 24 && id.bytes().all(|byte| byte.is_ascii_hexdigit())
 }
@@ -338,6 +353,8 @@ pub struct Plaza {
     /// Uploader id -> name and head; 「未知玩家」 and Steve after a failed request.
     players: HashMap<String, (String, slint::Image)>,
     uploader: String,
+    /// The pack author's id, whose head stands for the name on the pack page.
+    author: String,
 }
 
 impl Plaza {
@@ -382,6 +399,7 @@ impl Plaza {
             mods_rendered: None,
             players: HashMap::new(),
             uploader: String::new(),
+            author: String::new(),
         }));
         let weak = Rc::downgrade(&plaza);
         ui.on_plaza_action(move |action, value| {
@@ -406,6 +424,7 @@ impl Plaza {
         self.version_epoch += 1;
         self.version_mods.clear();
         self.uploader.clear();
+        self.author.clear();
         self.players.clear();
         self.keyword.clear();
         self.filters = PlazaFilters::default();
@@ -648,6 +667,23 @@ impl Plaza {
         ui.invoke_navigate("plaza-version".into());
     }
 
+    /// The author's head on the pack page; the name shows on hover.
+    fn show_author(&mut self, ui: &AppWindow, api: Client) {
+        if let Some((_, head)) = self.players.get(&self.author) {
+            ui.set_plaza_author_head(head.clone());
+            return;
+        }
+        ui.set_plaza_author_head(steve());
+        if self.author.trim().is_empty() {
+            return;
+        }
+        let (uid, tx) = (self.author.clone(), self.tx.clone());
+        self.runtime.spawn(async move {
+            let result = crate::rooms_ui::player(&api, &uid).await;
+            let _ = tx.send(Reply::Uploader(uid, result));
+        });
+    }
+
     /// 「by」 the uploader's head and name (`HeadButton(uploaderId, showName = true)`).
     fn show_uploader(&mut self, ui: &AppWindow, api: &Client) {
         if let Some((name, head)) = self.players.get(&self.uploader) {
@@ -772,19 +808,15 @@ impl Plaza {
             .map(Version::summary)
             .collect();
         let minecraft = local_packs::mc_version_name(&detail.mc_ver).unwrap_or(&detail.mc_ver);
-        let loader = match detail.modloader.as_str() {
-            "forge" => "Forge",
-            "neoforge" => "NeoForge",
-            "Fabric" | "fabric" => "Fabric",
-            loader => loader,
-        };
+        self.author = detail.author_id.clone();
+        self.show_author(ui, api.clone());
         ui.set_plaza_pack(PlazaPack {
             id: self.detail_id.as_str().into(),
             minecraft: minecraft.into(),
             name: detail.name.as_str().into(),
             author: detail.author_name.as_str().into(),
             intro: detail.info.as_deref().unwrap_or_default().trim().into(),
-            metadata: format!("MC{minecraft} · {loader}").into(),
+            code: short_code(minecraft, &detail.modloader).into(),
             categories: categories(&detail.categories).into(),
             has_source: source_url(detail.source_url.as_deref()).is_some(),
         });
@@ -868,6 +900,9 @@ impl Plaza {
                         }
                     };
                     self.players.insert(uid.clone(), (name.clone(), head.clone()));
+                    if uid == self.author {
+                        ui.set_plaza_author_head(head.clone());
+                    }
                     if uid == self.uploader {
                         ui.set_plaza_uploader_name(name.into());
                         ui.set_plaza_uploader_head(head);
@@ -907,6 +942,15 @@ fn abort(job: &mut Option<JoinHandle<()>>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn short_codes_name_the_major_version_and_loader_letter() {
+        assert_eq!(short_code("1.21.1", "neoforge"), "mc21n");
+        assert_eq!(short_code("1.20.1", "forge"), "mc20f");
+        assert_eq!(short_code("1.7.10", "forge"), "mc7f");
+        assert_eq!(short_code("1.21.1", "Fabric"), "mc21a");
+        assert_eq!(short_code("unknown", "forge"), "");
+    }
     use serde_json::json;
 
     #[test]

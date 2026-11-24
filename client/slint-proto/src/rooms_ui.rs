@@ -480,19 +480,13 @@ impl RoomsUi {
         let Some((me, dav)) = self.me() else { return };
         let me = Me { id: &me, is_dav: dav };
         let pack = &detail.modpack;
-        let minecraft = crate::local_packs::mc_version_name(&pack.mc_ver).unwrap_or(&pack.mc_ver);
-        let loader = match pack.modloader.as_str() {
-            "forge" => "Forge",
-            "neoforge" => "NeoForge",
-            "fabric" | "Fabric" => "Fabric",
-            other => other,
-        };
         let previous = rooms(ui).get_info();
         let same_pack = previous.mid == pack.id.as_str() && previous.has_pack_icon;
         rooms(ui).set_info(RoomInfo {
             name: detail.name.as_str().into(),
             pack_name: pack.name.as_str().into(),
-            pack_meta: format!("MC{minecraft} · {loader} · {}", detail.pack_ver).into(),
+            // Players need not know the Minecraft version or the loader; only the pack version shows.
+            pack_version: detail.pack_ver.as_str().into(),
             pack_initial: name_placeholder(&pack.name),
             pack_icon: if same_pack { previous.pack_icon } else { Default::default() },
             has_pack_icon: same_pack,
