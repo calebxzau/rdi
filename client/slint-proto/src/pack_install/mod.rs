@@ -53,17 +53,15 @@ pub enum State {
     Installed,
 }
 
-/// Version ids of running games, fed from the service's `game.state` events.
+/// Version ids of running or preparing games, fed from the Rust sessions.
 #[derive(Clone, Default)]
-pub struct Running(Arc<Mutex<(HashSet<String>, bool)>>);
+pub struct Running(Arc<Mutex<HashSet<String>>>);
 impl Running {
-    pub fn update(&self, versions: HashSet<String>, preparing: bool) {
-        *self.0.lock().unwrap() = (versions, preparing);
+    pub fn update(&self, versions: HashSet<String>) {
+        *self.0.lock().unwrap() = versions;
     }
-    /// A session that is still preparing has no version yet, so it blocks every commit.
     fn blocks(&self, version_id: &str) -> bool {
-        let state = self.0.lock().unwrap();
-        state.1 || state.0.contains(version_id)
+        self.0.lock().unwrap().contains(version_id)
     }
 }
 

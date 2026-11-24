@@ -1,7 +1,10 @@
 //! Microsoft device-code sign-in, returning what Kotlin `MsaAccountInfo` holds: the Minecraft
-//! profile id and name and a Minecraft access token. Nothing is saved; the server checks the
+//! profile id and name and a Minecraft access token. Binding saves nothing; the server checks the
 //! token itself. Owner decision D1 chose azalea-auth, but its azalea-buf needs nightly Rust
 //! (simdnbt), so this is the agreed fallback: the same live.com flow azalea-auth uses.
+//!
+//! J5c (C3): online play keeps the Microsoft refresh token (`crate::msa_play`) and refreshes the
+//! Minecraft token through [`refresh`] with the same Switch title id.
 use anyhow::{Result, anyhow, bail};
 use serde_json::{Value, json};
 use std::time::{Duration, Instant};
@@ -14,13 +17,48 @@ const SCOPE: &str = "service::user.auth.xboxlive.com::MBI_SSL";
 /// Kotlin `MICROSOFT_LOGIN_TIMEOUT_MS`: ten minutes.
 const TIMEOUT: Duration = Duration::from_secs(600);
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, PartialEq)]
 pub struct MsaProfile {
     /// Dashed, as Kotlin `UUID.toString`.
     pub uuid: String,
     pub name: String,
     pub token: String,
 }
+/// The token never reaches a log.
+impl std::fmt::Debug for MsaProfile {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MsaProfile").field("uuid", &self.uuid).field("name", &self.name).finish_non_exhaustive()
+    }
+}
+
+/// Where each step of the sign-in goes; tests point all four at a local server.
+#[derive(Clone, Debug)]
+pub struct Endpoints {
+    pub live: String,
+    pub xbox_user: String,
+    pub xsts: String,
+    pub minecraft: String,
+}
+impl Default for Endpoints {
+    fn default() -> Self {
+        Self {
+            live: "https://login.live.com".into(),
+            xbox_user: "https://user.auth.xboxlive.com".into(),
+            xsts: "https://xsts.auth.xboxlive.com".into(),
+            minecraft: "https://api.minecraftservices.com".into(),
+        }
+    }
+}
+
+/// A finished sign-in or refresh: the Minecraft profile and token, how long the token lasts, and
+/// the Microsoft refresh token when live.com sent one.
+#[derive(Clone)]
+pub struct Session {
+    pub profile: MsaProfile,
+    pub expires_in_secs: u64,
+    pub refresh_token: Option<String>,
+}
+
 impl MsaProfile {
     /// Kotlin `MsaAccountInfo` JSON.
     pub fn json(&self) -> Value {
@@ -68,7 +106,7 @@ fn xsts_error(code: i64) -> &'static str {
 }
 
 /// Minecraft's undashed profile id as a dashed UUID.
-fn dashed(id: &str) -> Result<String> {
+pub(crate) fn dashed(id: &str) -> Result<String> {
     let id = id.replace('-', "").to_ascii_lowercase();
     anyhow::ensure!(id.len() == 32 && id.bytes().all(|b| b.is_ascii_hexdigit()), "MC档案格式不兼容");
     Ok(format!("{}-{}-{}-{}-{}", &id[..8], &id[8..12], &id[12..16], &id[16..20], &id[20..]))
@@ -89,10 +127,51 @@ async fn json_body(step: &str, response: reqwest::Response) -> Result<(reqwest::
 }
 
 /// Asks Microsoft for a device code, hands its link to `on_link`, waits up to ten minutes for
-/// the player to sign in, then reads the Minecraft profile.
+/// the player to sign in, then reads the Minecraft profile. Used for binding; nothing is kept.
 pub async fn sign_in(http: &reqwest::Client, on_link: impl FnOnce(String)) -> Result<MsaProfile> {
+    Ok(sign_in_session(http, &Endpoints::default(), on_link).await?.profile)
+}
+
+/// [`sign_in`] that also returns the refresh token and the token lifetime, for online play.
+pub async fn sign_in_session(http: &reqwest::Client, endpoints: &Endpoints, on_link: impl FnOnce(String)) -> Result<Session> {
+    let live = device_code(http, endpoints, on_link).await?;
+    minecraft(http, endpoints, live).await
+}
+
+/// Trades a saved Microsoft refresh token for a new Minecraft token and profile.
+pub async fn refresh(http: &reqwest::Client, endpoints: &Endpoints, refresh_token: &str) -> Result<Session> {
     let response = http
-        .post("https://login.live.com/oauth20_connect.srf")
+        .post(format!("{}/oauth20_token.srf", endpoints.live))
+        .form(&[
+            ("client_id", CLIENT_ID),
+            ("refresh_token", refresh_token),
+            ("grant_type", "refresh_token"),
+            ("scope", SCOPE),
+        ])
+        .send()
+        .await
+        .map_err(|e| network("refresh", e))?;
+    let (status, body) = json_body("refresh", response).await?;
+    let Some(access) = body["access_token"].as_str().filter(|t| !t.is_empty()) else {
+        tracing::warn!(status = status.as_u16(), error = body["error"].as_str().unwrap_or("none"), "微软登录续期失败");
+        bail!("正版登录已过期，请重新登录");
+    };
+    minecraft(http, endpoints, LiveTokens { access: access.to_owned(), refresh: refresh_of(&body) }).await
+}
+
+/// live.com tokens: the Xbox ticket and, when sent, the refresh token.
+struct LiveTokens {
+    access: String,
+    refresh: Option<String>,
+}
+
+fn refresh_of(body: &Value) -> Option<String> {
+    body["refresh_token"].as_str().filter(|t| !t.is_empty()).map(str::to_owned)
+}
+
+async fn device_code(http: &reqwest::Client, endpoints: &Endpoints, on_link: impl FnOnce(String)) -> Result<LiveTokens> {
+    let response = http
+        .post(format!("{}/oauth20_connect.srf", endpoints.live))
         .form(&[("scope", SCOPE), ("client_id", CLIENT_ID), ("response_type", "device_code")])
         .send()
         .await
@@ -107,13 +186,13 @@ pub async fn sign_in(http: &reqwest::Client, on_link: impl FnOnce(String)) -> Re
     let mut interval = Duration::from_secs(code["interval"].as_u64().unwrap_or(5).clamp(1, 30));
     let expires = Duration::from_secs(code["expires_in"].as_u64().unwrap_or(900)).min(TIMEOUT);
     let deadline = Instant::now() + expires;
-    let access_token = loop {
+    loop {
         if Instant::now() >= deadline {
             bail!("登录超时，请在10分钟内完成微软登录");
         }
         tokio::time::sleep(interval).await;
         let response = http
-            .post(format!("https://login.live.com/oauth20_token.srf?client_id={CLIENT_ID}"))
+            .post(format!("{}/oauth20_token.srf?client_id={CLIENT_ID}", endpoints.live))
             .form(&[
                 ("client_id", CLIENT_ID),
                 ("device_code", device_code),
@@ -124,7 +203,7 @@ pub async fn sign_in(http: &reqwest::Client, on_link: impl FnOnce(String)) -> Re
             .map_err(|e| network("device token", e))?;
         let (_, body) = json_body("device token", response).await?;
         match poll_reply(&body) {
-            Poll::Token(token) => break token,
+            Poll::Token(access) => return Ok(LiveTokens { access, refresh: refresh_of(&body) }),
             Poll::Pending => {}
             Poll::SlowDown => interval += Duration::from_secs(5),
             Poll::Failed(message) => {
@@ -132,13 +211,17 @@ pub async fn sign_in(http: &reqwest::Client, on_link: impl FnOnce(String)) -> Re
                 bail!("{message}");
             }
         }
-    };
+    }
+}
+
+/// Xbox Live, XSTS, the Minecraft token and the profile, from a live.com access token.
+async fn minecraft(http: &reqwest::Client, endpoints: &Endpoints, live: LiveTokens) -> Result<Session> {
     let response = http
-        .post("https://user.auth.xboxlive.com/user/authenticate")
+        .post(format!("{}/user/authenticate", endpoints.xbox_user))
         .header("Accept", "application/json")
         .header("x-xbl-contract-version", "1")
         .json(&json!({
-            "Properties": {"AuthMethod": "RPS", "SiteName": "user.auth.xboxlive.com", "RpsTicket": access_token},
+            "Properties": {"AuthMethod": "RPS", "SiteName": "user.auth.xboxlive.com", "RpsTicket": live.access},
             "RelyingParty": "http://auth.xboxlive.com",
             "TokenType": "JWT",
         }))
@@ -151,7 +234,7 @@ pub async fn sign_in(http: &reqwest::Client, on_link: impl FnOnce(String)) -> Re
         bail!("读取Xbox账号失败，请稍后重试");
     };
     let response = http
-        .post("https://xsts.auth.xboxlive.com/xsts/authorize")
+        .post(format!("{}/xsts/authorize", endpoints.xsts))
         .header("Accept", "application/json")
         .json(&json!({
             "Properties": {"SandboxId": "RETAIL", "UserTokens": [xbl_token]},
@@ -168,7 +251,7 @@ pub async fn sign_in(http: &reqwest::Client, on_link: impl FnOnce(String)) -> Re
         bail!("{}", xsts_error(code));
     };
     let response = http
-        .post("https://api.minecraftservices.com/authentication/login_with_xbox")
+        .post(format!("{}/authentication/login_with_xbox", endpoints.minecraft))
         .header("Accept", "application/json")
         .json(&json!({"identityToken": format!("XBL3.0 x={user_hash};{xsts_token}")}))
         .send()
@@ -179,8 +262,10 @@ pub async fn sign_in(http: &reqwest::Client, on_link: impl FnOnce(String)) -> Re
         tracing::warn!(status = status.as_u16(), "MC登录失败");
         bail!("登录MC服务失败，请稍后重试");
     };
+    // Minecraft tokens last a day; an unreadable lifetime counts as one hour, so it is refreshed soon.
+    let expires_in_secs = minecraft["expires_in"].as_u64().unwrap_or(3600);
     let response = http
-        .get("https://api.minecraftservices.com/minecraft/profile")
+        .get(format!("{}/minecraft/profile", endpoints.minecraft))
         .bearer_auth(token)
         .send()
         .await
@@ -190,7 +275,11 @@ pub async fn sign_in(http: &reqwest::Client, on_link: impl FnOnce(String)) -> Re
         tracing::warn!(status = status.as_u16(), "读取MC档案失败");
         bail!("这个微软账号没有Minecraft Java版档案，请确认已购买并设置过角色名");
     };
-    Ok(MsaProfile { uuid: dashed(id)?, name: name.to_owned(), token: token.to_owned() })
+    Ok(Session {
+        profile: MsaProfile { uuid: dashed(id)?, name: name.to_owned(), token: token.to_owned() },
+        expires_in_secs,
+        refresh_token: live.refresh,
+    })
 }
 
 #[cfg(test)]

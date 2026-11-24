@@ -12,12 +12,11 @@ fn offline_accounts_match_java_name_uuids() {
 }
 
 #[test]
-fn duplicate_check_counts_rust_and_service_sessions() {
+fn duplicate_check_counts_running_sessions() {
     let s = Sessions::default();
-    let first = s.admit("单机 - A", "local_a", false, 0).unwrap();
-    assert!(s.admit("单机 - A", "local_a", false, 0).is_none());
-    assert!(s.admit("单机 - B", "local_b", false, 1).is_none(), "the service runs it");
-    let second = s.admit("单机 - A", "local_a", true, 0).unwrap();
+    let first = s.admit("单机 - A", "local_a", false).unwrap();
+    assert!(s.admit("单机 - A", "local_a", false).is_none());
+    let second = s.admit("单机 - A", "local_a", true).unwrap();
     assert_eq!(s.alive_count("local_a"), 2);
     s.stop(&first, false).unwrap();
     s.stop(&second, true).unwrap();
@@ -38,13 +37,13 @@ fn stop_kills_a_running_process_and_attach_after_stop_kills_it_too() {
             std::process::Command::new("sleep").arg("30").spawn().unwrap()
         }
     };
-    let id = s.admit("t", "v", false, 0).unwrap();
+    let id = s.admit("t", "v", false).unwrap();
     let child = s.attach(&id, sleeper(), None).unwrap();
     assert!(s.views()[0].running);
     s.stop(&id, true).unwrap();
     assert!(child.lock().unwrap().wait().is_ok());
     assert_eq!(s.alive_count("v"), 0);
-    let late = s.admit("t", "v", false, 0).unwrap();
+    let late = s.admit("t", "v", false).unwrap();
     s.stop(&late, false).unwrap();
     assert!(s.attach(&late, sleeper(), None).is_none());
 }
@@ -68,9 +67,9 @@ fn running_games_are_recorded_recovered_and_stopped() {
     let journal = dir.join("running_games.json");
     let first = Sessions::default();
     first.set_journal(journal.clone());
-    let room = first.admit_room("游玩 房间", "pack_1", false, 0).unwrap();
+    let room = first.admit_room("游玩 房间", "pack_1", false).unwrap();
     let child = first.attach(&room, sleeper(), Some(55668)).unwrap();
-    let local = first.admit("单机 - A", "local_a", false, 0).unwrap();
+    let local = first.admit("单机 - A", "local_a", false).unwrap();
     first.attach(&local, sleeper(), Some(1)).unwrap();
     let recorded = recovery::read(&journal).unwrap();
     assert_eq!(recorded.len(), 2);
@@ -87,7 +86,7 @@ fn running_games_are_recorded_recovered_and_stopped() {
     assert_eq!(second.alive_count("pack_1"), 1);
     assert_eq!(second.recovered_room_port(), Some(55668));
     assert!(second.lines(&room)[0].starts_with("[RDI] 已恢复对此游戏的管理"));
-    assert!(second.admit_room("游玩 房间", "pack_1", false, 0).is_none(), "a recovered game counts as running");
+    assert!(second.admit_room("游玩 房间", "pack_1", false).is_none(), "a recovered game counts as running");
 
     second.stop(&room, true).unwrap();
     assert!(child.lock().unwrap().wait().is_ok());
@@ -109,7 +108,7 @@ fn running_games_are_recorded_recovered_and_stopped() {
 #[test]
 fn console_lines_are_capped_and_cleared() {
     let s = Sessions::default();
-    let id = s.admit("t", "v", false, 0).unwrap();
+    let id = s.admit("t", "v", false).unwrap();
     for i in 0..(MAX_LOG_LINES + 10) {
         s.append(&id, format!("line {i}"));
     }
@@ -138,6 +137,10 @@ fn early_display_cleanup_and_window_arguments() {
     remember_offline_name(&dir, "Steve").unwrap();
     let info: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(dir.join("rdi-local-pack.json")).unwrap()).unwrap();
     assert_eq!((info["lastAccountMode"].as_str(), info["lastOfflineName"].as_str(), info["extra"].as_i64()), (Some("Offline"), Some("Steve"), Some(1)));
+    // Online play changes the mode and keeps the offline name, as Kotlin `LocalPackPlay.prepare`.
+    remember_online(&dir).unwrap();
+    let info: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(dir.join("rdi-local-pack.json")).unwrap()).unwrap();
+    assert_eq!((info["lastAccountMode"].as_str(), info["lastOfflineName"].as_str()), (Some("Online"), Some("Steve")));
     std::fs::remove_dir_all(dir).unwrap();
     assert!(is_window_jvm_arg("-Drdi.window.title=x") && is_window_jvm_arg("-Drdi.window.icon") && !is_window_jvm_arg("-Drdi.windows=1"));
 }

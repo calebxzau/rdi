@@ -1,12 +1,10 @@
 //! J5a/J5c wiring between the pack screens and Rust game sessions (`crate::play`). Local packs
 //! start offline in Rust and installed RDI packs start alone in Rust (`play::room::start_solo`);
-//! Microsoft online play keeps using the service until GJ5c2, whose sessions are mirrored here so
-//! the console lists both.
-use super::{CandidateRow, LogRow, PackUi, sync, text};
+//! Microsoft online play resolves the bound profile in Rust (`crate::msa_play`). Every game is a
+//! Rust session; the launcher starts no other process for play (J5c C4).
+use super::{CandidateRow, LogRow, PackUi, sync};
 use crate::AppWindow;
-use serde_json::{Value, json};
 use slint::ComponentHandle;
-use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
 /// The pack whose play dialog Rust opened.
@@ -18,13 +16,6 @@ pub(super) struct NativePlay {
     dir: PathBuf,
     /// An installed RDI pack: started at once with the RDI core, no dialog (`rdiPackPlayArgs`).
     rdi: bool,
-}
-
-/// Game state the service last reported (`game.state`).
-#[derive(Default)]
-pub struct ServiceGames {
-    pub any_session: bool,
-    pub alive_by_version: HashMap<String, usize>,
 }
 
 /// `rdi-local-pack.json` fields the play dialog needs.
@@ -39,10 +30,12 @@ struct LocalPlayInfo {
 }
 
 impl PackUi {
-    /// `packPlay.open` for a local pack Rust can start; `false` leaves it to the service.
-    pub(super) fn open_native_play(&mut self, ui: &AppWindow, version_id: &str) -> bool {
+    /// `packPlay.open`: an installed RDI pack starts at once, a local pack opens the play dialog.
+    /// A pack that cannot start shows why.
+    pub(super) fn open_native_play(&mut self, ui: &AppWindow, version_id: &str) {
         let Some(dir) = self.pack_dirs.get(version_id).cloned() else {
-            return false;
+            ui.set_action_error("找不到这个整合包，请刷新整合包列表".into());
+            return;
         };
         if crate::local_packs::remote_name(version_id).is_some() {
             self.native_play = Some(NativePlay {
@@ -55,17 +48,23 @@ impl PackUi {
             });
             ui.set_local_play(false);
             self.start_native_play(ui, false);
-            return true;
+            return;
         }
         let info: LocalPlayInfo = match std::fs::read_to_string(dir.join("rdi-local-pack.json")).map(|t| serde_json::from_str(&t)) {
             Ok(Ok(info)) => info,
-            _ => return false,
+            _ => {
+                tracing::warn!(version = version_id, "本地整合包信息无法读取");
+                ui.set_action_error("本地整合包信息损坏，无法启动".into());
+                return;
+            }
         };
         let Some(mc_version) = crate::local_packs::mc_version_name(&info.mc_version) else {
-            return false;
+            ui.set_action_error(format!("不支持的MC版本：{}", info.mc_version).into());
+            return;
         };
-        if crate::mc_install::meta::runtime(mc_version, &info.mod_loader).is_err() {
-            return false;
+        if let Err(error) = crate::mc_install::meta::runtime(mc_version, &info.mod_loader) {
+            ui.set_action_error(error.to_string().into());
+            return;
         }
         let online = self.api.as_ref().is_some_and(|a| a.has_msid);
         let mode = match info.last_account_mode.as_deref() {
@@ -92,28 +91,17 @@ impl PackUi {
         ui.set_play_online(mode == "Online");
         ui.set_play_online_available(online);
         ui.set_local_play(true);
-        true
     }
 
-    /// Play from the dialog. Offline starts in Rust; online goes to the service as before.
-    /// Returns `false` when the service must handle it.
-    pub(super) fn start_native_play(&mut self, ui: &AppWindow, allow_duplicate: bool) -> bool {
+    /// Play from the dialog: offline at once, online after the Microsoft identity is resolved
+    /// (`crate::msa_play`), an installed RDI pack alone with the RDI core.
+    pub(super) fn start_native_play(&mut self, ui: &AppWindow, allow_duplicate: bool) {
         let Some(native) = &self.native_play else {
-            return false;
+            return;
         };
         if native.version_id != ui.get_pack_selected_id().as_str() {
             self.native_play = None;
-            return false;
-        }
-        let external = self.service_games.alive_by_version.get(&native.version_id).copied().unwrap_or(0);
-        if ui.get_play_online() && !native.rdi {
-            // J5c moves Microsoft play; until then a Rust game of this pack still counts as a duplicate.
-            if !allow_duplicate && self.play.alive_count(&native.version_id) > 0 {
-                ui.set_local_play(false);
-                ui.set_duplicate_host(format!("pack:{}", native.version_id).into());
-                return true;
-            }
-            return false;
+            return;
         }
         if crate::java_runtime::state() == crate::java_runtime::State::Missing {
             ui.set_play_busy(false);
@@ -123,19 +111,28 @@ impl PackUi {
             } else {
                 ui.set_action_error(format!("{}，请安装后重新启动启动器", crate::java_runtime::MISSING_MESSAGE).into());
             }
-            return true;
+            return;
+        }
+        if ui.get_play_online() && !native.rdi {
+            // Checked before the login, so a second copy does not ask for one first.
+            if !allow_duplicate && self.play.alive_count(&native.version_id) > 0 {
+                ui.set_local_play(false);
+                ui.set_duplicate_host(format!("pack:{}", native.version_id).into());
+                return;
+            }
+            self.login_online(ui, allow_duplicate);
+            return;
         }
         let size = ui.window().size();
         if native.rdi {
             let Some(builder) = self.room_deps(&crate::config::primary_server()) else {
                 ui.set_action_error("请先登录".into());
-                return true;
+                return;
             };
             let request = crate::play::room::SoloStart {
                 version_id: native.version_id.clone(),
                 window: (size.width, size.height),
                 allow_duplicate,
-                external_alive: external,
             };
             let (tx, generation, version_id) = (self.tx.clone(), self.generation, native.version_id.clone());
             self.native_play = None;
@@ -146,12 +143,87 @@ impl PackUi {
                 };
                 let _ = tx.send(super::Reply::SoloStarted(generation, version_id, result));
             });
-            return true;
+            return;
         }
-        let Some(deps) = self.play_deps() else {
-            ui.set_action_error("请先登录".into());
-            return true;
+        self.start_local_with(ui, None, allow_duplicate);
+    }
+
+    /// Kotlin `LocalPlayDialog.confirm` for 正版: resolves the bound profile in the background;
+    /// a device-code link comes back as `Reply::PlayLink`, the identity as `Reply::OnlineAccount`.
+    fn login_online(&mut self, ui: &AppWindow, allow_duplicate: bool) {
+        let (Some(api), Some(native)) = (self.api.as_ref(), self.native_play.as_ref()) else {
+            ui.set_play_error("请先登录".into());
+            return;
         };
+        let Some(msid) = api.msid.clone() else {
+            ui.set_play_error("请先在玩家信息里绑定微软账号".into());
+            return;
+        };
+        let uid = match api.uid() {
+            Ok(uid) => uid,
+            Err(error) => {
+                ui.set_play_error(error.to_string().into());
+                return;
+            }
+        };
+        ui.set_play_busy(true);
+        ui.set_play_error("".into());
+        ui.set_play_device_uri("".into());
+        let resolver = crate::msa_play::Resolver::new(api.http.clone());
+        let (tx, generation, version_id) = (self.tx.clone(), self.generation, native.version_id.clone());
+        if let Some(job) = self.online_login.take() {
+            job.abort();
+        }
+        self.online_login = Some(self.runtime.spawn(async move {
+            let link_tx = tx.clone();
+            let result = resolver
+                .resolve(&uid, &msid, move |link| {
+                    let _ = link_tx.send(super::Reply::PlayLink(generation, link));
+                })
+                .await;
+            let _ = tx.send(super::Reply::OnlineAccount(generation, version_id, allow_duplicate, result));
+        }));
+    }
+
+    /// The Microsoft sign-in page for the open dialog; Kotlin opens it at once.
+    pub(super) fn play_link(&mut self, uri: &str) {
+        if let Some(ui) = self.ui.upgrade() {
+            ui.set_play_device_uri(uri.into());
+        }
+        self.open_url(uri);
+    }
+
+    /// The answer of `login_online`; ignored when the dialog was closed meanwhile.
+    pub(super) fn online_resolved(&mut self, version_id: &str, allow_duplicate: bool, result: anyhow::Result<crate::mc_launch::Account>) {
+        self.online_login = None;
+        let Some(ui) = self.ui.upgrade() else {
+            return;
+        };
+        if self.native_play.as_ref().map(|n| n.version_id.as_str()) != Some(version_id) {
+            return;
+        }
+        ui.set_play_device_uri("".into());
+        match result {
+            Ok(account) => self.start_local_with(&ui, Some(account), allow_duplicate),
+            Err(error) => {
+                tracing::warn!(error = %format!("{error:#}"), version = version_id, "正版登录失败");
+                ui.set_play_busy(false);
+                ui.set_play_error(format!("正版登录失败：{error}").into());
+            }
+        }
+    }
+
+    /// Starts the open dialog's local pack offline (`online` is `None`) or as the given identity.
+    fn start_local_with(&mut self, ui: &AppWindow, online: Option<crate::mc_launch::Account>, allow_duplicate: bool) {
+        let Some(native) = &self.native_play else {
+            return;
+        };
+        let Some(deps) = self.play_deps() else {
+            ui.set_play_busy(false);
+            ui.set_action_error("请先登录".into());
+            return;
+        };
+        let size = ui.window().size();
         let request = crate::play::LocalStart {
             version_id: native.version_id.clone(),
             name: native.name.clone(),
@@ -159,9 +231,9 @@ impl PackUi {
             loader: native.loader.clone(),
             version_dir: native.dir.clone(),
             nickname: ui.get_play_nickname().to_string(),
+            online,
             window: (size.width, size.height),
             allow_duplicate,
-            external_alive: external,
         };
         match crate::play::start_local(&deps, request) {
             Ok(crate::play::Admitted::Started(id)) => {
@@ -182,7 +254,6 @@ impl PackUi {
                 ui.set_play_error(error.to_string().into());
             }
         }
-        true
     }
 
     /// The answer of `start_solo`.
@@ -217,9 +288,12 @@ impl PackUi {
         }
     }
 
-    /// `play.cancel`: a dialog Rust opened needs no service call.
-    pub(super) fn cancel_native_play(&mut self) -> bool {
-        self.native_play.take().is_some()
+    /// `play.cancel`: closes the dialog and stops a Microsoft sign-in still waiting.
+    pub(super) fn cancel_native_play(&mut self) {
+        if let Some(job) = self.online_login.take() {
+            job.abort();
+        }
+        self.native_play = None;
     }
 
     fn play_deps(&self) -> Option<crate::play::Deps> {
@@ -275,11 +349,6 @@ impl PackUi {
         })
     }
 
-    /// The service's running games per version, for the duplicate check of a Rust start.
-    pub fn service_alive_by_version(&self) -> HashMap<String, usize> {
-        self.service_games.alive_by_version.clone()
-    }
-
     /// `java.install`: the updater's automatic Java 25 install as a launcher task.
     pub(super) fn install_java(&mut self) {
         let Some(api) = self.api.as_ref() else {
@@ -296,57 +365,18 @@ impl PackUi {
         self.open_task(&run);
     }
 
-    /// The service's `game.state`, kept so Rust can count its sessions per version.
-    pub fn service_game_state(&mut self, sessions: &[Value]) {
-        let mut by_version = HashMap::new();
-        for s in sessions.iter().filter(|s| s["running"] == true || s["preparing"] == true) {
-            if let Some(v) = s["process"]["versionId"].as_str() {
-                *by_version.entry(v.to_owned()).or_insert(0) += 1;
-            }
-        }
-        self.service_games = ServiceGames { any_session: !sessions.is_empty(), alive_by_version: by_version };
-    }
-
-    pub fn clear_service_games(&mut self) {
-        self.service_games = ServiceGames::default();
-        self.service_sessions.clear();
-        self.service_lines.clear();
-        self.render_console();
-    }
-
-    /// `console.subscribe`/`console.select`/`console.clear` across Rust and service sessions.
+    /// `console.subscribe`/`console.select`/`console.clear` over the Rust sessions.
     pub(super) fn console_action(&mut self, action: &str, value: &str) {
         if action == "console.select" {
             self.session_id = value.into();
         }
-        let rust = self.play.contains(&self.session_id) || (self.session_id.is_empty() && self.service_sessions.is_empty());
-        if rust {
-            if self.session_id.is_empty()
-                && let Some(last) = self.play.views().last()
-            {
-                self.session_id = last.id.clone();
-            }
-            if action == "console.clear" {
-                self.play.clear(&self.session_id);
-            }
-            self.render_console();
+        if !self.play.contains(&self.session_id)
+            && let Some(last) = self.play.views().last()
+        {
+            self.session_id = last.id.clone();
         }
-        // The service keeps its own sessions; it is only asked when it has any, so the console
-        // never starts it.
-        if self.service_games.any_session || !self.service_sessions.is_empty() {
-            let id = if rust { String::new() } else { self.session_id.clone() };
-            let method = if action == "console.clear" && !rust { "console.clear" } else { "console.subscribe" };
-            self.call(method, json!({"sessionId": id}));
-        }
-    }
-
-    /// `console.state` from the service.
-    pub(super) fn service_console(&mut self, v: &Value) {
-        self.service_sessions = super::array(v, "sessions").iter().map(|t| (text(t, "id").to_owned(), text(t, "title").to_owned())).collect();
-        let service_id = text(v, "sessionId").to_owned();
-        if !self.play.contains(&self.session_id) {
-            self.session_id = service_id.clone();
-            self.service_lines = super::array(v, "lines").iter().filter_map(Value::as_str).map(str::to_owned).collect();
+        if action == "console.clear" {
+            self.play.clear(&self.session_id);
         }
         self.render_console();
     }
@@ -365,14 +395,11 @@ impl PackUi {
     pub(super) fn render_console(&mut self) {
         let rust = self.play.views();
         if self.session_id.is_empty()
-            && self.service_sessions.is_empty()
             && let Some(last) = rust.last()
         {
             self.session_id = last.id.clone();
         }
-        let mut rows: Vec<(String, String)> = self.service_sessions.clone();
-        let known: HashSet<String> = rows.iter().map(|r| r.0.clone()).collect();
-        rows.extend(rust.iter().filter(|s| !known.contains(&s.id)).map(|s| (s.id.clone(), s.title.clone())));
+        let rows: Vec<(String, String)> = rust.iter().map(|s| (s.id.clone(), s.title.clone())).collect();
         sync(
             &self.sessions,
             rows.iter()
@@ -386,7 +413,7 @@ impl PackUi {
                 })
                 .collect(),
         );
-        let lines = if self.play.contains(&self.session_id) { self.play.lines(&self.session_id) } else { self.service_lines.clone() };
+        let lines = if self.play.contains(&self.session_id) { self.play.lines(&self.session_id) } else { Vec::new() };
         sync(
             &self.logs,
             lines

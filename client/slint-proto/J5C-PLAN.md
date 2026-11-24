@@ -188,3 +188,17 @@ Settled from section 8:
   GTNH, which has Forgelin), zstd-jni on all three, media only on 1.20.1/1.21.1.
 - Fabric libraries download from `maven.fabricmc.net` with the RDI server copy as last source
   (Kotlin has no fallback there).
+
+## Progress (2026-11-24, part 2)
+
+GJ5c1 accepted and committed (4064d78a). Steps 6-8 implemented, uncommitted; at GJ5c2. Owner
+decision: the owner tests real Microsoft online play by hand (`evidence/jvm-removal/j5c2/owner-checklist.md`).
+
+| Step | Rust | Checked by |
+|---|---|---|
+| 6 Sessions | `account/msa.rs` (`Endpoints`, `sign_in_session`, `refresh`), `msa_play.rs` (`msa_game_sessions.json`, `Resolver`), logout clears both files | mock live.com/Xbox/Minecraft tests in `msa_play/tests.rs` |
+| 7 Online play | `play_ui.rs` `login_online` → `Reply::PlayLink`/`OnlineAccount` → `play::start_local` with `online` | `play::tests` (mode/offline name), live smoke of offline and room starts |
+| 8 Archive | `service.rs`, `lazy_service.rs`, `protocol.rs` in `DEL/20261124-j5c-service-client/`; every service call, event and mirror removed | grep, clippy, tests, release, zigbuild |
+
+Settled from section 8: live.com may return a new refresh token on refresh; Rust saves it when
+present and keeps the old one otherwise.

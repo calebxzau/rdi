@@ -1,9 +1,8 @@
 //! J5a: game sessions in Rust (`McPlayStore`, `McGameSession`, `RunningGameGuard`) and the local
-//! pack start of `McPlayController.startSession` for `withRdiCore = false` with an offline
-//! identity. Rooms start here too (`room`, J5b; GTNH and Fabric since J5c). Microsoft online play
-//! still starts through the service until GJ5c2; its sessions are mirrored in from
-//! `game.state` by the app so one list covers both. Rust games survive a launcher crash
-//! (`recovery`) and are never handed to the service's `game.restore`.
+//! pack start of `McPlayController.startSession` for `withRdiCore = false`, offline or with a
+//! Microsoft identity (`crate::msa_play`, J5c). Rooms start here too (`room`, J5b; GTNH and Fabric
+//! since J5c). Since J5c every game of the launcher is one of these sessions. Rust games survive
+//! a launcher crash (`recovery`).
 //! No Slint types here, so the planned launcher MCP can call these functions.
 pub mod core;
 pub mod mods_sync;
@@ -92,19 +91,18 @@ impl Sessions {
     }
 
     /// `McPlayStore.admitSession`: `None` when the version already runs and no duplicate is allowed.
-    /// `external` counts this version's sessions that live in the service.
-    pub fn admit(&self, title: &str, version_id: &str, allow_duplicate: bool, external: usize) -> Option<String> {
-        self.admit_kind(title, version_id, allow_duplicate, external, false)
+    pub fn admit(&self, title: &str, version_id: &str, allow_duplicate: bool) -> Option<String> {
+        self.admit_kind(title, version_id, allow_duplicate, false)
     }
 
     /// `admit` for a room game, which keeps the room connection alive.
-    pub fn admit_room(&self, title: &str, version_id: &str, allow_duplicate: bool, external: usize) -> Option<String> {
-        self.admit_kind(title, version_id, allow_duplicate, external, true)
+    pub fn admit_room(&self, title: &str, version_id: &str, allow_duplicate: bool) -> Option<String> {
+        self.admit_kind(title, version_id, allow_duplicate, true)
     }
 
-    fn admit_kind(&self, title: &str, version_id: &str, allow_duplicate: bool, external: usize, room: bool) -> Option<String> {
+    fn admit_kind(&self, title: &str, version_id: &str, allow_duplicate: bool, room: bool) -> Option<String> {
         self.with(|inner| {
-            let alive = inner.list.iter().filter(|s| s.version_id == version_id && s.alive()).count() + external;
+            let alive = inner.list.iter().filter(|s| s.version_id == version_id && s.alive()).count();
             if !allow_duplicate && alive > 0 {
                 return None;
             }
@@ -364,7 +362,7 @@ impl Sessions {
         self.0.lock().unwrap().list.iter().any(|s| s.id == id)
     }
 
-    /// Console lines with the service's snapshot bound (`boundedConsoleLines`).
+    /// Console lines with Kotlin's snapshot bound (`boundedConsoleLines`).
     pub fn lines(&self, id: &str) -> Vec<String> {
         let inner = self.0.lock().unwrap();
         let Some(s) = inner.list.iter().find(|s| s.id == id) else {
@@ -454,11 +452,23 @@ pub fn clean_early_display(version_dir: &Path) -> Result<()> {
 
 /// `LocalModpackStore.update` for the last play mode; other fields are kept as written.
 pub fn remember_offline_name(version_dir: &Path, name: &str) -> Result<()> {
+    update_local_pack(version_dir, |object| {
+        object.insert("lastAccountMode".into(), "Offline".into());
+        object.insert("lastOfflineName".into(), name.into());
+    })
+}
+
+/// Kotlin `LocalPackPlay.prepare` for online play: the mode changes, the offline name stays.
+pub fn remember_online(version_dir: &Path) -> Result<()> {
+    update_local_pack(version_dir, |object| {
+        object.insert("lastAccountMode".into(), "Online".into());
+    })
+}
+
+fn update_local_pack(version_dir: &Path, change: impl FnOnce(&mut serde_json::Map<String, serde_json::Value>)) -> Result<()> {
     let file = version_dir.join("rdi-local-pack.json");
     let mut info: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&file).with_context(|| format!("缺少本地整合包信息: {}", file.display()))?)?;
-    let object = info.as_object_mut().context("本地整合包信息格式无效")?;
-    object.insert("lastAccountMode".into(), "Offline".into());
-    object.insert("lastOfflineName".into(), name.into());
+    change(info.as_object_mut().context("本地整合包信息格式无效")?);
     let temporary = version_dir.join(".rdi-local-pack.json.tmp");
     std::fs::write(&temporary, serde_json::to_string(&info)?)?;
     std::fs::rename(&temporary, &file)?;
@@ -485,11 +495,11 @@ pub struct LocalStart {
     pub loader: String,
     pub version_dir: PathBuf,
     pub nickname: String,
-    /// Physical pixels of the launcher window, as the service received them.
+    /// J5c: the Microsoft identity from `crate::msa_play`; `None` plays offline as `nickname`.
+    pub online: Option<Account>,
+    /// Physical pixels of the launcher window, as Kotlin received them.
     pub window: (u32, u32),
     pub allow_duplicate: bool,
-    /// The version's sessions that run in the service.
-    pub external_alive: usize,
 }
 
 pub enum Admitted {
@@ -497,16 +507,25 @@ pub enum Admitted {
     Duplicate,
 }
 
-/// Starts a local pack offline: validates the name, admits a session and runs the preparation in
-/// the background. Errors before admission are returned; later ones go to the session's console.
-pub fn start_local(deps: &Deps, request: LocalStart) -> Result<Admitted> {
-    let account = offline_account(&request.nickname)?;
+/// Starts a local pack offline or with a resolved Microsoft identity: admits a session and runs
+/// the preparation in the background. Errors before admission are returned; later ones go to the
+/// session's console.
+pub fn start_local(deps: &Deps, mut request: LocalStart) -> Result<Admitted> {
+    let (account, online) = match request.online.take() {
+        Some(account) => (account, true),
+        None => (offline_account(&request.nickname)?, false),
+    };
     crate::mc_install::meta::runtime(&request.mc_version, &request.loader)?;
-    if let Err(error) = remember_offline_name(&request.version_dir, &account.name) {
+    let saved = if online {
+        remember_online(&request.version_dir)
+    } else {
+        remember_offline_name(&request.version_dir, &account.name)
+    };
+    if let Err(error) = saved {
         tracing::warn!(error = %format!("{error:#}"), version = %request.version_id, "保存整合包的游玩方式失败");
     }
     let title = format!("单机 - {}", request.name);
-    let Some(id) = deps.sessions.admit(&title, &request.version_id, request.allow_duplicate, request.external_alive) else {
+    let Some(id) = deps.sessions.admit(&title, &request.version_id, request.allow_duplicate) else {
         return Ok(Admitted::Duplicate);
     };
     let (deps, session) = (deps.clone(), id.clone());

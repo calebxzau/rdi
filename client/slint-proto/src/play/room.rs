@@ -60,7 +60,7 @@ struct Version {
     mods: Vec<Mod>,
 }
 
-/// The Minecraft version and loader Rust starts rooms for; `None` leaves the room to the service.
+/// The Minecraft version and loader of a room or RDI pack; `None` when the launcher cannot start it.
 pub fn supported(brief: &Brief) -> Option<(&'static str, &'static str)> {
     let mc = crate::local_packs::mc_version_name(&brief.mc_ver)?;
     crate::mc_install::meta::runtime(mc, &brief.modloader).ok().map(|r| (mc, r.loader_name()))
@@ -85,8 +85,6 @@ pub struct RoomStart {
     pub host_id: String,
     pub window: (u32, u32),
     pub allow_duplicate: bool,
-    /// Games the service runs, per version id.
-    pub external_alive: std::collections::HashMap<String, usize>,
 }
 
 pub enum RoomOutcome {
@@ -187,8 +185,7 @@ pub async fn start(deps: &RoomDeps, request: RoomStart) -> Result<RoomOutcome> {
     }
     let version_id = crate::pack_install::version_id(&pack_id, &version.name);
     let title = format!("游玩 {}", detail.name);
-    let external = request.external_alive.get(&version_id).copied().unwrap_or(0);
-    let Some(session) = deps.play.sessions.admit_room(&title, &version_id, request.allow_duplicate, external) else {
+    let Some(session) = deps.play.sessions.admit_room(&title, &version_id, request.allow_duplicate) else {
         return Ok(RoomOutcome::Admitted(Admitted::Duplicate));
     };
     let prepared = Prepared {
@@ -229,8 +226,6 @@ pub struct SoloStart {
     pub version_id: String,
     pub window: (u32, u32),
     pub allow_duplicate: bool,
-    /// The version's games that run in the service.
-    pub external_alive: usize,
 }
 
 /// `rdiPackPlayArgs` + `startSession`: the room flow with the RDI core and the room connection, but
@@ -246,7 +241,7 @@ pub async fn start_solo(deps: &RoomDeps, request: SoloStart) -> Result<Admitted>
     let uuid = uuid_of(&deps.uid)?;
     let play_arg = play_arg(&server.base(), "127.0.0.1:55667", "test", 55555, &uuid, &deps.account_name);
     let title = format!("单机 - {}", pack.name);
-    let Some(session) = deps.play.sessions.admit_room(&title, &request.version_id, request.allow_duplicate, request.external_alive) else {
+    let Some(session) = deps.play.sessions.admit_room(&title, &request.version_id, request.allow_duplicate) else {
         return Ok(Admitted::Duplicate);
     };
     let prepared = Prepared {

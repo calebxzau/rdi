@@ -243,9 +243,6 @@ impl Manager {
             .find(|e| e.dedupe == dedupe && e.status < 2)
             .map(|e| e.id.clone())
     }
-    pub fn owns(&self, id: &str) -> bool {
-        self.0.lock().unwrap().iter().any(|e| e.id == id)
-    }
     pub fn snapshot(&self, id: &str) -> Option<Value> {
         self.0
             .lock()

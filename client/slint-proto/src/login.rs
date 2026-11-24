@@ -127,20 +127,20 @@ impl LoginUi {
             let _ = tx.send(Event::Ready(result));
         });
     }
-    /// Stops the service first: it can still write to the saved accounts until it exits.
     pub fn sign_out(&mut self, api: Client) {
         self.show();
         let tx = self.tx.clone();
         self.runtime.spawn(async move {
             let result = tokio::task::spawn_blocking(move || {
-                api.stop_immediately();
+                // Compose's sessions and Rust's own (J5c C2) are both forgotten.
                 let clear_notice = api
                     .uid()
                     .and_then(|uid| {
                         crate::msa_sessions::clear(
                             &crate::paths::data_dir().join("msa_sessions.json"),
                             &uid,
-                        )
+                        )?;
+                        crate::msa_play::clear(&crate::msa_play::path(), &uid)
                     })
                     .err()
                     .map(|error| {

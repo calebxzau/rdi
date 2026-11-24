@@ -1,4 +1,4 @@
-//! Rust pack/import/task UI adapters; only game play and console use the service.
+//! Rust pack/import/task UI adapters, game play and the console (all in Rust since J5c).
 use crate::{
     AppWindow, CandidateRow, ContentRow, LogRow, OptionDraft, TaskRow,
     api::Client,
@@ -11,7 +11,7 @@ use serde_json::{Value, json};
 use slint::{ComponentHandle, Model, VecModel};
 use std::{
     cell::RefCell,
-    collections::{HashMap, HashSet, VecDeque},
+    collections::{HashMap, HashSet},
     path::PathBuf,
     rc::Rc,
     sync::mpsc,
@@ -53,7 +53,6 @@ pub use crate::local_packs::InstalledPack;
 #[path = "play_ui.rs"]
 mod play_ui;
 enum Reply {
-    Service(u64, String, Result<Value>),
     Scan(u64, Vec<crate::import::scanner::Candidate>),
     ArchiveProgress(u64, String, Option<f32>),
     Archive(u64, Result<crate::import::archive::Preview>),
@@ -67,6 +66,9 @@ enum Reply {
     InstallStarted(u64, Result<String>),
     /// J5c: an installed RDI pack played alone.
     SoloStarted(u64, String, Result<crate::play::Admitted>),
+    /// J5c online play: the Microsoft sign-in link, then the resolved identity.
+    PlayLink(u64, String),
+    OnlineAccount(u64, String, bool, Result<crate::mc_launch::Account>),
 }
 type ArchiveCache = std::sync::Arc<
     std::sync::Mutex<
@@ -86,8 +88,6 @@ pub struct PackUi {
     tx: mpsc::Sender<Reply>,
     rx: mpsc::Receiver<Reply>,
     generation: u64,
-    queue: VecDeque<(String, Value)>,
-    busy: bool,
     installer: Value,
     native: crate::import::state::State,
     archive_cache: ArchiveCache,
@@ -103,7 +103,6 @@ pub struct PackUi {
     images: std::collections::HashMap<String, slint::Image>,
     pending_images: HashSet<String>,
     failed_images: HashSet<String>,
-    global_java_path: String,
     packs_generation: u64,
     loaded_packs: Option<Vec<InstalledPack>>,
     pack_dirs: HashMap<String, PathBuf>,
@@ -122,18 +121,16 @@ pub struct PackUi {
     collapsed: HashSet<String>,
     collapsed_candidates: HashSet<String>,
     session_id: String,
-    last_device_uri: String,
     /// Running game versions, so a room pack install never replaces a version in use.
     pub running: crate::pack_install::Running,
     install_prompt: Option<(String, String)>,
-    /// Changes only with the signed-in session; a service restart must not drop a started install.
+    /// Changes only with the signed-in session, so a started install survives other resets.
     install_generation: u64,
     /// J5a: games started by Rust.
     pub play: crate::play::Sessions,
     native_play: Option<play_ui::NativePlay>,
-    service_games: play_ui::ServiceGames,
-    service_sessions: Vec<(String, String)>,
-    service_lines: Vec<String>,
+    /// J5c: the Microsoft sign-in of the open play dialog.
+    online_login: Option<tokio::task::JoinHandle<()>>,
     play_revision: u64,
 }
 impl PackUi {
@@ -162,8 +159,6 @@ impl PackUi {
             tx,
             rx,
             generation: 0,
-            queue: VecDeque::new(),
-            busy: false,
             installer: Value::Null,
             native: Default::default(),
             archive_cache: Default::default(),
@@ -179,7 +174,6 @@ impl PackUi {
             images: Default::default(),
             pending_images: Default::default(),
             failed_images: Default::default(),
-            global_java_path: String::new(),
             packs_generation: 0,
             loaded_packs: None,
             pack_dirs: Default::default(),
@@ -198,15 +192,12 @@ impl PackUi {
             collapsed: Default::default(),
             collapsed_candidates: Default::default(),
             session_id: String::new(),
-            last_device_uri: String::new(),
             running: Default::default(),
             install_prompt: None,
             install_generation: 0,
             play: Default::default(),
             native_play: None,
-            service_games: Default::default(),
-            service_sessions: vec![],
-            service_lines: vec![],
+            online_login: None,
             play_revision: 0,
         }));
         let weak = Rc::downgrade(&state);
@@ -234,7 +225,8 @@ impl PackUi {
                     Ok(value) if topic == "packOptions.state" => {
                         state.borrow_mut().options_proof(&value)
                     }
-                    Ok(value) => state.borrow_mut().event(topic.as_str(), &value),
+                    // Play and console states came from the service, which is gone since J5c.
+                    Ok(_) => tracing::warn!(topic = %topic, "不支持的截图样例主题"),
                     Err(error) => tracing::error!(%error,"截图样例数据无效"),
                 }
             }
@@ -243,14 +235,13 @@ impl PackUi {
     }
     pub fn connect(&mut self, api: Option<Client>) {
         self.generation += 1;
+        // A Microsoft sign-in for the previous RDI account must not finish into the next one.
+        if let Some(job) = self.online_login.take() {
+            job.abort();
+        }
+        self.native_play = None;
         self.install_generation += 1;
         self.install_prompt = None;
-        self.busy = false;
-        self.queue.clear();
-        self.global_java_path = api
-            .as_ref()
-            .map(|a| a.java_path.clone())
-            .unwrap_or_default();
         self.api = api;
         self.archive_cache.lock().unwrap().clear();
         // A list still loading for the previous session must not reach the next one.
@@ -263,7 +254,6 @@ impl PackUi {
         self.native = Default::default();
         self.watched.clear();
         self.task = Value::Null;
-        self.last_device_uri.clear();
         self.pending_images.clear();
         self.failed_images.clear();
         if let Some(ui) = self.ui.upgrade() {
@@ -282,35 +272,6 @@ impl PackUi {
                 }
             }
         }
-    }
-    pub fn service_idle(&self) -> bool {
-        !self.busy && self.queue.is_empty()
-    }
-    pub fn service_lost(&mut self) {
-        // Never replay commands queued for a lost generation.
-        self.generation += 1;
-        self.queue.clear();
-        self.busy = false;
-        self.service_games = Default::default();
-        self.service_sessions.clear();
-        self.service_lines.clear();
-        self.render_console();
-        self.last_device_uri.clear();
-        if !self.native_tasks.owns(&self.watched) {
-            self.task = Value::Null;
-            self.watched.clear();
-            self.render_task();
-        }
-        if let Some(ui) = self.ui.upgrade() {
-            ui.set_local_play(false);
-            ui.set_play_busy(false);
-            ui.set_duplicate_host("".into());
-            // The console needs the process; the task screen does not.
-            if ui.get_activity_panel() == 1 {
-                ui.set_activity_panel(0);
-            }
-        }
-        self.merge_tasks();
     }
     pub fn tasks(&self) -> crate::tasks::Manager {
         self.native_tasks.clone()
@@ -409,13 +370,6 @@ impl PackUi {
     pub fn shutdown_tasks(&self) {
         self.native_tasks
             .shutdown(std::time::Duration::from_secs(3));
-    }
-    /// Only the console screen needs the service.
-    pub fn service_screens_idle(&self) -> bool {
-        let Some(ui) = self.ui.upgrade() else {
-            return true;
-        };
-        ui.get_activity_panel() != 1 || !(self.service_games.any_session || !self.service_sessions.is_empty())
     }
     fn native_render(&mut self) {
         self.installer(&self.native.value.clone());
@@ -596,28 +550,6 @@ impl PackUi {
             self.render_task();
         }
     }
-    fn call(&mut self, method: &str, params: Value) {
-        self.queue.push_back((method.into(), params));
-        self.pump();
-    }
-    fn pump(&mut self) {
-        if self.busy {
-            return;
-        }
-        let Some(api) = self.api.clone() else {
-            return;
-        };
-        let Some((method, params)) = self.queue.pop_front() else {
-            return;
-        };
-        self.busy = true;
-        let tx = self.tx.clone();
-        let generation = self.generation;
-        self.runtime.spawn(async move {
-            let result = api.call(&method, params).await;
-            let _ = tx.send(Reply::Service(generation, method, result));
-        });
-    }
     fn navigate(&self, target: &str) {
         let weak = self.ui.clone();
         let target = slint::SharedString::from(target);
@@ -643,15 +575,7 @@ impl PackUi {
             ui.set_play_error("".into());
             ui.set_play_device_uri("".into());
             self.native_play = None;
-            if self.open_native_play(&ui, ui.get_pack_selected_id().as_str()) {
-                return;
-            }
-            ui.set_local_play(true);
-            ui.set_play_busy(true);
-            self.call(
-                "packPlay.open",
-                json!({"versionId":ui.get_pack_selected_id().as_str()}),
-            );
+            self.open_native_play(&ui, ui.get_pack_selected_id().as_str());
         }
     }
     /// The app takes each finished list; `None` until the next refresh completes.
@@ -713,7 +637,10 @@ impl PackUi {
     fn options_update(&mut self, ui: &AppWindow) {
         let mut d = ui.get_options_draft();
         if d.java_custom_enabled && !self.java_was_enabled && d.java_path.is_empty() {
-            d.java_path = self.global_java_path.clone().into();
+            // Kotlin offered `globalJavaPath`, the Java the launcher found at startup.
+            if let crate::java_runtime::State::Found(jdk) = crate::java_runtime::state() {
+                d.java_path = jdk.java().display().to_string().into();
+            }
             ui.set_options_draft(d.clone());
         }
         self.java_was_enabled = d.java_custom_enabled;
@@ -897,19 +824,10 @@ impl PackUi {
             "play.cancel" => {
                 ui.set_local_play(false);
                 ui.set_play_busy(false);
-                if !self.cancel_native_play() {
-                    self.call("packPlay.cancel", json!({}));
-                }
+                self.cancel_native_play();
             }
             "java.install" => self.install_java(),
-            "play.start" | "play.duplicate" => {
-                if self.start_native_play(&ui, action == "play.duplicate") {
-                    return;
-                }
-                let size = ui.window().size();
-                ui.set_play_busy(true);
-                self.call("packPlay.start",json!({"versionId":ui.get_pack_selected_id().as_str(),"mode":if ui.get_play_online(){"Online"}else{"Offline"},"nickname":ui.get_play_nickname().as_str(),"windowWidth":size.width,"windowHeight":size.height,"allowDuplicateVersion":action=="play.duplicate"}));
-            }
+            "play.start" | "play.duplicate" => self.start_native_play(&ui, action == "play.duplicate"),
             "tasks.subscribe" => {
                 self.merge_tasks();
             }
@@ -1038,6 +956,10 @@ impl PackUi {
         while let Ok(reply) = self.rx.try_recv() {
             match reply {
                 Reply::SoloStarted(g, version_id, result) if g == self.generation => self.solo_started(&version_id, result),
+                Reply::PlayLink(g, uri) if g == self.generation => self.play_link(&uri),
+                Reply::OnlineAccount(g, version_id, allow_duplicate, result) if g == self.generation => {
+                    self.online_resolved(&version_id, allow_duplicate, result)
+                }
                 Reply::InstallStarted(g, result) if g == self.install_generation => match result {
                     Ok(run) => self.open_task(&run),
                     Err(error) => {
@@ -1146,30 +1068,6 @@ impl PackUi {
                         }
                     }
                 }
-                Reply::Service(g, method, result) if g == self.generation => {
-                    self.busy = false;
-                    match result {
-                        Ok(v) => {
-                            if method == "packPlay.open" {
-                                self.play(&v);
-                                if v["local"] == false {
-                                    self.action("play.start", "");
-                                }
-                            }
-                        }
-                        Err(error) => {
-                            if let Some(ui) = self.ui.upgrade() {
-                                self.queue.clear();
-                                ui.set_action_error(format!("{error:#}").into());
-                                ui.set_play_busy(false);
-                                if method == "packPlay.open" {
-                                    ui.set_local_play(false);
-                                }
-                            }
-                        }
-                    }
-                    self.pump();
-                }
                 Reply::Pick(g, kind, result) if g == self.generation => match result {
                     Ok(Some(path)) => match kind.as_str() {
                         "installer.pickArchive" | "installer.pickDirectory" => {
@@ -1240,13 +1138,6 @@ impl PackUi {
             .and_then(|v| v);
             let _ = tx.send(Reply::Pick(generation, "directory".into(), result));
         });
-    }
-    pub fn event(&mut self, topic: &str, v: &Value) {
-        match topic {
-            "packPlay.state" => self.play(v),
-            "console.state" => self.service_console(v),
-            _ => {}
-        }
     }
     fn installer(&mut self, v: &Value) {
         self.installer = v.clone();
@@ -1422,39 +1313,6 @@ impl PackUi {
         if v["navigateBack"] == true {
             ui.set_options_dirty(false);
             self.navigate("back");
-        }
-    }
-    fn play(&mut self, v: &Value) {
-        let Some(ui) = self.ui.upgrade() else {
-            return;
-        };
-        ui.set_play_busy(v["busy"] == true);
-        ui.set_play_error(text(v, "error").into());
-        ui.set_play_device_uri(text(v, "deviceUri").into());
-        if v["closed"] == true {
-            ui.set_local_play(false);
-            return;
-        }
-        if v["duplicateVersion"] == true {
-            ui.set_local_play(false);
-            ui.set_duplicate_host(format!("pack:{}", text(v, "versionId")).into());
-            return;
-        }
-        if v["nickname"].is_string() {
-            ui.set_play_nickname(text(v, "nickname").into());
-            ui.set_play_nonstandard_name(!standard_name(text(v, "nickname")));
-            ui.set_play_online(text(v, "mode") == "Online");
-        }
-        if v["onlineAvailable"].is_boolean() {
-            ui.set_play_online_available(v["onlineAvailable"] == true);
-        }
-        if v["local"] == true {
-            ui.set_local_play(true);
-        }
-        let uri = text(v, "deviceUri");
-        if !uri.is_empty() && uri != self.last_device_uri {
-            self.last_device_uri = uri.into();
-            self.open_url(uri);
         }
     }
     fn visible_task_rows(&self) -> Vec<Value> {

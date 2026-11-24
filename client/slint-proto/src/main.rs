@@ -13,6 +13,7 @@ mod rdipack2_ui;
 mod paths;
 mod credentials;
 mod msa_sessions;
+mod msa_play;
 mod hwspec;
 mod packs;
 mod tasks;

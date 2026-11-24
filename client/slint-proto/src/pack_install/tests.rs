@@ -432,7 +432,7 @@ fn failure_leaves_no_version_dir_and_older_install_survives() {
 #[test]
 fn running_game_blocks_commit_and_unbuilt_version_is_refused() {
     let e = env("4.0");
-    e.deps.running.update([format!("{PACK}_4.0")].into(), false);
+    e.deps.running.update([format!("{PACK}_4.0")].into());
     let id = start(&e.deps, request("4.0", false)).unwrap();
     let snap = wait(&e.deps, &id);
     assert_eq!(snap["error"], "整合包正在运行，不能安装");

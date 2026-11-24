@@ -28,15 +28,10 @@ impl std::fmt::Display for Base {
 }
 pub struct Session {
     pub account: Value,
-    jwt: String,
 }
 impl Session {
     pub fn uid(&self) -> Result<&str> {
         self.account["_id"].as_str().context("服务器数据格式不兼容")
-    }
-    pub fn params(mut self) -> Value {
-        self.account["pwd"] = json!("");
-        json!({"account":self.account,"jwt":self.jwt})
     }
 }
 #[derive(Default, Deserialize)]
@@ -228,9 +223,8 @@ impl ServerApi {
             id.len() == 24 && id.bytes().all(|b| b.is_ascii_hexdigit()),
             "服务器数据格式不兼容"
         );
-        let jwt = jwt.context("登录凭据缺失")?;
-        self.jwt = Some(jwt.clone());
-        Ok(Session { account, jwt })
+        self.jwt = Some(jwt.context("登录凭据缺失")?);
+        Ok(Session { account })
     }
     pub async fn get<T: DeserializeOwned>(&self, path: &str) -> Result<T> {
         self.get_query(path, &[]).await
@@ -548,7 +542,6 @@ pub(crate) mod tests {
                 None => {
                     let session = result.unwrap();
                     assert_eq!(session.account["pwd"], "fake-server");
-                    assert_eq!(session.params()["account"]["pwd"], "");
                 }
             }
             let request = task.await.unwrap();

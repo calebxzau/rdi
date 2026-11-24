@@ -2,6 +2,3 @@
 #[cfg(feature = "allocation-probe")]
 pub use rdi_renderer::allocation_probe;
 pub use rdi_renderer::scene;
-pub mod lazy_service;
-pub mod protocol;
-pub mod service;
