@@ -61,6 +61,7 @@ mod route;
 #[cfg(test)]
 mod test_dir;
 mod mcp;
+mod upload;
 mod mcp_ui;
 use rdi_slint_proto::scene;
 mod runtime_probe;

@@ -66,6 +66,19 @@ fn game_call_schema() -> Value {
         "session": {"type": "string", "description": "The game session id from get_status. May be left out when one game has game tools."}},
         "required": ["tool"], "additionalProperties": false})
 }
+fn upload_check_schema() -> Value {
+    let categories: Vec<String> = crate::upload::draft::CATEGORIES.iter().map(|(name, label)| format!("{name} ({label})")).collect();
+    json!({"type": "object", "properties": {
+        "path": {"type": "string", "description": "Full path of the modpack on this computer: a CurseForge or Modrinth export (.zip) or its unpacked folder."},
+        "name": {"type": "string", "description": "Modpack name; defaults to the name in the pack. Ignored for a new version of an existing pack."},
+        "version": {"type": "string", "description": "Version name; defaults to the version in the pack. Spaces become underscores."},
+        "categories": {"type": "array", "items": {"type": "string"}, "description": format!("1 to 4 category names for a new pack: {}", categories.join(", "))},
+        "info": {"type": "string", "description": "Short introduction (简介) of a new pack, 10 to 100 characters."},
+        "icon_url": {"type": "string", "description": "Icon image address of a new pack, on the pack's publishing site (CurseForge, Modrinth, MC百科, bilibili and similar)."},
+        "source_url": {"type": "string", "description": "Optional address of the pack's publishing page."},
+        "update_modpack_id": {"type": "string", "description": "Upload a new version of this existing pack (an id from list_my_modpacks) instead of a new pack."}},
+        "required": ["path"], "additionalProperties": false})
+}
 fn stop_game_schema() -> Value {
     json!({"type": "object", "properties": {
         "session": {"type": "string", "description": "The game session id from get_status."},
@@ -135,6 +148,16 @@ const TOOLS: &[Tool] = &[
         schema: game_call_schema,
     },
     Tool {
+        name: "list_my_modpacks",
+        description: "Modpacks (整合包) on the RDI server that the player may upload a new version to, with their versions newest first.",
+        schema: no_arguments,
+    },
+    Tool {
+        name: "upload_modpack_check",
+        description: "Check a modpack (整合包) on this computer before uploading it: reads the pack, fills the upload form from it, lists every problem in the form and, when there is none, asks the server whether the upload would be accepted. Uploads nothing. The upload itself is not available yet.",
+        schema: upload_check_schema,
+    },
+    Tool {
         name: "stop_game",
         description: "Stop a running game (游戏). Unsaved progress in a single-player world can be lost; ask the player first.",
         schema: stop_game_schema,
@@ -171,6 +194,8 @@ pub async fn call(context: &Context, name: &str, arguments: &Value) -> Result<Va
         "cancel_task" => cancel_task(context, arguments),
         "get_game_log" => get_game_log(context, arguments),
         "stop_game" => stop_game(context, arguments),
+        "list_my_modpacks" => list_my_modpacks(context).await,
+        "upload_modpack_check" => upload_modpack_check(context, arguments).await,
         "game_tools" => game_tools(context, arguments).await,
         // The game's own result goes back as it is, images and `isError` included.
         "game_call" => match game_call(context, arguments).await {
@@ -532,4 +557,63 @@ async fn game_call(context: &Context, arguments: &Value) -> Result<Value> {
     let (view, url) = game_address(&context.sessions, optional_string(arguments, "session")?)?;
     tracing::info!(tool, session = %view.id, "AI助手调用游戏工具");
     context.game.request(&url, "tools/call", json!({"name": tool, "arguments": inner})).await
+}
+
+async fn list_my_modpacks(context: &Context) -> Result<Value> {
+    let account = signed_in(context).await?;
+    let packs = crate::upload::api::uploadable(&account.api).await?;
+    let packs: Vec<Value> = packs
+        .into_iter()
+        .map(|p| json!({"id": p.id, "name": p.name, "versions": p.versions, "categories": p.categories}))
+        .collect();
+    Ok(json!({"modpacks": packs}))
+}
+
+fn string_list(arguments: &Value, name: &str) -> Result<Vec<String>> {
+    match arguments.get(name) {
+        None | Some(Value::Null) => Ok(vec![]),
+        Some(Value::Array(items)) => items
+            .iter()
+            .map(|item| item.as_str().map(|s| s.trim().to_owned()).with_context(|| format!("参数{name}必须是字符串数组")))
+            .collect(),
+        Some(_) => bail!("参数{name}必须是字符串数组"),
+    }
+}
+
+async fn upload_modpack_check(context: &Context, arguments: &Value) -> Result<Value> {
+    let path = std::path::PathBuf::from(string_arg(arguments, "path")?);
+    if !path.is_absolute() {
+        bail!("请提供整合包的完整路径");
+    }
+    let update = optional_string(arguments, "update_modpack_id")?.map(str::to_owned);
+    let draft = crate::upload::draft::Draft {
+        name: optional_string(arguments, "name")?.unwrap_or_default().to_owned(),
+        version: optional_string(arguments, "version")?.unwrap_or_default().to_owned(),
+        categories: string_list(arguments, "categories")?,
+        icon_url: optional_string(arguments, "icon_url")?.unwrap_or_default().to_owned(),
+        source_url: optional_string(arguments, "source_url")?.unwrap_or_default().to_owned(),
+        info: optional_string(arguments, "info")?.unwrap_or_default().to_owned(),
+    };
+    let account = signed_in(context).await?;
+    let check = crate::upload::check(&account.api, crate::upload::Request { path, draft, update_modpack_id: update }).await?;
+    let (preflight, ready) = match &check.preflight {
+        None => (json!("not_run"), false),
+        Some(Ok(())) => (json!("passed"), true),
+        Some(Err(message)) => (json!({"failed": message}), false),
+    };
+    let s = &check.summary;
+    Ok(json!({
+        "pack": {"format": s.kind.name(), "name": s.name, "version": s.version,
+            "minecraft": crate::import::scanner::version_label(&s.mc_version), "loader": s.loader},
+        "upload_as": match &check.update {
+            Some(target) => json!({"new_version_of": {"id": target.id, "name": target.name}}),
+            None => json!("new_modpack"),
+        },
+        "form": {"name": check.draft.name, "version": check.draft.version, "categories": check.draft.categories,
+            "info": check.draft.info, "icon_url": check.draft.icon_url, "source_url": check.draft.source_url},
+        "problems": check.problems,
+        "preflight": preflight,
+        "ready": ready,
+        "note": "The upload itself (with the required client and server test runs) is not available yet.",
+    }))
 }

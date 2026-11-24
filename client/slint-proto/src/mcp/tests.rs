@@ -398,13 +398,13 @@ fn game_address_is_exact_first_and_cleared_on_exit() {
 // ---- M2: host, task and game tools ----
 
 /// A tiny RDI server: fixed JSON envelopes per path, everything else 404.
-struct FakeServer {
-    url: String,
-    hits: Arc<Mutex<Vec<String>>>,
+pub(crate) struct FakeServer {
+    pub(crate) url: String,
+    pub(crate) hits: Arc<Mutex<Vec<String>>>,
 }
 
 impl FakeServer {
-    fn new(routes: Vec<(String, Value)>) -> Self {
+    pub(crate) fn new(routes: Vec<(String, Value)>) -> Self {
         use std::io::{Read, Write};
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let url = format!("http://{}", listener.local_addr().unwrap());
@@ -441,7 +441,7 @@ impl FakeServer {
         Self { url, hits }
     }
 
-    fn client(&self) -> crate::api::Client {
+    pub(crate) fn client(&self) -> crate::api::Client {
         let mut server = crate::api::server::ServerApi::with_token(&self.url, "jwt");
         server.http = reqwest::Client::builder().no_proxy().build().unwrap();
         crate::api::Client::for_test(server, "66a000000000000000000001", "acc")

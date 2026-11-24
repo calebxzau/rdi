@@ -278,6 +278,76 @@ implement. Guidance:
 GM4: report to the owner with the test numbers, what was verified live and what was not, and a
 short recipe to try it with a real agent.
 
+### M4 design
+
+Written 2026-11-25 after reading the Kotlin sources of section 3. Owner decisions the same day:
+port everything to Rust (E4), and the client and server tests are required before an upload,
+as in Compose (E1).
+
+**The Kotlin flow, in order** (`ModpackUploadViewModel`, `RdiModpackUploadGateway`,
+`ModpackProcessor`, `ModpackUploadService`, `ModpackChunkedUploader`, `ModpackTestSession`):
+
+1. Page start: `ensureAudioReady` (an Opus canary through `OggTranscoder`; failure blocks the
+   upload with 音频处理模块损坏，请更新客户端). Update mode: `GET modpack/{id}/detail`, refuse
+   without `canUploadVersion`; the draft takes the pack's name, categories, icon and info.
+2. Read the client pack (`loadLocalModpack`): structure preflight (CF `manifest.json` or MR
+   `modrinth.index.json`; CF needs `overrides`), copy or extract into a work folder, read the
+   manifest (name, version or `1.0`, MC version, loader; only 1.20.1 and 1.21.1), collect embedded
+   jars (`overrides/mods`, client overrides), identify them (CurseForge fingerprint, Modrinth
+   SHA-1), mark client overrides and raw client replacements, build the mod list (MR index with CF
+   slug mapping through the catalog; CF manifest), `postProcessModSides` (not Fabric), stage
+   embedded mod sources, match embedded resource and shader packs, merge client extras, flag
+   `.mca` files (地图模板 warning). Then put embedded mods and extras into the content store,
+   default unknown CurseForge sides, read Fabric sides from jars, `processUploadMods`
+   (`pack_install::mods` already has it). Java check for the MC version.
+3. Optional server pack (`loadServerPack`): merge server mods into the client list, server
+   extra files.
+4. Tests (required, E1): missing mods are downloaded first; the client test starts the pack and
+   waits for `开始运行客户端测试`; the server test installs a test server once and waits for its
+   ready line. Skipped only with a server pack, `rdi.ignoreModpackTest` or debug mode.
+5. Submit: draft checks (name, version without spaces, info 10 to 100 code points, icon address
+   on an allowed domain and an image, 1 to 4 categories), then `POST modpack/preflight`.
+6. Task `上传并安装整合包 {name} {version}`, key `modpack-upload:{id|new}:{name}:{version}`
+   (lower case), three steps:
+   - 上传整合包: build the `.tar.zst` (cache folders out, `.disabled` out, matched platform
+     content out, resource packs over 50MB out, region files kept empty, OGG to Opus or an
+     empty sound when longer than 10 s, PNG recompressed, nested zip and jar rewritten, shader
+     config rules, quest language rule, server extras under `server/`, 768MB cap), then the
+     chunked upload: SHA-1, `POST /modpack/upload-sessions`, parts with `X-Part-SHA1` (up to 8
+     at once, retries), `POST .../complete`, publish (`POST /modpack/from-upload` or
+     `/modpack/{id}/version/{ver}/from-upload`), session cancelled on failure before publishing,
+     new pack id from `GET /modpack/my`.
+   - 下载剩余客户端Mod.
+   - 本地安装整合包 from the built archive.
+
+**What becomes Rust, in stages** (one commit each; the M4 gate is GM4):
+
+| Stage | Content | Reuses |
+|---|---|---|
+| A1 | `src/upload/`: draft rules, categories, icon checks, preflight, `list_my_modpacks`, update target; reading a pack's manifest summary; tool `upload_modpack_check` | `import::archive` loader and version recognition, `api::Client` |
+| A2 | Full pack reading: extraction into a work folder, embedded mod and extra identification, mod list, sides, content store commit, server pack merge | `catalog`, `content_store`, `digests`, `pack_install::mods` |
+| A3 | Archive builder without audio: every Kotlin rule above; a Kotlin fixture test compares file lists | `pack_install::archive` (reader), `rdipack2` tar writer |
+| A4 | OGG to Opus with the 10 s rule and the canary | to be chosen in A4: the game's media natives or a bundled encoder |
+| A5 | Chunked upload, publish, pack id, missing mods, local install; tool `upload_modpack` returning a task | `save_import::upload` part uploader, `pack_install` install steps |
+| A6 | Client and server tests; tool `upload_modpack` refuses until both pass | `play`, `mc_install` |
+
+**Tool shapes.**
+
+- `list_my_modpacks`: the packs the player may upload a version to (`GET modpack/uploadable`),
+  newest first: id, name, versions.
+- `upload_modpack_check { path, name?, version?, categories?, info?, icon_url?, source_url?,
+  update_modpack_id? }`: reads the pack at `path` (a CurseForge or Modrinth zip or folder),
+  returns what was recognised (name, version, MC version and loader, mods once A2 lands,
+  warnings), the draft problems in Kotlin's words, and the preflight result when the draft is
+  complete. Uploads nothing.
+- `upload_modpack { path, name, version, categories, info, icon_url, source_url?,
+  update_modpack_id? }`: runs the tests and the upload as launcher tasks and returns the task id
+  (A5, A6).
+- Category values are the Kotlin enum names (`LARGE`, `TECH`, ...); the tool description lists
+  them with their Chinese labels.
+
+Kotlin bugs found on the way are noted here and not fixed.
+
 ## 7. Validation rules
 
 - `cargo test` from `client/slint-proto`; WSL native test recipe and known false failures are in
@@ -348,3 +418,15 @@ short recipe to try it with a real agent.
   (it falls back to a free port). The launcher MCP's saved port 10503 was not affected.
 - 2026-11-25 test temp folders: tests now remove their temp folders (`src/test_dir.rs`, commit
   8d5594e2), requested by another session for the owner.
+- 2026-11-25 M4 design written (section 6, "M4 design"); owner decisions E1 (tests required) and
+  E4 (port everything to Rust).
+- 2026-11-25 M4 stage A1 done: `src/upload/` (`draft`: categories, field rules, icon address and
+  image check; `source`: manifest look of a CurseForge or Modrinth zip or folder with Kotlin's
+  messages; `api`: `modpack/uploadable`, update target, `modpack/preflight`), tools
+  `list_my_modpacks` and `upload_modpack_check`. Loader recognition is shared with local import
+  (`import::archive::recognize_loader`, behavior unchanged). Launcher tests 385 pass (5 new
+  upload tests); clippy has no new warnings. The owner's sample pack
+  (七七和小翔修仙世界0.3.377v2.0.zip) reads as Modrinth, 1.20.1 Forge, version 1.0.0 (ignored test
+  `real_pack_summary`). Not done live: the tools against the local master (needs a release build).
+  Differences noted: Kotlin parses the icon address with `java.net.URI`; Rust uses `Url`, so an
+  address Java accepts but `Url` rejects is 链接无效 here. Next: A2 (full pack reading).

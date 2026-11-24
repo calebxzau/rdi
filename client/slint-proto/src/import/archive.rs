@@ -171,7 +171,17 @@ fn runtime(v: &Value, cf: bool) -> Result<(String, String)> {
     let version = super::scanner::version_entry(mc)
         .map_err(|_| anyhow::anyhow!("暂不支持MC版本{}", mc.trim()))?
         .to_owned();
-    let loader = if cf {
+    let loader = recognize_loader(v, cf)?;
+    ensure!(
+        super::scanner::supported(&version, loader),
+        "已识别为Minecraft{mc}／{loader}，当前版本暂不支持导入"
+    );
+    Ok((version, loader.into()))
+}
+/// Kotlin `LoaderRecognition.curseForge` / `.modrinth`: the one declared loader, as `forge`,
+/// `neoforge` or `Fabric`. Shared with the modpack upload (`crate::upload::source`).
+pub(crate) fn recognize_loader(v: &Value, cf: bool) -> Result<&'static str> {
+    Ok(if cf {
         let declarations = arr(&v["minecraft"]["modLoaders"]);
         let primary: Vec<_> = declarations
             .iter()
@@ -235,12 +245,7 @@ fn runtime(v: &Value, cf: bool) -> Result<(String, String)> {
             "neoforge" => "neoforge",
             _ => "Fabric",
         }
-    };
-    ensure!(
-        super::scanner::supported(&version, loader),
-        "已识别为Minecraft{mc}／{loader}，当前版本暂不支持导入"
-    );
-    Ok((version, loader.into()))
+    })
 }
 fn kind(path: &str) -> String {
     let p = path.to_lowercase();
