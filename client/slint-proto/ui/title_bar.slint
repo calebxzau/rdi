@@ -8,10 +8,14 @@ export component TitleBar inherits Rectangle {
     in property <bool> can-back;
     in property <bool> gallery-enabled;
     in property <bool> host-list-visible;
+    /// The AI assistant (launcher MCP): 0 off, 1 on, 2 failed.
+    in property <int> mcp-state;
     callback navigate(string);
+    callback mcp();
     callback action(int);
     callback account();
     out property <length> account-x: head.absolute-position.x;
+    out property <length> mcp-x: mcp-button.absolute-position.x;
     private property <length> nav-content-x: root.can-back ? 118px : 80px;
     height: 40px;
     background: #ffffff45;
@@ -27,9 +31,13 @@ export component TitleBar inherits Rectangle {
         vertical-alignment: center;
     }
     if root.gallery-enabled: GlassButton { x: root.nav-content-x + (root.host-list-visible ? 74px : 0px); y: 6px; width: 96px; height: 28px; label: "组件画廊"; clicked => {root.navigate("gallery");} }
-    HorizontalLayout { x: parent.width - 496px; y: 0px; width: 496px; height: 40px; spacing: 8px; padding: 0px; padding-right: 8px; alignment: end;
+    HorizontalLayout { x: parent.width - 532px; y: 0px; width: 532px; height: 40px; spacing: 8px; padding: 0px; padding-right: 8px; alignment: end;
         // Padding centers the shorter items, since layouts place fixed-height items at the top.
         HorizontalLayout { spacing: 8px; padding-top: 6px; padding-bottom: 6px;
+            mcp-button := Rectangle { width: 28px; height: 28px;
+                GlassButton { x: 0px; y: 0px; width: 28px; height: 28px; circle: true; glyph: "\u{ee0d}"; accessible-label: root.mcp-state == 1 ? "AI助手（已开启）" : "AI助手"; clicked => {root.mcp();} }
+                if root.mcp-state == 1: Rectangle { x: 20px; y: 0px; width: 8px; height: 8px; border-radius: 4px; background: #28c840; border-width: 1px; border-color: #ffffffcc; }
+            }
             GlassButton { width: 28px; height: 28px; circle: true; glyph: "\u{f11b}"; clicked => {root.navigate("console");} }
             GlassButton { width: 28px; height: 28px; circle: true; glyph: "\u{f0ae}"; clicked => {root.navigate("tasks");} }
         }

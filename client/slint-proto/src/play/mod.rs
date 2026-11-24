@@ -45,6 +45,35 @@ struct Session {
     room: bool,
     /// What `running_games.json` keeps while the process lives.
     record: Option<recovery::Entry>,
+    /// The in-game RMCP address, for the launcher MCP's game tools.
+    ai: GameAi,
+}
+
+/// Whether the launcher MCP can reach a game's own tools (RMCP).
+#[derive(Clone, Debug, PartialEq)]
+pub enum GameAi {
+    /// Started without the RDI core (local packs) or with no RMCP (GTNH 1.7.10).
+    Unsupported,
+    /// Recovered after a launcher crash: its output, and so its address, is not seen.
+    Recovered,
+    /// Started with the RDI core; the address line has not appeared yet.
+    Waiting,
+    /// `http://127.0.0.1:<port>/mcp`.
+    Ready(String),
+}
+
+/// The game prints its RMCP address once at startup (`RDIMain`: `AI MCP URL: <url>`).
+pub const GAME_MCP_MARKER: &str = "AI MCP URL: ";
+
+/// The address in a game line, only when it is exactly `http://127.0.0.1:<port>/mcp`.
+pub fn game_mcp_url(line: &str) -> Option<String> {
+    let (_, rest) = line.split_once(GAME_MCP_MARKER)?;
+    let port = rest.trim_end().strip_prefix("http://127.0.0.1:")?.strip_suffix("/mcp")?;
+    if port.is_empty() || port.len() > 5 || !port.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    let port: u16 = port.parse().ok().filter(|p| *p > 0)?;
+    Some(format!("http://127.0.0.1:{port}/mcp"))
 }
 
 impl Session {
@@ -61,6 +90,7 @@ pub struct SessionView {
     pub preparing: bool,
     pub running: bool,
     pub exit_message: Option<String>,
+    pub ai: GameAi,
 }
 
 #[derive(Default)]
@@ -119,6 +149,7 @@ impl Sessions {
                 cancel: Cancellation::default(),
                 room,
                 record: None,
+                ai: GameAi::Unsupported,
             });
             Some(id)
         })
@@ -132,6 +163,35 @@ impl Sessions {
                     s.console.pop_front();
                 }
                 s.console.push_back(line);
+            }
+        });
+    }
+
+    /// A line of the game's own output. The first valid RMCP address line of a game that waits
+    /// for one becomes its address; later lines (chat, mods) cannot change it.
+    pub fn game_line(&self, id: &str, line: impl Into<String>) {
+        let line = line.into();
+        let url = line.contains(GAME_MCP_MARKER).then(|| game_mcp_url(&line)).flatten();
+        self.with(|inner| {
+            if let Some(s) = inner.list.iter_mut().find(|s| s.id == id) {
+                if let Some(url) = url
+                    && s.ai == GameAi::Waiting
+                {
+                    s.ai = GameAi::Ready(url);
+                }
+                if s.console.len() >= MAX_LOG_LINES {
+                    s.console.pop_front();
+                }
+                s.console.push_back(line);
+            }
+        });
+    }
+
+    /// Marks a game about to start with the RDI core as one whose RMCP address will appear.
+    pub fn expect_game_tools(&self, id: &str) {
+        self.with(|inner| {
+            if let Some(s) = inner.list.iter_mut().find(|s| s.id == id) {
+                s.ai = GameAi::Waiting;
             }
         });
     }
@@ -256,6 +316,7 @@ impl Sessions {
                     cancel: Cancellation::default(),
                     room: entry.room,
                     record: Some(entry.clone()),
+                    ai: GameAi::Recovered,
                 });
             });
             tracing::info!(pid, version = %entry.version_id, room = entry.room, "已找回运行中的游戏");
@@ -302,6 +363,7 @@ impl Sessions {
             let s = inner.list.iter_mut().find(|s| s.id == id)?;
             s.preparing = false;
             s.exit_message = message;
+            s.ai = GameAi::Unsupported;
             Some(s.child.take().is_some())
         });
         if had_process == Some(true) {
@@ -354,6 +416,7 @@ impl Sessions {
                 preparing: s.preparing,
                 running: s.child.is_some(),
                 exit_message: s.exit_message.clone(),
+                ai: s.ai.clone(),
             })
             .collect()
     }
@@ -631,7 +694,7 @@ async fn run(deps: &Deps, session: &str, request: &LocalStart, account: &Account
     if stopped() {
         return Ok(());
     }
-    spawn_and_watch(sessions, session, &command, &request.version_dir, &request.version_id, None)
+    spawn_and_watch(sessions, session, &command, &request.version_dir, &request.version_id, None, false)
 }
 
 /// The start of `launchInternal`: GTNH's lwjgl3ify mod into `mods`, then every library checked.
@@ -649,11 +712,15 @@ async fn check_launch(launch: &crate::mc_install::Launch, version_dir: &Path, di
 
 /// Starts the command, attaches the process to the session and adds the exit line when it ends
 /// (`readProcessOutput`). A session stopped meanwhile kills the new process instead.
-fn spawn_and_watch(sessions: &Sessions, session: &str, command: &[String], version_dir: &Path, version_id: &str, room_port: Option<u16>) -> Result<()> {
+/// `game_tools`: the game runs the RDI core with RMCP, so its address line is awaited.
+fn spawn_and_watch(sessions: &Sessions, session: &str, command: &[String], version_dir: &Path, version_id: &str, room_port: Option<u16>, game_tools: bool) -> Result<()> {
+    if game_tools {
+        sessions.expect_game_tools(session);
+    }
     let (lines, id) = (sessions.clone(), session.to_owned());
     let started = mc_launch::spawn(command, version_dir, move |line| {
         if !line.is_empty() {
-            lines.append(&id, line);
+            lines.game_line(&id, line);
         }
     })?;
     let pid = started.child.id();

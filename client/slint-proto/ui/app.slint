@@ -12,6 +12,7 @@ import { Console, TaskProgress } from "components/activity.slint";
 import { TileData, Theme } from "theme.slint";
 import { TitleBar } from "title_bar.slint";
 import { AccountMenu } from "account_menu.slint";
+import { McpMenu } from "mcp_menu.slint";
 import { TileGrid } from "components/tile_grid.slint";
 import { CardHint } from "components/card_hint.slint";
 import { NameInitial } from "components/name_initial_icon.slint";
@@ -248,6 +249,15 @@ export component AppWindow inherits Window {
     in property <string> player-name: "未登录";
     in-out property <bool> account-menu;
     callback logout();
+    // The AI assistant (launcher MCP): 0 off, 1 on, 2 failed. The prompt is only set while on.
+    in property <int> mcp-state;
+    in property <string> mcp-prompt;
+    in property <string> mcp-status;
+    in-out property <bool> mcp-menu;
+    /// Starts the assistant; true when it runs and the prompt should be copied now.
+    callback mcp-start() -> bool;
+    callback mcp-stop();
+    callback mcp-copied();
     in property <image> player-head;
     in property <string> error;
     in property <string> page-error;
@@ -308,12 +318,21 @@ export component AppWindow inherits Window {
     shell-focus := FocusScope { x: 0px; y: 0px; width: root.width; height: root.height;
         key-pressed(e) => {
             if e.text == Key.Escape && root.account-menu {root.account-menu = false; return accept;}
+            if e.text == Key.Escape && root.mcp-menu {root.mcp-menu = false; return accept;}
             if e.text == Key.Escape {root.navigate("back"); return accept;}
             if e.modifiers.alt && e.text == Key.LeftArrow {root.navigate("back"); return accept;}
             return reject;
         }
     Image { width: parent.width; height: parent.height; source: root.backdrop-revision >= 0 ? root.backdrop : root.backdrop; image-fit: fill; }
-    title-bar := TitleBar { y: 0px; width: parent.width; player-name: root.player-name; head: root.player-head; account => {if !root.login-visible {root.account-menu = !root.account-menu;}} action(a) => {root.window-action(a);} can-back: root.can-back; host-list-visible: root.host-list-visible; gallery-enabled: root.gallery-enabled; navigate(s) => {root.navigate(s);} }
+    title-bar := TitleBar { y: 0px; width: parent.width; player-name: root.player-name; head: root.player-head; account => {if !root.login-visible {root.account-menu = !root.account-menu;}} action(a) => {root.window-action(a);} can-back: root.can-back; host-list-visible: root.host-list-visible; gallery-enabled: root.gallery-enabled; navigate(s) => {root.navigate(s);}
+        mcp-state: root.mcp-state;
+        mcp => {
+            if root.mcp-state == 1 { root.mcp-menu = !root.mcp-menu; }
+            else if root.mcp-start() { mcp-clip.text = root.mcp-prompt; mcp-clip.select-all(); mcp-clip.copy(); mcp-clip.clear-selection(); }
+        }
+    }
+    // The prompt reaches the clipboard through this hidden input's copy(); Slint has no clipboard API.
+    mcp-clip := TextInput { x: 0px; y: 0px; width: 1px; height: 1px; text: ""; read-only: true; color: transparent; single-line: true; font-size: 1px; }
     menu := FocusScope { x: 0px; y: 40px; width: parent.width; height: parent.height - 40px; visible: !root.login-visible && !root.ui-proof && !root.gallery && root.pack-screen == 0 && !root.wardrobe-visible && !root.host-list-visible && Rooms.screen == 0 && RoomPages.screen == 0 && Account.screen == 0 && Inbox.screen == 0 && Settings.screen == 0 && Content.screen == 0 && Worlds.screen == 0 && Closet.screen == 0; enabled: !root.modal-open && root.activity-panel == 0;
     tabs := GlassTabBar {
         x: (parent.width - self.width) / 2; y: 16px; tab-position: root.tab-position; selected: root.selected;
@@ -639,6 +658,13 @@ export component AppWindow inherits Window {
         mail => {root.account-menu = false; root.navigate("mail");}
         settings => {root.account-menu = false; root.navigate("settings");}
         logout => {root.account-menu = false; root.logout();}
+    }
+    if root.mcp-menu && root.mcp-state == 1: McpMenu {
+        x: 0px; y: 0px; width: parent.width; height: parent.height;
+        anchor-x: title-bar.mcp-x + 14px; anchor-y: 44px; status: root.mcp-status;
+        dismiss => {root.mcp-menu = false;}
+        copy-prompt => { root.mcp-menu = false; mcp-clip.text = root.mcp-prompt; mcp-clip.select-all(); mcp-clip.copy(); mcp-clip.clear-selection(); root.mcp-copied(); }
+        stop => {root.mcp-menu = false; root.mcp-stop();}
     }
     if root.modal-open && !(Rooms.menu-open && !Rooms.dialog): Rectangle { x: 0px; y: 0px; width: parent.width; height: parent.height; background: #0009; TouchArea {} }
     dialog := SharedDialog {

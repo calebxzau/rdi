@@ -1,0 +1,28 @@
+import { Theme } from "theme.slint";
+import { AccountMenuItem } from "account_menu.slint";
+/// The AI assistant menu while it runs. Covers the window so that a click outside closes it.
+export component McpMenu inherits Rectangle {
+    in property <length> anchor-x;
+    in property <length> anchor-y;
+    in property <string> status;
+    callback dismiss();
+    callback copy-prompt();
+    callback stop();
+    TouchArea { clicked => {root.dismiss();} }
+    Rectangle {
+        width: 180px; height: menu-items.preferred-height;
+        x: max(8px, min(root.anchor-x - self.width / 2, root.width - self.width - 8px)); y: root.anchor-y;
+        border-radius: 12px; background: #eef1f5;
+        drop-shadow-blur: 10px; drop-shadow-offset-y: 3px; drop-shadow-color: #00000026;
+        TouchArea {}
+        menu-items := VerticalLayout {
+            padding-top: 6px; padding-bottom: 6px;
+            HorizontalLayout { padding-left: 12px; padding-right: 12px; padding-top: 4px; padding-bottom: 4px; spacing: 8px;
+                Rectangle { width: 8px; height: 8px; y: (parent.height - self.height) / 2; border-radius: 4px; background: #28c840; }
+                Text { text: root.status; font-size: 13px; color: Theme.ink; vertical-alignment: center; wrap: word-wrap; }
+            }
+            AccountMenuItem { glyph: "\u{f0c5}"; label: "复制提示词"; clicked => {root.copy-prompt();} }
+            AccountMenuItem { glyph: "\u{f011}"; label: "关闭AI助手"; clicked => {root.stop();} }
+        }
+    }
+}

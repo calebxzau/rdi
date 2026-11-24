@@ -30,6 +30,11 @@ impl Client {
         let msid = session.account["msid"].as_str().map(str::trim).filter(|m| !m.is_empty()).map(str::to_owned);
         Ok(Self { http: server.http.clone(), server, uid, is_dav, account_name, has_msid: msid.is_some(), msid })
     }
+    /// A signed-in client for tests against a local server.
+    #[cfg(test)]
+    pub fn for_test(server: ServerApi, uid: &str, name: &str) -> Self {
+        Self { http: server.http.clone(), server, uid: uid.into(), is_dav: false, account_name: name.into(), has_msid: false, msid: None }
+    }
     pub fn server(&self) -> &ServerApi {
         &self.server
     }

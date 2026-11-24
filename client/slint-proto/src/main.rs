@@ -58,6 +58,8 @@ mod base_world_ui;
 mod closet;
 mod closet_ui;
 mod route;
+mod mcp;
+mod mcp_ui;
 use rdi_slint_proto::scene;
 mod runtime_probe;
 mod window;

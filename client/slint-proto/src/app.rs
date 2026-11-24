@@ -221,6 +221,7 @@ pub struct App {
     content_ui: Rc<RefCell<crate::content_ui::ContentUi>>,
     base_world_ui: Rc<RefCell<crate::base_world_ui::BaseWorldUi>>,
     closet_ui: Rc<RefCell<crate::closet_ui::ClosetUi>>,
+    mcp_ui: Rc<RefCell<crate::mcp_ui::McpUi>>,
     heads: HeadCache,
     cache: lru::LruCache<String, CachedArt>,
     jobs: HashMap<String, JoinHandle<()>>,
@@ -287,6 +288,7 @@ impl App {
         let base_world_ui = crate::base_world_ui::BaseWorldUi::wire(ui, runtime.clone(), pack_ui.borrow().tasks());
         let closet_ui = crate::closet_ui::ClosetUi::wire(ui, runtime.clone(), config.renderer == "femtovg-wgpu" && !config.no_glass);
         let settings_ui = crate::settings_ui::SettingsUi::wire(ui, runtime.clone(), pack_ui.borrow().tasks(), pack_ui.borrow().play.clone(), config.server.clone());
+        let mcp_ui = crate::mcp_ui::McpUi::wire(ui, runtime.clone(), pack_ui.borrow().play.clone(), pack_ui.borrow().tasks());
         let app = Rc::new(RefCell::new(Self {
             ui: ui.as_weak(),
             runtime,
@@ -309,6 +311,7 @@ impl App {
             content_ui,
             base_world_ui,
             closet_ui,
+            mcp_ui,
             login_ui,
             play_revision: 0,
             heads: HeadCache::default(),
@@ -820,40 +823,28 @@ impl App {
         ui.set_loading(true);
         ui.set_game_status("正在准备".into());
         let size = ui.window().size();
-        let id = id.to_owned();
+        let request = crate::play::room::RoomStart {
+            host_id: id.to_owned(),
+            window: (size.width, size.height),
+            allow_duplicate,
+        };
         let tx = self.tx.clone();
         self.runtime.spawn(async move {
-            // J4c 4.3: the room's pack must be installed first.
-            match room_pack(&api, &id, &tasks).await {
-                Ok(None) => {}
-                Ok(Some(need)) => {
-                    let _ = tx.send(Event::NeedPack(need));
-                    return;
-                }
-                Err(error) => {
-                    let _ = tx.send(Event::Started(Err(error)));
-                    return;
-                }
-            }
-            let deps = match tokio::task::spawn_blocking(builder).await {
-                Ok(deps) => deps,
-                Err(error) => {
-                    let _ = tx.send(Event::Started(Err(anyhow::anyhow!("准备游玩失败: {error}"))));
-                    return;
-                }
+            use crate::play::room::Entered;
+            let id = request.host_id.clone();
+            let versions = crate::local_packs::versions_dir();
+            let java = crate::java_runtime::state();
+            let event = match crate::play::room::enter(&api, &tasks, &versions, java, builder, request).await {
+                Ok(Entered::Started(_)) => Event::Started(Ok(serde_json::json!({"accepted": true}))),
+                Ok(Entered::Duplicate) => Event::Started(Ok(serde_json::json!({"duplicateVersion": true, "hostId": id}))),
+                // J4c 4.3: the room's pack must be installed first.
+                Ok(Entered::Installing(run)) => Event::NeedPack(Ok(run)),
+                Ok(Entered::NeedInstall(pack)) => Event::NeedPack(Err(serde_json::json!({"modpackId": pack.modpack_id,
+                    "version": pack.version, "name": pack.name, "size": pack.size}))),
+                Ok(Entered::JavaMissing) => Event::Started(Err(anyhow::anyhow!(crate::java_runtime::MISSING_MESSAGE))),
+                Err(error) => Event::Started(Err(error)),
             };
-            let request = crate::play::room::RoomStart {
-                host_id: id.clone(),
-                window: (size.width, size.height),
-                allow_duplicate,
-            };
-            use crate::play::{Admitted, room::RoomOutcome};
-            let result = match crate::play::room::start(&deps, request).await {
-                Ok(RoomOutcome::Admitted(Admitted::Started(_))) => Ok(serde_json::json!({"accepted": true})),
-                Ok(RoomOutcome::Admitted(Admitted::Duplicate)) => Ok(serde_json::json!({"duplicateVersion": true, "hostId": id})),
-                Err(error) => Err(error),
-            };
-            let _ = tx.send(Event::Started(result));
+            let _ = tx.send(event);
         });
     }
     fn load_page(&mut self) {
@@ -1085,6 +1076,11 @@ impl App {
         let Some(ui) = self.ui.upgrade() else {
             return;
         };
+        // Served before anything that waits for focus: the agent works while the player looks away.
+        let requests = self.mcp_ui.borrow().take_requests();
+        for request in requests {
+            self.answer_mcp(&ui, request);
+        }
         self.pack_ui.borrow_mut().tick();
         self.plaza.borrow_mut().tick();
         self.rooms.borrow_mut().tick();
@@ -1363,6 +1359,31 @@ impl App {
             ui.window().request_redraw();
         }
     }
+    /// Answers a launcher MCP tool's request for UI-thread state.
+    fn answer_mcp(&self, ui: &AppWindow, request: crate::mcp::bridge::Request) {
+        use crate::mcp::bridge::{Account, InstallKit, Request, RoomKit};
+        match request {
+            Request::Account(reply) => {
+                let account = self.api.clone().map(|api| Account { api, name: ui.get_player_name().to_string() });
+                let _ = reply.send(account);
+            }
+            Request::Room(reply) => {
+                let kit = self.api.clone().and_then(|api| {
+                    let packs = self.pack_ui.borrow();
+                    let deps = packs.room_deps(&self.config.server)?;
+                    Some(RoomKit { api, tasks: packs.tasks(), deps: Box::new(deps), window: game_window(ui) })
+                });
+                let _ = reply.send(kit);
+            }
+            Request::Install(reply) => {
+                let kit = self.api.clone().and_then(|api| {
+                    let deps = self.pack_ui.borrow().install_deps()?;
+                    Some(InstallKit { api, deps: Box::new(deps) })
+                });
+                let _ = reply.send(kit);
+            }
+        }
+    }
     pub fn frame(&self, ui: &AppWindow) -> glass::Frame {
         crate::shell::frame(
             ui,
@@ -1372,6 +1393,16 @@ impl App {
             self.selected,
         )
     }
+}
+/// The launcher window's size for a game started by the AI assistant. A minimized window reports
+/// almost nothing, so the default 1280x720 window size is used then.
+fn game_window(ui: &AppWindow) -> (u32, u32) {
+    let size = ui.window().size();
+    if size.width >= 320 && size.height >= 240 {
+        return (size.width, size.height);
+    }
+    let scale = ui.window().scale_factor().max(1.0);
+    ((1280.0 * scale) as u32, (720.0 * scale) as u32)
 }
 /// Updates `model` to `rows`, touching only rows that changed so unchanged tiles keep their textures.
 fn sync_rows<T: Clone + PartialEq + 'static>(model: &VecModel<T>, rows: Vec<T>) {
@@ -1455,24 +1486,6 @@ mod tests {
     }
 }
 
-/// The fields of Kotlin `Host.DetailVo` the pack check needs.
-#[derive(serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct RoomDetail {
-    modpack: RoomPack,
-    pack_ver: String,
-}
-#[derive(serde::Deserialize)]
-struct RoomPack {
-    id: String,
-    #[serde(default)]
-    name: String,
-}
-#[derive(serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct RoomVersion {
-    total_size: Option<u64>,
-}
 /// J5b B5 (`GameRecovery.restore`): a room game recovered after a crash gets its room connection
 /// back on the port it was started with, so the player can reconnect from the game.
 async fn reconnect_recovered_room(play: &crate::play::Sessions, endpoint: &crate::route::Endpoint) {
@@ -1494,25 +1507,4 @@ async fn reconnect_recovered_room(play: &crate::play::Sessions, endpoint: &crate
             play.append_alive("[RDI] 房间连接恢复失败，请结束游戏后重新进入房间");
         }
     }
-}
-/// `None` when the pack is installed; otherwise the running install or the confirmation data.
-async fn room_pack(
-    api: &Client,
-    host_id: &str,
-    tasks: &crate::tasks::Manager,
-) -> anyhow::Result<Option<Result<String, serde_json::Value>>> {
-    let detail: RoomDetail = api.get(&format!("/host/{host_id}/detail")).await?;
-    let (id, version) = (detail.modpack.id, detail.pack_ver);
-    let versions = crate::local_packs::versions_dir();
-    Ok(match crate::pack_install::state_in(tasks, &versions, &id, &version) {
-        crate::pack_install::State::Installed => None,
-        crate::pack_install::State::Installing(run) => Some(Ok(run)),
-        crate::pack_install::State::Missing => {
-            let info: RoomVersion = api
-                .get(&format!("/modpack/{id}/version/{version}"))
-                .await?;
-            Some(Err(serde_json::json!({"modpackId":id,"version":version,
-                "name":detail.modpack.name,"size":info.total_size})))
-        }
-    })
 }

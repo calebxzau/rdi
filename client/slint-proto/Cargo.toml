@@ -53,6 +53,13 @@ anyhow = "1.0.104"
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 
+# Launcher MCP: a small local HTTP server; these versions were already locked through reqwest.
+hyper = { version = "=1.12.0", features = ["server", "http1"] }
+hyper-util = { version = "=0.1.21", features = ["tokio"] }
+http-body-util = "=0.1.5"
+# Launcher MCP token: 32 bytes from the OS random source; already in the lock file.
+getrandom = "=0.3.4"
+
 # U4b1: QQ mail operation codes, the same AES-256-GCM as Kotlin CryptoManager.
 aes-gcm = "=0.10.3"
 # U4b2: 清除无效整合包 moves folders to the system recycle bin, as Compose moveToOsTrash.

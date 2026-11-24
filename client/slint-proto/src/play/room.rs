@@ -320,6 +320,95 @@ fn spawn_run(deps: &RoomDeps, session: &str, title: String, prepared: Prepared, 
     });
 }
 
+/// A host's pack that is not installed: what the install confirmation shows.
+#[derive(Clone, Debug, PartialEq)]
+pub struct PackNeeded {
+    pub modpack_id: String,
+    pub version: String,
+    pub name: String,
+    pub size: Option<u64>,
+}
+
+/// The install check before a host start (J4c 4.3).
+#[derive(Clone, Debug, PartialEq)]
+pub enum PackCheck {
+    Installed,
+    /// The run id of the install task.
+    Installing(String),
+    Missing(PackNeeded),
+}
+
+/// The fields of Kotlin `Host.DetailVo` the pack check needs.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CheckDetail {
+    modpack: CheckPack,
+    pack_ver: String,
+}
+#[derive(Deserialize)]
+struct CheckPack {
+    id: String,
+    #[serde(default)]
+    name: String,
+}
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CheckVersion {
+    total_size: Option<u64>,
+}
+
+/// Whether the host's pack is installed in `versions`, being installed, or missing.
+pub async fn pack_check(api: &crate::api::Client, host_id: &str, tasks: &crate::tasks::Manager, versions: &Path) -> Result<PackCheck> {
+    let detail: CheckDetail = api.get(&format!("/host/{host_id}/detail")).await?;
+    let (id, version) = (detail.modpack.id, detail.pack_ver);
+    Ok(match crate::pack_install::state_in(tasks, versions, &id, &version) {
+        crate::pack_install::State::Installed => PackCheck::Installed,
+        crate::pack_install::State::Installing(run) => PackCheck::Installing(run),
+        crate::pack_install::State::Missing => {
+            let info: CheckVersion = api.get(&format!("/modpack/{id}/version/{version}")).await?;
+            PackCheck::Missing(PackNeeded { modpack_id: id, version, name: detail.modpack.name, size: info.total_size })
+        }
+    })
+}
+
+/// How entering a host ended.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Entered {
+    /// The game session's id.
+    Started(String),
+    /// The pack already runs and no duplicate was allowed.
+    Duplicate,
+    NeedInstall(PackNeeded),
+    /// The run id of the install task.
+    Installing(String),
+    JavaMissing,
+}
+
+/// Entering a host as the UI does it, without the UI (the launcher MCP calls it too): Java check,
+/// pack check, deps built off the calling thread, then `start`.
+pub async fn enter(
+    api: &crate::api::Client,
+    tasks: &crate::tasks::Manager,
+    versions: &Path,
+    java: crate::java_runtime::State,
+    deps: impl FnOnce() -> RoomDeps + Send + 'static,
+    request: RoomStart,
+) -> Result<Entered> {
+    if java == crate::java_runtime::State::Missing {
+        return Ok(Entered::JavaMissing);
+    }
+    match pack_check(api, &request.host_id, tasks, versions).await? {
+        PackCheck::Installed => {}
+        PackCheck::Installing(run) => return Ok(Entered::Installing(run)),
+        PackCheck::Missing(pack) => return Ok(Entered::NeedInstall(pack)),
+    }
+    let deps = tokio::task::spawn_blocking(deps).await.map_err(|error| anyhow::anyhow!("准备游玩失败: {error}"))?;
+    Ok(match start(&deps, request).await? {
+        RoomOutcome::Admitted(Admitted::Started(id)) => Entered::Started(id),
+        RoomOutcome::Admitted(Admitted::Duplicate) => Entered::Duplicate,
+    })
+}
+
 /// Playing an installed RDI pack alone from the 整合包 tab (`rdiPackPlayArgs`).
 pub struct SoloStart {
     pub version_id: String,
@@ -572,7 +661,9 @@ async fn run(deps: &RoomDeps, session: &str, p: &Prepared, window: (u32, u32)) -
         return Ok(());
     }
     let room_port = address.rsplit_once(':').and_then(|(_, port)| port.parse().ok());
-    super::spawn_and_watch(sessions, session, &command, &p.version_dir, &p.version_id, room_port)
+    // RMCP is in the RDI core of every supported version except GTNH 1.7.10.
+    let game_tools = p.mc_version != "1.7.10";
+    super::spawn_and_watch(sessions, session, &command, &p.version_dir, &p.version_id, room_port, game_tools)
 }
 
 #[cfg(test)]

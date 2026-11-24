@@ -281,7 +281,7 @@ impl PackUi {
         self.native_tasks.clone()
     }
     /// Deps for `pack_install`. The catalog opens its identity database, so build it off the UI thread.
-    fn install_deps(&self) -> Option<impl FnOnce() -> crate::pack_install::Deps + Send + 'static> {
+    pub(crate) fn install_deps(&self) -> Option<impl FnOnce() -> crate::pack_install::Deps + Send + 'static> {
         let api = self.api.as_ref()?;
         let (server, http) = (api.server().clone(), api.http.clone());
         let (tasks, runtime, running) = (
