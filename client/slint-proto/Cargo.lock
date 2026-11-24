@@ -4300,6 +4300,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "rdi-anvilrw"
+version = "0.1.0"
+dependencies = [
+ "crc32fast",
+ "flate2",
+ "libc",
+ "md-5",
+ "regex",
+ "tempfile",
+ "uuid",
+ "zstd",
+]
+
+[[package]]
 name = "rdi-local-proxy"
 version = "0.1.0"
 dependencies = [
@@ -4354,6 +4368,7 @@ dependencies = [
  "naga",
  "pollster",
  "rav1d-safe",
+ "rdi-anvilrw",
  "rdi-local-proxy",
  "rdi-renderer",
  "rdi-session-resume",

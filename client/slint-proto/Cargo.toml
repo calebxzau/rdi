@@ -33,6 +33,8 @@ rdi-renderer = { path = "crates/rdi-renderer" }
 # J5b: the room connection runs inside the launcher (J5 decision D3), no native library to load.
 rdi-local-proxy = { path = "../local-proxy-rs" }
 rdi-session-resume = { path = "../../common/session-resume-rs" }
+# A3: save import (导入存档): strict save reading and player UUID remapping.
+rdi-anvilrw = { path = "../../common/anvilrw-rs" }
 glam = "=0.34.1"
 half = "=2.7.1"
 bytemuck = { version = "=1.25.2", features = ["derive"] }

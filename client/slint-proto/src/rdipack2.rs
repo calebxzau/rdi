@@ -360,7 +360,7 @@ fn set_name(header: &mut tar::Header, name: &[u8]) {
     field[..name.len()].copy_from_slice(name);
 }
 
-fn append<W: Write>(builder: &mut tar::Builder<W>, path: &str, directory: bool, size: u64, time: u64, data: impl Read) -> Result<()> {
+pub(crate) fn append<W: Write>(builder: &mut tar::Builder<W>, path: &str, directory: bool, size: u64, time: u64, data: impl Read) -> Result<()> {
     let mut header = tar::Header::new_ustar();
     header.set_entry_type(if directory { tar::EntryType::Directory } else { tar::EntryType::Regular });
     header.set_size(size);
@@ -386,7 +386,7 @@ fn append<W: Write>(builder: &mut tar::Builder<W>, path: &str, directory: bool, 
     Ok(())
 }
 
-fn seconds(meta: &std::fs::Metadata) -> u64 {
+pub(crate) fn seconds(meta: &std::fs::Metadata) -> u64 {
     meta.modified().ok().and_then(|t| t.duration_since(UNIX_EPOCH).ok()).map(|d| d.as_secs()).unwrap_or(0)
 }
 
@@ -459,9 +459,9 @@ pub fn export(ctx: &Context, pack: &Path, version_id: &str, output: &Path) -> Re
     committed
 }
 
-struct CancelRead<'a> {
-    inner: std::fs::File,
-    ctx: &'a Context,
+pub(crate) struct CancelRead<'a> {
+    pub(crate) inner: std::fs::File,
+    pub(crate) ctx: &'a Context,
 }
 impl Read for CancelRead<'_> {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {

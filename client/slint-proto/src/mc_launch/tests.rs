@@ -96,6 +96,7 @@ fn launch_commands_match_the_kotlin_fixture() {
             java_override: java_override.as_deref(),
             max_memory_override: case["maxMemoryMb"].as_i64().map(|m| m as i32),
             extra_jvm_args: &extra,
+            extra_game_args: &[],
             rdi: None,
             gtnh_root: None,
         };
@@ -118,6 +119,13 @@ fn launch_commands_match_the_kotlin_fixture() {
             assert_eq!(b, e, "{} argument {i}", case["name"]);
         }
         assert_eq!(built.len(), expected.len(), "{}", case["name"]);
+        // A3: extra game arguments (the save import marking launch) come last, after the window size.
+        let marking = ["--quickPlaySingleplayer".to_owned(), "新的世界-RDI导入".to_owned()];
+        let with_marking: Vec<String> = mask_secrets(&command(&Request { extra_game_args: &marking, ..request }, &env).unwrap())
+            .into_iter()
+            .map(|a| a.replace(&root_text, "${ROOT}").replace('\\', "/"))
+            .collect();
+        assert_eq!(with_marking, [expected, marking.to_vec()].concat(), "{}", case["name"]);
         std::fs::remove_dir_all(root).unwrap();
     }
 }
@@ -238,6 +246,7 @@ fn room_launch_commands_match_the_kotlin_fixture() {
             java_override: None,
             max_memory_override: case["maxMemoryMb"].as_i64().map(|m| m as i32),
             extra_jvm_args: &extra,
+            extra_game_args: &[],
             rdi: Some(RdiRuntime { loader: loader_name, classpath: &classpath, media_natives: Some(&natives) }),
             gtnh_root: None,
         };
@@ -365,6 +374,7 @@ fn gtnh_and_fabric_commands_match_the_kotlin_fixture() {
             java_override: None,
             max_memory_override: case["maxMemoryMb"].as_i64().map(|m| m as i32),
             extra_jvm_args: &extra,
+            extra_game_args: &[],
             rdi: rdi.then(|| RdiRuntime { loader: loader_name, classpath: &classpath, media_natives: natives.as_deref() }),
             gtnh_root: gtnh_root.as_deref(),
         };

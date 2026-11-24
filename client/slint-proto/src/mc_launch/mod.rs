@@ -46,6 +46,9 @@ pub struct Request<'a> {
     pub java_override: Option<&'a str>,
     pub max_memory_override: Option<i32>,
     pub extra_jvm_args: &'a [String],
+    /// `extraGameArgs`: added after `--width`/`--height`, such as `--quickPlaySingleplayer` for
+    /// the save import marking mode.
+    pub extra_game_args: &'a [String],
     /// `rdiRuntime = true`: a room game. `None` for local packs.
     pub rdi: Option<RdiRuntime<'a>>,
     /// GTNH (1.7.10): the pack's `gtnh` folder from [`gtnh::require_root`]. The caller passes
@@ -157,6 +160,7 @@ pub fn command(request: &Request, env: &Environment) -> Result<Vec<String>> {
         })
         .collect();
     game_args.extend(["--width".into(), request.window.0.to_string(), "--height".into(), request.window.1.to_string()]);
+    game_args.extend(request.extra_game_args.iter().cloned());
 
     let mut resolved_jvm = manifest.jvm_arguments(host);
     resolved_jvm.extend(loader.jvm_arguments(host));

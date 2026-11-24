@@ -49,6 +49,7 @@ mod java_runtime;
 mod mc_install;
 mod mc_launch;
 mod play;
+mod save_import;
 mod route;
 use rdi_slint_proto::scene;
 mod runtime_probe;

@@ -612,6 +612,7 @@ async fn run(deps: &Deps, session: &str, request: &LocalStart, account: &Account
             java_override: snapshot.java_path.as_deref(),
             max_memory_override: snapshot.max_memory_mb,
             extra_jvm_args: &jvm,
+            extra_game_args: &[],
             rdi: None,
             gtnh_root: launch.gtnh_root.as_deref(),
         },

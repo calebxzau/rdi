@@ -153,29 +153,117 @@ struct Prepared {
     version_dir: PathBuf,
     active: Vec<Mod>,
     play_arg: String,
+    overrides: LaunchOverrides,
+}
+
+/// What a save import marking launch changes in a host game (Kotlin `markingLaunch` through
+/// `McPlayArgs.account`, `extraJvmArgs` and `extraGameArgs`). The default changes nothing.
+#[derive(Clone, Default)]
+pub struct LaunchOverrides {
+    /// Plays as this identity instead of the signed-in RDI account.
+    pub account: Option<Account>,
+    /// Added after the pack's own JVM arguments, before the window arguments.
+    pub extra_jvm_args: Vec<String>,
+    pub extra_game_args: Vec<String>,
+}
+
+/// The installed pack of a host, as `startPlay` looks it up before it starts anything.
+pub struct HostPack {
+    pub detail: Detail,
+    pub mc_version: &'static str,
+    pub loader: &'static str,
+    pub version_name: String,
+    pub version_id: String,
+    pub version_dir: PathBuf,
+    pub state: crate::pack_install::State,
+    active: Vec<Mod>,
+}
+
+/// `startPlay` up to the install check: node refresh, host detail and status, pack version.
+/// Starts nothing and counts no play.
+pub async fn host_pack(deps: &RoomDeps, host_id: &str) -> Result<HostPack> {
+    let server = deps.install.server.clone();
+    if let Err(error) = route::refresh(&server, &deps.endpoint).await {
+        tracing::warn!(error = %format!("{error:#}"), "启动游戏前刷新节点失败，继续使用当前节点");
+    }
+    let detail: Detail = server.get(&format!("/host/{host_id}/detail")).await.context("获取房间信息失败")?;
+    let Some((mc_version, loader)) = supported(&detail.modpack) else {
+        bail!("暂不支持这个房间的游戏版本: {} {}", detail.modpack.mc_ver, detail.modpack.modloader);
+    };
+    let _status: serde_json::Value = server.get(&format!("/host/{host_id}/status")).await.context("获取房间状态失败")?;
+    let pack_id = detail.modpack.id.clone();
+    let version: Version = server.get(&format!("/modpack/{pack_id}/version/{}", detail.pack_ver)).await.context("获取整合包版本信息失败")?;
+    let state = crate::pack_install::state_in(&deps.install.tasks, &deps.install.versions, &pack_id, &version.name);
+    let version_id = crate::pack_install::version_id(&pack_id, &version.name);
+    Ok(HostPack {
+        active: active_base_mods(&version.mods, &detail.disabled_mods),
+        version_dir: deps.install.versions.join(&version_id),
+        detail,
+        mc_version,
+        loader,
+        version_name: version.name,
+        version_id,
+        state,
+    })
+}
+
+/// A save import marking launch: the host's pack opens a local save copy as another identity.
+pub struct MarkingStart {
+    pub host_id: String,
+    pub overrides: LaunchOverrides,
+    pub window: (u32, u32),
+    pub allow_duplicate: bool,
+}
+
+/// Kotlin `markingLaunch` after its checks: `startPlay(startHost = false)` and `startSession`
+/// with the overrides. The host is not started and no play is counted. The pack must be installed.
+pub async fn start_marking(deps: &RoomDeps, request: MarkingStart) -> Result<Admitted> {
+    let pack = host_pack(deps, &request.host_id).await?;
+    ensure_installed(&pack.state)?;
+    let uuid = uuid_of(&deps.uid)?;
+    let server = deps.install.server.base();
+    let play_arg = play_arg(&server, "127.0.0.1:55667", &pack.detail.name, pack.detail.port, &uuid, &deps.account_name);
+    let title = format!("标记要保留的区块 {}", pack.detail.name);
+    let Some(session) = deps.play.sessions.admit_room(&title, &pack.version_id, request.allow_duplicate) else {
+        return Ok(Admitted::Duplicate);
+    };
+    let prepared = Prepared {
+        version_dir: pack.version_dir,
+        pack: pack.detail.modpack.clone(),
+        room: Some(pack.detail),
+        mc_version: pack.mc_version,
+        loader: pack.loader,
+        version_id: pack.version_id,
+        version_name: pack.version_name,
+        active: pack.active,
+        play_arg,
+        overrides: request.overrides,
+    };
+    spawn_run(deps, &session, title, prepared, request.window);
+    Ok(Admitted::Started(session))
+}
+
+/// The save import's wording for a host pack that is not ready (Kotlin `playArgs`).
+pub fn ensure_installed(state: &crate::pack_install::State) -> Result<()> {
+    match state {
+        crate::pack_install::State::Installed => Ok(()),
+        crate::pack_install::State::Installing(_) => bail!("房间整合包正在安装，请等待安装完成后再试"),
+        crate::pack_install::State::Missing => bail!("请先进入房间游玩一次，安装好房间整合包后再导入存档"),
+    }
 }
 
 /// `startPlay` up to the session: node refresh, room and version, install check, room start,
 /// play count. Then admits the session and prepares it in the background.
 pub async fn start(deps: &RoomDeps, request: RoomStart) -> Result<RoomOutcome> {
     let server = deps.install.server.clone();
-    if let Err(error) = route::refresh(&server, &deps.endpoint).await {
-        tracing::warn!(error = %format!("{error:#}"), "启动游戏前刷新节点失败，继续使用当前节点");
-    }
     let host = &request.host_id;
-    let detail: Detail = server.get(&format!("/host/{host}/detail")).await.context("获取房间信息失败")?;
-    let Some((mc_version, loader)) = supported(&detail.modpack) else {
-        bail!("暂不支持这个房间的游戏版本: {} {}", detail.modpack.mc_ver, detail.modpack.modloader);
-    };
-    let _status: serde_json::Value = server.get(&format!("/host/{host}/status")).await.context("获取房间状态失败")?;
-    let pack_id = detail.modpack.id.clone();
-    let version: Version = server.get(&format!("/modpack/{pack_id}/version/{}", detail.pack_ver)).await.context("获取整合包版本信息失败")?;
-    match crate::pack_install::state_in(&deps.install.tasks, &deps.install.versions, &pack_id, &version.name) {
+    let HostPack { detail, mc_version, loader, version_name, version_id, version_dir, state, active } = host_pack(deps, host).await?;
+    match state {
         crate::pack_install::State::Installed => {}
         crate::pack_install::State::Installing(_) => bail!("整合包正在安装，请稍候"),
         crate::pack_install::State::Missing => bail!("请先安装整合包"),
     }
-    let active = active_base_mods(&version.mods, &detail.disabled_mods);
+    let pack_id = detail.modpack.id.clone();
     let _: serde_json::Value = server.post_empty(&format!("/host/{host}/start")).await.map_err(|e| anyhow::anyhow!("启动房间失败: {e}"))?;
     let uuid = uuid_of(&deps.uid)?;
     let play_arg = play_arg(&server.base(), "127.0.0.1:55667", &detail.name, detail.port, &uuid, &deps.account_name);
@@ -183,21 +271,21 @@ pub async fn start(deps: &RoomDeps, request: RoomStart) -> Result<RoomOutcome> {
     if let Err(error) = server.post_empty::<serde_json::Value>(&format!("/modpack/{pack_id}/play")).await {
         tracing::warn!(error = %format!("{error:#}"), "记录游玩次数失败");
     }
-    let version_id = crate::pack_install::version_id(&pack_id, &version.name);
     let title = format!("游玩 {}", detail.name);
     let Some(session) = deps.play.sessions.admit_room(&title, &version_id, request.allow_duplicate) else {
         return Ok(RoomOutcome::Admitted(Admitted::Duplicate));
     };
     let prepared = Prepared {
-        version_dir: deps.install.versions.join(&version_id),
+        version_dir,
         pack: detail.modpack.clone(),
         room: Some(detail),
         mc_version,
         loader,
         version_id,
-        version_name: version.name,
+        version_name,
         active,
         play_arg,
+        overrides: LaunchOverrides::default(),
     };
     spawn_run(deps, &session, title, prepared, request.window);
     Ok(RoomOutcome::Admitted(Admitted::Started(session)))
@@ -254,6 +342,7 @@ pub async fn start_solo(deps: &RoomDeps, request: SoloStart) -> Result<Admitted>
         version_name,
         active: vec![],
         play_arg,
+        overrides: LaunchOverrides::default(),
     };
     spawn_run(deps, &session, title, prepared, request.window);
     Ok(Admitted::Started(session))
@@ -386,6 +475,7 @@ async fn run(deps: &RoomDeps, session: &str, p: &Prepared, window: (u32, u32)) -
 
     let runtime = crate::play::runtime::GameRuntime::load(&deps.runtime_dir)?;
     let mut jvm: Vec<String> = snapshot.custom_jvm_args.iter().filter(|a| !is_window_jvm_arg(a)).cloned().collect();
+    jvm.extend(p.overrides.extra_jvm_args.iter().filter(|a| !a.starts_with("-Drdi.play=") && !is_window_jvm_arg(a)).cloned());
     jvm.extend(window_args);
     if let Some(jdwp) = &snapshot.jdwp_jvm_arg {
         jvm.push("-Xlog:os+exit=trace".into());
@@ -428,11 +518,14 @@ async fn run(deps: &RoomDeps, session: &str, p: &Prepared, window: (u32, u32)) -
     };
     let dirs = install.directories();
     super::check_launch(&launch, &p.version_dir, &dirs, &install.host).await?;
-    let account = Account {
-        name: deps.account_name.clone(),
-        uuid: uuid_of(&deps.uid)?,
-        access_token: deps.install.server.jwt().unwrap_or_default().to_owned(),
-        user_type: "msa".into(),
+    let account = match &p.overrides.account {
+        Some(account) => account.clone(),
+        None => Account {
+            name: deps.account_name.clone(),
+            uuid: uuid_of(&deps.uid)?,
+            access_token: deps.install.server.jwt().unwrap_or_default().to_owned(),
+            user_type: "msa".into(),
+        },
     };
     let java = jdk.java().to_string_lossy().into_owned();
     let classpath = runtime.classpath_for(selection);
@@ -449,6 +542,7 @@ async fn run(deps: &RoomDeps, session: &str, p: &Prepared, window: (u32, u32)) -
             java_override: snapshot.java_path.as_deref(),
             max_memory_override: snapshot.max_memory_mb,
             extra_jvm_args: &jvm,
+            extra_game_args: &p.overrides.extra_game_args,
             rdi: Some(mc_launch::RdiRuntime { loader: p.loader, classpath: &classpath, media_natives: natives.as_deref() }),
             gtnh_root: launch.gtnh_root.as_deref(),
         },
