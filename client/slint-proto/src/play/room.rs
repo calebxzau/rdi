@@ -302,7 +302,16 @@ pub async fn start(deps: &RoomDeps, request: RoomStart) -> Result<RoomOutcome> {
     Ok(RoomOutcome::Admitted(Admitted::Started(session)))
 }
 
+/// RMCP is in the RDI core of every supported version except GTNH 1.7.10.
+fn has_game_tools(mc_version: &str) -> bool {
+    mc_version != "1.7.10"
+}
+
 fn spawn_run(deps: &RoomDeps, session: &str, title: String, prepared: Prepared, window: (u32, u32)) {
+    // Marked from the start, so the launcher MCP says "starting" while the game is prepared.
+    if has_game_tools(prepared.mc_version) {
+        deps.play.sessions.expect_game_tools(session);
+    }
     let (deps, id) = (deps.clone(), session.to_owned());
     deps.play.runtime.clone().spawn(async move {
         let sessions = deps.play.sessions.clone();
@@ -661,9 +670,7 @@ async fn run(deps: &RoomDeps, session: &str, p: &Prepared, window: (u32, u32)) -
         return Ok(());
     }
     let room_port = address.rsplit_once(':').and_then(|(_, port)| port.parse().ok());
-    // RMCP is in the RDI core of every supported version except GTNH 1.7.10.
-    let game_tools = p.mc_version != "1.7.10";
-    super::spawn_and_watch(sessions, session, &command, &p.version_dir, &p.version_id, room_port, game_tools)
+    super::spawn_and_watch(sessions, session, &command, &p.version_dir, &p.version_id, room_port, has_game_tools(p.mc_version))
 }
 
 #[cfg(test)]
@@ -685,6 +692,7 @@ mod tests {
         assert_eq!(dm_jvm_args(true, "https://rdi.example:443"), ["-Drdi.dm.server=http://rdi.example:15566"]);
         assert!(dm_jvm_args(false, "https://rdi.example:443").is_empty());
         assert!(supports_forgeguard("某某GTO") && !supports_forgeguard("GTO包"));
+        assert!(has_game_tools("1.21.1") && has_game_tools("1.20.1") && !has_game_tools("1.7.10"));
         assert_eq!(forgeguard_jvm_arg(Path::new("C:/rdi/lib/forgeguard.jar")), "-javaagent:C:/rdi/lib/forgeguard.jar");
     }
 

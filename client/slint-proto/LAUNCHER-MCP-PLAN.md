@@ -293,7 +293,8 @@ short recipe to try it with a real agent.
 
 | # | Question | Default until answered |
 |---|---|---|
-| E1 | Must the upload test run (`modpack-test`, starts the pack once before upload) be ported for M4, or may an agent-driven upload skip it? | Port it last; do not skip silently |
+| E1 | Must the upload test run (`modpack-test`, starts the pack once before upload) be ported for M4, or may an agent-driven upload skip it? | **Answered 2026-11-25: the tests are required**, as in Compose: the client and the server test must pass unless `rdi.ignoreModpackTest` or debug mode is on |
+| E4 | Port the whole upload flow to Rust, or keep pack reading, archive building and tests in a headless Kotlin helper? | **Answered 2026-11-25: port everything to Rust** (owner picked the recommended option) |
 | E2 | Are confirmation dialogs wanted before destructive tools are added later? | Destructive tools stay out (D1) |
 | E3 | Should a stdio bridge exist for agents without HTTP MCP support? | No |
 
@@ -323,3 +324,27 @@ short recipe to try it with a real agent.
   tool results (`isError`), so the agent can correct itself; unknown tools stay protocol errors.
   14 `mcp::` tests pass; clippy has no new warnings. Live check runs together with M3 (one
   release build).
+- 2026-11-25 M2 live (local master, test account 11111, isolated J5a data folder): `list_hosts`
+  (3 hosts), `list_modpacks`, `get_host` (missing, then installed), `play_host` → `need_install`,
+  `install_host_modpack` → task done in seconds, `list_tasks`; the installed packs then appear in
+  the 整合包 tab. `play_host` after the install returned master's own refusal
+  `启动房间失败: 请先为此房间安装kotlinforforge模组才能启动` as a tool error for both local test
+  hosts, so a host game was not started through `play_host` (master rule, not changed here).
+- 2026-11-25 M3 done: `src/mcp/game.rs` (`Forwarder`, no system proxy, 30 s timeout),
+  `game_tools` and `game_call` in `tools.rs`; `game_call` returns the game's result unchanged.
+  Sessions started with the RDI core are marked as waiting for the address when they are
+  admitted (`room::spawn_run`), so `get_status` says `starting` instead of `unsupported` while a
+  game is prepared. 16 `mcp::` tests; launcher 380 tests pass; clippy has no new warnings.
+  Live, games started alone from the 整合包 tab (RDI core, since the hosts are refused by master):
+  1.21.1 NeoForge and 1.20.1 Forge both reached `game_tools: available`; 30 game tools listed on
+  each; `screen_read` and `screenshot` (PNG passed through) on both; on 1.20.1 `screen_click`
+  created a world and `command` `/time query day` ran in it (cheats off, so the game answered
+  未知或不完整的命令, returned as is); `get_game_log` and `stop_game` on both. The live run used
+  the release build from before the `starting` change; that change is covered by tests only.
+- 2026-11-25 environment notes: after a reboot, Windows refused to bind any loopback port from
+  about 55000 to 56000 (netstat showed no owner, not in `excludedportrange`), so the Slint
+  developer MCP could not use 55566; the live run used `SLINT_MCP_PORT=60066`
+  (`evidence/launcher-mcp/live/run-built.ps1`). The room connection's 55667 is in that range too
+  (it falls back to a free port). The launcher MCP's saved port 10503 was not affected.
+- 2026-11-25 test temp folders: tests now remove their temp folders (`src/test_dir.rs`, commit
+  8d5594e2), requested by another session for the owner.

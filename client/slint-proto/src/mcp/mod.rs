@@ -2,6 +2,7 @@
 //! the launcher and, through it, the games it started. No Slint types here; `crate::mcp_ui` holds
 //! the title bar icon and the copy step.
 pub mod bridge;
+pub mod game;
 pub mod protocol;
 pub mod server;
 pub mod tools;

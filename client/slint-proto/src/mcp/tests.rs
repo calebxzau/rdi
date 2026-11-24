@@ -5,10 +5,9 @@ use serde_json::{Value, json};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-fn temp() -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("rdi-mcp-test-{}", uuid::Uuid::now_v7()));
-    std::fs::create_dir_all(&dir).unwrap();
-    dir
+/// Removed when dropped, also after a failed assertion.
+fn temp() -> crate::test_dir::TestDir {
+    crate::test_dir::TestDir::new("rdi-mcp-test")
 }
 
 type Make<T> = Arc<Mutex<Option<Box<dyn Fn() -> T + Send>>>>;
@@ -45,8 +44,10 @@ pub(super) fn context_with_ui() -> (tools::Context, FakeUi) {
         tasks: crate::tasks::Manager::default(),
         bridge,
         launcher_version: "9.9.9".into(),
-        versions: temp().join("versions"),
+        // Never created here; a test that installs something points it at its own folder.
+        versions: std::env::temp_dir().join(format!("rdi-mcp-missing-{}", uuid::Uuid::now_v7())).join("versions"),
         java: || crate::java_runtime::State::Searching,
+        game: game::Forwarder::new(),
     };
     (context, ui)
 }
@@ -61,17 +62,20 @@ struct Live {
     port: u16,
     token: String,
     http: reqwest::Client,
+    /// Last, so the folder goes after the server that saved into it.
+    _dir: crate::test_dir::TestDir,
 }
 
 impl Live {
     fn start() -> Self {
         let runtime = runtime();
         let (context, _) = context_with_ui();
-        let mut controller = Controller::new(temp().join(SETTINGS_FILE), runtime.handle().clone(), context);
+        let dir = temp();
+        let mut controller = Controller::new(dir.join(SETTINGS_FILE), runtime.handle().clone(), context);
         let started = controller.start().unwrap();
         let token = controller.token.clone();
         let http = reqwest::Client::builder().no_proxy().build().unwrap();
-        Live { runtime, controller, port: started.port, token, http }
+        Live { runtime, controller, port: started.port, token, http, _dir: dir }
     }
 
     fn url(&self) -> String {
@@ -498,7 +502,9 @@ fn signed_out_tools_ask_for_sign_in() {
 #[test]
 fn hosts_and_host_detail_follow_the_server() {
     let runtime = runtime();
-    let (context, ui) = context_with_ui();
+    let (mut context, ui) = context_with_ui();
+    let dir = temp();
+    context.versions = dir.join("versions");
     let server = FakeServer::new(host_routes());
     signed_in(&ui, &server);
     let (error, hosts) = call(&context, &runtime, "list_hosts", json!({}));
@@ -639,4 +645,136 @@ fn tasks_can_be_listed_read_and_cancelled() {
     assert_eq!(task["status"], "cancelled");
     let (error, message) = call(&context, &runtime, "cancel_task", json!({"id": id}));
     assert_eq!((error, message), (true, json!("任务已结束，无法取消")));
+}
+
+// ---- M3: game tools ----
+
+/// A stand-in for the game's RMCP: answers `tools/list` and a few `tools/call` names and records
+/// whether requests carried a session header.
+fn fake_game() -> (String, Arc<Mutex<Vec<Value>>>) {
+    use std::io::{Read, Write};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = format!("http://{}/mcp", listener.local_addr().unwrap());
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let log = seen.clone();
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(mut stream) = stream else { continue };
+            let log = log.clone();
+            std::thread::spawn(move || {
+                stream.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+                let mut input = Vec::new();
+                let mut buffer = [0u8; 4096];
+                let body = loop {
+                    if let Some(end) = input.windows(4).position(|w| w == b"\r\n\r\n") {
+                        let head = String::from_utf8_lossy(&input[..end]).to_ascii_lowercase();
+                        let length: usize = head
+                            .lines()
+                            .find_map(|l| l.strip_prefix("content-length:").map(|v| v.trim().parse().unwrap()))
+                            .unwrap_or(0);
+                        if input.len() >= end + 4 + length {
+                            break serde_json::from_slice::<Value>(&input[end + 4..end + 4 + length]).unwrap();
+                        }
+                    }
+                    match stream.read(&mut buffer) {
+                        Ok(0) | Err(_) => return,
+                        Ok(n) => input.extend_from_slice(&buffer[..n]),
+                    }
+                };
+                log.lock().unwrap().push(body.clone());
+                let result = match (body["method"].as_str(), body["params"]["name"].as_str()) {
+                    (Some("tools/list"), _) => json!({"result": {"tools": [{"name": "screen_read", "description": "Read the screen", "inputSchema": {"type": "object"}}]}}),
+                    (Some("tools/call"), Some("screenshot")) => json!({"result": {"content": [{"type": "image", "data": "iVBORw0KGgo=", "mimeType": "image/png"}], "isError": false}}),
+                    (Some("tools/call"), Some("command")) => json!({"result": {"content": [{"type": "text", "text": "Unknown command"}], "isError": true}}),
+                    _ => json!({"error": {"code": -32602, "message": "unknown tool: nope"}}),
+                };
+                let mut answer = json!({"jsonrpc": "2.0", "id": body["id"]});
+                answer.as_object_mut().unwrap().extend(result.as_object().unwrap().clone());
+                let text = answer.to_string();
+                let head = format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n", text.len());
+                let _ = stream.write_all(head.as_bytes());
+                let _ = stream.write_all(text.as_bytes());
+            });
+        }
+    });
+    (url, seen)
+}
+
+fn ready_game(sessions: &crate::play::Sessions, title: &str, url: &str) -> String {
+    let id = sessions.admit_room(title, &format!("pack_{title}"), false).unwrap();
+    sessions.expect_game_tools(&id);
+    sessions.game_line(&id, format!("[main/INFO]: AI MCP URL: {url}"));
+    id
+}
+
+#[test]
+fn game_tools_pick_the_game_with_an_address() {
+    let runtime = runtime();
+    let (context, _) = context_with_ui();
+    let (error, message) = call(&context, &runtime, "game_tools", json!({}));
+    assert_eq!((error, message), (true, json!("没有正在运行的游戏")));
+
+    let local = context.sessions.admit("单机 - A", "local_a", false).unwrap();
+    let (_, message) = call(&context, &runtime, "game_tools", json!({}));
+    assert_eq!(message, "这个游戏不支持AI操作");
+    let (_, message) = call(&context, &runtime, "game_tools", json!({"session": local}));
+    assert_eq!(message, "这个游戏不支持AI操作");
+
+    let starting = context.sessions.admit_room("游玩 甲", "pack_a", false).unwrap();
+    context.sessions.expect_game_tools(&starting);
+    let (_, message) = call(&context, &runtime, "game_tools", json!({}));
+    assert_eq!(message, "游戏还在启动，请稍后再试");
+
+    let (url, seen) = fake_game();
+    let one = ready_game(&context.sessions, "乙", &url);
+    let (error, tools) = call(&context, &runtime, "game_tools", json!({}));
+    assert!(!error, "{tools}");
+    assert_eq!(tools["session"], one.as_str());
+    assert_eq!(tools["tools"][0]["name"], "screen_read");
+    assert_eq!(seen.lock().unwrap()[0]["method"], "tools/list");
+
+    let two = ready_game(&context.sessions, "丙", &url);
+    let (error, message) = call(&context, &runtime, "game_tools", json!({}));
+    assert!(error && message.as_str().unwrap().contains(&one) && message.as_str().unwrap().contains(&two), "{message}");
+    let (error, tools) = call(&context, &runtime, "game_tools", json!({"session": two}));
+    assert!(!error && tools["session"] == two.as_str());
+
+    context.sessions.mark_exited(&two, None);
+    let (_, message) = call(&context, &runtime, "game_tools", json!({"session": two}));
+    assert_eq!(message, "这个游戏已经结束");
+    let (_, tools) = call(&context, &runtime, "game_tools", json!({}));
+    assert_eq!(tools["session"], one.as_str(), "the ended game no longer counts");
+}
+
+#[test]
+fn game_call_returns_the_game_result_unchanged() {
+    let runtime = runtime();
+    let (context, _) = context_with_ui();
+    let (url, seen) = fake_game();
+    ready_game(&context.sessions, "甲", &url);
+
+    let image = runtime.block_on(tools::call(&context, "game_call", &json!({"tool": "screenshot", "arguments": {"scale": 0.5}}))).unwrap();
+    assert_eq!(image, json!({"content": [{"type": "image", "data": "iVBORw0KGgo=", "mimeType": "image/png"}], "isError": false}));
+    let request = seen.lock().unwrap().last().cloned().unwrap();
+    assert_eq!(request["method"], "tools/call");
+    assert_eq!(request["params"], json!({"name": "screenshot", "arguments": {"scale": 0.5}}));
+
+    let failed = runtime.block_on(tools::call(&context, "game_call", &json!({"tool": "command"}))).unwrap();
+    assert_eq!(failed["isError"], true);
+    assert_eq!(failed["content"][0]["text"], "Unknown command");
+    assert_eq!(seen.lock().unwrap().last().unwrap()["params"]["arguments"], json!({}));
+
+    let (error, message) = call(&context, &runtime, "game_call", json!({"tool": "nope"}));
+    assert_eq!((error, message), (true, json!("游戏返回错误：unknown tool: nope")));
+    let (error, message) = call(&context, &runtime, "game_call", json!({"tool": "screenshot", "arguments": [1]}));
+    assert_eq!((error, message), (true, json!("参数arguments必须是对象")));
+    let (error, message) = call(&context, &runtime, "game_call", json!({}));
+    assert_eq!((error, message), (true, json!("缺少参数tool")));
+
+    // A game that went away: the address now points at a closed port.
+    let closed = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
+    let (context, _) = context_with_ui();
+    ready_game(&context.sessions, "丁", &format!("http://127.0.0.1:{closed}/mcp"));
+    let (error, message) = call(&context, &runtime, "game_call", json!({"tool": "screenshot"}));
+    assert!(error && message.as_str().unwrap().starts_with("无法连接游戏"), "{message}");
 }

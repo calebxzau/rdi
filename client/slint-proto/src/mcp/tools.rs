@@ -22,6 +22,7 @@ pub struct Context {
     pub versions: std::path::PathBuf,
     /// The Java 25 search state (`java_runtime::state`); tests pass their own.
     pub java: fn() -> crate::java_runtime::State,
+    pub game: super::game::Forwarder,
 }
 
 struct Tool {
@@ -52,6 +53,18 @@ fn game_log_schema() -> Value {
         "session": {"type": "string", "description": "The game session id from get_status. May be left out when one game runs."},
         "tail": {"type": "integer", "minimum": 1, "maximum": MAX_LOG_TAIL, "description": "How many of the newest lines; default 100."}},
         "additionalProperties": false})
+}
+fn game_tools_schema() -> Value {
+    json!({"type": "object", "properties": {
+        "session": {"type": "string", "description": "The game session id from get_status. May be left out when one game has game tools."}},
+        "additionalProperties": false})
+}
+fn game_call_schema() -> Value {
+    json!({"type": "object", "properties": {
+        "tool": {"type": "string", "description": "The name of an in-game tool from game_tools."},
+        "arguments": {"type": "object", "description": "The in-game tool's arguments, as its input schema in game_tools describes."},
+        "session": {"type": "string", "description": "The game session id from get_status. May be left out when one game has game tools."}},
+        "required": ["tool"], "additionalProperties": false})
 }
 fn stop_game_schema() -> Value {
     json!({"type": "object", "properties": {
@@ -112,6 +125,16 @@ const TOOLS: &[Tool] = &[
         schema: game_log_schema,
     },
     Tool {
+        name: "game_tools",
+        description: "The tools of a running game (游戏): reading and clicking its screens, running commands, screenshots and more. They differ between game versions, so read them before game_call. Available once get_status shows game_tools: available.",
+        schema: game_tools_schema,
+    },
+    Tool {
+        name: "game_call",
+        description: "Run one in-game tool from game_tools in a running game (游戏) and return its result unchanged, images included.",
+        schema: game_call_schema,
+    },
+    Tool {
         name: "stop_game",
         description: "Stop a running game (游戏). Unsaved progress in a single-player world can be lost; ask the player first.",
         schema: stop_game_schema,
@@ -148,6 +171,12 @@ pub async fn call(context: &Context, name: &str, arguments: &Value) -> Result<Va
         "cancel_task" => cancel_task(context, arguments),
         "get_game_log" => get_game_log(context, arguments),
         "stop_game" => stop_game(context, arguments),
+        "game_tools" => game_tools(context, arguments).await,
+        // The game's own result goes back as it is, images and `isError` included.
+        "game_call" => match game_call(context, arguments).await {
+            Ok(result) => return Ok(result),
+            Err(error) => Err(error),
+        },
         _ => unreachable!("listed tool without a handler"),
     };
     Ok(match result {
@@ -442,4 +471,65 @@ fn stop_game(context: &Context, arguments: &Value) -> Result<Value> {
     }
     context.sessions.stop(&view.id, force)?;
     Ok(json!({"result": "stopped", "session": view.id, "force": force}))
+}
+
+const GAME_STARTING: &str = "游戏还在启动，请稍后再试";
+const GAME_UNSUPPORTED: &str = "这个游戏不支持AI操作";
+const GAME_RECOVERED: &str = "这个游戏是启动器重启后找回的，不能AI操作；结束游戏后重新进入即可";
+
+/// The in-game MCP address of the given game, or of the only running game that has one.
+pub fn game_address(sessions: &crate::play::Sessions, given: Option<&str>) -> Result<(crate::play::SessionView, String)> {
+    use crate::play::GameAi;
+    let alive = |v: &crate::play::SessionView| v.preparing || v.running;
+    let view = match given {
+        Some(_) => {
+            let view = pick_session(sessions, given, |_| true)?;
+            if !alive(&view) {
+                bail!("这个游戏已经结束");
+            }
+            view
+        }
+        None => {
+            let views = sessions.views();
+            let ready: Vec<&crate::play::SessionView> = views.iter().filter(|v| alive(v) && matches!(v.ai, GameAi::Ready(_))).collect();
+            match ready.as_slice() {
+                [one] => (*one).clone(),
+                [] if views.iter().any(|v| alive(v) && v.ai == GameAi::Waiting) => bail!(GAME_STARTING),
+                [] if views.iter().any(|v| alive(v) && v.ai == GameAi::Recovered) => bail!(GAME_RECOVERED),
+                [] if views.iter().any(alive) => bail!(GAME_UNSUPPORTED),
+                [] => bail!("没有正在运行的游戏"),
+                many => {
+                    let list: Vec<String> = many.iter().map(|v| format!("{}（{}）", v.id, v.title)).collect();
+                    bail!("有多个游戏，请用session参数指定其中一个：{}", list.join("、"))
+                }
+            }
+        }
+    };
+    match &view.ai {
+        GameAi::Ready(url) => {
+            let url = url.clone();
+            Ok((view, url))
+        }
+        GameAi::Waiting => bail!(GAME_STARTING),
+        GameAi::Recovered => bail!(GAME_RECOVERED),
+        GameAi::Unsupported => bail!(GAME_UNSUPPORTED),
+    }
+}
+
+async fn game_tools(context: &Context, arguments: &Value) -> Result<Value> {
+    let (view, url) = game_address(&context.sessions, optional_string(arguments, "session")?)?;
+    let result = context.game.request(&url, "tools/list", json!({})).await?;
+    Ok(json!({"session": view.id, "title": view.title, "tools": result.get("tools").cloned().unwrap_or_else(|| json!([]))}))
+}
+
+async fn game_call(context: &Context, arguments: &Value) -> Result<Value> {
+    let tool = string_arg(arguments, "tool")?;
+    let inner = match arguments.get("arguments") {
+        None | Some(Value::Null) => json!({}),
+        Some(value @ Value::Object(_)) => value.clone(),
+        Some(_) => bail!("参数arguments必须是对象"),
+    };
+    let (view, url) = game_address(&context.sessions, optional_string(arguments, "session")?)?;
+    tracing::info!(tool, session = %view.id, "AI助手调用游戏工具");
+    context.game.request(&url, "tools/call", json!({"name": tool, "arguments": inner})).await
 }

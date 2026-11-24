@@ -20,6 +20,7 @@ impl McpUi {
             launcher_version: env!("RDI_APP_VERSION").into(),
             versions: crate::local_packs::versions_dir(),
             java: crate::java_runtime::state,
+            game: mcp::game::Forwarder::new(),
         };
         let this = Rc::new(RefCell::new(Self { controller: Controller::new(mcp::settings_path(), runtime, context), requests }));
         let weak = Rc::downgrade(&this);
