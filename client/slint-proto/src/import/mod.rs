@@ -8,17 +8,13 @@ pub mod state;
 mod tests {
     use super::*;
     use serde_json::Value;
-    use std::{
-        path::PathBuf,
-        time::{Duration, Instant},
-    };
+    use std::time::{Duration, Instant};
     fn fixture() -> Value {
         serde_json::from_str(include_str!("../../protocol/fixtures/j4a.json")).unwrap()
     }
-    fn temp() -> PathBuf {
-        let path = std::env::temp_dir().join(format!("j4-{}", uuid::Uuid::now_v7()));
-        std::fs::create_dir_all(&path).unwrap();
-        path
+    /// Removed when dropped, also after a failed assertion.
+    fn temp() -> crate::test_dir::TestDir {
+        crate::test_dir::TestDir::new("j4")
     }
     #[test]
     fn shared_scanner_manifests() {

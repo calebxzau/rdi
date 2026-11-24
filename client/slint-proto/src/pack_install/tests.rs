@@ -25,10 +25,9 @@ pub(super) fn cancel_at(version_id: &str) -> Option<usize> {
         .map(|(_, s)| *s)
 }
 
-fn temp() -> PathBuf {
-    let p = std::env::temp_dir().join(format!("j4c-{}", uuid::Uuid::now_v7()));
-    std::fs::create_dir_all(&p).unwrap();
-    p
+/// Removed when dropped, also after a failed assertion.
+fn temp() -> crate::test_dir::TestDir {
+    crate::test_dir::TestDir::new("j4c")
 }
 fn sha1(bytes: &[u8]) -> String {
     use sha1::Digest as _;
@@ -197,7 +196,8 @@ struct Env {
     deps: Deps,
     _runtime: tokio::runtime::Runtime,
     catalog_calls: Arc<Mutex<Vec<String>>>,
-    data: PathBuf,
+    /// Last field, so the folder goes after the runtime and the deps that use it.
+    data: crate::test_dir::TestDir,
 }
 const MR_JAR: &[u8] = b"modrinth jar";
 const CF_JAR: &[u8] = b"curseforge jar";
@@ -500,17 +500,18 @@ fn raw_tar(entries: &[(&str, u8, u64, &[u8])]) -> Vec<u8> {
     out.extend([0u8; 1024]);
     out
 }
-fn extract_bytes(bytes: Vec<u8>) -> (PathBuf, Result<()>) {
+/// The folder guard comes back too, so `out` lives as long as the caller keeps it.
+fn extract_bytes(bytes: Vec<u8>) -> (crate::test_dir::TestDir, PathBuf, Result<()>) {
     let dir = temp();
     let file = dir.join("pack");
     std::fs::write(&file, bytes).unwrap();
     let out = dir.join("out");
     std::fs::create_dir(&out).unwrap();
     let result = archive::extract(&file, &out, &Cancellation::default(), &|_, _, _| {});
-    (out, result)
+    (dir, out, result)
 }
 fn rejected(bytes: Vec<u8>, message: &str) {
-    let (_, result) = extract_bytes(bytes);
+    let (_dir, _, result) = extract_bytes(bytes);
     let error = format!("{:#}", result.unwrap_err());
     assert!(error.contains(message), "{error} should contain {message}");
 }
@@ -543,7 +544,7 @@ fn archive_rejections_match_kotlin() {
     }
     // The tar reader itself refuses two long names in a row; the raw guard's layer limit is
     // checked on the bounded stream alone.
-    assert!(extract_bytes(z(&long)).1.is_err());
+    assert!(extract_bytes(z(&long)).2.is_err());
     let raw = raw_tar(&long);
     let mut bounded =
         archive::bounded_for_test(&raw[..], archive::MODPACK_LIMITS, Cancellation::default());
@@ -559,7 +560,7 @@ fn archive_rejections_match_kotlin() {
         zip.write_all(b"ok").unwrap();
         zip.finish().unwrap();
     }
-    let (out, result) = extract_bytes(zip_bytes.into_inner());
+    let (_dir, out, result) = extract_bytes(zip_bytes.into_inner());
     result.unwrap();
     assert_eq!(std::fs::read(out.join("config/中文.txt")).unwrap(), b"ok");
 }
@@ -583,7 +584,7 @@ fn archive_limits_count_entries_and_total() {
 #[cfg(unix)]
 #[test]
 fn archive_refuses_symbolic_link_on_target_path() {
-    let (out, _) = extract_bytes(tar_zst(&[("x", b"1")]));
+    let (_dir, out, _) = extract_bytes(tar_zst(&[("x", b"1")]));
     let elsewhere = temp();
     std::os::unix::fs::symlink(&elsewhere, out.join("mods")).unwrap();
     let file = out.parent().unwrap().join("pack");
@@ -595,7 +596,7 @@ fn archive_refuses_symbolic_link_on_target_path() {
 #[cfg(windows)]
 #[test]
 fn archive_refuses_symbolic_link_on_target_path() {
-    let (out, _) = extract_bytes(tar_zst(&[("x", b"1")]));
+    let (_dir, out, _) = extract_bytes(tar_zst(&[("x", b"1")]));
     let elsewhere = temp();
     // Creating a directory link may need developer mode; a junction-free machine skips the check.
     if std::os::windows::fs::symlink_dir(&elsewhere, out.join("mods")).is_err() {
@@ -618,8 +619,9 @@ fn fetch_hit_mismatch_and_single_flight() {
     let body = vec![7u8; 300_000];
     server.routes.file("/pack", body.clone(), Duration::from_millis(300));
     server.routes.file("/bad", b"other".to_vec(), Duration::ZERO);
+    let cache = temp();
     let store = Store {
-        root: temp().join("dlc"),
+        root: cache.join("dlc"),
         downloader: Downloader {
             http: reqwest::Client::builder().no_proxy().build().unwrap(),
         },
@@ -637,8 +639,9 @@ fn fetch_hit_mismatch_and_single_flight() {
     let good = req("/pack", &sha1(&body));
     let c = Cancellation::default();
     // Requests one fetch makes (a probe plus the body), measured on a separate cache.
+    let alone_cache = temp();
     let alone = Store {
-        root: temp().join("dlc"),
+        root: alone_cache.join("dlc"),
         ..store.clone()
     };
     runtime.block_on(alone.fetch(&good, &c, &|_| {})).unwrap();

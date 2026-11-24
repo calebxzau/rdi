@@ -16,10 +16,13 @@ use std::{
     path::PathBuf,
     sync::{Arc, Mutex, atomic::Ordering},
 };
-fn temp() -> PathBuf {
-    let p = std::env::temp_dir().join(format!("j4b-{}", uuid::Uuid::now_v7()));
-    std::fs::create_dir_all(&p).unwrap();
-    p
+/// Removed when dropped, also after a failed assertion.
+fn temp() -> crate::test_dir::TestDir {
+    crate::test_dir::TestDir::new("j4b")
+}
+/// A path that is never created: the catalog only opens its identity index read-only.
+fn missing(name: &str) -> PathBuf {
+    std::env::temp_dir().join(format!("j4b-missing-{}", uuid::Uuid::now_v7())).join(name)
 }
 fn fixture() -> Value {
     serde_json::from_str(include_str!("../protocol/fixtures/j4b.json")).unwrap()
@@ -63,7 +66,7 @@ fn catalog() -> catalog::Catalog {
             calls: Default::default(),
         }),
         catalog::transport::HttpTransport::new(client(), false),
-        temp().join("missing.db"),
+        missing("missing.db"),
     )
 }
 #[test]
@@ -87,7 +90,7 @@ fn shared_hashes_and_cache_layout() {
     )
     .unwrap();
     let store = Store {
-        root,
+        root: root.to_path_buf(),
         downloader: Downloader { http: client() },
     };
     assert_eq!(
@@ -119,7 +122,7 @@ async fn shared_catalog_adapters_exact_hash_and_cache() {
     let c = catalog::Catalog::with_transport(
         tr.clone(),
         catalog::transport::HttpTransport::new(client(), false),
-        temp().join("missing"),
+        missing("missing"),
     );
     let r = catalog::FileRef {
         platform: Platform::CurseForge,
@@ -383,7 +386,8 @@ async fn cache_singleflight_aliases_reuse_and_conflict() {
 #[tokio::test]
 async fn cancel_download_removes_owned_partial() {
     let server = Server::new(vec![4u8; 8 * 1024 * 1024], false);
-    let path = temp().join("file");
+    let dir = temp();
+    let path = dir.join("file");
     let c = Cancellation::default();
     let d = Downloader { http: client() };
     let result = d
@@ -404,7 +408,8 @@ async fn cancel_download_removes_owned_partial() {
 #[ignore = "External APIs require an explicit live smoke run"]
 fn real_catalog_smoke() {
     let runtime = tokio::runtime::Runtime::new().unwrap();
-    let c = catalog::Catalog::new(client(), &temp());
+    let data = temp();
+    let c = catalog::Catalog::new(client(), &data);
     runtime.block_on(async {
         let result = c
             .search(&catalog::SearchRequest {
@@ -517,7 +522,8 @@ async fn ranged_validation_failure_retries_in_single_stream() {
     let bytes = vec![9u8; 5 * 1024 * 1024];
     let server = Server::new(bytes.clone(), true);
     let calls = std::sync::atomic::AtomicUsize::new(0);
-    let path = temp().join("file");
+    let dir = temp();
+    let path = dir.join("file");
     Downloader { http: client() }
         .download(
             &[server.source("/ok")],
@@ -701,7 +707,7 @@ async fn catalog_overlapping_files_are_single_flight() {
     let c = catalog::Catalog::with_transport(
         tr.clone(),
         catalog::transport::HttpTransport::new(client(), false),
-        temp().join("missing"),
+        missing("missing"),
     );
     let refs = [catalog::FileRef {
         platform: Platform::CurseForge,
@@ -761,7 +767,8 @@ async fn same_source_interruption_resumes_only_with_matching_etag() {
             }
         }
     });
-    let path = temp().join("resume");
+    let dir = temp();
+    let path = dir.join("resume");
     let result = tokio::time::timeout(
         std::time::Duration::from_secs(8),
         Downloader { http: client() }.download(
@@ -927,9 +934,7 @@ fn symlink_rule_covers_only_the_root_and_below() {
         std::os::unix::fs::symlink(&outside, root.join("pack/mods")).unwrap();
         let error = no_symlink_under(&root.join("pack"), &root.join("pack/mods/a.jar")).unwrap_err();
         assert!(error.to_string().starts_with("内容路径不能穿过符号链接"), "{error}");
-        let _ = std::fs::remove_dir_all(outside);
     }
-    let _ = std::fs::remove_dir_all(root);
 }
 
 /// The store works when an ancestor of its folders is a symlink, as macOS temp folders are.
@@ -938,7 +943,9 @@ fn symlink_rule_covers_only_the_root_and_below() {
 async fn store_under_a_linked_ancestor_downloads() {
     let server = Server::new(b"abc".to_vec(), false);
     let real = temp();
-    let link = std::env::temp_dir().join(format!("j4b-link-{}", uuid::Uuid::now_v7()));
+    // The link lives in its own test folder, so it goes away with that folder.
+    let links = temp();
+    let link = links.join("link");
     std::os::unix::fs::symlink(&real, &link).unwrap();
     let store = Store { root: link.join("cache"), downloader: Downloader { http: client() } };
     let request = Request {
@@ -951,6 +958,4 @@ async fn store_under_a_linked_ancestor_downloads() {
     store.materialize(&[request], &link.join("pack"), &Cancellation::default(), &|_| {}).await.unwrap();
     assert_eq!(std::fs::read(real.join("pack/mods/a.jar")).unwrap(), b"abc");
     assert!(real.join("cache/a9993e364706816aba3e25717850c26c9cd0d89d.sha1").is_file());
-    let _ = std::fs::remove_file(link);
-    let _ = std::fs::remove_dir_all(real);
 }
