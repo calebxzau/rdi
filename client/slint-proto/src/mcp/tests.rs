@@ -45,6 +45,8 @@ pub(super) fn context_with_ui() -> (tools::Context, FakeUi) {
         tasks: crate::tasks::Manager::default(),
         bridge,
         launcher_version: "9.9.9".into(),
+        versions: temp().join("versions"),
+        java: || crate::java_runtime::State::Searching,
     };
     (context, ui)
 }
@@ -387,4 +389,254 @@ fn game_address_is_exact_first_and_cleared_on_exit() {
     assert_eq!(sessions.lines(&id).len(), 4, "every line still reaches the console");
     sessions.mark_exited(&id, None);
     assert_eq!(ai(&sessions), GameAi::Unsupported);
+}
+
+// ---- M2: host, task and game tools ----
+
+/// A tiny RDI server: fixed JSON envelopes per path, everything else 404.
+struct FakeServer {
+    url: String,
+    hits: Arc<Mutex<Vec<String>>>,
+}
+
+impl FakeServer {
+    fn new(routes: Vec<(String, Value)>) -> Self {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let hits = Arc::new(Mutex::new(Vec::new()));
+        let seen = hits.clone();
+        let routes: std::collections::HashMap<String, Value> = routes.into_iter().collect();
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { continue };
+                let (routes, seen) = (routes.clone(), seen.clone());
+                std::thread::spawn(move || {
+                    stream.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+                    let mut input = Vec::new();
+                    let mut buffer = [0u8; 4096];
+                    while !input.windows(4).any(|w| w == b"\r\n\r\n") {
+                        match stream.read(&mut buffer) {
+                            Ok(0) | Err(_) => return,
+                            Ok(n) => input.extend_from_slice(&buffer[..n]),
+                        }
+                    }
+                    let text = String::from_utf8_lossy(&input).to_string();
+                    let path = text.lines().next().unwrap_or("").split(' ').nth(1).unwrap_or("").split('?').next().unwrap_or("").to_owned();
+                    seen.lock().unwrap().push(path.clone());
+                    let (status, body) = match routes.get(&path) {
+                        Some(data) => (200, json!({"code": 0, "msg": "", "data": data}).to_string()),
+                        None => (404, String::new()),
+                    };
+                    let head = format!("HTTP/1.1 {status} X\r\nContent-Length: {}\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n", body.len());
+                    let _ = stream.write_all(head.as_bytes());
+                    let _ = stream.write_all(body.as_bytes());
+                });
+            }
+        });
+        Self { url, hits }
+    }
+
+    fn client(&self) -> crate::api::Client {
+        let mut server = crate::api::server::ServerApi::with_token(&self.url, "jwt");
+        server.http = reqwest::Client::builder().no_proxy().build().unwrap();
+        crate::api::Client::for_test(server, "66a000000000000000000001", "acc")
+    }
+}
+
+const HOST: &str = "66b000000000000000000001";
+const PACK: &str = "66c000000000000000000002";
+
+fn host_routes() -> Vec<(String, Value)> {
+    vec![
+        (
+            "/host/my".into(),
+            json!([{"_id": HOST, "name": "周末房间", "modpackName": "甲包", "packVer": "1.0", "status": "PLAYABLE",
+                "onlinePlayerIds": ["a", "b"]}]),
+        ),
+        (
+            format!("/host/{HOST}/detail"),
+            json!({"_id": HOST, "name": "周末房间", "modpack": {"id": PACK, "name": "甲包", "mcVer": "V211", "modloader": "neoforge"},
+                "packVer": "1.0", "port": 20001, "extraMods": [], "disabledMods": []}),
+        ),
+        (format!("/modpack/{PACK}/version/1.0"), json!({"name": "1.0", "totalSize": 1048576})),
+    ]
+}
+
+fn signed_in(ui: &FakeUi, server: &FakeServer) {
+    *ui.account.lock().unwrap() = Some((server.client(), "玩家甲".into()));
+    let client = server.client();
+    *ui.room.lock().unwrap() = Some(Box::new(move || bridge::RoomKit {
+        api: client.clone(),
+        tasks: crate::tasks::Manager::default(),
+        deps: Box::new(|| -> crate::play::room::RoomDeps { unreachable!("an installed pack is not part of these tests") }),
+        window: (1280, 720),
+    }));
+}
+
+#[test]
+fn signed_out_tools_ask_for_sign_in() {
+    let runtime = runtime();
+    let (context, _) = context_with_ui();
+    for (tool, arguments) in [
+        ("list_hosts", json!({})),
+        ("get_host", json!({"host_id": HOST})),
+        ("play_host", json!({"host_id": HOST})),
+        ("install_host_modpack", json!({"host_id": HOST})),
+        ("list_modpacks", json!({})),
+    ] {
+        assert_eq!(call(&context, &runtime, tool, arguments), (true, json!(tools::NOT_SIGNED_IN)), "{tool}");
+    }
+    let (error, message) = call(&context, &runtime, "get_host", json!({"host_id": "../../player/x"}));
+    assert!(error && message.as_str().unwrap().starts_with("房间编号无效"), "{message}");
+    let (error, message) = call(&context, &runtime, "play_host", json!({}));
+    assert_eq!((error, message), (true, json!("缺少参数host_id")));
+    let (error, message) = call(&context, &runtime, "play_host", json!({"host_id": HOST, "allow_duplicate": "yes"}));
+    assert!(error && message.as_str().unwrap().contains("allow_duplicate"), "{message}");
+}
+
+#[test]
+fn hosts_and_host_detail_follow_the_server() {
+    let runtime = runtime();
+    let (context, ui) = context_with_ui();
+    let server = FakeServer::new(host_routes());
+    signed_in(&ui, &server);
+    let (error, hosts) = call(&context, &runtime, "list_hosts", json!({}));
+    assert!(!error, "{hosts}");
+    assert_eq!(hosts["hosts"][0], json!({"host_id": HOST, "name": "周末房间", "modpack": "甲包", "modpack_version": "1.0",
+        "status": "playable", "can_play": true, "online_players": 2}));
+
+    let (_, host) = call(&context, &runtime, "get_host", json!({"host_id": HOST}));
+    assert_eq!(host["modpack"], json!({"id": PACK, "name": "甲包", "version": "1.0"}));
+    assert_eq!(host["modpack_on_this_computer"]["state"], "missing");
+    assert_eq!(host["supported"], true);
+    std::fs::create_dir_all(context.versions.join(format!("{PACK}_1.0")).join("mods")).unwrap();
+    let (_, host) = call(&context, &runtime, "get_host", json!({"host_id": HOST}));
+    assert_eq!(host["modpack_on_this_computer"]["state"], "installed");
+
+    let (error, message) = call(&context, &runtime, "get_host", json!({"host_id": "66b0000000000000000000ff"}));
+    assert!(error && message.as_str().unwrap().starts_with("获取房间信息失败"), "{message}");
+}
+
+#[test]
+fn play_host_reports_every_outcome() {
+    let runtime = runtime();
+    let (mut context, ui) = context_with_ui();
+    let server = FakeServer::new(host_routes());
+    signed_in(&ui, &server);
+
+    context.java = || crate::java_runtime::State::Missing;
+    let (_, java) = call(&context, &runtime, "play_host", json!({"host_id": HOST}));
+    assert_eq!(java["result"], "java_missing");
+    assert!(server.hits.lock().unwrap().is_empty(), "nothing is asked of the server without Java");
+
+    context.java = || crate::java_runtime::State::Searching;
+    let (error, need) = call(&context, &runtime, "play_host", json!({"host_id": HOST}));
+    assert!(!error, "{need}");
+    assert_eq!((need["result"].as_str(), need["modpack"].as_str(), need["modpack_version"].as_str()), (Some("need_install"), Some("甲包"), Some("1.0")));
+    assert_eq!(need["size"], crate::packs::human_file_size(1048576));
+
+    // The room kit carries its own task manager, as the UI's pack screens share theirs.
+    let tasks = crate::tasks::Manager::default();
+    let running = tasks.submit(runtime.handle(), "完整下载整合包 甲包".into(), crate::pack_install::task_key(PACK, "1.0"), |c| {
+        while !c.cancel.cancelled() {
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        c.cancel.check()
+    });
+    let client = server.client();
+    let kit_tasks = tasks.clone();
+    *ui.room.lock().unwrap() = Some(Box::new(move || bridge::RoomKit {
+        api: client.clone(),
+        tasks: kit_tasks.clone(),
+        deps: Box::new(|| -> crate::play::room::RoomDeps { unreachable!() }),
+        window: (1280, 720),
+    }));
+    let (_, installing) = call(&context, &runtime, "play_host", json!({"host_id": HOST}));
+    assert_eq!(installing, json!({"result": "installing", "task_id": running, "message": "整合包正在下载，请等待下载完成后再启动"}));
+    tasks.shutdown(Duration::from_secs(2));
+
+    use crate::play::room::{Entered, PackNeeded};
+    assert_eq!(tools::entered_result(Entered::Started("s1".into()))["session"], "s1");
+    assert_eq!(tools::entered_result(Entered::Duplicate)["result"], "duplicate");
+    let pack = PackNeeded { modpack_id: PACK.into(), version: "2".into(), name: "乙".into(), size: None };
+    assert_eq!(tools::entered_result(Entered::NeedInstall(pack))["size"], Value::Null);
+}
+
+#[test]
+fn game_log_and_stop_pick_the_right_game() {
+    let runtime = runtime();
+    let (context, _) = context_with_ui();
+    let (error, message) = call(&context, &runtime, "get_game_log", json!({}));
+    assert_eq!((error, message), (true, json!("还没有启动过游戏")));
+    let first = context.sessions.admit("单机 - A", "local_a", false).unwrap();
+    for i in 0..600 {
+        context.sessions.append(&first, format!("line {i}"));
+    }
+    let (_, log) = call(&context, &runtime, "get_game_log", json!({}));
+    assert_eq!(log["session"], first.as_str());
+    assert_eq!(log["lines"].as_array().unwrap().len(), tools::DEFAULT_LOG_TAIL as usize);
+    assert_eq!(log["lines"].as_array().unwrap().last().unwrap(), "line 599");
+    let (_, log) = call(&context, &runtime, "get_game_log", json!({"tail": 10000}));
+    assert_eq!(log["lines"].as_array().unwrap().len(), tools::MAX_LOG_TAIL as usize);
+    let (_, log) = call(&context, &runtime, "get_game_log", json!({"tail": 3}));
+    assert_eq!(log["lines"], json!(["line 597", "line 598", "line 599"]));
+    for bad in [json!(0), json!(-1), json!("5"), json!(2.5)] {
+        let (error, _) = call(&context, &runtime, "get_game_log", json!({"tail": bad}));
+        assert!(error, "tail {bad}");
+    }
+
+    let second = context.sessions.admit("单机 - B", "local_b", false).unwrap();
+    let (error, message) = call(&context, &runtime, "get_game_log", json!({}));
+    assert!(error && message.as_str().unwrap().contains(&second), "lists the games: {message}");
+    let (_, log) = call(&context, &runtime, "get_game_log", json!({"session": second}));
+    assert_eq!(log["state"], "starting");
+    let (error, message) = call(&context, &runtime, "get_game_log", json!({"session": "nope"}));
+    assert_eq!((error, message), (true, json!("找不到这个游戏：nope")));
+
+    let (error, _) = call(&context, &runtime, "stop_game", json!({"session": "nope"}));
+    assert!(error);
+    let (error, stopped) = call(&context, &runtime, "stop_game", json!({"session": second, "force": true}));
+    assert!(!error, "{stopped}");
+    assert_eq!(stopped["result"], "stopped");
+    let (error, message) = call(&context, &runtime, "stop_game", json!({"session": second}));
+    assert_eq!((error, message), (true, json!("这个游戏已经结束")));
+    let (_, log) = call(&context, &runtime, "get_game_log", json!({}));
+    assert_eq!(log["session"], first.as_str(), "the only game still running");
+}
+
+#[test]
+fn tasks_can_be_listed_read_and_cancelled() {
+    let runtime = runtime();
+    let (context, _) = context_with_ui();
+    let (error, message) = call(&context, &runtime, "get_task", json!({"id": "nope"}));
+    assert_eq!((error, message), (true, json!("找不到这个任务：nope")));
+    let (error, _) = call(&context, &runtime, "cancel_task", json!({"id": "nope"}));
+    assert!(error);
+    let id = context.tasks.submit_steps(runtime.handle(), "完整下载整合包 甲".into(), "k".into(), &["下载", "解压"], |c| {
+        c.step(0);
+        c.progress("下载中", Some(0.5));
+        while !c.cancel.cancelled() {
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        c.cancel.check()
+    });
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while context.tasks.snapshot(&id).unwrap()["message"] != "下载中" && std::time::Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    let (_, task) = call(&context, &runtime, "get_task", json!({"id": id}));
+    assert_eq!(task["status"], "running");
+    assert_eq!(task["steps"], json!([{"title": "下载", "status": "running", "detail": "50%"}, {"title": "解压", "status": "waiting", "detail": ""}]));
+    let (_, list) = call(&context, &runtime, "list_tasks", json!({}));
+    assert_eq!(list["tasks"][0]["id"], id.as_str());
+    let (_, cancelled) = call(&context, &runtime, "cancel_task", json!({"id": id}));
+    assert_eq!(cancelled["result"], "cancelling");
+    while context.tasks.running() && std::time::Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    let (_, task) = call(&context, &runtime, "get_task", json!({"id": id}));
+    assert_eq!(task["status"], "cancelled");
+    let (error, message) = call(&context, &runtime, "cancel_task", json!({"id": id}));
+    assert_eq!((error, message), (true, json!("任务已结束，无法取消")));
 }

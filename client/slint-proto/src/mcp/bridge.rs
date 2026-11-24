@@ -8,7 +8,6 @@ use std::time::Duration;
 use tokio::sync::oneshot;
 
 /// The signed-in account.
-#[allow(dead_code)] // `api`: M2 tools
 pub struct Account {
     pub api: Client,
     /// The name the title bar shows.
@@ -16,7 +15,6 @@ pub struct Account {
 }
 
 /// What a host start needs from the UI thread.
-#[allow(dead_code)] // M2 tools
 pub struct RoomKit {
     pub api: Client,
     pub tasks: crate::tasks::Manager,
@@ -26,13 +24,11 @@ pub struct RoomKit {
 }
 
 /// What a pack install needs from the UI thread.
-#[allow(dead_code)] // M2 tools
 pub struct InstallKit {
     pub api: Client,
     pub deps: Box<dyn FnOnce() -> crate::pack_install::Deps + Send>,
 }
 
-#[allow(dead_code)] // `Room`, `Install`: M2 tools
 pub enum Request {
     Account(oneshot::Sender<Option<Account>>),
     Room(oneshot::Sender<Option<RoomKit>>),
@@ -61,13 +57,11 @@ impl Bridge {
         self.ask(Request::Account).await
     }
 
-    #[allow(dead_code)] // M2 tools
-    pub async fn room(&self) -> Result<Option<RoomKit>> {
+        pub async fn room(&self) -> Result<Option<RoomKit>> {
         self.ask(Request::Room).await
     }
 
-    #[allow(dead_code)] // M2 tools
-    pub async fn install(&self) -> Result<Option<InstallKit>> {
+        pub async fn install(&self) -> Result<Option<InstallKit>> {
         self.ask(Request::Install).await
     }
 }

@@ -315,3 +315,11 @@ short recipe to try it with a real agent.
   403; requests are served while the window is minimized; 关闭AI助手 refuses connections; turning
   it on again reuses the port and token; the token is not in the log. Not done: adding it to a
   real agent with the copied prompt (left for GM4).
+- 2026-11-25 M2 code done: `list_hosts`, `get_host`, `play_host` (through `play::room::enter`),
+  `install_host_modpack` (`pack_check`, then `pack_install::start` without extras, as Compose's
+  default), `list_modpacks`, `list_tasks`, `get_task`, `cancel_task`, `get_game_log` (default 100,
+  at most 500 lines; without `session` the only running game, else the newest one when none runs),
+  `stop_game`. Host ids must be 24 hex digits before they reach a server path. Argument errors are
+  tool results (`isError`), so the agent can correct itself; unknown tools stay protocol errors.
+  14 `mcp::` tests pass; clippy has no new warnings. Live check runs together with M3 (one
+  release build).

@@ -13,7 +13,14 @@ pub struct McpUi {
 impl McpUi {
     pub fn wire(ui: &AppWindow, runtime: tokio::runtime::Handle, sessions: crate::play::Sessions, tasks: crate::tasks::Manager) -> Rc<RefCell<Self>> {
         let (bridge, requests) = bridge::Bridge::new();
-        let context = mcp::tools::Context { sessions, tasks, bridge, launcher_version: env!("RDI_APP_VERSION").into() };
+        let context = mcp::tools::Context {
+            sessions,
+            tasks,
+            bridge,
+            launcher_version: env!("RDI_APP_VERSION").into(),
+            versions: crate::local_packs::versions_dir(),
+            java: crate::java_runtime::state,
+        };
         let this = Rc::new(RefCell::new(Self { controller: Controller::new(mcp::settings_path(), runtime, context), requests }));
         let weak = Rc::downgrade(&this);
         let ui_weak = ui.as_weak();
