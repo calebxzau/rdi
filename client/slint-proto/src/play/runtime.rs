@@ -35,6 +35,22 @@ pub struct GameRuntime {
 }
 
 /// `RDI_GAME_RUNTIME_DIR`, else the development build output beside the service.
+/// Which runtimes a room game gets: `RdiRuntimeSelection` (GTNH has Kotlin through Forgelin),
+/// `needsForgeRuntime` (no Kotlin for Fabric) and `resolveMediaRuntime` (1.20.1 and 1.21.1 only).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Selection {
+    pub kotlin: bool,
+    pub zstd: bool,
+    pub media: bool,
+}
+
+impl Selection {
+    pub fn for_room(mc_version: &str, loader: &str) -> Self {
+        let modern = mc_version == "1.20.1" || mc_version == "1.21.1";
+        Self { kotlin: modern && !loader.eq_ignore_ascii_case("fabric"), zstd: modern || mc_version == "1.7.10", media: modern }
+    }
+}
+
 pub fn default_dir() -> PathBuf {
     std::env::var_os("RDI_GAME_RUNTIME_DIR").map(PathBuf::from).unwrap_or_else(|| {
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../ui/ui-service/build/game-runtime")
@@ -72,9 +88,10 @@ impl GameRuntime {
         })
     }
 
-    /// Kotlin, zstd-jni and mediaproc in `buildLaunchClasspath` order.
-    pub fn classpath(&self) -> Vec<PathBuf> {
-        self.kotlin.iter().chain(&self.zstd).chain(&self.media).cloned().collect()
+    /// The selected runtimes in `buildLaunchClasspath` order.
+    pub fn classpath_for(&self, selection: Selection) -> Vec<PathBuf> {
+        let pick = |on: bool, jars: &[PathBuf]| if on { jars.to_vec() } else { vec![] };
+        [pick(selection.kotlin, &self.kotlin), pick(selection.zstd, &self.zstd), pick(selection.media, &self.media)].concat()
     }
 
     /// `MediaProcNativeRuntime.prepare` into `<tools>/mediaproc-natives/<sha256 of the native jar>`.
@@ -159,6 +176,20 @@ fn extract(native_jar: &Path, bundle: &Path, platform: &str) -> Result<()> {
 }
 
 #[cfg(test)]
+mod selection_tests {
+    use super::Selection;
+
+    #[test]
+    fn runtimes_follow_kotlin_per_version_and_loader() {
+        let all = Selection { kotlin: true, zstd: true, media: true };
+        assert_eq!(Selection::for_room("1.20.1", "forge"), all);
+        assert_eq!(Selection::for_room("1.21.1", "neoforge"), all);
+        assert_eq!(Selection::for_room("1.20.1", "Fabric"), Selection { kotlin: false, ..all });
+        assert_eq!(Selection::for_room("1.7.10", "forge"), Selection { kotlin: false, zstd: true, media: false });
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use std::io::Write;
@@ -196,7 +227,7 @@ mod tests {
     fn manifest_gives_the_class_path_in_order() {
         let dir = folder(&NAMES, true);
         let runtime = GameRuntime::load(dir.path()).unwrap();
-        let names: Vec<String> = runtime.classpath().iter().map(|p| p.file_name().unwrap().to_string_lossy().into_owned()).collect();
+        let names: Vec<String> = runtime.classpath_for(Selection { kotlin: true, zstd: true, media: true }).iter().map(|p| p.file_name().unwrap().to_string_lossy().into_owned()).collect();
         assert_eq!(names, NAMES);
         assert_eq!(runtime.forgeguard.unwrap(), dir.path().join("forgeguard.jar"));
     }

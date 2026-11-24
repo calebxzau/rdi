@@ -1,7 +1,7 @@
 //! J5a: game sessions in Rust (`McPlayStore`, `McGameSession`, `RunningGameGuard`) and the local
 //! pack start of `McPlayController.startSession` for `withRdiCore = false` with an offline
-//! identity. Forge 1.20.1 and NeoForge 1.21.1 rooms start here too (`room`, J5b). GTNH, Fabric and
-//! Microsoft online play still start through the service; their sessions are mirrored in from
+//! identity. Rooms start here too (`room`, J5b; GTNH and Fabric since J5c). Microsoft online play
+//! still starts through the service until GJ5c2; its sessions are mirrored in from
 //! `game.state` by the app so one list covers both. Rust games survive a launcher crash
 //! (`recovery`) and are never handed to the service's `game.restore`.
 //! No Slint types here, so the planned launcher MCP can call these functions.
@@ -501,7 +501,7 @@ pub enum Admitted {
 /// the background. Errors before admission are returned; later ones go to the session's console.
 pub fn start_local(deps: &Deps, request: LocalStart) -> Result<Admitted> {
     let account = offline_account(&request.nickname)?;
-    crate::mc_install::meta::loader(&request.mc_version, &request.loader)?;
+    crate::mc_install::meta::runtime(&request.mc_version, &request.loader)?;
     if let Err(error) = remember_offline_name(&request.version_dir, &account.name) {
         tracing::warn!(error = %format!("{error:#}"), version = %request.version_id, "保存整合包的游玩方式失败");
     }
@@ -557,7 +557,13 @@ async fn run(deps: &Deps, session: &str, request: &LocalStart, account: &Account
     install.java = jdk.java();
     sessions.append(session, "[RDI] 检查游戏安装...");
     let log = |line: String| sessions.append(session, format!("[RDI] {line}"));
-    let (manifest, loader) = crate::mc_install::prepare_for_launch(&install, &request.mc_version, &request.loader, &cancel, &log).await?;
+    let target = crate::mc_install::Target {
+        mc_version: &request.mc_version,
+        loader: &request.loader,
+        version_id: &request.version_id,
+        version_dir: &request.version_dir,
+    };
+    let launch = crate::mc_install::prepare_for_launch(&install, &target, &cancel, &log).await?;
     sessions.append(session, "[RDI] 游戏安装已就绪");
     if stopped() {
         return Ok(());
@@ -572,8 +578,7 @@ async fn run(deps: &Deps, session: &str, request: &LocalStart, account: &Account
         jvm.push(jdwp.clone());
     }
     let dirs = install.directories();
-    let (m, l, libraries, host) = (manifest.clone(), loader.clone(), dirs.libraries.clone(), install.host.clone());
-    tokio::task::spawn_blocking(move || mc_launch::validate_libraries(&m, &l, &libraries, &host)).await??;
+    check_launch(&launch, &request.version_dir, &dirs, &install.host).await?;
     let java = jdk.java().to_string_lossy().into_owned();
     let free = || free_memory_mb();
     let command = mc_launch::command(
@@ -581,14 +586,15 @@ async fn run(deps: &Deps, session: &str, request: &LocalStart, account: &Account
             mc_version: &request.mc_version,
             version_id: &request.version_id,
             version_dir: &request.version_dir,
-            manifest: &manifest,
-            loader: &loader,
+            manifest: &launch.manifest,
+            loader: &launch.loader,
             account,
             window: request.window,
             java_override: snapshot.java_path.as_deref(),
             max_memory_override: snapshot.max_memory_mb,
             extra_jvm_args: &jvm,
             rdi: None,
+            gtnh_root: launch.gtnh_root.as_deref(),
         },
         &mc_launch::Environment {
             directories: &dirs,
@@ -606,6 +612,19 @@ async fn run(deps: &Deps, session: &str, request: &LocalStart, account: &Account
         return Ok(());
     }
     spawn_and_watch(sessions, session, &command, &request.version_dir, &request.version_id, None)
+}
+
+/// The start of `launchInternal`: GTNH's lwjgl3ify mod into `mods`, then every library checked.
+async fn check_launch(launch: &crate::mc_install::Launch, version_dir: &Path, dirs: &mc_launch::Directories, host: &mc_launch::manifest::Host) -> Result<()> {
+    let (m, l, libraries, h) = (launch.manifest.clone(), launch.loader.clone(), dirs.libraries.clone(), host.clone());
+    let (root, dir) = (launch.gtnh_root.clone(), version_dir.to_owned());
+    tokio::task::spawn_blocking(move || {
+        if let Some(root) = &root {
+            mc_launch::gtnh::ensure_runtime_mods(&dir, root, &h)?;
+        }
+        mc_launch::validate_libraries(&m, &l, &libraries, &h)
+    })
+    .await?
 }
 
 /// Starts the command, attaches the process to the session and adds the exit line when it ends

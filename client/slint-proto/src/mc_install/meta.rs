@@ -31,7 +31,7 @@ pub const LOADERS: [LoaderVersion; 2] = [
     },
 ];
 
-/// Only Forge 1.20.1 and NeoForge 1.21.1 start from Rust in J5a; the rest stays with the service.
+/// The loaders installed through their own installer; see [`runtime`] for all supported ones.
 pub fn loader(mc_version: &str, loader: &str) -> Result<LoaderVersion> {
     LOADERS
         .iter()
@@ -40,10 +40,42 @@ pub fn loader(mc_version: &str, loader: &str) -> Result<LoaderVersion> {
         .with_context(|| format!("暂不支持在这里启动{mc_version} {loader}整合包"))
 }
 
+/// How a pack's loader gets onto the disk and into the launch (J5c).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Runtime {
+    /// Forge 1.20.1 and NeoForge 1.21.1 through their installers.
+    Installer(LoaderVersion),
+    /// Fabric 1.20.1 through the `meta.fabricmc.net` profile (`mc_install::fabric`).
+    Fabric,
+    /// GTNH on 1.7.10: the pack's Prism patches replace the Forge install (`mc_launch::gtnh`).
+    Gtnh,
+}
+
+impl Runtime {
+    /// `ModLoader.name` as the room and pack code spell it.
+    pub fn loader_name(&self) -> &'static str {
+        match self {
+            Runtime::Installer(v) => v.loader,
+            Runtime::Fabric => "Fabric",
+            Runtime::Gtnh => "forge",
+        }
+    }
+}
+
+/// Every Minecraft version and loader the Rust launcher starts.
+pub fn runtime(mc_version: &str, loader_name: &str) -> Result<Runtime> {
+    match (mc_version, loader_name.to_lowercase().as_str()) {
+        ("1.7.10", "forge") => Ok(Runtime::Gtnh),
+        ("1.20.1", "fabric") => Ok(Runtime::Fabric),
+        _ => loader(mc_version, loader_name).map(Runtime::Installer),
+    }
+}
+
 fn vanilla_text(mc_version: &str) -> Result<&'static str> {
     Ok(match mc_version {
         "1.20.1" => include_str!("../../../mclaunch/src/main/resources/mcmeta/1.20.1.json"),
         "1.21.1" => include_str!("../../../mclaunch/src/main/resources/mcmeta/1.21.1.json"),
+        "1.7.10" => include_str!("../../../mclaunch/src/main/resources/mcmeta/1.7.10.json"),
         other => bail!("缺少Minecraft{other}版本信息"),
     })
 }
@@ -58,6 +90,7 @@ pub fn asset_index(id: &str) -> Result<&'static str> {
     Ok(match id {
         "5" => include_str!("../../../mclaunch/src/main/resources/mcmeta/assets-index/5.json"),
         "17" => include_str!("../../../mclaunch/src/main/resources/mcmeta/assets-index/17.json"),
+        "1.7.10" => include_str!("../../../mclaunch/src/main/resources/mcmeta/assets-index/1.7.10.json"),
         other => bail!("缺少资源索引{other}"),
     })
 }
@@ -84,15 +117,23 @@ mod tests {
         }
         assert!(loader("1.7.10", "forge").is_err());
         assert!(loader("1.20.1", "Fabric").is_err());
+        assert_eq!(runtime("1.7.10", "forge").unwrap(), Runtime::Gtnh);
+        assert_eq!(runtime("1.20.1", "Fabric").unwrap(), Runtime::Fabric);
+        assert!(runtime("1.21.1", "Fabric").is_err());
+        let server = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../common/model/src/main/kotlin/calebxzhou/rdi/common/model/ServerLoaderRuntime.kt"),
+        )
+        .unwrap();
+        assert!(server.contains(&format!("FABRIC_1_20_1_LOADER_VERSION = \"{}\"", super::super::fabric::LOADER_VERSION)));
     }
 
     #[test]
     fn bundled_metadata_parses() {
-        for (mc, index) in [("1.20.1", "5"), ("1.21.1", "17")] {
+        for (mc, index) in [("1.20.1", "5"), ("1.21.1", "17"), ("1.7.10", "1.7.10")] {
             let m = vanilla(mc).unwrap();
             assert_eq!(m.id, mc);
             assert_eq!(m.asset_index.as_ref().unwrap().id, index);
-            assert!(m.downloads.as_ref().unwrap().client_mappings.is_some());
+            assert!(m.downloads.as_ref().unwrap().client.is_some());
             assert!(serde_json::from_str::<serde_json::Value>(asset_index(index).unwrap()).unwrap()["objects"].is_object());
         }
     }

@@ -19,6 +19,11 @@ pub struct Config {
     pub log: String,
     pub server: String,
 }
+/// The RDI server address: `RDI_PROTO_SERVER` for development, else the production one.
+pub fn primary_server() -> String {
+    std::env::var("RDI_PROTO_SERVER").unwrap_or_else(|_| "https://rdi.calebxzhou.cn:65331".into())
+}
+
 impl Config {
     pub fn read() -> Result<Self> {
         let mut c = Self {
@@ -35,8 +40,7 @@ impl Config {
             scene: Default::default(),
             scale: None,
             log: "info".into(),
-            server: std::env::var("RDI_PROTO_SERVER")
-                .unwrap_or_else(|_| "https://rdi.calebxzhou.cn:65331".into()),
+            server: primary_server(),
         };
         let mut args = std::env::args().skip(1);
         while let Some(a) = args.next() {

@@ -127,9 +127,66 @@ async fn cancelled_prepare_stops_before_any_work() {
     let d = deps(true, &root);
     let cancel = Cancellation::default();
     cancel.cancel();
-    let error = prepare_for_launch(&d, "1.20.1", "forge", &cancel, &|_| {}).await.unwrap_err();
+    let dir = root.join("versions/pack");
+    let target = |mc_version, loader| Target { mc_version, loader, version_id: "pack", version_dir: &dir };
+    let error = prepare_for_launch(&d, &target("1.20.1", "forge"), &cancel, &|_| {}).await.unwrap_err();
     assert!(error.to_string().contains("已取消"));
     assert!(!root.join("launcher_profiles.json").exists());
-    assert!(prepare_for_launch(&d, "1.7.10", "forge", &Cancellation::default(), &|_| {}).await.is_err());
+    let error = prepare_for_launch(&d, &target("1.7.10", "forge"), &Cancellation::default(), &|_| {}).await.unwrap_err();
+    assert!(error.to_string().starts_with("整合包缺少GTNH扩展包"), "{error}");
+    assert!(prepare_for_launch(&d, &target("1.21.1", "Fabric"), &Cancellation::default(), &|_| {}).await.is_err());
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+/// A Compose-installed Fabric profile whose libraries are present: `fabric::ensure` reuses it and
+/// sends no request. Library files are stand-ins whose SHA-1 is written into the profile.
+#[tokio::test]
+async fn installed_fabric_profile_is_reused_and_a_broken_library_is_noticed() {
+    let root = temp();
+    let d = deps(false, &root);
+    let text = std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("protocol/fixtures/j5c/fabric-loader-0.19.5-1.20.1.json")).unwrap();
+    let mut raw: serde_json::Value = serde_json::from_str(&text).unwrap();
+    for library in raw["libraries"].as_array_mut().unwrap() {
+        let name = library["name"].as_str().unwrap().to_owned();
+        let path = crate::mc_launch::manifest::descriptor_path(&name).unwrap();
+        let file = d.libraries().join(&path);
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(&file, name.as_bytes()).unwrap();
+        let sha1 = sha1_file(&file).unwrap();
+        library["sha1"] = sha1.clone().into();
+        library["size"] = name.len().into();
+        library["downloads"]["artifact"]["sha1"] = sha1.into();
+        library["downloads"]["artifact"]["size"] = name.len().into();
+    }
+    let profile = fabric::profile_file(&d.versions());
+    std::fs::create_dir_all(profile.parent().unwrap()).unwrap();
+    std::fs::write(&profile, serde_json::to_vec(&raw).unwrap()).unwrap();
+
+    let lines = std::sync::Mutex::new(vec![]);
+    let manifest = fabric::ensure(&d, &Cancellation::default(), &|l| lines.lock().unwrap().push(l)).await.unwrap();
+    assert_eq!(manifest.id, fabric::PROFILE_ID);
+    assert!(lines.lock().unwrap().is_empty(), "{:?}", lines.lock().unwrap());
+    assert!(fabric::libraries_ready(&manifest, &d.libraries(), &d.host));
+
+    let loader = d.libraries().join("net/fabricmc/fabric-loader/0.19.5/fabric-loader-0.19.5.jar");
+    std::fs::write(&loader, b"changed").unwrap();
+    assert!(!fabric::libraries_ready(&manifest, &d.libraries(), &d.host));
+    std::fs::remove_file(&loader).unwrap();
+    assert!(!fabric::libraries_ready(&manifest, &d.libraries(), &d.host));
+
+    // A damaged profile is absent, not an error.
+    std::fs::write(&profile, b"{not json").unwrap();
+    assert!(fabric::read_profile(&d.versions()).is_none());
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
+async fn cancelled_fabric_install_does_nothing() {
+    let root = temp();
+    let d = deps(false, &root);
+    let cancel = Cancellation::default();
+    cancel.cancel();
+    assert!(fabric::ensure(&d, &cancel, &|_| {}).await.unwrap_err().to_string().contains("已取消"));
+    assert!(!fabric::profile_file(&d.versions()).exists());
     std::fs::remove_dir_all(root).unwrap();
 }

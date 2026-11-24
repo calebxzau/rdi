@@ -1,6 +1,6 @@
 //! J5b: starting a room game in Rust, the Rust form of Kotlin `Host.DetailVo.startPlay` followed by
-//! `McPlayController.startSession` with `withRdiCore = true`, for Forge 1.20.1 and NeoForge 1.21.1.
-//! Other rooms (GTNH, Fabric) still start through the service until J5c.
+//! `McPlayController.startSession` with `withRdiCore = true`, for Forge 1.20.1, NeoForge 1.21.1
+//! (J5b), Fabric 1.20.1 and GTNH (J5c).
 //! Console lines keep the Kotlin wording. No Slint types, so the planned launcher MCP can call it.
 use super::{Admitted, Deps, JavaMissing, is_window_jvm_arg, mods_sync, root_message};
 use crate::download::Progress;
@@ -62,11 +62,8 @@ struct Version {
 
 /// The Minecraft version and loader Rust starts rooms for; `None` leaves the room to the service.
 pub fn supported(brief: &Brief) -> Option<(&'static str, &'static str)> {
-    match (crate::local_packs::mc_version_name(&brief.mc_ver)?, brief.modloader.to_lowercase().as_str()) {
-        ("1.20.1", "forge") => Some(("1.20.1", "forge")),
-        ("1.21.1", "neoforge") => Some(("1.21.1", "neoforge")),
-        _ => None,
-    }
+    let mc = crate::local_packs::mc_version_name(&brief.mc_ver)?;
+    crate::mc_install::meta::runtime(mc, &brief.modloader).ok().map(|r| (mc, r.loader_name()))
 }
 
 /// Everything a room start needs besides the request.
@@ -94,8 +91,6 @@ pub struct RoomStart {
 
 pub enum RoomOutcome {
     Admitted(Admitted),
-    /// Not a Forge 1.20.1 or NeoForge 1.21.1 room: the service starts it.
-    Service,
 }
 
 /// `ObjectId.toUUID`: the twelve id bytes, then four zero bytes.
@@ -150,7 +145,9 @@ pub fn forgeguard_jvm_arg(agent: &Path) -> String {
 }
 
 struct Prepared {
-    detail: Detail,
+    pack: Brief,
+    /// `None` for an RDI pack played alone (`rdiPackPlayArgs`): no room mods, no host id.
+    room: Option<Detail>,
     mc_version: &'static str,
     loader: &'static str,
     version_id: String,
@@ -170,7 +167,7 @@ pub async fn start(deps: &RoomDeps, request: RoomStart) -> Result<RoomOutcome> {
     let host = &request.host_id;
     let detail: Detail = server.get(&format!("/host/{host}/detail")).await.context("获取房间信息失败")?;
     let Some((mc_version, loader)) = supported(&detail.modpack) else {
-        return Ok(RoomOutcome::Service);
+        bail!("暂不支持这个房间的游戏版本: {} {}", detail.modpack.mc_ver, detail.modpack.modloader);
     };
     let _status: serde_json::Value = server.get(&format!("/host/{host}/status")).await.context("获取房间状态失败")?;
     let pack_id = detail.modpack.id.clone();
@@ -196,7 +193,8 @@ pub async fn start(deps: &RoomDeps, request: RoomStart) -> Result<RoomOutcome> {
     };
     let prepared = Prepared {
         version_dir: deps.install.versions.join(&version_id),
-        detail,
+        pack: detail.modpack.clone(),
+        room: Some(detail),
         mc_version,
         loader,
         version_id,
@@ -204,8 +202,12 @@ pub async fn start(deps: &RoomDeps, request: RoomStart) -> Result<RoomOutcome> {
         active,
         play_arg,
     };
-    let (deps, id) = (deps.clone(), session.clone());
-    let window = request.window;
+    spawn_run(deps, &session, title, prepared, request.window);
+    Ok(RoomOutcome::Admitted(Admitted::Started(session)))
+}
+
+fn spawn_run(deps: &RoomDeps, session: &str, title: String, prepared: Prepared, window: (u32, u32)) {
+    let (deps, id) = (deps.clone(), session.to_owned());
     deps.play.runtime.clone().spawn(async move {
         let sessions = deps.play.sessions.clone();
         sessions.append(&id, format!("[RDI] 准备启动 {title}"));
@@ -220,7 +222,46 @@ pub async fn start(deps: &RoomDeps, request: RoomStart) -> Result<RoomOutcome> {
             }
         }
     });
-    Ok(RoomOutcome::Admitted(Admitted::Started(session)))
+}
+
+/// Playing an installed RDI pack alone from the 整合包 tab (`rdiPackPlayArgs`).
+pub struct SoloStart {
+    pub version_id: String,
+    pub window: (u32, u32),
+    pub allow_duplicate: bool,
+    /// The version's games that run in the service.
+    pub external_alive: usize,
+}
+
+/// `rdiPackPlayArgs` + `startSession`: the room flow with the RDI core and the room connection, but
+/// no room mods, no room start and no host id. The room line of `-Drdi.play` is `test`, port 55555.
+pub async fn start_solo(deps: &RoomDeps, request: SoloStart) -> Result<Admitted> {
+    let (pack_id, version_name) = crate::local_packs::remote_name(&request.version_id).context("请选择RDI整合包")?;
+    let server = deps.install.server.clone();
+    let briefs: Vec<Brief> = server.post("/modpack/infos", &serde_json::json!([pack_id])).await.context("获取整合包信息失败")?;
+    let pack = briefs.into_iter().find(|b| b.id.eq_ignore_ascii_case(&pack_id)).context("整合包在服务器不存在")?;
+    let Some((mc_version, loader)) = supported(&pack) else {
+        bail!("暂不支持这个整合包的游戏版本: {} {}", pack.mc_ver, pack.modloader);
+    };
+    let uuid = uuid_of(&deps.uid)?;
+    let play_arg = play_arg(&server.base(), "127.0.0.1:55667", "test", 55555, &uuid, &deps.account_name);
+    let title = format!("单机 - {}", pack.name);
+    let Some(session) = deps.play.sessions.admit_room(&title, &request.version_id, request.allow_duplicate, request.external_alive) else {
+        return Ok(Admitted::Duplicate);
+    };
+    let prepared = Prepared {
+        version_dir: deps.install.versions.join(&request.version_id),
+        pack,
+        room: None,
+        mc_version,
+        loader,
+        version_id: request.version_id,
+        version_name,
+        active: vec![],
+        play_arg,
+    };
+    spawn_run(deps, &session, title, prepared, request.window);
+    Ok(Admitted::Started(session))
 }
 
 /// `SyncProgressFilter`, simplified: a line per 8MiB downloaded, plus the first and the last.
@@ -258,6 +299,33 @@ async fn sync_mods(deps: &RoomDeps, id: &str, mods_dir: &Path, list: Vec<Mod>, e
     deps.install.store.materialize(&requests, mods_dir, &cancel, &progress).await
 }
 
+/// `syncHostManagedBaseMods` and `syncHostExtraMods` for a room game.
+async fn sync_room_mods(deps: &RoomDeps, session: &str, p: &Prepared, room: &Detail, mods_dir: &Path, fabric: bool) -> Result<()> {
+    let sessions = &deps.play.sessions;
+    let stopped = || sessions.stop_requested(session);
+    sessions.append(session, "[RDI] 检查房间基础Mod...");
+    let base = mods_sync::base_plan(mods_dir, &p.active, &room.disabled_mods, fabric);
+    for name in &base.delete {
+        sessions.append(session, format!("[RDI] 移除已禁用基础Mod {name}"));
+    }
+    mods_sync::delete(mods_dir, &base.delete)?;
+    sync_mods(deps, session, mods_dir, base.download, false, "下载并同步基础Mod").await?;
+    sessions.append(session, "[RDI] 房间基础Mod已同步");
+    if stopped() {
+        return Ok(());
+    }
+
+    sessions.append(session, "[RDI] 检查房间附加Mod...");
+    let extra = mods_sync::extra_plan(mods_dir, &room.extra_mods, fabric)?;
+    for name in &extra.delete {
+        sessions.append(session, format!("[RDI] 移除旧附加Mod {name}"));
+    }
+    mods_sync::delete(mods_dir, &extra.delete)?;
+    sync_mods(deps, session, mods_dir, extra.download, true, "下载并同步附加Mod").await?;
+    sessions.append(session, "[RDI] 房间附加Mod已同步");
+    Ok(())
+}
+
 async fn run(deps: &RoomDeps, session: &str, p: &Prepared, window: (u32, u32)) -> Result<()> {
     let sessions = &deps.play.sessions;
     let stopped = || sessions.stop_requested(session);
@@ -267,32 +335,16 @@ async fn run(deps: &RoomDeps, session: &str, p: &Prepared, window: (u32, u32)) -
     ensure!(p.version_dir.exists(), "未找到整合包目录: {}", p.version_dir.display());
     let mods_dir = p.version_dir.join("mods");
     std::fs::create_dir_all(&mods_dir)?;
+    let fabric = p.loader == "Fabric";
 
-    sessions.append(session, "[RDI] 检查房间基础Mod...");
-    let base = mods_sync::base_plan(&mods_dir, &p.active, &p.detail.disabled_mods, false);
-    for name in &base.delete {
-        sessions.append(session, format!("[RDI] 移除已禁用基础Mod {name}"));
-    }
-    mods_sync::delete(&mods_dir, &base.delete)?;
-    sync_mods(deps, session, &mods_dir, base.download, false, "下载并同步基础Mod").await?;
-    sessions.append(session, "[RDI] 房间基础Mod已同步");
-    if stopped() {
-        return Ok(());
+    if let Some(room) = &p.room {
+        sync_room_mods(deps, session, p, room, &mods_dir, fabric).await?;
+        if stopped() {
+            return Ok(());
+        }
     }
 
-    sessions.append(session, "[RDI] 检查房间附加Mod...");
-    let extra = mods_sync::extra_plan(&mods_dir, &p.detail.extra_mods, false)?;
-    for name in &extra.delete {
-        sessions.append(session, format!("[RDI] 移除旧附加Mod {name}"));
-    }
-    mods_sync::delete(&mods_dir, &extra.delete)?;
-    sync_mods(deps, session, &mods_dir, extra.download, true, "下载并同步附加Mod").await?;
-    sessions.append(session, "[RDI] 房间附加Mod已同步");
-    if stopped() {
-        return Ok(());
-    }
-
-    for name in mods_sync::cleanup_removed(&p.version_dir, false)? {
+    for name in mods_sync::cleanup_removed(&p.version_dir, fabric)? {
         sessions.append(session, format!("[RDI] 已移除不兼容Mod {name}"));
     }
     let status = |line: String| sessions.append(session, format!("[RDI] {line}"));
@@ -309,7 +361,8 @@ async fn run(deps: &RoomDeps, session: &str, p: &Prepared, window: (u32, u32)) -
     install.java = jdk.java();
     sessions.append(session, "[RDI] 检查游戏安装...");
     let log = |line: String| sessions.append(session, format!("[RDI] {line}"));
-    let (manifest, loader) = crate::mc_install::prepare_for_launch(&install, p.mc_version, p.loader, &cancel, &log).await?;
+    let target = crate::mc_install::Target { mc_version: p.mc_version, loader: p.loader, version_id: &p.version_id, version_dir: &p.version_dir };
+    let launch = crate::mc_install::prepare_for_launch(&install, &target, &cancel, &log).await?;
     sessions.append(session, "[RDI] 游戏安装已就绪");
     if stopped() {
         return Ok(());
@@ -318,9 +371,9 @@ async fn run(deps: &RoomDeps, session: &str, p: &Prepared, window: (u32, u32)) -
         tracing::warn!(error = %format!("{error:#}"), version = %p.version_id, "旧版加载界面清理失败");
         sessions.append(session, format!("[RDI] 旧版加载界面清理失败: {error}"));
     }
-    let mut window_args = vec![super::window::title_jvm_arg(&p.detail.modpack.name, Some(&p.detail.name), &p.version_name)];
+    let mut window_args = vec![super::window::title_jvm_arg(&p.pack.name, p.room.as_ref().map(|r| r.name.as_str()), &p.version_name)];
     let http = deps.play.install.downloader.http.clone();
-    let icon = super::window::prepare_icon(&p.version_dir, &crate::paths::data_dir(), p.detail.modpack.icon.as_deref(), |url| async move {
+    let icon = super::window::prepare_icon(&p.version_dir, &crate::paths::data_dir(), p.pack.icon.as_deref(), |url| async move {
         crate::images::download(&http, &url).await
     })
     .await;
@@ -343,7 +396,7 @@ async fn run(deps: &RoomDeps, session: &str, p: &Prepared, window: (u32, u32)) -
         jvm.push("-Xlog:os+exit=trace".into());
         jvm.push(jdwp.clone());
     }
-    if supports_forgeguard(&p.detail.modpack.name) {
+    if supports_forgeguard(&p.pack.name) {
         let agent = runtime.forgeguard.clone().context("缺少Forgeguard启动保护文件")?;
         jvm.push(forgeguard_jvm_arg(&agent));
     }
@@ -353,25 +406,33 @@ async fn run(deps: &RoomDeps, session: &str, p: &Prepared, window: (u32, u32)) -
     let play_arg = with_game_addr(&p.play_arg, &address)?;
     use base64::Engine as _;
     jvm.push(format!("-Drdi.play={}", base64::engine::general_purpose::STANDARD.encode(play_arg.as_bytes())));
-    jvm.push(format!("-Drdi.host.id={}", p.detail.id));
+    if let Some(room) = &p.room {
+        jvm.push(format!("-Drdi.host.id={}", room.id));
+    }
     jvm.extend(dm_jvm_args(deps.is_dav, &deps.install.server.base()));
     if stopped() {
         return Ok(());
     }
 
     // `GameKotlinRuntime.prepare` and the media runtime, as `launchInternal` does before the command.
-    let (mods, cache) = (mods_dir.clone(), deps.tools.join("kotlin-runtime"));
-    tokio::task::spawn_blocking(move || super::thin::thin_mods(&mods, &cache))
-        .await?
-        .map_err(|e| anyhow::anyhow!("Kotlin运行库准备失败：{e}"))?;
-    let (rt, tools) = (runtime.clone(), deps.tools.clone());
-    let natives = tokio::task::spawn_blocking(move || rt.prepare_media_natives(&tools)).await?.map_err(|e| {
-        tracing::error!(error = %format!("{e:#}"), "Minecraft媒体模块不可用");
-        anyhow::anyhow!("媒体模块缺失或损坏，请先修复")
-    })?;
+    let selection = crate::play::runtime::Selection::for_room(p.mc_version, p.loader);
+    if selection.kotlin {
+        let (mods, cache) = (mods_dir.clone(), deps.tools.join("kotlin-runtime"));
+        tokio::task::spawn_blocking(move || super::thin::thin_mods(&mods, &cache))
+            .await?
+            .map_err(|e| anyhow::anyhow!("Kotlin运行库准备失败：{e}"))?;
+    }
+    let natives = if selection.media {
+        let (rt, tools) = (runtime.clone(), deps.tools.clone());
+        Some(tokio::task::spawn_blocking(move || rt.prepare_media_natives(&tools)).await?.map_err(|e| {
+            tracing::error!(error = %format!("{e:#}"), "Minecraft媒体模块不可用");
+            anyhow::anyhow!("媒体模块缺失或损坏，请先修复")
+        })?)
+    } else {
+        None
+    };
     let dirs = install.directories();
-    let (m, l, libraries, host) = (manifest.clone(), loader.clone(), dirs.libraries.clone(), install.host.clone());
-    tokio::task::spawn_blocking(move || mc_launch::validate_libraries(&m, &l, &libraries, &host)).await??;
+    super::check_launch(&launch, &p.version_dir, &dirs, &install.host).await?;
     let account = Account {
         name: deps.account_name.clone(),
         uuid: uuid_of(&deps.uid)?,
@@ -379,21 +440,22 @@ async fn run(deps: &RoomDeps, session: &str, p: &Prepared, window: (u32, u32)) -
         user_type: "msa".into(),
     };
     let java = jdk.java().to_string_lossy().into_owned();
-    let classpath = runtime.classpath();
+    let classpath = runtime.classpath_for(selection);
     let free = super::free_memory_mb;
     let command = mc_launch::command(
         &mc_launch::Request {
             mc_version: p.mc_version,
             version_id: &p.version_id,
             version_dir: &p.version_dir,
-            manifest: &manifest,
-            loader: &loader,
+            manifest: &launch.manifest,
+            loader: &launch.loader,
             account: &account,
             window,
             java_override: snapshot.java_path.as_deref(),
             max_memory_override: snapshot.max_memory_mb,
             extra_jvm_args: &jvm,
-            rdi: Some(mc_launch::RdiRuntime { loader: p.loader, classpath: &classpath, media_natives: &natives }),
+            rdi: Some(mc_launch::RdiRuntime { loader: p.loader, classpath: &classpath, media_natives: natives.as_deref() }),
+            gtnh_root: launch.gtnh_root.as_deref(),
         },
         &mc_launch::Environment {
             directories: &dirs,
@@ -444,12 +506,13 @@ mod tests {
     }
 
     #[test]
-    fn only_forge_1_20_1_and_neoforge_1_21_1_start_in_rust() {
+    fn every_room_version_starts_in_rust() {
         let brief = |mc: &str, loader: &str| -> Brief { serde_json::from_value(serde_json::json!({"id":"a","mcVer":mc,"modloader":loader})).unwrap() };
         assert_eq!(supported(&brief("V201", "forge")), Some(("1.20.1", "forge")));
         assert_eq!(supported(&brief("V211", "neoforge")), Some(("1.21.1", "neoforge")));
+        assert_eq!(supported(&brief("V201", "Fabric")), Some(("1.20.1", "Fabric")));
+        assert_eq!(supported(&brief("V071", "forge")), Some(("1.7.10", "forge")));
         assert_eq!(supported(&brief("V211", "fabric")), None);
-        assert_eq!(supported(&brief("V071", "forge")), None);
         let defaults: Brief = serde_json::from_value(serde_json::json!({"id":"a"})).unwrap();
         assert_eq!(supported(&defaults), Some(("1.21.1", "neoforge")));
     }

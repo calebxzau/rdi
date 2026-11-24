@@ -65,6 +65,8 @@ enum Reply {
     Pick(u64, String, Result<Option<String>>),
     Image(u64, String, Result<image::RgbaImage>),
     InstallStarted(u64, Result<String>),
+    /// J5c: an installed RDI pack played alone.
+    SoloStarted(u64, String, Result<crate::play::Admitted>),
 }
 type ArchiveCache = std::sync::Arc<
     std::sync::Mutex<
@@ -1035,6 +1037,7 @@ impl PackUi {
         }
         while let Ok(reply) = self.rx.try_recv() {
             match reply {
+                Reply::SoloStarted(g, version_id, result) if g == self.generation => self.solo_started(&version_id, result),
                 Reply::InstallStarted(g, result) if g == self.install_generation => match result {
                     Ok(run) => self.open_task(&run),
                     Err(error) => {

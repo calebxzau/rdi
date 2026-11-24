@@ -97,6 +97,7 @@ fn launch_commands_match_the_kotlin_fixture() {
             max_memory_override: case["maxMemoryMb"].as_i64().map(|m| m as i32),
             extra_jvm_args: &extra,
             rdi: None,
+            gtnh_root: None,
         };
         let env = Environment {
             directories: &dirs,
@@ -237,7 +238,8 @@ fn room_launch_commands_match_the_kotlin_fixture() {
             java_override: None,
             max_memory_override: case["maxMemoryMb"].as_i64().map(|m| m as i32),
             extra_jvm_args: &extra,
-            rdi: Some(RdiRuntime { loader: loader_name, classpath: &classpath, media_natives: &natives }),
+            rdi: Some(RdiRuntime { loader: loader_name, classpath: &classpath, media_natives: Some(&natives) }),
+            gtnh_root: None,
         };
         let env = Environment {
             directories: &dirs,
@@ -259,6 +261,144 @@ fn room_launch_commands_match_the_kotlin_fixture() {
         }
         assert_eq!(built.len(), expected.len(), "{}", case["name"]);
         std::fs::remove_dir_all(root).unwrap();
+    }
+}
+
+const J5C_FIXTURE: &str = include_str!("../../protocol/fixtures/j5c-launch.json");
+
+fn fixture_host() -> Host {
+    let j5a: Value = serde_json::from_str(FIXTURE).unwrap();
+    let h = &j5a["host"];
+    Host {
+        os_name: h["osName"].as_str().unwrap().into(),
+        os_arch: h["osArch"].as_str().unwrap().into(),
+        os_version: h["osVersion"].as_str().unwrap().into(),
+        path_separator: h["pathSeparator"].as_str().unwrap().into(),
+    }
+}
+
+/// Main artifacts and native classifiers of `libraries`, as the Kotlin fixture test creates them.
+fn placeholder_libraries(libraries: &[manifest::Library], dir: &Path) {
+    for library in libraries {
+        if let Some(path) = library.downloads.artifact.as_ref().and_then(|a| a.path.clone()).filter(|p| !p.trim().is_empty()).or_else(|| manifest::descriptor_path(&library.name)) {
+            placeholder_jar(&dir.join(path));
+        }
+        for native in library.downloads.classifiers.iter().flat_map(|c| c.values()) {
+            if let Some(path) = native.path.as_deref().filter(|p| !p.trim().is_empty()) {
+                placeholder_jar(&dir.join(path));
+            }
+        }
+    }
+}
+
+/// GTNH and Fabric, as room games and as local packs (J5c step 1).
+#[test]
+fn gtnh_and_fabric_commands_match_the_kotlin_fixture() {
+    let host = fixture_host();
+    let fixture: Value = serde_json::from_str(J5C_FIXTURE).unwrap();
+    assert_eq!(fixture["pathSeparator"].as_str().unwrap(), host.path_separator);
+    let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("protocol/fixtures/j5c");
+    let strings = |v: &Value| -> Vec<String> { v.as_array().unwrap().iter().map(|s| s.as_str().unwrap().to_owned()).collect() };
+    let cases = fixture["cases"].as_array().unwrap();
+    assert_eq!(cases.len(), 4);
+    for case in cases {
+        let name = case["name"].as_str().unwrap();
+        let root = temp();
+        let root_text = root.to_string_lossy().into_owned();
+        let runtime_root = root.join("runtime");
+        let dirs = Directories { versions: root.join("versions"), libraries: root.join("libraries"), assets: root.join("assets") };
+        let mc = case["mcVersion"].as_str().unwrap();
+        let loader_name = case["loader"].as_str().unwrap();
+        let version_id = case["versionId"].as_str().unwrap();
+        let version_dir = dirs.versions.join(version_id);
+        std::fs::create_dir_all(version_dir.join("mods")).unwrap();
+        let mut manifest = strip_checksums(vanilla(mc));
+        let (loader, gtnh_root) = if loader_name == "Fabric" {
+            let profile: Manifest = serde_json::from_str(&std::fs::read_to_string(fixtures.join("fabric-loader-0.19.5-1.20.1.json")).unwrap()).unwrap();
+            (strip_checksums(profile), None)
+        } else {
+            let patches = version_dir.join("gtnh/patches");
+            std::fs::create_dir_all(&patches).unwrap();
+            for entry in std::fs::read_dir(fixtures.join("gtnh/patches")).unwrap() {
+                let entry = entry.unwrap();
+                std::fs::copy(entry.path(), patches.join(entry.file_name())).unwrap();
+            }
+            placeholder_jar(&version_dir.join("gtnh/libraries/lwjgl3ify-2.1.16-forgePatches.jar"));
+            placeholder_jar(&version_dir.join("gtnh/libraries/lwjgl3ify-2.1.16.jar"));
+            let gtnh_root = gtnh::require_root(&version_dir, &host).unwrap();
+            // Every shared library and the client jar the launch would download.
+            for download in gtnh::downloads(&gtnh_root, &manifest, &dirs.libraries, &dirs.versions, &host).unwrap() {
+                placeholder_jar(&download.target);
+            }
+            manifest.libraries.retain(|l| !gtnh::is_legacy_lwjgl2(l));
+            (gtnh::loader_manifest(&gtnh_root, version_id).unwrap(), Some(gtnh_root))
+        };
+        placeholder_libraries(&manifest.libraries, &dirs.libraries);
+        placeholder_libraries(&loader.libraries, &dirs.libraries);
+        placeholder_jar(&dirs.versions.join(mc).join(format!("{mc}.jar")));
+        if let Some(gtnh_root) = &gtnh_root {
+            gtnh::ensure_runtime_mods(&version_dir, gtnh_root, &host).unwrap();
+            assert!(version_dir.join("mods/lwjgl3ify-2.1.16.jar").is_file(), "{name}");
+            assert!(gtnh::downloads(gtnh_root, &manifest, &dirs.libraries, &dirs.versions, &host).unwrap().is_empty(), "{name}");
+        }
+        validate_libraries(&manifest, &loader, &dirs.libraries, &host).unwrap();
+        let account = Account {
+            name: case["accountName"].as_str().unwrap().into(),
+            uuid: case["accountUuid"].as_str().unwrap().into(),
+            access_token: "jwt-secret".into(),
+            user_type: case["userType"].as_str().unwrap().into(),
+        };
+        let extra: Vec<String> = strings(&case["extraJvmArgs"]).into_iter().map(|a| a.replace("${ROOT}", &root_text)).collect();
+        let classpath: Vec<PathBuf> =
+            strings(&case["runtimeClasspath"]).iter().map(|e| runtime_root.join(e.strip_prefix("${RUNTIME}/").unwrap())).collect();
+        let natives = case["mediaNatives"].as_str().map(|n| PathBuf::from(n.replace("${ROOT}", &root_text)));
+        let window = strings(&case["window"]);
+        let rdi = case["rdiRuntime"].as_bool().unwrap();
+        let request = Request {
+            mc_version: mc,
+            version_id,
+            version_dir: &version_dir,
+            manifest: &manifest,
+            loader: &loader,
+            account: &account,
+            window: (window[0].parse().unwrap(), window[1].parse().unwrap()),
+            java_override: None,
+            max_memory_override: case["maxMemoryMb"].as_i64().map(|m| m as i32),
+            extra_jvm_args: &extra,
+            rdi: rdi.then(|| RdiRuntime { loader: loader_name, classpath: &classpath, media_natives: natives.as_deref() }),
+            gtnh_root: gtnh_root.as_deref(),
+        };
+        let env = Environment {
+            directories: &dirs,
+            host: &host,
+            java: "JAVA",
+            java_major: 25,
+            max_memory_mb: case["defaultMaxMemoryMb"].as_i64().unwrap() as i32,
+            launcher_version: case["launcherVersion"].as_str().unwrap(),
+            free_memory_mb: &|| panic!("a maximum is configured"),
+        };
+        let runtime_text = runtime_root.to_string_lossy().into_owned();
+        let built: Vec<String> = mask_secrets(&command(&request, &env).unwrap())
+            .into_iter()
+            .map(|a| a.replace(&format!("{runtime_text}{}", std::path::MAIN_SEPARATOR), "${RUNTIME}/").replace(&root_text, "${ROOT}").replace('\\', "/"))
+            .collect();
+        let expected = strings(&case["command"]);
+        for (i, (b, e)) in built.iter().zip(&expected).enumerate() {
+            assert_eq!(b, e, "{name} argument {i}");
+        }
+        assert_eq!(built.len(), expected.len(), "{name}");
+        std::fs::remove_dir_all(root).unwrap();
+    }
+}
+
+#[test]
+fn fabric_profile_rules_match_the_kotlin_fixture() {
+    let fixture: Value = serde_json::from_str(J5C_FIXTURE).unwrap();
+    let cases = fixture["fabricProfiles"].as_array().unwrap();
+    assert!(cases.len() >= 15);
+    for case in cases {
+        let result = crate::mc_install::fabric::validate_raw(&case["profile"], case["requireChecksums"].as_bool().unwrap());
+        assert_eq!(result.is_ok(), case["valid"].as_bool().unwrap(), "{}: {result:?}", case["name"]);
     }
 }
 

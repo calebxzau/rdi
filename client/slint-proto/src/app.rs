@@ -774,8 +774,7 @@ impl App {
         let _ = api;
         self.start_room(&ui, id, false);
     }
-    /// J5b: Forge 1.20.1 and NeoForge 1.21.1 rooms start in Rust; other rooms (GTNH, Fabric) keep
-    /// using the service's `host.start` until J5c.
+    /// J5b/J5c: every room starts in Rust (Forge 1.20.1, NeoForge 1.21.1, Fabric 1.20.1, GTNH).
     fn start_room(&self, ui: &crate::AppWindow, id: &str, allow_duplicate: bool) {
         let Some(api) = self.api.clone() else {
             return;
@@ -831,18 +830,6 @@ impl App {
             let result = match crate::play::room::start(&deps, request).await {
                 Ok(RoomOutcome::Admitted(Admitted::Started(_))) => Ok(serde_json::json!({"accepted": true})),
                 Ok(RoomOutcome::Admitted(Admitted::Duplicate)) => Ok(serde_json::json!({"duplicateVersion": true, "hostId": id})),
-                Ok(RoomOutcome::Service) => {
-                    api.call(
-                        "host.start",
-                        serde_json::json!({
-                            "hostId": id,
-                            "allowDuplicateVersion": allow_duplicate,
-                            "windowWidth": size.width,
-                            "windowHeight": size.height,
-                        }),
-                    )
-                    .await
-                }
                 Err(error) => Err(error),
             };
             let _ = tx.send(Event::Started(result));

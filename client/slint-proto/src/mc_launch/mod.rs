@@ -3,6 +3,7 @@
 //! (local packs) or with them (rooms). The command must equal Kotlin's; `protocol/fixtures/j5a.json`
 //! and `j5b-launch.json` are written by the Kotlin tests `J5aLaunchCommandFixtureTest` and
 //! `J5bLaunchCommandFixtureTest` and checked here (decision D6).
+pub mod gtnh;
 pub mod manifest;
 #[cfg(test)]
 mod tests;
@@ -47,16 +48,21 @@ pub struct Request<'a> {
     pub extra_jvm_args: &'a [String],
     /// `rdiRuntime = true`: a room game. `None` for local packs.
     pub rdi: Option<RdiRuntime<'a>>,
+    /// GTNH (1.7.10): the pack's `gtnh` folder from [`gtnh::require_root`]. The caller passes
+    /// [`gtnh::loader_manifest`] as `loader` and the vanilla manifest without LWJGL2.
+    pub gtnh_root: Option<&'a Path>,
 }
 
-/// The RDI runtimes of a room game on Forge 1.20.1 or NeoForge 1.21.1.
+/// The RDI runtimes of a room game.
 pub struct RdiRuntime<'a> {
-    /// `forge` or `neoforge`, as `ModLoader.name`.
+    /// `forge`, `neoforge` or `Fabric`, as `ModLoader.name`.
     pub loader: &'a str,
-    /// Kotlin, zstd-jni and mediaproc jars; they go first on the class path.
+    /// Kotlin, zstd-jni and mediaproc jars, as `play::runtime::Selection` picks them; they go
+    /// first on the class path.
     pub classpath: &'a [PathBuf],
-    /// The unpacked FFmpeg natives (`MediaProcGameRuntime.nativeLibraryDir`).
-    pub media_natives: &'a Path,
+    /// The unpacked FFmpeg natives (`MediaProcGameRuntime.nativeLibraryDir`); `None` where Kotlin
+    /// has no media runtime (GTNH).
+    pub media_natives: Option<&'a Path>,
 }
 
 /// `neoForgeLoggingJvmArgs`: quiet FML's marker logging on NeoForge 1.21.1 unless the player set it.
@@ -123,9 +129,10 @@ pub fn command(request: &Request, env: &Environment) -> Result<Vec<String>> {
     loader.id = request.version_id.into();
     let base_libraries: &[Library] = &manifest.libraries;
     let version_dir = request.version_dir;
+    let shared_natives = dirs.versions.join(request.mc_version).join("natives");
     let natives = {
         let own = version_dir.join("natives");
-        if own.exists() { own } else { dirs.versions.join(request.mc_version).join("natives") }
+        if request.gtnh_root.is_none() && own.exists() { own } else { shared_natives }
     };
     let assets_index = manifest
         .assets
@@ -161,6 +168,13 @@ pub fn command(request: &Request, env: &Environment) -> Result<Vec<String>> {
             classpath_entries.push(entry);
         }
     }
+    if let Some(root) = request.gtnh_root {
+        for entry in gtnh::classpath(root, &dirs.libraries, &dirs.versions, host)? {
+            if !classpath_entries.contains(&entry) {
+                classpath_entries.push(entry);
+            }
+        }
+    }
     for entry in manifest::classpath(base_libraries, &loader.libraries, &dirs.libraries, host) {
         let entry = text(&entry);
         if !classpath_entries.contains(&entry) {
@@ -187,27 +201,43 @@ pub fn command(request: &Request, env: &Environment) -> Result<Vec<String>> {
     let legacy = resolved_jvm.is_empty()
         && (manifest.minecraft_arguments.as_deref().is_some_and(|m| !m.trim().is_empty())
             || loader.minecraft_arguments.as_deref().is_some_and(|m| !m.trim().is_empty()));
-    let declares_classpath = resolved_jvm.iter().any(|a| a == "-cp" || a == "-classpath" || a.contains("${classpath}"));
+    let gtnh_launch = request.gtnh_root.is_some();
+    let declares_classpath = !gtnh_launch && resolved_jvm.iter().any(|a| a == "-cp" || a == "-classpath" || a.contains("${classpath}"));
     let jvm_version_name = if bootstrap {
         manifest::first_not_blank(&[&loader.jar, &loader.inherits_from]).unwrap_or(&manifest.id).to_owned()
     } else {
         request.version_id.to_owned()
     };
     let launcher_brand = "rdi";
-    let mut jvm: Vec<String> = resolved_jvm
-        .iter()
-        .map(|raw| {
-            raw.replace("${natives_directory}", &text(&natives))
-                .replace("${game_directory}", &text(version_dir))
-                .replace("${library_directory}", &text(&dirs.libraries))
-                .replace("${libraries_directory}", &text(&dirs.libraries))
-                .replace("${launcher_name}", launcher_brand)
-                .replace("${launcher_version}", env.launcher_version)
-                .replace("${version_name}", &jvm_version_name)
-                .replace("${classpath}", &classpath)
-                .replace("${classpath_separator}", &host.path_separator)
-        })
-        .collect();
+    // `replaceLaunchTokens`.
+    let tokens = |raw: &str, version_name: &str| {
+        raw.replace("${natives_directory}", &text(&natives))
+            .replace("${game_directory}", &text(version_dir))
+            .replace("${library_directory}", &text(&dirs.libraries))
+            .replace("${libraries_directory}", &text(&dirs.libraries))
+            .replace("${launcher_name}", launcher_brand)
+            .replace("${launcher_version}", env.launcher_version)
+            .replace("${version_name}", version_name)
+            .replace("${classpath}", &classpath)
+            .replace("${classpath_separator}", &host.path_separator)
+    };
+    let mut jvm: Vec<String> = vec![];
+    let mut skip_classpath_value = false;
+    for raw in &resolved_jvm {
+        let argument = tokens(raw, &jvm_version_name);
+        // GTNH builds its own class path; drop the manifest's.
+        if gtnh_launch {
+            if skip_classpath_value {
+                skip_classpath_value = false;
+                continue;
+            }
+            if argument == "-cp" || argument == "-classpath" {
+                skip_classpath_value = true;
+                continue;
+            }
+        }
+        jvm.push(argument);
+    }
     if legacy {
         jvm.push(format!("-Djava.library.path={}", text(&natives)));
         jvm.push(format!("-Dminecraft.launcher.brand={launcher_brand}"));
@@ -240,12 +270,17 @@ pub fn command(request: &Request, env: &Environment) -> Result<Vec<String>> {
     jvm.extend(UTF8_LOGGING.iter().map(|s| s.to_string()));
     if let Some(rdi) = &request.rdi {
         jvm.extend(neoforge_logging_jvm_args(request.mc_version, rdi.loader, request.extra_jvm_args));
-        jvm.extend([
-            "-Dorg.bytedeco.javacpp.pathsFirst=true".into(),
-            "-Dorg.bytedeco.javacpp.findLibraries=false".into(),
-            "-Dorg.bytedeco.javacpp.maxPhysicalBytes=0".into(),
-            format!("-Dorg.bytedeco.javacpp.platform.preloadpath={}", text(rdi.media_natives)),
-        ]);
+        if let Some(media_natives) = rdi.media_natives {
+            jvm.extend([
+                "-Dorg.bytedeco.javacpp.pathsFirst=true".into(),
+                "-Dorg.bytedeco.javacpp.findLibraries=false".into(),
+                "-Dorg.bytedeco.javacpp.maxPhysicalBytes=0".into(),
+                format!("-Dorg.bytedeco.javacpp.platform.preloadpath={}", text(media_natives)),
+            ]);
+        }
+    }
+    if let Some(root) = request.gtnh_root {
+        jvm.extend(gtnh::jvm_args(root)?.iter().map(|raw| tokens(raw, request.version_id)));
     }
     jvm.extend(request.extra_jvm_args.iter().cloned());
     jvm.push(JAVA4SHELL_MITIGATION.into());

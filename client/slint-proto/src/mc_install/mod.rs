@@ -1,11 +1,12 @@
-//! J5a: installs Minecraft, the loader, libraries and assets before a launch, ported from
+//! J5a/J5c: installs Minecraft, the loader, libraries and assets before a launch, ported from
 //! `client/mc-install` (`McInstall.prepareForLaunch`) and `MinecraftLauncher.prepare` for
-//! Forge 1.20.1 and NeoForge 1.21.1. The on-disk layout and the "is it installed" checks match
+//! Forge 1.20.1, NeoForge 1.21.1, Fabric 1.20.1 and GTNH (1.7.10). The on-disk layout and the "is it installed" checks match
 //! Kotlin, so Compose accepts what Rust installs and the reverse. The Forge and NeoForge
 //! installers still run as a Java child process (`McInstallerBootstrapper.kt`).
 //!
 //! Not ported (J5 D9): reusing files from other launchers' folders (`LocalArtifactReuse`).
 pub mod assets;
+pub mod fabric;
 pub mod loader;
 pub mod meta;
 #[cfg(test)]
@@ -340,17 +341,91 @@ pub fn launch_manifests(deps: &Deps, mc_version: &str, loader: &str) -> Result<(
     Ok((vanilla, state.manifest))
 }
 
+/// The pack a launch is prepared for.
+pub struct Target<'a> {
+    pub mc_version: &'a str,
+    /// `ModLoader.name`: `forge`, `neoforge` or `Fabric`.
+    pub loader: &'a str,
+    pub version_id: &'a str,
+    pub version_dir: &'a Path,
+}
+
+#[derive(Debug)]
+/// What `mc_launch::command` needs after the install: the vanilla manifest (for GTNH without
+/// LWJGL2), the loader manifest, and the GTNH folder when there is one.
+pub struct Launch {
+    pub manifest: Manifest,
+    pub loader: Manifest,
+    pub gtnh_root: Option<PathBuf>,
+}
+
 /// `McInstall.prepareForLaunch`: loader, then client jar and libraries, then assets.
-pub async fn prepare_for_launch(deps: &Deps, mc_version: &str, loader_name: &str, cancel: &Cancellation, progress: Progress<'_>) -> Result<(Manifest, Manifest)> {
+///
+/// GTNH skips the Forge 1.7.10 installer that Kotlin still runs: its launch reads only the pack's
+/// patches, vanilla 1.7.10 and the shared libraries (J5c plan, section 8).
+pub async fn prepare_for_launch(deps: &Deps, target: &Target<'_>, cancel: &Cancellation, progress: Progress<'_>) -> Result<Launch> {
     ensure_not_cancelled(cancel)?;
-    let version = meta::loader(mc_version, loader_name)?;
-    loader::ensure(deps, &version, cancel, progress).await?;
+    let launch = match meta::runtime(target.mc_version, target.loader)? {
+        meta::Runtime::Installer(version) => {
+            loader::ensure(deps, &version, cancel, progress).await?;
+            ensure_not_cancelled(cancel)?;
+            let (vanilla, loader_manifest) = launch_manifests(deps, target.mc_version, target.loader)?;
+            Launch { manifest: vanilla, loader: loader_manifest, gtnh_root: None }
+        }
+        meta::Runtime::Fabric => {
+            let profile = fabric::ensure(deps, cancel, progress).await?;
+            Launch { manifest: meta::vanilla(fabric::MC_VERSION)?, loader: profile, gtnh_root: None }
+        }
+        meta::Runtime::Gtnh => {
+            let root = crate::mc_launch::gtnh::require_root(target.version_dir, &deps.host)?;
+            let loader_manifest = crate::mc_launch::gtnh::loader_manifest(&root, target.version_id)?;
+            let mut vanilla = meta::vanilla("1.7.10")?;
+            // Its plan includes the 1.7.10 client jar when that is missing.
+            ensure_gtnh_runtime(deps, &root, &vanilla, cancel, progress).await?;
+            vanilla.libraries.retain(|l| !crate::mc_launch::gtnh::is_legacy_lwjgl2(l));
+            Launch { manifest: vanilla, loader: loader_manifest, gtnh_root: Some(root) }
+        }
+    };
+    ensure_client_jar(deps, &launch.manifest, cancel, progress).await?;
+    ensure_libraries(deps, &launch.manifest, &launch.loader, cancel, progress).await?;
     ensure_not_cancelled(cancel)?;
-    let (vanilla, loader_manifest) = launch_manifests(deps, mc_version, loader_name)?;
-    ensure_client_jar(deps, &vanilla, cancel, progress).await?;
-    ensure_libraries(deps, &vanilla, &loader_manifest, cancel, progress).await?;
+    assets::ensure(deps, &launch.manifest, cancel, progress).await?;
     ensure_not_cancelled(cancel)?;
-    assets::ensure(deps, &vanilla, cancel, progress).await?;
-    ensure_not_cancelled(cancel)?;
-    Ok((vanilla, loader_manifest))
+    Ok(launch)
+}
+
+/// `GtnhLaunchSupport.ensureRuntime`: shared LWJGL3 and Forge libraries the pack needs.
+async fn ensure_gtnh_runtime(deps: &Deps, root: &Path, vanilla: &Manifest, cancel: &Cancellation, progress: Progress<'_>) -> Result<()> {
+    let (r, v, libraries, versions, host) = (root.to_owned(), vanilla.clone(), deps.libraries(), deps.versions(), deps.host.clone());
+    let plans = tokio::task::spawn_blocking(move || crate::mc_launch::gtnh::downloads(&r, &v, &libraries, &versions, &host)).await??;
+    if plans.is_empty() {
+        progress("GTNH运行库已齐全".into());
+        return Ok(());
+    }
+    progress(format!("开始自动下载{}个GTNH运行库", plans.len()));
+    let total = plans.len();
+    for (index, plan) in plans.into_iter().enumerate() {
+        ensure_not_cancelled(cancel)?;
+        progress(format!("下载{}/{total}: {}", index + 1, plan.label));
+        let last = std::sync::atomic::AtomicI64::new(-1);
+        let label = plan.label.clone();
+        let report = move |p: crate::download::Progress| {
+            let bucket = match p.total.filter(|t| *t > 0) {
+                Some(t) => ((p.bytes.min(t) * 100 / t) / 10 * 10) as i64,
+                None if p.bytes > 0 => i64::MAX,
+                None => 0,
+            };
+            if last.swap(bucket, std::sync::atomic::Ordering::Relaxed) == bucket {
+                return;
+            }
+            let total = p.total.filter(|t| *t > 0).map(human_file_size).unwrap_or_else(|| "未知".into());
+            let suffix = if p.total.is_some_and(|t| t > 0) { format!(" {}%", bucket.min(100)) } else { String::new() };
+            progress(format!("{label} {}/{total}{suffix}", human_file_size(p.bytes)));
+        };
+        let url = resolve_artifact_url(&plan.artifact);
+        let sources = source_plan(deps, &url, None, &plan.artifact.sha1);
+        download_verified(deps, &sources, &plan.target, &plan.artifact.sha1, plan.artifact.size, cancel, &report).await?;
+        progress(format!("{}下载完成", plan.label));
+    }
+    Ok(())
 }

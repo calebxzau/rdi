@@ -1,6 +1,7 @@
-//! J5a wiring between the pack screens and Rust game sessions (`crate::play`). Local packs on
-//! Forge 1.20.1 and NeoForge 1.21.1 start offline in Rust; Microsoft online play, RDI packs and
-//! rooms keep using the service, whose sessions are mirrored here so the console lists both.
+//! J5a/J5c wiring between the pack screens and Rust game sessions (`crate::play`). Local packs
+//! start offline in Rust and installed RDI packs start alone in Rust (`play::room::start_solo`);
+//! Microsoft online play keeps using the service until GJ5c2, whose sessions are mirrored here so
+//! the console lists both.
 use super::{CandidateRow, LogRow, PackUi, sync, text};
 use crate::AppWindow;
 use serde_json::{Value, json};
@@ -15,6 +16,8 @@ pub(super) struct NativePlay {
     mc_version: String,
     loader: String,
     dir: PathBuf,
+    /// An installed RDI pack: started at once with the RDI core, no dialog (`rdiPackPlayArgs`).
+    rdi: bool,
 }
 
 /// Game state the service last reported (`game.state`).
@@ -42,7 +45,17 @@ impl PackUi {
             return false;
         };
         if crate::local_packs::remote_name(version_id).is_some() {
-            return false;
+            self.native_play = Some(NativePlay {
+                version_id: version_id.into(),
+                name: String::new(),
+                mc_version: String::new(),
+                loader: String::new(),
+                dir,
+                rdi: true,
+            });
+            ui.set_local_play(false);
+            self.start_native_play(ui, false);
+            return true;
         }
         let info: LocalPlayInfo = match std::fs::read_to_string(dir.join("rdi-local-pack.json")).map(|t| serde_json::from_str(&t)) {
             Ok(Ok(info)) => info,
@@ -51,7 +64,7 @@ impl PackUi {
         let Some(mc_version) = crate::local_packs::mc_version_name(&info.mc_version) else {
             return false;
         };
-        if crate::mc_install::meta::loader(mc_version, &info.mod_loader).is_err() {
+        if crate::mc_install::meta::runtime(mc_version, &info.mod_loader).is_err() {
             return false;
         }
         let online = self.api.as_ref().is_some_and(|a| a.has_msid);
@@ -69,6 +82,7 @@ impl PackUi {
             mc_version: mc_version.into(),
             loader: info.mod_loader.clone(),
             dir,
+            rdi: false,
         });
         ui.set_play_busy(false);
         ui.set_play_error("".into());
@@ -92,7 +106,7 @@ impl PackUi {
             return false;
         }
         let external = self.service_games.alive_by_version.get(&native.version_id).copied().unwrap_or(0);
-        if ui.get_play_online() {
+        if ui.get_play_online() && !native.rdi {
             // J5c moves Microsoft play; until then a Rust game of this pack still counts as a duplicate.
             if !allow_duplicate && self.play.alive_count(&native.version_id) > 0 {
                 ui.set_local_play(false);
@@ -111,11 +125,33 @@ impl PackUi {
             }
             return true;
         }
+        let size = ui.window().size();
+        if native.rdi {
+            let Some(builder) = self.room_deps(&crate::config::primary_server()) else {
+                ui.set_action_error("请先登录".into());
+                return true;
+            };
+            let request = crate::play::room::SoloStart {
+                version_id: native.version_id.clone(),
+                window: (size.width, size.height),
+                allow_duplicate,
+                external_alive: external,
+            };
+            let (tx, generation, version_id) = (self.tx.clone(), self.generation, native.version_id.clone());
+            self.native_play = None;
+            self.runtime.spawn(async move {
+                let result = match tokio::task::spawn_blocking(builder).await {
+                    Ok(deps) => crate::play::room::start_solo(&deps, request).await,
+                    Err(error) => Err(anyhow::anyhow!("准备游玩失败: {error}")),
+                };
+                let _ = tx.send(super::Reply::SoloStarted(generation, version_id, result));
+            });
+            return true;
+        }
         let Some(deps) = self.play_deps() else {
             ui.set_action_error("请先登录".into());
             return true;
         };
-        let size = ui.window().size();
         let request = crate::play::LocalStart {
             version_id: native.version_id.clone(),
             name: native.name.clone(),
@@ -147,6 +183,38 @@ impl PackUi {
             }
         }
         true
+    }
+
+    /// The answer of `start_solo`.
+    pub(super) fn solo_started(&mut self, version_id: &str, result: anyhow::Result<crate::play::Admitted>) {
+        let Some(ui) = self.ui.upgrade() else {
+            return;
+        };
+        ui.set_play_busy(false);
+        match result {
+            Ok(crate::play::Admitted::Started(id)) => {
+                self.session_id = id;
+                self.render_console();
+            }
+            Ok(crate::play::Admitted::Duplicate) => {
+                // The duplicate dialog's 继续 comes back as `play.duplicate` for this pack.
+                if let Some(dir) = self.pack_dirs.get(version_id).cloned() {
+                    self.native_play = Some(NativePlay {
+                        version_id: version_id.into(),
+                        name: String::new(),
+                        mc_version: String::new(),
+                        loader: String::new(),
+                        dir,
+                        rdi: true,
+                    });
+                }
+                ui.set_duplicate_host(format!("pack:{version_id}").into());
+            }
+            Err(error) => {
+                tracing::warn!(error = %format!("{error:#}"), version = version_id, "启动RDI整合包失败");
+                ui.set_action_error(format!("启动游戏失败：{error}").into());
+            }
+        }
     }
 
     /// `play.cancel`: a dialog Rust opened needs no service call.
