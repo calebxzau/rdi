@@ -70,7 +70,7 @@ fn running_games_are_recorded_recovered_and_stopped() {
     let room = first.admit_room("游玩 房间", "pack_1", false).unwrap();
     let child = first.attach(&room, sleeper(), Some(55668)).unwrap();
     let local = first.admit("单机 - A", "local_a", false).unwrap();
-    first.attach(&local, sleeper(), Some(1)).unwrap();
+    let local_child = first.attach(&local, sleeper(), Some(1)).unwrap();
     let recorded = recovery::read(&journal).unwrap();
     assert_eq!(recorded.len(), 2);
     assert_eq!((recorded[0].room, recorded[0].room_port), (true, Some(55668)));
@@ -93,6 +93,8 @@ fn running_games_are_recorded_recovered_and_stopped() {
     assert_eq!(recovery::read(&journal).unwrap().len(), 1);
     assert_eq!(second.recovered_room_port(), None);
     second.stop(&local, true).unwrap();
+    // Reap it, or on Unix it stays a zombie with the same pid and start time and still matches.
+    assert!(local_child.lock().unwrap().wait().is_ok());
     assert!(recovery::read(&journal).unwrap().is_empty());
     first.stop_all(true);
 

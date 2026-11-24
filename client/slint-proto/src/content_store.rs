@@ -58,13 +58,13 @@ pub fn digest_lock(digest: &Digest) -> Arc<tokio::sync::Mutex<()>> {
 /// it lacks, linked when possible, as `materialize` would after a download. Each entry is
 /// written under its digest lock and renamed into place, so readers never see a partial file.
 pub fn adopt(root: &Path, file: &Path, digests: &[Digest]) -> Result<()> {
-    no_symlink(root)?;
+    no_symlink_under(root, root)?;
     std::fs::create_dir_all(root.join(".tmp"))?;
     for digest in digests {
         let lock = digest_lock(digest);
         let _guard = lock.blocking_lock();
         let path = root.join(format!("{}.{}", digest.value, digest.algorithm.suffix()));
-        no_symlink(&path)?;
+        no_symlink_under(root, &path)?;
         if path.try_exists()? {
             continue;
         }
@@ -74,21 +74,39 @@ pub fn adopt(root: &Path, file: &Path, digests: &[Digest]) -> Result<()> {
     }
     Ok(())
 }
-pub fn no_symlink(path: &Path) -> Result<()> {
-    let mut current = PathBuf::new();
-    for part in std::path::absolute(path)?.components() {
-        current.push(part);
+/// Refuses a path that passes through a symlink at `root` or below it. The folders above `root`
+/// are the system's and the player's choice, so they are not checked: macOS keeps temp files
+/// under the `/var` -> `/private/var` link, Fedora Atomic has `/home` -> `/var/home`. A missing
+/// part, or one under a regular file (`NotADirectory` on Unix), is not a link.
+pub fn no_symlink_under(root: &Path, path: &Path) -> Result<()> {
+    let root = std::path::absolute(root)?;
+    let path = std::path::absolute(path)?;
+    let below = path.strip_prefix(&root).with_context(|| format!("内容路径越界: {}", path.display()))?;
+    let mut current = root.clone();
+    for part in std::iter::once(None).chain(below.components().map(Some)) {
+        if let Some(part) = part {
+            current.push(part);
+        }
         match std::fs::symlink_metadata(&current) {
             Ok(m) => ensure!(
                 !m.file_type().is_symlink(),
                 "内容路径不能穿过符号链接: {}",
                 current.display()
             ),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) if matches!(e.kind(), std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory) => {}
             Err(e) => return Err(e.into()),
         }
     }
     Ok(())
+}
+/// `try_exists` where a path under a regular file (`NotADirectory` on Unix; Windows reports
+/// `NotFound`) is simply absent, so an unusable cache folder falls back instead of failing.
+fn present(path: &Path) -> Result<bool> {
+    match path.try_exists() {
+        Ok(found) => Ok(found),
+        Err(e) if e.kind() == std::io::ErrorKind::NotADirectory => Ok(false),
+        Err(e) => Err(e.into()),
+    }
 }
 pub fn relative(raw: &str) -> Result<String> {
     let path = raw.replace('\\', "/");
@@ -200,9 +218,9 @@ impl Store {
                 );
             }
         }
-        no_symlink(root)?;
+        no_symlink_under(root, root)?;
         std::fs::create_dir_all(root)?;
-        no_symlink(root)?;
+        no_symlink_under(root, root)?;
         let states = Mutex::new(vec![
             Progress {
                 bytes: 0,
@@ -278,7 +296,7 @@ impl Store {
         let mut cached = None;
         for d in &r.digests {
             let path = self.cache_path(d);
-            if path.try_exists()? {
+            if present(&path)? {
                 match self.checked(&path, r, c).await {
                     Ok(()) => {
                         cached = Some(path);
@@ -296,10 +314,10 @@ impl Store {
         let source = if let Some(path) = cached {
             path
         } else {
-            no_symlink(&self.root)?;
+            no_symlink_under(&self.root, &self.root)?;
             let temporary_root = match std::fs::create_dir_all(self.root.join(".tmp")) {
                 Ok(()) => {
-                    no_symlink(&self.root.join(".tmp"))?;
+                    no_symlink_under(&self.root, &self.root.join(".tmp"))?;
                     self.root.join(".tmp")
                 }
                 Err(error) => {
@@ -339,7 +357,7 @@ impl Store {
                 })
                 .unwrap();
             let path = self.cache_path(primary);
-            no_symlink(&path)?;
+            no_symlink_under(&self.root, &path)?;
             let committed = (|| -> Result<()> {
                 if path.try_exists()? && verify(&path, r, c).is_ok() {
                     remove(&tmp.0);
@@ -366,7 +384,7 @@ impl Store {
                     continue;
                 }
                 let alias_result = (|| -> Result<()> {
-                    no_symlink(&alias)?;
+                    no_symlink_under(&self.root, &alias)?;
                     if !alias.try_exists()? || verify(&alias, r, c).is_err() {
                         c.check()?;
                         let temp = Temp(
@@ -446,7 +464,7 @@ impl Store {
     ) -> Result<()> {
         c.check()?;
         let target = root.join(relative(&r.relative_path)?);
-        no_symlink(target.parent().unwrap())?;
+        no_symlink_under(root, target.parent().unwrap())?;
         let target_link =
             std::fs::symlink_metadata(&target).is_ok_and(|m| m.file_type().is_symlink());
         if !target_link && target.try_exists()? {
@@ -466,9 +484,9 @@ impl Store {
             .with_context(|| format!("下载失败: {}", r.relative_path))?;
         let _permit = cancellable(c, async { Ok(COPY.acquire().await?) }).await?;
         c.check()?;
-        no_symlink(target.parent().unwrap())?;
+        no_symlink_under(root, target.parent().unwrap())?;
         std::fs::create_dir_all(target.parent().unwrap())?;
-        no_symlink(target.parent().unwrap())?;
+        no_symlink_under(root, target.parent().unwrap())?;
         if std::fs::symlink_metadata(&target).is_ok_and(|m| m.file_type().is_symlink()) {
             // Remove only the link itself; never read or modify its referent.
             std::fs::remove_file(&target)?;

@@ -903,3 +903,54 @@ async fn catalog_mirror_unreachable_falls_back_and_preference_is_dynamic() {
     );
     worker.join().unwrap();
 }
+
+#[test]
+fn symlink_rule_covers_only_the_root_and_below() {
+    use crate::content_store::no_symlink_under;
+    let root = temp();
+    // Missing parts and parts under a regular file are not links.
+    no_symlink_under(&root, &root.join("a/b/c.jar")).unwrap();
+    std::fs::write(root.join("file"), b"x").unwrap();
+    no_symlink_under(&root, &root.join("file/below")).unwrap();
+    assert!(no_symlink_under(&root.join("a"), &root.join("b")).is_err(), "outside the root");
+    #[cfg(unix)]
+    {
+        let outside = temp();
+        // A link above the root is the system's choice (macOS /var, Fedora Atomic /home).
+        let linked = root.join("linked-parent");
+        std::os::unix::fs::symlink(&outside, &linked).unwrap();
+        let store_root = linked.join("store");
+        no_symlink_under(&store_root, &store_root.join("x.sha1")).unwrap();
+        // A link at the root or inside it is refused.
+        assert!(no_symlink_under(&linked, &linked.join("x")).is_err());
+        std::fs::create_dir_all(root.join("pack")).unwrap();
+        std::os::unix::fs::symlink(&outside, root.join("pack/mods")).unwrap();
+        let error = no_symlink_under(&root.join("pack"), &root.join("pack/mods/a.jar")).unwrap_err();
+        assert!(error.to_string().starts_with("内容路径不能穿过符号链接"), "{error}");
+        let _ = std::fs::remove_dir_all(outside);
+    }
+    let _ = std::fs::remove_dir_all(root);
+}
+
+/// The store works when an ancestor of its folders is a symlink, as macOS temp folders are.
+#[cfg(unix)]
+#[tokio::test]
+async fn store_under_a_linked_ancestor_downloads() {
+    let server = Server::new(b"abc".to_vec(), false);
+    let real = temp();
+    let link = std::env::temp_dir().join(format!("j4b-link-{}", uuid::Uuid::now_v7()));
+    std::os::unix::fs::symlink(&real, &link).unwrap();
+    let store = Store { root: link.join("cache"), downloader: Downloader { http: client() } };
+    let request = Request {
+        id: "linked".into(),
+        relative_path: "mods/a.jar".into(),
+        size: Some(3),
+        digests: vec![Digest::new(Algorithm::Sha1, "a9993e364706816aba3e25717850c26c9cd0d89d").unwrap()],
+        sources: vec![server.source("/ok")],
+    };
+    store.materialize(&[request], &link.join("pack"), &Cancellation::default(), &|_| {}).await.unwrap();
+    assert_eq!(std::fs::read(real.join("pack/mods/a.jar")).unwrap(), b"abc");
+    assert!(real.join("cache/a9993e364706816aba3e25717850c26c9cd0d89d.sha1").is_file());
+    let _ = std::fs::remove_file(link);
+    let _ = std::fs::remove_dir_all(real);
+}
