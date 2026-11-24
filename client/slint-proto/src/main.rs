@@ -22,6 +22,7 @@ mod mod_cards;
 mod rooms;
 mod rooms_ui;
 mod room_pages_ui;
+mod save_import_ui;
 mod digests;
 mod download;
 mod download_policy;

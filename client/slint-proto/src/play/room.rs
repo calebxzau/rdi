@@ -215,14 +215,25 @@ pub struct MarkingStart {
     pub allow_duplicate: bool,
 }
 
+/// The identity lines of a marking launch's `-Drdi.play`. The RDI core's `mUser` mixin replaces the
+/// game's user with them, so they must be the marking identity: with the RDI account's, the game
+/// saves the copy's `Data.Player` under that account and `check_identity` refuses the copy.
+/// (Kotlin `markingLaunch` passes the RDI account here and has this bug.)
+pub(crate) fn marking_play_identity(uid: &str, account_name: &str, overrides: &LaunchOverrides) -> Result<(String, String)> {
+    match &overrides.account {
+        Some(account) => Ok((account.uuid.clone(), account.name.clone())),
+        None => Ok((uuid_of(uid)?, account_name.to_owned())),
+    }
+}
+
 /// Kotlin `markingLaunch` after its checks: `startPlay(startHost = false)` and `startSession`
 /// with the overrides. The host is not started and no play is counted. The pack must be installed.
 pub async fn start_marking(deps: &RoomDeps, request: MarkingStart) -> Result<Admitted> {
     let pack = host_pack(deps, &request.host_id).await?;
     ensure_installed(&pack.state)?;
-    let uuid = uuid_of(&deps.uid)?;
+    let (uuid, name) = marking_play_identity(&deps.uid, &deps.account_name, &request.overrides)?;
     let server = deps.install.server.base();
-    let play_arg = play_arg(&server, "127.0.0.1:55667", &pack.detail.name, pack.detail.port, &uuid, &deps.account_name);
+    let play_arg = play_arg(&server, "127.0.0.1:55667", &pack.detail.name, pack.detail.port, &uuid, &name);
     let title = format!("标记要保留的区块 {}", pack.detail.name);
     let Some(session) = deps.play.sessions.admit_room(&title, &pack.version_id, request.allow_duplicate) else {
         return Ok(Admitted::Duplicate);

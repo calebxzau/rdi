@@ -35,6 +35,8 @@ enum Page {
     World,
     Rollback,
     Mods,
+    /// 导入单人存档 (A4), run by `save_import_ui.rs`; this side only keeps 存档 for the way back.
+    SaveImport,
 }
 impl Page {
     fn from_screen(screen: i32) -> Self {
@@ -43,6 +45,7 @@ impl Page {
             2 => Self::World,
             3 => Self::Rollback,
             4 => Self::Mods,
+            5 => Self::SaveImport,
             _ => Self::None,
         }
     }
@@ -256,6 +259,7 @@ impl RoomPagesUi {
         g.set_can_view(false);
         g.set_can_manage(false);
         g.set_can_reset(false);
+        g.set_can_import(false);
         g.set_can_download(false);
         g.set_can_rollback(false);
         g.set_download_enabled(false);
@@ -304,7 +308,7 @@ impl RoomPagesUi {
                 Page::World => self.load_world(&ui),
                 Page::Rollback => self.load_rollback(&ui, "正在加载回档点", false),
                 Page::Mods => self.load_mods(&ui),
-                Page::None => {}
+                Page::None | Page::SaveImport => {}
             },
             "back-nav" => self.navigate("back"),
             "alert-ok" => g.set_alert_title("".into()),
@@ -368,6 +372,14 @@ impl RoomPagesUi {
             "reset-confirm" => self.reset_world(&ui),
             "download" => self.download(&ui),
             "open-saves" => self.open_saves(),
+            "import-save" if self.access.can_import => {
+                self.navigate("room-save-import");
+                self.page = Page::SaveImport;
+                self.epoch += 1;
+                self.busy = false;
+                g.set_busy("".into());
+                ui.global::<crate::SaveImport>().invoke_action("open".into(), self.host.as_str().into());
+            }
             "rollback" if self.access.can_rollback => {
                 self.navigate("room-rollback");
                 self.page = Page::Rollback;
@@ -551,6 +563,7 @@ impl RoomPagesUi {
         g.set_loading(false);
         g.set_host_name(detail.name.as_str().into());
         g.set_can_reset(self.access.can_reset);
+        g.set_can_import(self.access.can_import);
         g.set_can_download(self.access.can_download);
         g.set_can_rollback(self.access.can_rollback);
         self.download = status;
@@ -851,7 +864,7 @@ impl RoomPagesUi {
         let page = Page::from_screen(pages(&ui).get_screen());
         if page != self.page {
             // Back from 回档 lands on 存档 of the same room; anything else leaves the pages.
-            if page == Page::World && self.page == Page::Rollback {
+            if page == Page::World && matches!(self.page, Page::Rollback | Page::SaveImport) {
                 self.epoch += 1;
                 self.busy = false;
                 self.refresh_at = None;

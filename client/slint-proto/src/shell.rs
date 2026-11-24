@@ -66,6 +66,7 @@ impl Shell {
                         else if !ui.get_action_error().is_empty() { ui.set_action_error("".into()); ui.invoke_pack_action("installer.dismissError".into(), "".into()); }
                         else if ui.global::<crate::Rooms>().get_modal() { ui.global::<crate::Rooms>().invoke_action("dismiss".into(), "".into()); }
                         else if ui.global::<crate::RoomPages>().get_modal() { ui.global::<crate::RoomPages>().invoke_action("dismiss".into(), "".into()); }
+                        else if ui.global::<crate::SaveImport>().get_modal() { ui.global::<crate::SaveImport>().invoke_action("dismiss".into(), "".into()); }
                         else if ui.global::<crate::Account>().get_modal() { ui.global::<crate::Account>().invoke_action("dismiss".into(), "".into()); }
                         else if ui.global::<crate::Inbox>().get_modal() { ui.global::<crate::Inbox>().invoke_action("dismiss".into(), "".into()); }
                         else if ui.global::<crate::Settings>().get_modal() { ui.global::<crate::Settings>().invoke_action("dismiss".into(), "".into()); }
@@ -87,6 +88,7 @@ impl Shell {
                     "room-world" if s.navigation.current() == Screen::RoomDetail => s.navigation.push(Screen::RoomWorld),
                     "room-rollback" if s.navigation.current() == Screen::RoomWorld => s.navigation.push(Screen::RoomRollback),
                     "room-mods" if s.navigation.current() == Screen::RoomDetail => s.navigation.push(Screen::RoomMods),
+                    "room-save-import" if s.navigation.current() == Screen::RoomWorld => s.navigation.push(Screen::RoomSaveImport),
                     "plaza-version" if s.navigation.current() == Screen::ModpackDetail => s.navigation.push(Screen::ModpackVersionDetail),
                     "packs" => { s.navigation.home(); ui.invoke_select_tab(1); }
                     "back" | "home" if ui.get_pack_screen() == 2 && ui.get_options_dirty() => { ui.set_discard_options(true); return; }
@@ -168,6 +170,7 @@ impl Shell {
             Screen::RoomWorld => 2,
             Screen::RoomRollback => 3,
             Screen::RoomMods => 4,
+            Screen::RoomSaveImport => 5,
             _ => 0,
         });
         ui.global::<crate::Account>().set_screen((self.navigation.current() == Screen::PlayerInfo) as i32);

@@ -70,13 +70,16 @@ pub struct SessionVo {
     pub part_count: u64,
     #[serde(default)]
     pub uploaded_parts: Vec<u64>,
+    // The DTO's remaining fields; the import does not use them yet.
     #[serde(default)]
+    #[allow(dead_code)]
     pub expires_at: i64,
     #[serde(default)]
     pub status: ImportStatus,
     #[serde(default)]
     pub error_message: Option<String>,
     #[serde(default)]
+    #[allow(dead_code)]
     pub member_warnings: Vec<MemberWarning>,
 }
 

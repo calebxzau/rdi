@@ -390,6 +390,11 @@ fn marking_launch_arguments() {
         let r = MarkingRecord { selected_player_name: name.map(String::from), ..record.clone() };
         assert_eq!(marking_overrides(&r, "RDI玩家").account.unwrap().name, "RDI玩家", "{name:?}");
     }
+    // `-Drdi.play` must carry the marking identity too, or the RDI core plays as the RDI account.
+    let (uuid, name) = crate::play::room::marking_play_identity("00112233445566778899aabb", "RDI玩家", &o).unwrap();
+    assert_eq!((uuid.as_str(), name.as_str()), (FRIEND.to_string().as_str(), "Steve_1"));
+    let plain = crate::play::room::marking_play_identity("00112233445566778899aabb", "RDI玩家", &Default::default()).unwrap();
+    assert_eq!(plain, ("00112233-4455-6677-8899-aabb00000000".to_owned(), "RDI玩家".to_owned()));
 }
 
 #[test]
@@ -505,6 +510,8 @@ impl ImportApi for FakeApi {
 }
 
 struct Setup {
+    /// Keeps the temp dir until the test ends.
+    #[allow(dead_code)]
     t: Temp,
     marking: MarkingService,
     plan: ImportPlan,

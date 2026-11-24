@@ -27,7 +27,8 @@ import { Account, AccountForm, PlayerInfoPage, AccountDialogs } from "account.sl
 import { Inbox, MailRow, MailPage, MailDialogs } from "mail.slint";
 import { Settings, SettingsPage, SettingsDialogs } from "settings.slint";
 import { RoomPages, RoomBackend, RoomWorldPage, RoomRollbackPage, RoomModsPage, RoomPageDialogs, RollbackRow, RoomModRow, GithubAssetRow } from "room_pages.slint";
-export { Account, Inbox, MailRow, Settings, Rooms, RoomInfo, RoomMember, RoomMenuEntry, RoomFriend, RoomFormView, RoomRule, RoomWorld, RoomPages, RollbackRow, RoomModRow, GithubAssetRow }
+import { SaveImport, SaveImportPage, SaveImportDialogs, SaveRoleRow, SaveMapRow } from "save_import.slint";
+export { Account, Inbox, MailRow, Settings, Rooms, RoomInfo, RoomMember, RoomMenuEntry, RoomFriend, RoomFormView, RoomRule, RoomWorld, RoomPages, RollbackRow, RoomModRow, GithubAssetRow, SaveImport, SaveRoleRow, SaveMapRow }
 export { LoginAccount, CandidateRow, OptionDraft, TileData, NameInitial, ProofRow, ProofRect, GlassShape, ContentRow, LogRow, TaskRow, WardrobeItem, HostListRow, PlazaCard, PlazaFilters, PlazaPack, PlazaVersion, PlazaMod }
 
 component MenuTileGrid inherits TileGrid {
@@ -194,7 +195,7 @@ export component AppWindow inherits Window {
     callback toggle-task(int);
     out property <bool> dialog-focused: dialog.contains-focus;
     out property <bool> gallery-password-revealed: gallery-view.password-revealed;
-    out property <bool> modal-open: root.login-register || root.action-error != "" || root.duplicate-host != "" || root.java-missing || root.confirm-exit || root.gallery-dialog || root.local-play || root.pack-menu || root.discard-options || root.install-missing || root.install-prompt || root.picked-candidates.length > 0 || Rooms.modal || RoomPages.modal || Account.modal || Inbox.modal || Settings.modal;
+    out property <bool> modal-open: root.login-register || root.action-error != "" || root.duplicate-host != "" || root.java-missing || root.confirm-exit || root.gallery-dialog || root.local-play || root.pack-menu || root.discard-options || root.install-missing || root.install-prompt || root.picked-candidates.length > 0 || Rooms.modal || RoomPages.modal || SaveImport.modal || Account.modal || Inbox.modal || Settings.modal;
     out property <[GlassShape]> menu-grids: [host-grid.shape, pack-grid.shape];
     out property <[GlassShape]> menu-pills: [tabs.shape, tabs.selected-shape, first-shortcut.shape, second-shortcut.shape, third-shortcut.shape];
     out property <[GlassShape]> glass-panels: [gallery-view.surfaces[0], gallery-view.surfaces[1], dialog.shape];
@@ -289,7 +290,7 @@ export component AppWindow inherits Window {
     private property <int> room-screen: Rooms.screen * 10 + RoomPages.screen;
     changed room-screen => { if !root.modal-open {shell-focus.focus();} }
     // Room dialogs focus their own fields; Escape then reaches shell-focus, which dismisses them.
-    changed modal-open => { if root.modal-open && !Rooms.modal && !RoomPages.modal && !Account.modal && !Inbox.modal && !Settings.modal {dialog.focus-dialog();} else if root.login-visible && Account.page == 0 {login-view.focus-account();} else {shell-focus.focus();} }
+    changed modal-open => { if root.modal-open && !Rooms.modal && !RoomPages.modal && !SaveImport.modal && !Account.modal && !Inbox.modal && !Settings.modal {dialog.focus-dialog();} else if root.login-visible && Account.page == 0 {login-view.focus-account();} else {shell-focus.focus();} }
     changed logical-width => {root.scroll-changed();}
     changed logical-height => {root.scroll-changed();}
     forward-focus: shell-focus;
@@ -492,6 +493,12 @@ export component AppWindow inherits Window {
         visible: RoomPages.screen == 4 && !root.login-visible;
         enabled: self.visible && !root.modal-open && root.activity-panel == 0;
     }
+    SaveImportPage {
+        x: (root.width - self.width) / 2; y: 56px; width: min(820px, root.width - 48px);
+        height: root.height - self.y - (root.game-running || root.game-status != "" ? 60px : 16px);
+        visible: RoomPages.screen == 5 && !root.login-visible;
+        enabled: self.visible && !root.modal-open && root.activity-panel == 0;
+    }
     PlayerInfoPage {
         x: (root.width - self.width) / 2; y: 56px; width: min(820px, root.width - 48px);
         height: min(460px, root.height - self.y - (root.game-running || root.game-status != "" ? 60px : 16px));
@@ -581,7 +588,7 @@ export component AppWindow inherits Window {
     if root.modal-open && !(Rooms.menu-open && !Rooms.dialog): Rectangle { x: 0px; y: 0px; width: parent.width; height: parent.height; background: #0009; TouchArea {} }
     dialog := SharedDialog {
         width: min(480px, root.width - 48px);
-        x: (parent.width - self.width) / 2; y: (parent.height - self.height) / 2; visible: root.modal-open && !Rooms.modal && !RoomPages.modal && !Account.modal && !Inbox.modal && !Settings.modal && !root.login-register && !root.local-play && !root.pack-menu && !root.discard-options && !root.install-missing && !root.install-prompt && root.picked-candidates.length == 0;
+        x: (parent.width - self.width) / 2; y: (parent.height - self.height) / 2; visible: root.modal-open && !Rooms.modal && !RoomPages.modal && !SaveImport.modal && !Account.modal && !Inbox.modal && !Settings.modal && !root.login-register && !root.local-play && !root.pack-menu && !root.discard-options && !root.install-missing && !root.install-prompt && root.picked-candidates.length == 0;
         title: root.confirm-exit ? "退出启动器" : root.duplicate-host != "" ? "重复启动" : root.java-missing ? "缺少Java25" : root.action-error != "" ? "错误" : "与朋友一起冒险";
         message: root.confirm-exit ? (root.tasks-running ? "任务仍在进行，退出将终止任务和正在运行的游戏。是否继续？" : "游戏仍在运行，退出将终止游戏。是否继续？") : root.duplicate-host != "" ? "该整合包已在运行。再次启动可能造成存档、配置、日志或Mod缓存冲突。是否继续？" : root.java-missing ? "没找到可用的完整版64位JDK25，游戏需要它才能启动。是否自动下载安装？安装时需要允许管理员授权。" : root.action-error != "" ? root.action-error : "准备好探索Minecraft世界了吗？这段较长的中文说明会自动换行。";
         confirm-label: root.confirm-exit ? (root.tasks-running ? "终止并退出" : "终止游戏并退出") : root.duplicate-host != "" ? "继续启动" : root.java-missing ? "自动下载安装" : root.login-visible ? "明白" : "确定";
@@ -591,6 +598,7 @@ export component AppWindow inherits Window {
     }
     if Rooms.modal: RoomDialogs { x: 0px; y: 0px; width: parent.width; height: parent.height; }
     if RoomPages.modal: RoomPageDialogs { x: 0px; y: 0px; width: parent.width; height: parent.height; }
+    if SaveImport.modal: SaveImportDialogs { x: 0px; y: 0px; width: parent.width; height: parent.height; }
     if Account.modal: AccountDialogs { x: 0px; y: 0px; width: parent.width; height: parent.height; }
     if Inbox.modal: MailDialogs { x: 0px; y: 0px; width: parent.width; height: parent.height; }
     if Settings.modal: SettingsDialogs { x: 0px; y: 0px; width: parent.width; height: parent.height; }

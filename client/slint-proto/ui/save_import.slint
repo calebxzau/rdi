@@ -1,0 +1,288 @@
+// A4: 导入单人存档 (Compose HostSaveImportScreen, SavePlayerMappingCard, QqPlayerSearchDialog).
+// Rust drives it through the `SaveImport` global (src/save_import_ui.rs); the logic is in
+// src/save_import/flow.rs.
+import { TextField } from "components/fields.slint";
+import { GlassButton, CircleIconButton } from "components/glass_button.slint";
+import { ErrorState, LoadingState, RScrollbar } from "components/shared.slint";
+import { PlayerHead } from "components/player_head.slint";
+import { PageCard, Busy, DialogCard, DialogTitle } from "room_pages.slint";
+import { Theme } from "theme.slint";
+
+// One role of the save that the copy can be opened as.
+export struct SaveRoleRow { uuid: string, name: string, id-line: string, position: string, saved: string, selected: bool }
+
+// One player of the save and the RDI account they become.
+export struct SaveMapRow {
+    uuid: string, name: string, badge: string, owner: bool, details: string,
+    read-only: bool, missing: bool,
+    has-target: bool, target-name: string, target-head: image, msid: bool,
+    dual: bool, keep-rdi: bool, rdi-label: string, other-label: string,
+}
+
+export global SaveImport {
+    in-out property <string> title: "导入单人存档";
+    // 0 选存档, 1 选角色, 2 标记中, 3 标记汇总, 4 玩家对应, 5 确认, 6 已提交.
+    in-out property <int> step;
+    // The room is still loading.
+    in-out property <bool> loading;
+    in-out property <string> busy;
+    in-out property <string> error;
+    in-out property <bool> can-pick;
+    in-out property <string> source;
+    in-out property <bool> fabric-note;
+    in-out property <[SaveRoleRow]> roles;
+    // The earlier copy's role, when it can be continued.
+    in-out property <string> reuse-line;
+    in-out property <string> marking-status;
+    in-out property <string> summary-headline;
+    in-out property <bool> summary-empty;
+    in-out property <[string]> summary-lines;
+    in-out property <[SaveMapRow]> rows;
+    in-out property <[string]> confirm-lines;
+    in-out property <bool> has-run;
+    in-out property <bool> cleanup-open;
+    in-out property <bool> qq-open;
+    in-out property <string> qq-text;
+    in-out property <bool> qq-searching;
+    in-out property <bool> qq-found;
+    in-out property <string> qq-name;
+    in-out property <image> qq-head;
+    in-out property <string> qq-error;
+    out property <bool> modal: self.cleanup-open || self.qq-open;
+    callback action(string, string);
+}
+
+component Note inherits Text { color: #5b625b; font-size: 13px; wrap: word-wrap; }
+component Strong inherits Text { color: Theme.ink; font-size: 15px; font-weight: 600; wrap: word-wrap; }
+component Body inherits Text { color: Theme.ink; font-size: 14px; wrap: word-wrap; }
+
+component Chip inherits Rectangle {
+    in property <string> text;
+    in property <bool> selected;
+    in property <bool> enabled: true;
+    callback clicked();
+    height: 28px; width: label.preferred-width + 20px; border-radius: 8px;
+    background: root.selected ? #dce8d4 : touch.has-hover && root.enabled ? #ffffffd0 : #ffffff80;
+    border-width: 1px; border-color: root.selected ? #446c49 : #b9beb6;
+    accessible-role: button; accessible-label: root.text; accessible-checked: root.selected;
+    accessible-action-default => { if root.enabled { root.clicked(); } }
+    label := Text { text: (root.selected ? "✓ " : "") + root.text; color: root.enabled ? Theme.ink : #777b77; font-size: 13px;
+        horizontal-alignment: center; vertical-alignment: center; }
+    touch := TouchArea { enabled: root.enabled; mouse-cursor: pointer; clicked => { root.clicked(); } }
+}
+
+component Badge inherits Rectangle {
+    in property <string> text;
+    height: 22px; width: badge-text.preferred-width + 14px; border-radius: 6px; background: #e8def8;
+    badge-text := Text { text: root.text; color: #1d192b; font-size: 12px; horizontal-alignment: center; vertical-alignment: center; }
+}
+
+component Buttons inherits HorizontalLayout { spacing: 10px; alignment: start; }
+
+component RoleRadio inherits Rectangle {
+    in property <SaveRoleRow> item;
+    in property <bool> enabled;
+    height: body.preferred-height + 20px; border-radius: 12px;
+    background: root.item.selected ? #dce8d4 : touch.has-hover && root.enabled ? #ffffffd0 : #ffffff80;
+    accessible-role: radio-button; accessible-label: root.item.name; accessible-checked: root.item.selected;
+    accessible-action-default => { if root.enabled { SaveImport.action("role", root.item.uuid); } }
+    touch := TouchArea { enabled: root.enabled; mouse-cursor: pointer; clicked => { SaveImport.action("role", root.item.uuid); } }
+    Rectangle { x: 12px; y: 12px; width: 20px; height: 20px; border-radius: 10px; border-width: 2px;
+        border-color: root.item.selected ? #446c49 : #5b625b;
+        if root.item.selected: Rectangle { width: 10px; height: 10px; border-radius: 5px; background: #446c49; }
+    }
+    // An explicit height: without it the layout fills the card and spills past its bottom edge.
+    body := VerticalLayout { x: 44px; y: 10px; width: parent.width - 56px; height: self.preferred-height; spacing: 2px;
+        Body { text: root.item.name; font-weight: 600; }
+        Note { text: root.item.id-line; }
+        Note { text: root.item.position; }
+        if root.item.saved != "": Note { text: root.item.saved; }
+    }
+}
+
+component MappingCard inherits Rectangle {
+    in property <SaveMapRow> item;
+    in property <bool> enabled;
+    height: body.preferred-height + 24px; border-radius: 16px; background: #ffffff90;
+    body := VerticalLayout { x: 14px; y: 12px; width: parent.width - 28px; height: self.preferred-height; spacing: 6px;
+        HorizontalLayout { spacing: 8px; alignment: start;
+            Text { text: root.item.name; color: Theme.ink; font-size: 15px; font-weight: 600; vertical-alignment: center; }
+            VerticalLayout { alignment: center; Badge { text: root.item.badge; } }
+            if root.item.owner: VerticalLayout { alignment: center; Badge { text: "房主"; } }
+        }
+        if root.item.details != "": Note { text: root.item.details; }
+        if root.item.read-only && root.item.missing: Text { text: "账号已不存在，将保持原样"; color: #ba3434; font-size: 13px; }
+        if root.item.read-only && !root.item.missing: Note { text: "已是RDI玩家，将保持原样并加入房间"; }
+        if !root.item.read-only: HorizontalLayout { spacing: 8px; alignment: start; height: 32px;
+            if !root.item.has-target: Note { text: "不迁移"; vertical-alignment: center; }
+            if root.item.has-target: Body { text: "对应到"; vertical-alignment: center; }
+            if root.item.has-target: VerticalLayout { alignment: center;
+                PlayerHead { width: 24px; height: 24px; source: root.item.target-head; } }
+            if root.item.has-target: Body { text: root.item.target-name; vertical-alignment: center; }
+            if root.item.has-target && root.item.msid: Note { text: "已绑定此正版账号"; vertical-alignment: center; }
+        }
+        if !root.item.read-only: Buttons {
+            GlassButton { label: "不迁移"; enabled: root.enabled && root.item.has-target; clicked => { SaveImport.action("clear", root.item.uuid); } }
+            GlassButton { label: "对应到我"; glyph: "\u{f007}"; enabled: root.enabled; clicked => { SaveImport.action("me", root.item.uuid); } }
+            GlassButton { label: "按QQ号查找"; glyph: "\u{f002}"; enabled: root.enabled; clicked => { SaveImport.action("qq", root.item.uuid); } }
+        }
+        if root.item.dual: VerticalLayout { spacing: 6px;
+            Body { text: "此玩家在存档中有两份数据，进入房间后使用哪一份的背包、位置和进度？"; font-weight: 600; }
+            HorizontalLayout { spacing: 8px; alignment: start;
+                Chip { text: root.item.rdi-label; selected: root.item.keep-rdi; enabled: root.enabled; clicked => { SaveImport.action("keep", root.item.uuid + "|rdi"); } }
+                Chip { text: root.item.other-label; selected: !root.item.keep-rdi; enabled: root.enabled; clicked => { SaveImport.action("keep", root.item.uuid + "|other"); } }
+            }
+            Note { text: "未选择的那份会作为另一名玩家留在存档中，它名下的领地、机器等归属不会合并。"; }
+        }
+    }
+}
+
+// The marking steps for the player, as Compose MARKING_NOTICE.
+component MarkingNotice inherits Body {
+    text: "1.点击开始按钮启动此整合包\n2.输入/syncchunk here显示你当前所在区块\n3.挨个找你想传的区块，站在里面，输入/syncchunk add，最多256个\n4.弄完了保存并退出";
+}
+
+export component SaveImportPage inherits PageCard {
+    in property <bool> enabled: true;
+    private property <bool> busy: SaveImport.busy != "";
+    FocusScope { x: 0px; y: 0px; width: root.width; height: root.height; enabled: root.enabled;
+        HorizontalLayout { x: 20px; y: 14px; width: parent.width - 40px; height: 48px; spacing: 10px;
+            VerticalLayout { alignment: center;
+                CircleIconButton { glyph: "\u{f060}"; accessible-label: "返回"; clicked => { SaveImport.action("back-nav", ""); } }
+            }
+            Text { text: SaveImport.title; color: Theme.ink; font-size: 22px; font-weight: 600; vertical-alignment: center; overflow: elide; horizontal-stretch: 1; }
+        }
+        if SaveImport.loading: LoadingState { x: 20px; y: 72px; width: parent.width - 40px; height: parent.height - 88px; }
+        if !SaveImport.loading: Rectangle { x: 24px; y: 68px; width: parent.width - 40px; height: parent.height - 84px;
+            flick := Flickable { x: 0px; y: 0px; width: parent.width - 14px; height: parent.height;
+                content-height: max(self.height, body.preferred-height + 16px);
+                body := VerticalLayout { width: parent.width; spacing: 12px; alignment: start;
+                    if root.busy: Busy { text: SaveImport.busy; alignment: start; }
+                    if SaveImport.error != "": Text { text: SaveImport.error; color: #ba3434; wrap: word-wrap; }
+
+                    // 选存档 and 选角色
+                    if SaveImport.step <= 1: VerticalLayout { spacing: 12px;
+                        Body { text: "把房间里的存档换成自己的"; }
+                        Buttons {
+                            GlassButton { label: "选择存档文件夹"; glyph: "\u{eaed}"; filled: SaveImport.step == 0; enabled: !root.busy && SaveImport.can-pick;
+                                clicked => { SaveImport.action("pick", ""); } }
+                        }
+                    }
+                    if SaveImport.step == 1: VerticalLayout { spacing: 10px;
+                        Note { text: "已选择：" + SaveImport.source; }
+                        if SaveImport.fabric-note: Body { text: "检测到Fabric使用记录，请确认原存档与房间使用同一整合包。"; }
+                        Strong { text: "用哪个角色进入存档？"; }
+                        if SaveImport.roles.length == 0: Body { text: "使用我的RDI角色，从世界出生点开始"; }
+                        for role in SaveImport.roles: RoleRadio { item: role; enabled: !root.busy; }
+                        Body { text: "此次选择用于寻找和标记区块，导入时再确认角色对应的RDI账号。"; }
+                        MarkingNotice {}
+                        if SaveImport.reuse-line != "": Body { text: SaveImport.reuse-line; }
+                        if SaveImport.reuse-line != "": Buttons {
+                            GlassButton { label: "继续使用上次标记的副本"; filled: true; enabled: !root.busy; clicked => { SaveImport.action("mark", "reuse"); } }
+                            GlassButton { label: "用所选角色创建新副本"; enabled: !root.busy; clicked => { SaveImport.action("mark", "new"); } }
+                        }
+                        if SaveImport.reuse-line == "": Buttons {
+                            GlassButton { label: "用所选角色开始标记"; glyph: "\u{f04b}"; filled: true; enabled: !root.busy; clicked => { SaveImport.action("mark", "new"); } }
+                        }
+                    }
+
+                    // 标记中
+                    if SaveImport.step == 2: VerticalLayout { spacing: 12px;
+                        Strong { text: "游戏中正在标记要保留的区块。"; }
+                        if SaveImport.marking-status != "": Note { text: SaveImport.marking-status; }
+                        MarkingNotice {}
+                        Note { text: "退出游戏后会自动读取标记。"; }
+                        Buttons {
+                            GlassButton { label: "我已退出游戏"; enabled: !root.busy; clicked => { SaveImport.action("exited", ""); } }
+                        }
+                    }
+
+                    // 标记汇总
+                    if SaveImport.step == 3: VerticalLayout { spacing: 8px;
+                        if SaveImport.summary-empty: Text { text: "还没有标记任何区块。请至少标记一个要保留的区块。"; color: #ba3434; wrap: word-wrap; }
+                        if !SaveImport.summary-empty: Strong { text: SaveImport.summary-headline; }
+                        for line in SaveImport.summary-lines: Body { text: line; }
+                        Buttons {
+                            GlassButton { label: "重新进入游戏调整"; glyph: "\u{f04b}"; enabled: !root.busy; clicked => { SaveImport.action("relaunch", ""); } }
+                            GlassButton { label: "下一步"; filled: true; enabled: !root.busy && !SaveImport.summary-empty; clicked => { SaveImport.action("continue", ""); } }
+                            GlassButton { label: "清理导入副本"; glyph: "\u{f1f8}"; destructive: true; enabled: !root.busy; clicked => { SaveImport.action("cleanup", ""); } }
+                        }
+                    }
+
+                    // 玩家对应
+                    if SaveImport.step == 4: VerticalLayout { spacing: 10px;
+                        Strong { text: "存档中的每名玩家对应到哪个RDI账号？不迁移的玩家会原样保留。"; }
+                        for row in SaveImport.rows: MappingCard { item: row; enabled: !root.busy; }
+                        Buttons {
+                            GlassButton { label: "下一步"; filled: true; enabled: !root.busy; clicked => { SaveImport.action("review", ""); } }
+                        }
+                    }
+
+                    // 确认
+                    if SaveImport.step == 5: VerticalLayout { spacing: 8px;
+                        Strong { text: "确认导入"; }
+                        for line in SaveImport.confirm-lines: Body { text: "· " + line; }
+                        Buttons {
+                            GlassButton { label: "返回修改"; enabled: !root.busy; clicked => { SaveImport.action("back-mapping", ""); } }
+                            GlassButton { label: "开始导入"; filled: true; destructive: true; enabled: !root.busy; clicked => { SaveImport.action("confirm", ""); } }
+                        }
+                    }
+
+                    // 已提交
+                    if SaveImport.step == 6: VerticalLayout { spacing: 12px;
+                        Body { text: "已开始导入。处理和上传需要几分钟，可以在任务列表查看进度，完成后会收到邮件。"; }
+                        if SaveImport.has-run: Buttons {
+                            GlassButton { label: "查看进度"; glyph: "\u{f0ae}"; filled: true; clicked => { SaveImport.action("tasks", ""); } }
+                        }
+                    }
+                }
+            }
+            RScrollbar { x: parent.width - 6px; y: 0px; width: 6px; height: flick.height; viewport: flick.height; extent: flick.content-height; position: -flick.content-y;
+                scrolled(offset) => { flick.content-y = -offset; } }
+        }
+    }
+}
+
+// 清理导入副本 and 按QQ号查找; the shell dims the window behind them.
+export component SaveImportDialogs inherits Rectangle {
+    if SaveImport.cleanup-open: Rectangle { x: 0px; y: 0px; width: root.width; height: root.height;
+        TouchArea {}
+        DialogCard { width: min(460px, root.width - 48px); height: cleanup-body.preferred-height;
+            x: (parent.width - self.width) / 2; y: (parent.height - self.height) / 2;
+            cleanup-body := VerticalLayout { padding: 24px; spacing: 12px;
+                DialogTitle { text: "清理导入副本"; }
+                Text { text: "将删除为导入创建的存档副本和其中的区块标记，原存档不受影响。"; color: Theme.ink; wrap: word-wrap; }
+                HorizontalLayout { alignment: end; spacing: 12px;
+                    GlassButton { label: "取消"; clicked => { SaveImport.action("cleanup-cancel", ""); } }
+                    GlassButton { label: "删除"; filled: true; destructive: true; init => { self.focus(); } clicked => { SaveImport.action("cleanup-confirm", ""); } }
+                }
+            }
+        }
+    }
+    if SaveImport.qq-open: Rectangle { x: 0px; y: 0px; width: root.width; height: root.height;
+        TouchArea {}
+        DialogCard { width: min(440px, root.width - 48px); height: qq-body.preferred-height;
+            x: (parent.width - self.width) / 2; y: (parent.height - self.height) / 2;
+            qq-body := VerticalLayout { padding: 24px; spacing: 12px;
+                DialogTitle { text: "按QQ号查找玩家"; }
+                TextField { label: "QQ号"; reserve-error: false; enabled: !SaveImport.qq-searching; text <=> SaveImport.qq-text;
+                    init => { self.focus(); }
+                    edited(text) => { SaveImport.action("qq-edited", text); }
+                    accepted => { SaveImport.action(SaveImport.qq-found ? "qq-pick" : "qq-search", ""); } }
+                if SaveImport.qq-found: HorizontalLayout { spacing: 8px; alignment: start; height: 32px;
+                    Text { text: "找到玩家："; color: Theme.ink; vertical-alignment: center; }
+                    VerticalLayout { alignment: center; PlayerHead { width: 24px; height: 24px; source: SaveImport.qq-head; } }
+                    Text { text: SaveImport.qq-name; color: Theme.ink; font-weight: 600; vertical-alignment: center; }
+                }
+                if SaveImport.qq-error != "": Text { text: SaveImport.qq-error; color: #ba3434; wrap: word-wrap; }
+                HorizontalLayout { alignment: end; spacing: 12px;
+                    GlassButton { label: "取消"; clicked => { SaveImport.action("qq-cancel", ""); } }
+                    if SaveImport.qq-found: GlassButton { label: "就是这名玩家"; filled: true; clicked => { SaveImport.action("qq-pick", ""); } }
+                    if !SaveImport.qq-found: GlassButton { label: SaveImport.qq-searching ? "正在查找..." : "查找"; filled: true;
+                        enabled: SaveImport.qq-text != "" && !SaveImport.qq-searching; busy: SaveImport.qq-searching;
+                        clicked => { SaveImport.action("qq-search", ""); } }
+                }
+            }
+        }
+    }
+}

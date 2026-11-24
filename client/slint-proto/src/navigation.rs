@@ -21,6 +21,8 @@ pub enum Screen {
     RoomRollback,
     /// U4c2b: a room's 模组 page.
     RoomMods,
+    /// A4: 导入单人存档, opened from the room's 存档 page.
+    RoomSaveImport,
     /// U4b1: 个人信息.
     PlayerInfo,
     /// U4b2: 信箱.
@@ -97,6 +99,7 @@ mod tests {
             Screen::RoomWorld,
             Screen::RoomRollback,
             Screen::RoomMods,
+            Screen::RoomSaveImport,
         ] {
             let mut navigation = Navigation::default();
             navigation.push(screen);

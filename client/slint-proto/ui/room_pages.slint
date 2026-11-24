@@ -38,6 +38,7 @@ export global RoomPages {
     in-out property <string> fail;
     in-out property <string> notice;
     in-out property <bool> can-reset;
+    in-out property <bool> can-import;
     in-out property <bool> can-download;
     in-out property <bool> can-rollback;
     in-out property <bool> download-enabled;
@@ -93,7 +94,7 @@ export global RoomPages {
     callback action(string, string);
 }
 
-component PageCard inherits Rectangle {
+export component PageCard inherits Rectangle {
     background: #f8f7eff7;
     border-radius: 24px;
 }
@@ -109,7 +110,7 @@ component PageTitle inherits HorizontalLayout {
 }
 
 // A round button with a text label under it, as Compose CircleIconButton(showText = true).
-component LabeledButton inherits VerticalLayout {
+export component LabeledButton inherits VerticalLayout {
     in property <string> glyph;
     in property <string> label;
     in property <bool> enabled: true;
@@ -122,7 +123,7 @@ component LabeledButton inherits VerticalLayout {
     Text { text: root.label; color: root.enabled ? Theme.ink : #777b77; font-size: 13px; horizontal-alignment: center; }
 }
 
-component Busy inherits HorizontalLayout {
+export component Busy inherits HorizontalLayout {
     in property <string> text;
     spacing: 8px; alignment: center;
     Text { text: "◌"; color: #446c49; font-size: 18px; vertical-alignment: center; }
@@ -186,6 +187,7 @@ export component RoomWorldPage inherits PageCard {
                 LabeledButton { glyph: "\u{eaed}"; label: "打开单人存档文件夹"; clicked => { RoomPages.action("open-saves", ""); } }
             }
             HorizontalLayout { spacing: 16px; alignment: center;
+                if RoomPages.can-import: LabeledButton { glyph: "\u{eac3}"; label: "上传自己的存档"; clicked => { RoomPages.action("import-save", ""); } }
                 if RoomPages.can-download: LabeledButton { glyph: "\u{eac2}"; label: "下载房间存档"; enabled: !root.busy && RoomPages.download-enabled;
                     clicked => { RoomPages.action("download", ""); } }
                 if RoomPages.can-rollback: LabeledButton { glyph: "\u{f1da}"; label: "回档"; clicked => { RoomPages.action("rollback", ""); } }
@@ -360,12 +362,12 @@ export component RoomModsPage inherits PageCard {
     }
 }
 
-component DialogCard inherits Rectangle {
+export component DialogCard inherits Rectangle {
     background: #f7faf0; border-radius: 24px;
     drop-shadow-blur: 12px; drop-shadow-offset-y: 3px; drop-shadow-color: #00000030;
     TouchArea {}
 }
-component DialogTitle inherits Text { font-size: 22px; font-weight: 600; color: Theme.ink; wrap: word-wrap; }
+export component DialogTitle inherits Text { font-size: 22px; font-weight: 600; color: Theme.ink; wrap: word-wrap; }
 
 // The page dialogs; the shell dims the window behind them.
 export component RoomPageDialogs inherits Rectangle {

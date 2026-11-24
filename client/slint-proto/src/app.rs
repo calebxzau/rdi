@@ -211,6 +211,7 @@ pub struct App {
     plaza: Rc<RefCell<crate::plaza::Plaza>>,
     rooms: Rc<RefCell<crate::rooms_ui::RoomsUi>>,
     room_pages: Rc<RefCell<crate::room_pages_ui::RoomPagesUi>>,
+    save_import: Rc<RefCell<crate::save_import_ui::SaveImportUi>>,
     account_ui: Rc<RefCell<crate::account_ui::AccountUi>>,
     mail_ui: Rc<RefCell<crate::mail_ui::MailUi>>,
     settings_ui: Rc<RefCell<crate::settings_ui::SettingsUi>>,
@@ -273,6 +274,7 @@ impl App {
         let login_ui = crate::login::LoginUi::wire(ui, runtime.clone(), config.server.clone());
         let rooms = crate::rooms_ui::RoomsUi::wire(ui, runtime.clone());
         let room_pages = crate::room_pages_ui::RoomPagesUi::wire(ui, runtime.clone(), pack_ui.borrow().tasks());
+        let save_import = crate::save_import_ui::SaveImportUi::wire(ui, runtime.clone(), pack_ui.clone(), config.server.clone());
         let account_ui = crate::account_ui::AccountUi::wire(ui, runtime.clone(), config.server.clone());
         let mail_ui = crate::mail_ui::MailUi::wire(ui, runtime.clone());
         let rdipack2_ui = crate::rdipack2_ui::Rdipack2Ui::wire(ui, runtime.clone(), pack_ui.borrow().tasks(), pack_ui.borrow().play.clone());
@@ -291,6 +293,7 @@ impl App {
             plaza,
             rooms,
             room_pages,
+            save_import,
             account_ui,
             mail_ui,
             settings_ui,
@@ -553,6 +556,7 @@ impl App {
         self.plaza.borrow_mut().connect(None);
         self.rooms.borrow_mut().connect(None);
         self.room_pages.borrow_mut().connect(None);
+        self.save_import.borrow_mut().connect(None);
         self.account_ui.borrow_mut().connect(None);
         self.mail_ui.borrow_mut().connect(None);
         self.settings_ui.borrow_mut().connect(None);
@@ -592,6 +596,7 @@ impl App {
         self.plaza.borrow_mut().connect(None);
         self.rooms.borrow_mut().connect(None);
         self.room_pages.borrow_mut().connect(None);
+        self.save_import.borrow_mut().connect(None);
         self.account_ui.borrow_mut().connect(None);
         self.mail_ui.borrow_mut().connect(None);
         self.settings_ui.borrow_mut().connect(None);
@@ -626,6 +631,7 @@ impl App {
         self.plaza.borrow_mut().connect(Some(api.clone()));
         self.rooms.borrow_mut().connect(Some(api.clone()));
         self.room_pages.borrow_mut().connect(Some(api.clone()));
+        self.save_import.borrow_mut().connect(Some(api.clone()));
         self.account_ui.borrow_mut().connect(Some(api.clone()));
         self.mail_ui.borrow_mut().connect(Some(api.clone()));
         self.settings_ui.borrow_mut().connect(Some(api.clone()));
@@ -1045,6 +1051,7 @@ impl App {
         self.plaza.borrow_mut().tick();
         self.rooms.borrow_mut().tick();
         self.room_pages.borrow_mut().tick();
+        self.save_import.borrow_mut().tick();
         self.account_ui.borrow_mut().tick();
         self.mail_ui.borrow_mut().tick();
         self.settings_ui.borrow_mut().tick();
