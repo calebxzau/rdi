@@ -20,6 +20,9 @@ pub mod mods;
 pub mod platform;
 pub mod policy;
 pub mod prepare;
+// Wired by the upload task (A5d).
+#[allow(dead_code)]
+pub mod publish;
 pub mod reader;
 pub mod server_pack;
 pub mod source;
@@ -31,6 +34,8 @@ mod drafts_tests;
 mod manifest_tests;
 #[cfg(test)]
 mod prepare_tests;
+#[cfg(test)]
+mod publish_tests;
 #[cfg(test)]
 mod reader_tests;
 #[cfg(test)]

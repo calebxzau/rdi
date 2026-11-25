@@ -674,7 +674,7 @@ pub fn build(ctx: &Context, media: &dyn Media, input: &Input) -> Result<PathBuf>
 }
 
 /// Kotlin `humanFileSize`.
-fn human_size(bytes: u64) -> String {
+pub(super) fn human_size(bytes: u64) -> String {
     if bytes < 1024 {
         return format!("{bytes}B");
     }

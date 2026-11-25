@@ -675,3 +675,16 @@ Kotlin bugs found on the way are noted here and not fixed.
   discard while reading did the same. Kotlin's `validateRuntime` (the Java of the JVM that runs
   the launcher) has no meaning in Rust and is left out; the test runs of A6 need Java anyway.
   Next: A5b.
+- 2026-11-25 M4 stage A5b done: `upload::publish` (Kotlin `HttpModpackUploadApi`,
+  `ModpackChunkedUploader.upload`, the publish halves of `uploadNewModpack`/`uploadNewVersion`,
+  `uploadSummary`, `resolveUploadedModpackId`). SHA-1 of the archive, `POST
+  /modpack/upload-sessions`, the missing parts through `save_import::upload` (parallelism capped
+  by `maxParallelParts`, retries as Kotlin), `complete` (must be ready), then the publish; a
+  failure before the publish cancels the session (10 s, also after a task cancel); after it a
+  lost connection or timeout becomes 发布结果尚未确认，请刷新整合包列表查看，勿重复提交 and the
+  session stays. `pack_install::extras::Content` serializes now; the publish bodies send every
+  field (Kotlin leaves out defaults, which master fills the same). 8 new tests with a fake
+  server; launcher tests 425 pass, 9 ignored; clippy has no new warnings. Not live yet: every
+  upload route of master requires `DEBUG || player.hasMsid`, and the local test account 11111
+  has no Microsoft binding (preflight answered 请先绑定微软账号，再上传整合包或新版本). The live
+  upload comes with A5d.

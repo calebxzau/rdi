@@ -2,9 +2,9 @@
 use super::mods::{self, Mod, SourceHeaders};
 use crate::{content_store::Request, digests::Digest, download::Source};
 use anyhow::{Result, ensure};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub enum Platform {
     CurseForge,
     Modrinth,
@@ -19,7 +19,7 @@ impl Platform {
         }
     }
 }
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub enum Kind {
     Mod,
     ShaderPack,
@@ -27,7 +27,7 @@ pub enum Kind {
     DataPack,
     Other,
 }
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub enum Side {
     Client,
     Server,
@@ -36,7 +36,7 @@ pub enum Side {
 fn yes() -> bool {
     true
 }
-#[derive(Clone, Debug, Eq, PartialEq, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Content {
     pub platform: Platform,
