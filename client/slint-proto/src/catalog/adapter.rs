@@ -62,7 +62,7 @@ const MAX_URL_IDS_BYTES: usize = 7000;
 
 /// Consecutive slices of `ids` whose URL-encoded JSON list (`%5B%22id%22%2C…%5D`) stays within
 /// `MAX_URL_IDS_BYTES`; a single id longer than that still gets its own batch.
-fn url_batches(ids: &[String]) -> Vec<&[String]> {
+pub(crate) fn url_batches(ids: &[String]) -> Vec<&[String]> {
     let mut batches = Vec::new();
     let (mut start, mut size) = (0, 6);
     for (i, id) in ids.iter().enumerate() {

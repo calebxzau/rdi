@@ -365,6 +365,9 @@ Kotlin bugs found on the way are noted here and not fixed.
 |---|---|---|
 | E1 | Must the upload test run (`modpack-test`, starts the pack once before upload) be ported for M4, or may an agent-driven upload skip it? | **Answered 2026-11-25: the tests are required**, as in Compose: the client and the server test must pass unless `rdi.ignoreModpackTest` or debug mode is on |
 | E4 | Port the whole upload flow to Rust, or keep pack reading, archive building and tests in a headless Kotlin helper? | **Answered 2026-11-25: port everything to Rust** (owner picked the recommended option) |
+| E5 | Which encoders for the upload archive? Kotlin needs two: Opus (24 kHz, 48 kbps, stereo) and AV1 for PNG files over 50KB (`PngCompression.kt` writes AVIF under the unchanged `.png` name, so other mods need no code change). | **Answered 2026-11-25: the game's slim FFmpeg natives** with a small C shim built in `client/mediaproc/ffmpeg/build-natives.sh` (flat functions, called through `libloading`); same encoders and settings as Kotlin. Needs a new natives release |
+| E6 | One `upload_modpack` call, or a draft with several steps? Compose is interactive (mod sides, missing mods, test again after a failure, optional server pack). | **Answered 2026-11-25: a draft.** `upload_modpack_check` returns a `draft_id`; tools set mod sides, start the client and server tests (tasks), take an optional `server_pack_path`; `upload_modpack { draft_id, ... }` submits. Test results expire when the mod list changes (Kotlin `testedModsSignature`) |
+| E7 | Stage order | **Answered 2026-11-25: A2, A3, A5, A4, A6.** Upload and publish are proven against the local master before the encoders; `upload_modpack` is not registered until A4 and A6 are done. A6 also needs the test server install (`McInstall` `--installServer`, Fabric server runtime), which Rust `mc_install` does not have |
 | E2 | Are confirmation dialogs wanted before destructive tools are added later? | Destructive tools stay out (D1) |
 | E3 | Should a stdio bridge exist for agents without HTTP MCP support? | No |
 
@@ -454,3 +457,24 @@ Kotlin bugs found on the way are noted here and not fixed.
   (`pack_install::extras` has `validateAndMergeClientExtras`), staging into the content store,
   `containsExcludedMcaFiles` (`SaveRegionPaths`), and `loadServerPack`. Compare the resulting
   mod and extra lists with Kotlin on the owner's sample pack before A3.
+- 2026-11-25 owner decisions E5 (encoders: the game's FFmpeg natives with a C shim), E6 (draft
+  tools) and E7 (stage order A2, A3, A5, A4, A6) recorded in section 8. Two things the design
+  above understated: the PNG rule writes AVIF (a second encoder), and the server test needs the
+  test server install, which Rust `mc_install` lacks.
+- 2026-11-25 M4 stage A2 part 2a: `upload::platform` (raw requests on the catalog transport:
+  Modrinth `version_files` and `projects`, CurseForge `fingerprints/432`, `mods` with and without
+  the mod class filter, `mods/files`; ids a first answer leaves out are asked again through the
+  new `Transport::request_official`) and `upload::manifest` (`loadParsedModpack` with
+  `resolveManifestEntries`, `mapManifestEntriesToMods`, `resolveManifestEntriesToContents`,
+  catalog slug map). 7 new tests; launcher tests 396 pass, 6 ignored; clippy has no new warnings.
+  Live (ignored test `real_pack_mods`, mirror preferred, no slug map): the owner's sample pack
+  reads 180 entries as 161 mods (127 Modrinth, 34 through the CurseForge fallback; 13 with an
+  unknown side) and 19 extras in 16 s. The live run found a panic on Chinese paths in
+  `content_kind`, fixed with a test. Differences noted: Modrinth `projects` id lists are split
+  as the catalog splits them (Kotlin sends one URL); with the mirror preferred the first request
+  is the catalog's mirror and official race, not Kotlin's mirror then official. Still not wired
+  (`allow(dead_code)`). Next, A2 part 2b: the reader (`loadLocalModpack`: copy or extract into
+  a work folder, strict manifest parse with `manifest::Index` / `CfManifest`, embedded jars
+  through `matchLocalModFiles` and `getInfosFromHash`, client override marking, staging,
+  `matchEmbeddedClientExtras` / `mergeEmbeddedClientExtras`, `containsExcludedMcaFiles`), then
+  `loadServerPack`, then the comparison with Kotlin on the sample pack.

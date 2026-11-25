@@ -18,6 +18,18 @@ pub trait Transport: Send + Sync {
         query: Vec<(String, String)>,
         body: Option<Value>,
     ) -> TransportFuture<'a>;
+    /// The official API alone, Kotlin `ignoreMirror`: the upload asks it again for the ids a
+    /// mirror answer left out. Transports without a mirror answer as `request`.
+    fn request_official<'a>(
+        &'a self,
+        platform: Platform,
+        method: Method,
+        path: &'a str,
+        query: Vec<(String, String)>,
+        body: Option<Value>,
+    ) -> TransportFuture<'a> {
+        self.request(platform, method, path, query, body)
+    }
 }
 pub struct HttpTransport {
     pub http: Client,
@@ -252,6 +264,28 @@ impl Transport for HttpTransport {
                 },
             }
         })
+    }
+    fn request_official<'a>(
+        &'a self,
+        p: Platform,
+        method: Method,
+        path: &'a str,
+        query: Vec<(String, String)>,
+        body: Option<Value>,
+    ) -> TransportFuture<'a> {
+        self.official_only(p, method, path, query, body)
+    }
+}
+impl HttpTransport {
+    fn official_only<'a>(
+        &'a self,
+        p: Platform,
+        method: Method,
+        path: &'a str,
+        query: Vec<(String, String)>,
+        body: Option<Value>,
+    ) -> TransportFuture<'a> {
+        Box::pin(async move { self.ask_official(p, &method, path, &query, &body).await })
     }
 }
 pub fn prefer_mirror(path: &std::path::Path) -> bool {

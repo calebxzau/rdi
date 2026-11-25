@@ -11,6 +11,7 @@ use crate::{
     tasks::Cancellation,
 };
 use adapter::Adapter;
+pub(crate) use adapter::url_batches;
 use anyhow::{Context, Result, ensure};
 use cache::MemoryCache;
 use identity::IdentityIndex;
@@ -440,6 +441,11 @@ impl Catalog {
             .transport
             .request(Platform::Modrinth, reqwest::Method::GET, path, query, None)
             .await
+    }
+    /// M4: the transport itself (mirror race, API key, retries) for the upload's raw platform
+    /// requests in `upload::platform`, which need fields the normalized models leave out.
+    pub fn transport(&self) -> Arc<dyn transport::Transport> {
+        self.adapters[&Platform::Modrinth].transport.clone()
     }
     pub fn download_headers_for(&self, url: &str) -> Result<reqwest::header::HeaderMap> {
         if !url.get(..8).is_some_and(|s| s.eq_ignore_ascii_case("https://")) {
