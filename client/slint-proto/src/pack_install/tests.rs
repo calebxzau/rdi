@@ -684,3 +684,117 @@ fn brief_and_version_accept_omitted_kotlin_defaults() {
     assert!(version.client_extras.is_empty());
     assert_eq!(version.mods[0].side, mods::Side::Both);
 }
+
+#[test]
+fn layered_upload_archives_prefer_client_overrides_and_skip_server_files() {
+    let dir = temp();
+    let file = dir.join("upload.tar.zst");
+    std::fs::write(
+        &file,
+        tar_zst(&[
+            ("manifest.json", b"{}"),
+            ("overrides/config/a.json", b"common"),
+            ("client-overrides/config/a.json", b"client"),
+            ("overrides/config/b.json", b"b"),
+            ("server/server.properties", b"motd=x"),
+            ("overrides/server-overrides/x.txt", b"x"),
+            ("resourcepacks/r.zip", b"r"),
+            ("loose.txt", b"not a pack file"),
+        ]),
+    )
+    .unwrap();
+    let out = dir.join("out");
+    std::fs::create_dir(&out).unwrap();
+    archive::extract_layered(&file, &out, &Cancellation::default(), &|_, _, _| {}).unwrap();
+    let read = |p: &str| std::fs::read(out.join(p)).ok();
+    assert_eq!(read("config/a.json").as_deref(), Some(b"client".as_slice()));
+    assert_eq!(read("config/b.json").as_deref(), Some(b"b".as_slice()));
+    assert_eq!(read("resourcepacks/r.zip").as_deref(), Some(b"r".as_slice()));
+    assert_eq!(read("server-overrides/x.txt").as_deref(), Some(b"x".as_slice()), "only a leading server folder is the server's");
+    for gone in ["manifest.json", "server/server.properties", "server.properties", "loose.txt"] {
+        assert!(read(gone).is_none(), "{gone}");
+    }
+
+    // Two files on one path and layer are refused, as in the flat archive.
+    let twice = dir.join("twice.tar.zst");
+    std::fs::write(&twice, tar_zst(&[("overrides/A.txt", b"1"), ("overrides/a.txt", b"2")])).unwrap();
+    let out = dir.join("out2");
+    std::fs::create_dir(&out).unwrap();
+    let error = archive::extract_layered(&twice, &out, &Cancellation::default(), &|_, _, _| {}).unwrap_err();
+    assert!(error.to_string().contains("客户端整合包包含重复文件路径"), "{error}");
+}
+
+#[test]
+fn an_upload_archive_installs_locally_inside_the_upload_task() {
+    let e = env("1.0");
+    let file = e.data.join("upload.tar.zst");
+    std::fs::write(
+        &file,
+        tar_zst(&[
+            ("overrides/options.txt", b"lang:en_us"),
+            ("client-overrides/config/c.json", b"client"),
+            ("server/config/s.json", b"server"),
+        ]),
+    )
+    .unwrap();
+    let mr_hash = sha1(MR_JAR);
+    let alpha = mods::Mod {
+        platform: "mr".into(),
+        project_id: "a".into(),
+        slug: "alpha".into(),
+        file_id: "1".into(),
+        hash: mr_hash.clone(),
+        side: mods::Side::Both,
+        download_urls: vec![format!("{}/files/alpha.jar", e.server.url)],
+        client_only_override: false,
+        client_override_replaced: false,
+    };
+    let server_only = mods::Mod { slug: "server-only".into(), hash: "9".repeat(40), side: mods::Side::Server, ..alpha.clone() };
+    let request = LocalInstall {
+        modpack_id: PACK.to_uppercase(),
+        version: "2.0".into(),
+        mc_version: "V211".into(),
+        fabric: false,
+        mods: vec![alpha.clone(), server_only],
+        extras: vec![],
+        archive: file.clone(),
+        embedded_names: [(alpha.file_name(), "mods/Alpha-1.0.jar".to_owned())].into(),
+    };
+    let worker = e.deps.clone();
+    let id = e.deps.tasks.submit(&e.deps.runtime, "上传并安装整合包".into(), "upload-test".into(), move |ctx| install_local(&worker, &ctx, request));
+    let snap = wait(&e.deps, &id);
+    assert_eq!(snap["status"], 2, "{snap}");
+    assert_eq!(snap["rows"].as_array().unwrap().len(), 1, "no step rows of its own");
+    let dir = e.deps.versions.join(format!("{PACK}_2.0"));
+    let read = |p: &str| std::fs::read(dir.join(p)).ok();
+    assert_eq!(read("mods/Alpha-1.0.jar").as_deref(), Some(MR_JAR), "an embedded mod keeps its name in the pack");
+    assert_eq!(std::fs::read_dir(dir.join("mods")).unwrap().count(), 1, "the server mod stays out");
+    assert_eq!(read("config/c.json").as_deref(), Some(b"client".as_slice()));
+    assert!(read("config/s.json").is_none());
+    assert_eq!(read("config/fancymenu/options.txt").as_deref(), Some(FANCYMENU_OPTIONS));
+    assert!(String::from_utf8(read("options.txt").unwrap()).unwrap().contains("lang:zh_cn"));
+    assert_eq!(e.server.gets(&format!("/modpack/{PACK}/version/2.0/client")), 0, "nothing is downloaded from master");
+    assert!(hidden(&e.deps.versions).is_empty());
+    assert!(file.is_file(), "the caller removes the archive");
+}
+
+#[test]
+fn local_mod_names_follow_kotlin_target_relative_path() {
+    let m = mods::Mod {
+        platform: "mr".into(),
+        project_id: "p".into(),
+        slug: "true-ending".into(),
+        file_id: "1".into(),
+        hash: "a".repeat(40),
+        side: mods::Side::Both,
+        download_urls: vec![],
+        client_only_override: false,
+        client_override_replaced: false,
+    };
+    let embedded: BTreeMap<String, String> = [(m.file_name(), "mods/TrueEnding.jar".to_owned())].into();
+    assert_eq!(local_mod_name(&m, &embedded), m.file_name(), "an alias slug keeps the store name");
+    let plain = mods::Mod { slug: "plain".into(), ..m };
+    let embedded: BTreeMap<String, String> = [(plain.file_name(), "mods\\sub\\Plain 1.0.jar".to_owned()), ("x".into(), " ".into())].into();
+    assert_eq!(local_mod_name(&plain, &embedded), "Plain 1.0.jar");
+    assert_eq!(local_mod_name(&plain, &BTreeMap::new()), plain.file_name());
+}

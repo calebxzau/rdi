@@ -1,5 +1,6 @@
 //! Kotlin `forEachArchiveEntryStreaming` with `MODPACK_ARCHIVE_READ_LIMITS`, and
-//! `extractClientPackArchiveToDir(layered = false)` for the already flattened client pack.
+//! `extractClientPackArchiveToDir`, flat for the client pack master builds and layered for an
+//! upload archive installed where it was built.
 use crate::tasks::Cancellation;
 use anyhow::{Result, bail, ensure};
 use std::{
@@ -447,7 +448,36 @@ pub fn extract(
     cancel: &Cancellation,
     progress: &dyn Fn(usize, usize, &str),
 ) -> Result<()> {
-    let mut selected: HashMap<String, (usize, String)> = HashMap::new();
+    extract_with(archive, target, cancel, progress, &|path| Ok(Some((normalize_safe_path(path)?, 0))))
+}
+
+/// `extractClientPackArchiveToDir` with `layered = true`, for an upload archive installed on the
+/// uploader's computer: `client-overrides` over `overrides`, `server/` and the manifests left out
+/// (`resolveClientPackEntryPath`).
+pub fn extract_layered(
+    archive: &Path,
+    target: &Path,
+    cancel: &Cancellation,
+    progress: &dyn Fn(usize, usize, &str),
+) -> Result<()> {
+    extract_with(archive, target, cancel, progress, &|path| {
+        Ok(crate::upload::mods::client_entry_path(path, false).map(|e| (e.relative, e.priority)))
+    })
+}
+
+/// A file's path in the pack folder and its layer, or `None` to leave the file out.
+type EntryMap<'a> = dyn Fn(&str) -> Result<Option<(String, u8)>> + 'a;
+
+/// Picks every file's path and layer with `map`; of two files on one path (case ignored) the
+/// higher layer wins, two on the same layer are an error.
+fn extract_with(
+    archive: &Path,
+    target: &Path,
+    cancel: &Cancellation,
+    progress: &dyn Fn(usize, usize, &str),
+    map: &EntryMap,
+) -> Result<()> {
+    let mut selected: HashMap<String, (usize, String, u8)> = HashMap::new();
     let mut index = 0usize;
     for_each(archive, MODPACK_LIMITS, cancel, &mut |entry, _| {
         let i = index;
@@ -455,13 +485,17 @@ pub fn extract(
         if entry.directory {
             return Ok(());
         }
-        let path = normalize_safe_path(&entry.path)?;
+        let Some((path, priority)) = map(&entry.path)? else {
+            return Ok(());
+        };
         let key = path.to_lowercase();
-        ensure!(
-            !selected.contains_key(&key),
-            "客户端整合包包含重复文件路径: {path}"
-        );
-        selected.insert(key, (i, path));
+        if let Some(old) = selected.get(&key) {
+            ensure!(old.2 != priority, "客户端整合包包含重复文件路径: {path}");
+            if old.2 > priority {
+                return Ok(());
+            }
+        }
+        selected.insert(key, (i, path, priority));
         Ok(())
     })?;
     for key in selected.keys() {
@@ -475,7 +509,7 @@ pub fn extract(
             parent = p;
         }
     }
-    let by_index: HashMap<usize, String> = selected.values().cloned().collect();
+    let by_index: HashMap<usize, String> = selected.values().map(|(i, path, _)| (*i, path.clone())).collect();
     let total = selected.len().max(1);
     let root = std::path::absolute(target)?;
     ensure!(

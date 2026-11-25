@@ -161,6 +161,64 @@ struct Plan {
     mc_version: String,
     mods: Vec<mods::Mod>,
     extras: Vec<extras::Content>,
+    /// The upload archive on this computer instead of the client pack of master.
+    local: Option<LocalSource>,
+    /// Whether the task shows `STEPS` as rows; the upload runs the install inside its own step.
+    rows: bool,
+}
+
+struct LocalSource {
+    archive: PathBuf,
+    /// `Mod.fileName` to the jar's name in the pack (`embeddedModOriginalFileNames`).
+    embedded_names: BTreeMap<String, String>,
+}
+
+/// An upload archive to install where it was built (`installBuiltClientZipTask2`).
+// The upload task (M4 stage A5d) builds it.
+#[allow(dead_code)]
+pub struct LocalInstall {
+    pub modpack_id: String,
+    pub version: String,
+    /// `McVersion` name, `V201` or `V211`.
+    pub mc_version: String,
+    pub fabric: bool,
+    /// The upload's processed mods; the client-installable ones are installed.
+    pub mods: Vec<mods::Mod>,
+    pub extras: Vec<extras::Content>,
+    pub archive: PathBuf,
+    pub embedded_names: BTreeMap<String, String>,
+}
+
+/// `installBuiltClientZipTask2` inside a running task: the steps after the download, with the
+/// archive extracted in layers and embedded mods under their names in the pack.
+#[allow(dead_code)]
+pub fn install_local(deps: &Deps, ctx: &Context, request: LocalInstall) -> Result<()> {
+    let modpack_id = request.modpack_id.to_ascii_lowercase();
+    check_ids(&modpack_id, &request.version)?;
+    let plan = Plan {
+        modpack_id,
+        version: request.version,
+        mc_version: request.mc_version,
+        mods: mods::client_installable(&request.mods, request.fabric),
+        extras: request.extras,
+        local: Some(LocalSource { archive: request.archive, embedded_names: request.embedded_names }),
+        rows: false,
+    };
+    install(deps, &plan, ctx)
+}
+
+/// `targetRelativePath` of the local install: a mod whose file name has no slug alias keeps the
+/// name it had in the pack.
+fn local_mod_name(m: &mods::Mod, embedded: &BTreeMap<String, String>) -> String {
+    let name = m.file_name();
+    if name != m.legacy_file_name() {
+        return name;
+    }
+    embedded
+        .get(&name)
+        .map(|original| original.rsplit('/').next().unwrap_or(original).rsplit('\\').next().unwrap_or(original).to_owned())
+        .filter(|original| !original.trim().is_empty())
+        .unwrap_or(name)
 }
 
 /// `完整下载整合包 <name> <size>`, as Kotlin `modpackInstallTaskTitle`.
@@ -213,6 +271,8 @@ pub fn start(deps: &Deps, request: InstallRequest) -> Result<String> {
         } else {
             vec![]
         },
+        local: None,
+        rows: true,
     };
     let worker = deps.clone();
     Ok(deps.tasks.submit_steps(
@@ -369,8 +429,10 @@ fn install(deps: &Deps, plan: &Plan, ctx: &Context) -> Result<()> {
 }
 
 /// Starts a visible step; cancellation is checked at every step boundary.
-fn begin(ctx: &Context, version_id: &str, index: usize) -> Result<()> {
-    ctx.step(index);
+fn begin(ctx: &Context, plan: &Plan, version_id: &str, index: usize) -> Result<()> {
+    if plan.rows {
+        ctx.step(index);
+    }
     #[cfg(test)]
     if tests::cancel_at(version_id) == Some(index) {
         ctx.cancel.cancel();
@@ -391,55 +453,36 @@ fn install_into(
     let cancel = &ctx.cancel;
     let headers = Headers(deps);
 
-    begin(ctx, version_id, 0)?;
-    ctx.progress("读取客户端整合包", None);
-    let path = format!(
-        "/modpack/{}/version/{}/client",
-        plan.modpack_id, plan.version
-    );
-    let hash: String = deps.runtime.block_on(cancellable(
-        cancel,
-        deps.server.get::<String>(&format!("{path}/hash")),
-    ))
-    .context("客户端包hash为空")?;
-    let url = deps.server.url(&path);
-    let pack = Request {
-        id: format!("modpack-client:{}:{}", plan.modpack_id, plan.version),
-        relative_path: format!("{version_id}.client-pack"),
-        size: None,
-        digests: vec![Digest::new(Algorithm::Sha1, &hash)?],
-        sources: vec![Source {
-            headers: deps.server.auth_headers(&url)?,
-            url,
-        }],
+    begin(ctx, plan, version_id, 0)?;
+    let fetched = match &plan.local {
+        Some(_) => None,
+        None => Some(fetch_client_pack(deps, plan, ctx, version_id)?),
     };
-    let fetched = deps.runtime.block_on(cancellable(
-        cancel,
-        deps.store.fetch(&pack, cancel, &|p| {
-            let (message, fraction) = bytes_message(&p);
-            ctx.progress(message, fraction);
-        }),
-    ))?;
     ctx.progress("客户端整合包已准备", Some(1.));
 
-    begin(ctx, version_id, 1)?;
+    begin(ctx, plan, version_id, 1)?;
     ctx.progress("创建安装目录", None);
     std::fs::create_dir(staging)?;
     ctx.progress("目录已就绪", Some(1.));
 
-    begin(ctx, version_id, 2)?;
+    begin(ctx, plan, version_id, 2)?;
     ctx.progress("扫描压缩包内容...", Some(0.));
-    archive::extract(&fetched.path, staging, cancel, &|done, total, current| {
+    let extracting = |done: usize, total: usize, current: &str| {
         let name = current.rsplit('/').next().unwrap_or(current);
         ctx.progress(
             format!("解压中 {name}({done}/{total})"),
             Some(done as f32 / total as f32),
         );
-    })?;
+    };
+    match (&plan.local, &fetched) {
+        (Some(local), _) => archive::extract_layered(&local.archive, staging, cancel, &extracting)?,
+        (None, Some(fetched)) => archive::extract(&fetched.path, staging, cancel, &extracting)?,
+        (None, None) => unreachable!("the client pack was fetched above"),
+    }
     drop(fetched);
     ctx.progress("解压完成", Some(1.));
 
-    begin(ctx, version_id, 3)?;
+    begin(ctx, plan, version_id, 3)?;
     let menu = crate::import::installer::checked_target(
         staging,
         Path::new("config/fancymenu/options.txt"),
@@ -448,7 +491,7 @@ fn install_into(
     std::fs::write(&menu, FANCYMENU_OPTIONS)?;
     ctx.progress("写入完成", Some(1.));
 
-    begin(ctx, version_id, 4)?;
+    begin(ctx, plan, version_id, 4)?;
     let mods_dir = crate::import::installer::checked_target(staging, Path::new("mods"))?;
     std::fs::create_dir_all(&mods_dir)?;
     let requests = mod_requests(deps, plan, &headers)?;
@@ -461,7 +504,7 @@ fn install_into(
     ))?;
     ctx.progress("完成", Some(1.));
 
-    begin(ctx, version_id, 5)?;
+    begin(ctx, plan, version_id, 5)?;
     let extras = extras::merge(&plan.extras)?;
     let mut missing = vec![];
     for extra in &extras {
@@ -488,7 +531,7 @@ fn install_into(
     }
     ctx.progress("完成", Some(1.));
 
-    begin(ctx, version_id, 6)?;
+    begin(ctx, plan, version_id, 6)?;
     let options = crate::import::installer::checked_target(staging, Path::new("options.txt"))?;
     let original = match std::fs::read_to_string(&options) {
         Ok(text) => text,
@@ -506,8 +549,47 @@ fn install_into(
     Ok(())
 }
 
+/// The client pack master built for this version, through the content store.
+fn fetch_client_pack(deps: &Deps, plan: &Plan, ctx: &Context, version_id: &str) -> Result<content_store::Fetched> {
+    let cancel = &ctx.cancel;
+    ctx.progress("读取客户端整合包", None);
+    let path = format!(
+        "/modpack/{}/version/{}/client",
+        plan.modpack_id, plan.version
+    );
+    let hash: String = deps.runtime.block_on(cancellable(
+        cancel,
+        deps.server.get::<String>(&format!("{path}/hash")),
+    ))
+    .context("客户端包hash为空")?;
+    let url = deps.server.url(&path);
+    let pack = Request {
+        id: format!("modpack-client:{}:{}", plan.modpack_id, plan.version),
+        relative_path: format!("{version_id}.client-pack"),
+        size: None,
+        digests: vec![Digest::new(Algorithm::Sha1, &hash)?],
+        sources: vec![Source {
+            headers: deps.server.auth_headers(&url)?,
+            url,
+        }],
+    };
+    deps.runtime.block_on(cancellable(
+        cancel,
+        deps.store.fetch(&pack, cancel, &|p| {
+            let (message, fraction) = bytes_message(&p);
+            ctx.progress(message, fraction);
+        }),
+    ))
+}
+
 fn mod_requests(deps: &Deps, plan: &Plan, headers: &Headers) -> Result<Vec<Request>> {
-    requests_for(deps, &plan.mods, headers)
+    let mut requests = requests_for(deps, &plan.mods, headers)?;
+    if let Some(local) = &plan.local {
+        for (request, m) in requests.iter_mut().zip(&plan.mods) {
+            request.relative_path = local_mod_name(m, &local.embedded_names);
+        }
+    }
+    Ok(requests)
 }
 
 /// Download requests for mods outside a pack install (J5b room base and extra mods), each at

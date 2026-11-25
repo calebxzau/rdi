@@ -688,3 +688,12 @@ Kotlin bugs found on the way are noted here and not fixed.
   upload route of master requires `DEBUG || player.hasMsid`, and the local test account 11111
   has no Microsoft binding (preflight answered 请先绑定微软账号，再上传整合包或新版本). The live
   upload comes with A5d.
+- 2026-11-25 M4 stage A5c done: `pack_install::install_local` (Kotlin
+  `installBuiltClientZipTask2`) runs the install steps after the download inside the caller's
+  task (no step rows of its own): the upload archive is extracted with
+  `archive::extract_layered` (`extractClientPackArchiveToDir(layered = true)`:
+  `resolveClientPackEntryPath`, `client-overrides` over `overrides`, `server/` and the
+  manifests left out, two files on one path and layer refused), and a mod whose file name has
+  no slug alias is placed under its name in the pack (`targetRelativePath` with
+  `embeddedModOriginalFileNames`). The flat extract of master's client pack is unchanged. 3 new
+  tests; launcher tests 428 pass, 9 ignored; clippy has no new warnings.
