@@ -2,6 +2,7 @@
 
 - Every library must need only other libraries in the jar, or ones every player's system has.
 - Every symbol the JNI glue imports from FFmpeg must be exported by the matching library.
+- rdimedia, the launcher's entry points, must be there and export its functions.
 """
 import os
 import re
@@ -75,6 +76,9 @@ def mach_o_problems(path, name):
     return problems
 
 
+SHIM_EXPORTS = ("rdi_media_abi", "rdi_media_free", "rdi_ogg_to_opus", "rdi_rgba_to_avif")
+
+
 def is_ffmpeg_symbol(symbol):
     return re.match(r"_?(av|avcodec|avformat|avio|swr|sws|avutil|swresample|swscale)_", symbol) is not None
 
@@ -108,6 +112,15 @@ def main():
         ffmpeg_files = [name for name in files if "jni" not in name]
         exports = {name: exported_symbols(os.path.join(native_dir, name), family) for name in ffmpeg_files}
         all_exports = set().union(*exports.values())
+
+        shims = [name for name in ffmpeg_files if "rdimedia" in name]
+        if len(shims) != 1:
+            failures.append(f"Expected one rdimedia library, found: {shims}")
+        for name in shims:
+            # Mach-O symbols carry a leading underscore.
+            missing = [symbol for symbol in SHIM_EXPORTS if symbol not in exports[name] and f"_{symbol}" not in exports[name]]
+            if missing:
+                failures.append(f"{name} does not export {missing}")
         for name in files:
             if "jni" not in name:
                 continue

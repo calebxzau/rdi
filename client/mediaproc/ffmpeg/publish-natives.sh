@@ -41,6 +41,7 @@ gh release create "$TAG" -R "$REPO" --target "$COMMIT" --prerelease --title "FFm
 Slim FFmpeg libraries for the RDI launcher, from ffmpeg-natives run $RUN.
 
 - The jars hold FFmpeg in its LGPL configuration with dav1d, libaom and libopus linked statically, plus the unchanged JNI glue of bytedeco's FFmpeg presets. The \`-gpl\` in the file names only matches bytedeco's platform names.
+- Each jar also holds \`rdimedia\`, flat entry points to the Opus and AVIF encoders for the launcher without a JVM, built from \`client/mediaproc/ffmpeg/rdimedia.c\` at this tag.
 - The source archives are the exact inputs of this build.
 - Build script: \`client/mediaproc/ffmpeg/build-natives.sh\` at this tag. Each jar lists its configure flags and license texts under \`META-INF/rdi-ffmpeg/\`.
 EOF

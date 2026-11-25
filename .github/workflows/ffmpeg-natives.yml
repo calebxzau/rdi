@@ -103,6 +103,10 @@ jobs:
             otool -L "$library"
             codesign -dv "$library"
           done
+      # rdimedia has no JVM in front of it, so it is called here the way the launcher calls it.
+      - name: Test the launcher entry points
+        shell: pwsh
+        run: python client/mediaproc/ffmpeg/test-shim.py "$env:NATIVES_JAR" ${{ matrix.platform }} client/ui/assets/src/main/resources/assets/empty.ogg
       - name: Run the tests
         working-directory: client/ui
         shell: pwsh
