@@ -54,6 +54,8 @@ def main():
     parser = argparse.ArgumentParser()
     for option in ("classifier", "prefix", "bytedeco-jar", "sources", "config", "versions", "output"):
         parser.add_argument(f"--{option}", required=True)
+    # rdimedia, the launcher's entry points, built next to the FFmpeg libraries.
+    parser.add_argument("--shim", required=True)
     args = parser.parse_args()
 
     native_dir = f"org/bytedeco/ffmpeg/{args.classifier}/"
@@ -72,7 +74,9 @@ def main():
         # Keeps the module name of bytedeco's jar. Without it the file name would give the module "ffmpeg".
         add(jar, MODULE_INFO, bytedeco.read(MODULE_INFO))
 
-        for path in sorted(libraries):
+        if not os.path.isfile(args.shim):
+            raise SystemExit(f"Missing rdimedia library: {args.shim}")
+        for path in sorted(libraries + [args.shim]):
             with open(path, "rb") as file:
                 add(jar, native_dir + os.path.basename(path), file.read(), executable=True)
 

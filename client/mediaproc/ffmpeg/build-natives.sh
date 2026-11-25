@@ -7,7 +7,8 @@
 #
 # FFmpeg is built in its LGPL configuration, with its third-party libraries linked statically.
 # Only the av*/sw* libraries are ours: the JNI glue and the Java API stay those of bytedeco,
-# so the versions below must keep the library names the glue expects.
+# so the versions below must keep the library names the glue expects. rdimedia (rdimedia.c) is
+# ours too: the same encoders as flat functions, for the launcher that has no JVM.
 set -euo pipefail
 
 FFMPEG_VERSION=8.0.1
@@ -19,6 +20,8 @@ AOM_SHA256=9e9775180dec7dfd61a79e00bda3809d43891aee6b2e331ff7f26986207ea22e
 OPUS_VERSION=1.5.2
 OPUS_SHA256=65c1d2f78b9f2fb20082c38cbe47c951ad5839345876e46941612ee87f9a7ce1
 BYTEDECO_VERSION=8.0.1-1.5.13
+# Our own revision of the jar for one FFmpeg version. rdi2 adds rdimedia, the launcher's entry points.
+RDI_REVISION=rdi2
 
 PLATFORM=${1:?platform}
 WORK_ROOT=$(mkdir -p "${2:?work dir}" && cd "$2" && pwd)
@@ -216,6 +219,30 @@ mkdir -p "$SOURCES/ffmpeg-build"
     make install SLIB_INSTALL_EXTRA_SHLIB=
 )
 
+# ---- rdimedia: flat entry points for the launcher without a JVM ----
+# It links the libraries above and is loaded from the same folder, after them.
+SHIM_DIR=$PREFIX/shim
+rm -rf "$SHIM_DIR"
+mkdir -p "$SHIM_DIR"
+SHIM_FLAGS=(-O2 -fPIC -shared -Wall -Werror=implicit-function-declaration -I"$PREFIX/include" "$SCRIPT_DIR/rdimedia.c")
+SHIM_LIBS=(-L"$PREFIX/lib" -lavformat -lavcodec -lswresample -lswscale -lavutil)
+case "$PLATFORM" in
+    windows-x64)
+        SHIM=$SHIM_DIR/rdimedia.dll
+        # Without import libraries the linker takes the DLLs themselves.
+        [ -f "$PREFIX/lib/libavcodec.dll.a" ] || SHIM_LIBS=("$PREFIX"/bin/av*.dll "$PREFIX"/bin/sw*.dll)
+        "$TOOLS/cc" "${SHIM_FLAGS[@]}" -o "$SHIM" "${SHIM_LIBS[@]}" -s
+        ;;
+    linux-x64)
+        SHIM=$SHIM_DIR/librdimedia.so
+        "$TOOLS/cc" "${SHIM_FLAGS[@]}" -o "$SHIM" "${SHIM_LIBS[@]}" -s -Wl,-soname,librdimedia.so '-Wl,-rpath,$ORIGIN'
+        ;;
+    macos-arm64)
+        SHIM=$SHIM_DIR/librdimedia.dylib
+        "$TOOLS/cc" "${SHIM_FLAGS[@]}" -o "$SHIM" "${SHIM_LIBS[@]}" -s -Wl,-install_name,@rpath/librdimedia.dylib -Wl,-rpath,@loader_path/.
+        ;;
+esac
+
 # ---- Package ----
 BYTEDECO_JAR=$(fetch \
     "https://repo1.maven.org/maven2/org/bytedeco/ffmpeg/$BYTEDECO_VERSION/ffmpeg-$BYTEDECO_VERSION-$CLASSIFIER.jar" \
@@ -225,7 +252,8 @@ python3 -I "$SCRIPT_DIR/pack-natives.py" \
     --prefix "$PREFIX" \
     --bytedeco-jar "$BYTEDECO_JAR" \
     --sources "$SOURCES" \
+    --shim "$SHIM" \
     --config="$(printf '%s\n' "${FFMPEG_CONFIG[@]}" | sed "s#$WORK_ROOT#<work>#g")" \
-    --versions="FFmpeg $FFMPEG_VERSION, dav1d $DAV1D_VERSION, libaom $AOM_VERSION, libopus $OPUS_VERSION, JNI glue bytedeco $BYTEDECO_VERSION" \
-    --output "$OUTPUT_DIR/ffmpeg-$FFMPEG_VERSION-rdi1-$CLASSIFIER.jar"
-python3 -I "$SCRIPT_DIR/check-natives.py" "$OUTPUT_DIR/ffmpeg-$FFMPEG_VERSION-rdi1-$CLASSIFIER.jar" "$CLASSIFIER"
+    --versions="FFmpeg $FFMPEG_VERSION, dav1d $DAV1D_VERSION, libaom $AOM_VERSION, libopus $OPUS_VERSION, JNI glue bytedeco $BYTEDECO_VERSION, rdimedia from rdimedia.c of this build" \
+    --output "$OUTPUT_DIR/ffmpeg-$FFMPEG_VERSION-$RDI_REVISION-$CLASSIFIER.jar"
+python3 -I "$SCRIPT_DIR/check-natives.py" "$OUTPUT_DIR/ffmpeg-$FFMPEG_VERSION-$RDI_REVISION-$CLASSIFIER.jar" "$CLASSIFIER"
