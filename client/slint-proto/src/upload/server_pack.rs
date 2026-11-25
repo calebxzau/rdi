@@ -15,7 +15,7 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 
 /// `MEDIA_FILE_EXTENSIONS`: pictures, audio and video stay out of the server files.
-const MEDIA_EXTENSIONS: [&str; 31] = [
+pub(super) const MEDIA_EXTENSIONS: [&str; 31] = [
     "ogg", "wav", "mp3", "flac", "aac", "m4a", "opus", "wma", "mp4", "mov", "avi", "mkv", "webm", "m4v", "mpeg", "mpg", "flv", "wmv", "png", "jpg", "jpeg", "webp",
     "gif", "bmp", "tif", "tiff", "avif", "ico", "svg", "psd", "tga",
 ];
