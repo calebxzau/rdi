@@ -548,3 +548,25 @@ Kotlin bugs found on the way are noted here and not fixed.
   `readResourcepackEntry`, the shader config and shadowed source rules), with the encoders
   behind a trait until A4; `rdipack2::append` is the tar writer and `upload::policy` has the
   skip rules. Compare file lists with Kotlin through a second dump test.
+- 2026-11-25 M4 stage A3 done: `upload::archive` (`buildUploadArchiveInternal`: the walk
+  without `cache` folders, shadowed lower layers of packs and shader settings, recognised packs
+  left out after a SHA-1 check before and after, oversized resource packs, `.disabled` files,
+  the skip rules, empty region files of saves, nested zips and jars rewritten with
+  `processNestedZip` in its three modes, MP3 files replaced by the bundled empty one, server
+  files under `server/`, the 768MB limit; pictures and sounds on up to 8 threads). The two
+  encoders are the trait `archive::Media`; `archive::Unprocessed` leaves the bytes alone until
+  stage A4 and must not be used for an upload. `rdipack2::append` writes the tar entries.
+  2 new tests; launcher tests 407 pass, 8 ignored; clippy has no new warnings. Compared with
+  Kotlin (`UploadPackDumpTest` and `real_pack_read` with `RDI_UPLOAD_ARCHIVE=1`, script
+  `rdi-m4-diff-archive.py`; the helper scripts read `RDI_M4_ARCHIVE` through `WSLENV`) on the
+  Modrinth sample pack (493 entries, 17 nested archives), `Sky Frogs-1.8.1` (288) and
+  `After The Nukes` (295, 3 nested): the entry paths and their order are equal, every file that
+  is not a picture, a sound or a nested archive has the same size, and the nested archives hold
+  the same names. Pictures and sounds differ as expected: Kotlin's 18 of the sample pack take
+  0.58MB, unencoded 29MB. Differences noted: the tar headers are ustar with PAX path records
+  (Kotlin: commons-compress POSIX mode), nested zips are compressed by another deflate
+  implementation, and folders get the time of the build as in Kotlin. Not compared: a pack with
+  a server pack or with recognised embedded packs (covered by tests with fakes only).
+  Next: stage A5 (chunked upload, publish, missing mods, local install, the draft tools of E6)
+  against the local master, and in parallel stage A4's C shim in
+  `client/mediaproc/ffmpeg/build-natives.sh`, which ends in a new natives release.

@@ -344,7 +344,33 @@ fn real_pack_read() {
             .map(|c| json!({"platform": format!("{:?}", c.platform), "type": format!("{:?}", c.kind), "projectId": c.project_id, "fileId": c.file_id, "slug": c.slug,
                 "hash": c.hash, "path": c.path, "required": c.required, "downloadUrls": c.download_urls}))
             .collect();
-        let value = json!({"mods": loaded.mods, "extras": extras, "embeddedNames": loaded.embedded_names, "containsMca": loaded.contains_mca});
+        let mut value = json!({"mods": loaded.mods, "extras": extras, "embeddedNames": loaded.embedded_names, "containsMca": loaded.contains_mca});
+        // `RDI_UPLOAD_ARCHIVE`: build the archive too (encoders left out) and list its entries.
+        if std::env::var("RDI_UPLOAD_ARCHIVE").is_ok_and(|v| !v.trim().is_empty()) {
+            use std::io::Read;
+            let started = std::time::Instant::now();
+            let input = super::archive::Input { root: &loaded.source_dir, base_name: &loaded.summary.name, server_extras: &[], excluded: &loaded.embedded_extras, client_extras: &loaded.extras };
+            let built = super::archive::build(&ctx, &super::archive::Unprocessed, &input).unwrap();
+            let mut entries: Vec<Value> = Vec::new();
+            let mut archive = tar::Archive::new(zstd::stream::read::Decoder::new(std::fs::File::open(&built).unwrap()).unwrap());
+            for entry in archive.entries().unwrap() {
+                let mut entry = entry.unwrap();
+                let path = entry.path().unwrap().to_string_lossy().replace('\\', "/");
+                let dir = entry.header().entry_type().is_dir();
+                let mut item = json!({"path": path.trim_end_matches('/'), "dir": dir, "size": entry.size()});
+                let lower = path.to_lowercase();
+                if !dir && (lower.ends_with(".zip") || lower.ends_with(".jar")) {
+                    let mut bytes = Vec::new();
+                    entry.read_to_end(&mut bytes).unwrap();
+                    let mut zip = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
+                    let inner: Vec<String> = (0..zip.len()).map(|i| zip.by_index_raw(i).unwrap().name().to_owned()).collect();
+                    item["inner"] = json!(inner);
+                }
+                entries.push(item);
+            }
+            println!("archive: {} entries, {} bytes, {:?}", entries.len(), std::fs::metadata(&built).unwrap().len(), started.elapsed());
+            value["archive"] = json!(entries);
+        }
         std::fs::write(dump, serde_json::to_string_pretty(&value).unwrap()).unwrap();
     }
 }

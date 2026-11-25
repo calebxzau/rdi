@@ -7,7 +7,10 @@
 //! upload (`api`).
 pub mod api;
 pub mod draft;
-// A2 parts 1, 2a and 2b: the pack reader and its pieces; the draft (stage A5) wires them.
+// A2 and A3: the pack readers, their pieces and the archive builder; the draft (stage A5)
+// wires them.
+#[allow(dead_code)]
+pub mod archive;
 #[allow(dead_code)]
 pub mod jar_meta;
 #[allow(dead_code)]
@@ -25,6 +28,8 @@ pub mod reader;
 #[allow(dead_code)]
 pub mod server_pack;
 pub mod source;
+#[cfg(test)]
+mod archive_tests;
 #[cfg(test)]
 mod manifest_tests;
 #[cfg(test)]

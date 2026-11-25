@@ -470,12 +470,12 @@ pub(super) fn stage_mods(ctx: &Context, found: &[Match]) -> Result<Vec<EmbeddedM
 
 /// A resource or shader pack lying in the pack: Kotlin `ExtraCandidate`.
 #[derive(Clone, Debug, PartialEq)]
-struct Candidate {
-    file: PathBuf,
-    directory: bool,
-    source_relative: String,
-    game_path: String,
-    priority: u8,
+pub(super) struct Candidate {
+    pub file: PathBuf,
+    pub directory: bool,
+    pub source_relative: String,
+    pub game_path: String,
+    pub priority: u8,
 }
 
 impl Candidate {
@@ -499,9 +499,9 @@ impl Candidate {
     }
 }
 
-/// `collectEffectiveLocalExtraCandidates`: per game path the highest layer; packs of one layer
-/// that differ are a conflict.
-fn extra_candidates(ctx: &Context, root: &Path) -> Result<Vec<Candidate>> {
+/// `collectAllLocalExtraCandidates`: the folders and zips in the pack's `resourcepacks` and
+/// `shaderpacks` folders, of every layer.
+pub(super) fn all_extra_candidates(root: &Path) -> Result<Vec<Candidate>> {
     let roots = [
         ("resourcepacks", "resourcepacks"),
         ("shaderpacks", "shaderpacks"),
@@ -529,6 +529,13 @@ fn extra_candidates(ctx: &Context, root: &Path) -> Result<Vec<Candidate>> {
             all.push(Candidate { file: child, directory, source_relative, game_path: mapped.relative, priority: mapped.priority });
         }
     }
+    Ok(all)
+}
+
+/// `collectEffectiveLocalExtraCandidates`: per game path the highest layer; packs of one layer
+/// that differ are a conflict.
+pub(super) fn extra_candidates(ctx: &Context, root: &Path) -> Result<Vec<Candidate>> {
+    let all = all_extra_candidates(root)?;
     let mut keys: Vec<String> = Vec::new();
     for candidate in &all {
         let key = candidate.key();
