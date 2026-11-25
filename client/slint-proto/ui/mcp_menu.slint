@@ -1,16 +1,27 @@
 import { Theme } from "theme.slint";
 import { AccountMenuItem } from "account_menu.slint";
-/// The AI assistant menu while it runs. Covers the window so that a click outside closes it.
+import { GlassButton } from "components/glass_button.slint";
+/// The AI assistant menu. Covers the window so that a click outside closes it. The switch in
+/// front of the status turns the assistant off (green) and on again (red); the menu stays open,
+/// so the player sees the new state. Until an agent connects, a short guide tells a new player
+/// what to do with the copied text.
 export component McpMenu inherits Rectangle {
     in property <length> anchor-x;
     in property <length> anchor-y;
     in property <string> status;
+    in property <bool> running;
+    /// An agent is connected: the guide gives way to the status.
+    in property <bool> connected;
+    /// Nothing connected for a while after turning on.
+    in property <bool> hint;
+    /// The brands of the AI software that can connect, in display order.
+    in property <[image]> brand-icons;
     callback dismiss();
     callback copy-prompt();
-    callback stop();
+    callback toggle();
     TouchArea { clicked => {root.dismiss();} }
     Rectangle {
-        width: 180px; height: menu-items.preferred-height;
+        width: 252px; height: menu-items.preferred-height;
         x: max(8px, min(root.anchor-x - self.width / 2, root.width - self.width - 8px)); y: root.anchor-y;
         border-radius: 12px; background: #eef1f5;
         drop-shadow-blur: 10px; drop-shadow-offset-y: 3px; drop-shadow-color: #00000026;
@@ -18,11 +29,34 @@ export component McpMenu inherits Rectangle {
         menu-items := VerticalLayout {
             padding-top: 6px; padding-bottom: 6px;
             HorizontalLayout { padding-left: 12px; padding-right: 12px; padding-top: 4px; padding-bottom: 4px; spacing: 8px;
-                Rectangle { width: 8px; height: 8px; y: (parent.height - self.height) / 2; border-radius: 4px; background: #28c840; }
-                Text { text: root.status; font-size: 13px; color: Theme.ink; vertical-alignment: center; wrap: word-wrap; }
+                switch := Rectangle { width: 24px; height: 24px; y: (parent.height - self.height) / 2; border-radius: 12px;
+                    background: root.running ? (switch-touch.has-hover ? #22b038 : #28c840) : (switch-touch.has-hover ? #e8453d : #ff5f57);
+                    accessible-role: button;
+                    accessible-label: root.running ? "关闭AI助手" : "开启AI助手";
+                    accessible-action-default => {root.toggle();}
+                    Text { text: "\u{f011}"; font-family: Theme.symbols; font-size: 14px; color: white; horizontal-alignment: center; vertical-alignment: center; }
+                    switch-touch := TouchArea { mouse-cursor: pointer; clicked => {root.toggle();} }
+                }
+                Text { text: root.status; font-size: 13px; color: Theme.ink; vertical-alignment: center; overflow: elide; }
             }
-            AccountMenuItem { glyph: "\u{f0c5}"; label: "复制提示词"; clicked => {root.copy-prompt();} }
-            AccountMenuItem { glyph: "\u{f011}"; label: "关闭AI助手"; clicked => {root.stop();} }
+            if root.running && !root.connected: VerticalLayout { padding-left: 12px; padding-right: 12px; padding-top: 6px; padding-bottom: 6px; spacing: 6px;
+                Text { text: "让AI帮你操作启动器："; font-size: 12px; color: #5c6370; }
+                HorizontalLayout { spacing: 6px; alignment: start;
+                    Text { text: "①"; font-size: 13px; color: Theme.ink; vertical-alignment: center; }
+                    GlassButton { height: 28px; label: "复制给AI"; filled: true; clicked => {root.copy-prompt();} }
+                }
+                Text { text: "② 打开电脑上装好的AI软件"; font-size: 13px; color: Theme.ink; }
+                HorizontalLayout { padding-left: 18px; spacing: 6px; alignment: start;
+                    for icon in root.brand-icons: Rectangle { width: 22px; height: 22px; border-radius: 11px; clip: true; background: white;
+                        border-width: 1px; border-color: #0000001f;
+                        Image { width: 20px; height: 20px; source: icon; image-fit: cover; }
+                    }
+                }
+                Text { text: "③ 在对话框里粘贴并发送"; font-size: 13px; color: Theme.ink; }
+                // Lines are broken by hand: a wrapped text does not grow the menu.
+                if root.hint: Text { text: "还没连上？网页版AI聊天连不上，\n要用电脑上装好的AI软件。"; font-size: 12px; color: #c0392b; }
+            }
+            if root.running && root.connected: AccountMenuItem { glyph: "\u{f0c5}"; label: "复制给AI（换一个AI时用）"; clicked => {root.copy-prompt();} }
         }
     }
 }

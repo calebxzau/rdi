@@ -1,5 +1,6 @@
 import { GlassButton } from "components/glass_button.slint";
 import { HeadButton } from "components/shared.slint";
+import { McpIcon } from "components/mcp_icon.slint";
 import { Theme } from "theme.slint";
 import { WindowDotButton } from "window_dot_button.slint";
 export component TitleBar inherits Rectangle {
@@ -10,6 +11,11 @@ export component TitleBar inherits Rectangle {
     in property <bool> host-list-visible;
     /// The AI assistant (launcher MCP): 0 off, 1 on, 2 failed.
     in property <int> mcp-state;
+    /// The connected agent's brand or name; empty while none is connected.
+    in property <string> mcp-agent;
+    in property <image> mcp-agent-icon;
+    in property <bool> mcp-agent-has-icon;
+    private property <bool> mcp-capsule: root.mcp-state == 1 && root.mcp-agent != "";
     callback navigate(string);
     callback mcp();
     callback action(int);
@@ -34,8 +40,21 @@ export component TitleBar inherits Rectangle {
     HorizontalLayout { x: parent.width - 532px; y: 0px; width: 532px; height: 40px; spacing: 8px; padding: 0px; padding-right: 8px; alignment: end;
         // Padding centers the shorter items, since layouts place fixed-height items at the top.
         HorizontalLayout { spacing: 8px; padding-top: 6px; padding-bottom: 6px;
-            mcp-button := Rectangle { width: 28px; height: 28px;
-                GlassButton { x: 0px; y: 0px; width: 28px; height: 28px; circle: true; glyph: "\u{ee0d}"; accessible-label: root.mcp-state == 1 ? "AI助手（已开启）" : "AI助手"; clicked => {root.mcp();} }
+            // Round with the MCP mark; a capsule with the agent's brand while one is connected.
+            mcp-button := Rectangle { width: root.mcp-capsule ? 27px + agent-pill.width + 3px : 28px; height: 28px;
+                GlassButton { x: 0px; y: 0px; width: parent.width; height: 28px; circle: !root.mcp-capsule;
+                    accessible-label: root.mcp-capsule ? "AI助手（已连接" + root.mcp-agent + "）" : root.mcp-state == 1 ? "AI助手（已开启）" : "AI助手";
+                    clicked => {root.mcp();} }
+                McpIcon { x: 4px; y: 4px; }
+                agent-pill := Rectangle { x: 27px; y: 3px; height: 22px; width: agent-row.preferred-width; visible: root.mcp-capsule;
+                    border-radius: 11px; background: #ffffff99; border-width: 1px; border-color: #0000001a;
+                    agent-row := HorizontalLayout { padding-left: root.mcp-agent-has-icon ? 3px : 8px; padding-right: 8px; padding-top: 3px; padding-bottom: 3px; spacing: 4px;
+                        if root.mcp-agent-has-icon: Rectangle { width: 16px; height: 16px; border-radius: 8px; clip: true;
+                            Image { width: 16px; height: 16px; source: root.mcp-agent-icon; image-fit: cover; }
+                        }
+                        Text { text: root.mcp-agent; font-size: 12px; color: Theme.ink; vertical-alignment: center; }
+                    }
+                }
                 if root.mcp-state == 1: Rectangle { x: 20px; y: 0px; width: 8px; height: 8px; border-radius: 4px; background: #28c840; border-width: 1px; border-color: #ffffffcc; }
             }
             GlassButton { width: 28px; height: 28px; circle: true; glyph: "\u{f11b}"; clicked => {root.navigate("console");} }

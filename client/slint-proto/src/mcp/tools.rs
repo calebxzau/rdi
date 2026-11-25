@@ -25,6 +25,8 @@ pub struct Context {
     pub game: super::game::Forwarder,
     /// The upload draft of the upload tools (one at a time).
     pub drafts: crate::upload::drafts::Drafts,
+    /// The agent behind the requests, for the title bar.
+    pub agent: super::agent::Seen,
 }
 
 struct Tool {

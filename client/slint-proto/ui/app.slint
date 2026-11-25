@@ -254,6 +254,13 @@ export component AppWindow inherits Window {
     in property <string> mcp-prompt;
     in property <string> mcp-status;
     in-out property <bool> mcp-menu;
+    /// The connected agent for the title bar capsule (empty while none is).
+    in property <string> mcp-agent;
+    in property <image> mcp-agent-icon;
+    in property <bool> mcp-agent-has-icon;
+    in property <bool> mcp-connected;
+    in property <bool> mcp-hint;
+    in property <[image]> mcp-brand-icons;
     /// Starts the assistant; true when it runs and the prompt should be copied now.
     callback mcp-start() -> bool;
     callback mcp-stop();
@@ -326,9 +333,11 @@ export component AppWindow inherits Window {
     Image { width: parent.width; height: parent.height; source: root.backdrop-revision >= 0 ? root.backdrop : root.backdrop; image-fit: fill; }
     title-bar := TitleBar { y: 0px; width: parent.width; player-name: root.player-name; head: root.player-head; account => {if !root.login-visible {root.account-menu = !root.account-menu;}} action(a) => {root.window-action(a);} can-back: root.can-back; host-list-visible: root.host-list-visible; gallery-enabled: root.gallery-enabled; navigate(s) => {root.navigate(s);}
         mcp-state: root.mcp-state;
+        mcp-agent: root.mcp-agent; mcp-agent-icon: root.mcp-agent-icon; mcp-agent-has-icon: root.mcp-agent-has-icon;
         mcp => {
             if root.mcp-state == 1 { root.mcp-menu = !root.mcp-menu; }
-            else if root.mcp-start() { mcp-clip.text = root.mcp-prompt; mcp-clip.select-all(); mcp-clip.copy(); mcp-clip.clear-selection(); }
+            // Turned on: the prompt is copied and the menu shows the guide to it.
+            else if root.mcp-start() { mcp-clip.text = root.mcp-prompt; mcp-clip.select-all(); mcp-clip.copy(); mcp-clip.clear-selection(); root.mcp-menu = true; }
         }
     }
     // The prompt reaches the clipboard through this hidden input's copy(); Slint has no clipboard API.
@@ -659,12 +668,17 @@ export component AppWindow inherits Window {
         settings => {root.account-menu = false; root.navigate("settings");}
         logout => {root.account-menu = false; root.logout();}
     }
-    if root.mcp-menu && root.mcp-state == 1: McpMenu {
+    if root.mcp-menu: McpMenu {
         x: 0px; y: 0px; width: parent.width; height: parent.height;
-        anchor-x: title-bar.mcp-x + 14px; anchor-y: 44px; status: root.mcp-status;
+        anchor-x: title-bar.mcp-x + 14px; anchor-y: 44px; status: root.mcp-status; running: root.mcp-state == 1;
+        connected: root.mcp-connected; hint: root.mcp-hint; brand-icons: root.mcp-brand-icons;
         dismiss => {root.mcp-menu = false;}
         copy-prompt => { root.mcp-menu = false; mcp-clip.text = root.mcp-prompt; mcp-clip.select-all(); mcp-clip.copy(); mcp-clip.clear-selection(); root.mcp-copied(); }
-        stop => {root.mcp-menu = false; root.mcp-stop();}
+        // Off stays in the menu; on again copies the prompt, as the title bar button does.
+        toggle => {
+            if root.mcp-state == 1 { root.mcp-stop(); }
+            else if root.mcp-start() { mcp-clip.text = root.mcp-prompt; mcp-clip.select-all(); mcp-clip.copy(); mcp-clip.clear-selection(); }
+        }
     }
     if root.modal-open && !(Rooms.menu-open && !Rooms.dialog): Rectangle { x: 0px; y: 0px; width: parent.width; height: parent.height; background: #0009; TouchArea {} }
     dialog := SharedDialog {

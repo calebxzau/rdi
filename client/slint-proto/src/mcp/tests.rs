@@ -50,6 +50,7 @@ pub(super) fn context_with_ui() -> (tools::Context, FakeUi) {
         game: game::Forwarder::new(),
         // Never created here either; draft tests point it at their own folder.
         drafts: crate::upload::drafts::Drafts::new(std::env::temp_dir().join(format!("rdi-mcp-drafts-{}", uuid::Uuid::now_v7()))),
+        agent: Default::default(),
     };
     (context, ui)
 }

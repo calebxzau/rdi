@@ -1,6 +1,7 @@
 //! The launcher MCP (`LAUNCHER-MCP-PLAN.md`): a local MCP server a player's agent uses to operate
 //! the launcher and, through it, the games it started. No Slint types here; `crate::mcp_ui` holds
 //! the title bar icon and the copy step.
+pub mod agent;
 pub mod bridge;
 pub mod game;
 pub mod protocol;
@@ -118,15 +119,24 @@ impl Controller {
             let context = context.clone();
             Box::pin(async move { handle(&context, &body).await })
         });
-        self.running = Some(server::spawn(listener, port, token.clone(), handler));
+        self.running = Some(server::spawn(listener, port, token.clone(), self.context.agent.clone(), handler));
         self.token = token;
         Ok(Started { port, port_changed })
+    }
+
+    /// The agent using the assistant, while it runs.
+    pub fn agent(&self) -> Option<agent::Agent> {
+        match self.state {
+            State::Running { .. } => self.context.agent.current(),
+            _ => None,
+        }
     }
 
     pub fn stop(&mut self) {
         if let Some(running) = self.running.take() {
             running.stop();
         }
+        self.context.agent.clear();
         self.token.clear();
         self.state = State::Stopped;
     }
@@ -140,7 +150,10 @@ pub async fn handle(context: &tools::Context, body: &[u8]) -> Option<Value> {
     };
     let notification = request.id.is_none();
     let result = match request.method.as_str() {
-        "initialize" => Ok(protocol::initialize(&request.params, &context.launcher_version)),
+        "initialize" => {
+            context.agent.initialize(&request.params);
+            Ok(protocol::initialize(&request.params, &context.launcher_version))
+        }
         "ping" => Ok(serde_json::json!({})),
         "tools/list" => Ok(tools::list()),
         "tools/call" => match request.params.get("name").and_then(Value::as_str) {

@@ -36,12 +36,14 @@ impl Drop for Running {
 struct Checks {
     port: u16,
     token: String,
+    /// Who sends the authorized requests, for the title bar.
+    seen: super::agent::Seen,
 }
 
 /// Serves `listener` until stopped. Must be called inside the tokio runtime.
-pub fn spawn(listener: tokio::net::TcpListener, port: u16, token: String, handler: Handler) -> Running {
+pub fn spawn(listener: tokio::net::TcpListener, port: u16, token: String, seen: super::agent::Seen, handler: Handler) -> Running {
     let (stop, stopped) = tokio::sync::watch::channel(false);
-    let checks = Arc::new(Checks { port, token });
+    let checks = Arc::new(Checks { port, token, seen });
     tokio::spawn(async move {
         let mut accept_stop = stopped.clone();
         loop {
@@ -88,6 +90,7 @@ async fn respond(request: Request<Incoming>, checks: &Checks, handler: &Handler)
         }
         return plain(status);
     }
+    checks.seen.request(parts.headers.get(header::USER_AGENT).and_then(|v| v.to_str().ok()));
     let bytes = match Limited::new(body, MAX_BODY).collect().await {
         Ok(collected) => collected.to_bytes(),
         Err(error) if error.downcast_ref::<http_body_util::LengthLimitError>().is_some() => {

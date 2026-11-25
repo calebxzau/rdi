@@ -1081,6 +1081,7 @@ impl App {
         for request in requests {
             self.answer_mcp(&ui, request);
         }
+        self.mcp_ui.borrow_mut().tick(&ui);
         self.pack_ui.borrow_mut().tick();
         self.plaza.borrow_mut().tick();
         self.rooms.borrow_mut().tick();

@@ -721,3 +721,18 @@ Kotlin bugs found on the way are noted here and not fixed.
   covered live: a cancel while parts upload (session delete; unit tests only) and an in-game
   start of the installed packs. Next: A6 (client and server test runs, test server install);
   the owner asked for the AI assistant icon work (MCP logo, agent brand capsule) before it.
+- 2026-11-25 owner request between A5 and A6, done: the AI assistant button shows the MCP mark
+  (`ui/components/mcp_icon.slint`, the three strokes of the official logo as a Slint `Path`,
+  20px with 1.4px strokes so they stay apart at 1x) and becomes a capsule with the connected
+  agent's brand icon and name. `mcp::agent::Seen` records `initialize`'s `clientInfo` and every
+  authorized request's User-Agent; brands by keyword (Claude, ChatGPT/Codex, DeepSeek,
+  豆包/Trae, Kimi, 通义千问, WorkBuddy/CodeBuddy, icons copied from nayuta to
+  `assets/agents/`), otherwise the client name; gone after 10 minutes without requests or when
+  turned off. Menu: an on/off switch before the status (green on, red off, the menu stays
+  open); no "提示词" wording: until an agent connects a guide ① 复制给AI ② 打开电脑上装好的AI软件
+  with the row of brand icons ③ 在对话框里粘贴并发送, plus a red hint after 5 minutes without an
+  agent (web chats cannot connect); turning on from the title bar opens the menu. Connected:
+  已连接：<client> <version> and 复制给AI（换一个AI时用）. 3 new tests; launcher tests 433 pass;
+  clippy has no new warnings. Checked on the release build through the Slint MCP: off, on with
+  the guide, connected as claude-code (capsule with the round Claude icon), switched off (red,
+  menu open), on again, an unknown client (name only).
