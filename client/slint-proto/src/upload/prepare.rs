@@ -16,7 +16,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 /// `modStableKey`.
-fn stable_key(m: &Mod) -> String {
+pub(super) fn stable_key(m: &Mod) -> String {
     format!("{}:{}:{}:{}", m.platform, m.project_id, m.file_id, m.hash)
 }
 

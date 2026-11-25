@@ -4,34 +4,29 @@
 //! (the Slint launcher has no upload screen by owner decision).
 //!
 //! Stage A1: the draft rules, the first look at a pack (`source`) and the server checks before
-//! upload (`api`).
+//! upload (`api`). A2 to A4: the pack readers, the archive builder and the encoders. A5a: the
+//! drafts of the MCP tools (`drafts`), which wire the readers.
 pub mod api;
 pub mod draft;
-// A2 and A3: the pack readers, their pieces and the archive builder; the draft (stage A5)
-// wires them.
+pub mod drafts;
+// The archive builder and the encoders are wired by the upload task (A5d).
 #[allow(dead_code)]
 pub mod archive;
-#[allow(dead_code)]
 pub mod jar_meta;
-#[allow(dead_code)]
 pub mod manifest;
 #[allow(dead_code)]
 pub mod media;
-#[allow(dead_code)]
 pub mod mods;
-#[allow(dead_code)]
 pub mod platform;
-#[allow(dead_code)]
 pub mod policy;
-#[allow(dead_code)]
 pub mod prepare;
-#[allow(dead_code)]
 pub mod reader;
-#[allow(dead_code)]
 pub mod server_pack;
 pub mod source;
 #[cfg(test)]
 mod archive_tests;
+#[cfg(test)]
+mod drafts_tests;
 #[cfg(test)]
 mod manifest_tests;
 #[cfg(test)]
@@ -95,19 +90,67 @@ pub async fn check(api: &crate::api::Client, request: Request) -> Result<Check> 
     fill(&mut draft.version, &summary.version);
     draft.version = draft::version_name(draft.version.trim());
     draft.name = draft.name.trim().to_owned();
-    let problems = draft::problems(&draft, update.is_some());
-    let preflight = if !problems.is_empty() {
-        None
-    } else {
-        let checked = async {
-            if update.is_none() {
-                draft::icon_is_image(&api.http, &draft.icon_url).await.map_err(|error| format!("验证图标链接失败：{error}"))?;
-            }
-            api::preflight(api, &draft, &summary.mc_version, &summary.loader, update.as_ref().map(|t| t.id.as_str()))
-                .await
-                .map_err(|error| format!("上传检查失败：{error:#}"))
-        };
-        Some(checked.await)
-    };
+    let (problems, preflight) = validate(api, &draft, &summary, update.as_ref()).await;
     Ok(Check { summary, draft, update, problems, preflight })
+}
+
+/// `validateModpackUploadDraft`, then, when nothing is wrong, the icon check of a new pack and
+/// `POST modpack/preflight` (`submitUpload` up to the queue).
+pub async fn validate(api: &crate::api::Client, draft: &draft::Draft, summary: &source::Summary, update: Option<&api::Target>) -> (Vec<String>, Option<Result<(), String>>) {
+    let problems = draft::problems(draft, update.is_some());
+    if !problems.is_empty() {
+        return (problems, None);
+    }
+    let checked = async {
+        if update.is_none() {
+            draft::icon_is_image(&api.http, &draft.icon_url).await.map_err(|error| format!("验证图标链接失败：{error}"))?;
+        }
+        api::preflight(api, draft, &summary.mc_version, &summary.loader, update.map(|t| t.id.as_str()))
+            .await
+            .map_err(|error| format!("上传检查失败：{error:#}"))
+    };
+    (problems, Some(checked.await))
+}
+
+/// Form fields an edit changes; `None` keeps a field.
+#[derive(Clone, Debug, Default)]
+pub struct FormChange {
+    pub name: Option<String>,
+    pub version: Option<String>,
+    pub categories: Option<Vec<String>>,
+    pub icon_url: Option<String>,
+    pub source_url: Option<String>,
+    pub info: Option<String>,
+}
+
+impl FormChange {
+    pub fn is_empty(&self) -> bool {
+        self.name.is_none() && self.version.is_none() && self.categories.is_none() && self.icon_url.is_none() && self.source_url.is_none() && self.info.is_none()
+    }
+
+    /// `updateDraft` and `updateVersionName`. A new version keeps the pack's name, categories,
+    /// icon and introduction, as the page shows them read only.
+    pub fn apply(&self, form: &mut draft::Draft, update: bool) {
+        if let Some(version) = &self.version {
+            form.version = draft::version_name(version.trim());
+        }
+        if let Some(source) = &self.source_url {
+            form.source_url = source.trim().to_owned();
+        }
+        if update {
+            return;
+        }
+        if let Some(name) = &self.name {
+            form.name = name.trim().to_owned();
+        }
+        if let Some(categories) = &self.categories {
+            form.categories = categories.clone();
+        }
+        if let Some(icon) = &self.icon_url {
+            form.icon_url = icon.trim().to_owned();
+        }
+        if let Some(info) = &self.info {
+            form.info = info.trim().to_owned();
+        }
+    }
 }

@@ -48,6 +48,8 @@ pub(super) fn context_with_ui() -> (tools::Context, FakeUi) {
         versions: std::env::temp_dir().join(format!("rdi-mcp-missing-{}", uuid::Uuid::now_v7())).join("versions"),
         java: || crate::java_runtime::State::Searching,
         game: game::Forwarder::new(),
+        // Never created here either; draft tests point it at their own folder.
+        drafts: crate::upload::drafts::Drafts::new(std::env::temp_dir().join(format!("rdi-mcp-drafts-{}", uuid::Uuid::now_v7()))),
     };
     (context, ui)
 }

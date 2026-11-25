@@ -23,6 +23,8 @@ pub struct Context {
     /// The Java 25 search state (`java_runtime::state`); tests pass their own.
     pub java: fn() -> crate::java_runtime::State,
     pub game: super::game::Forwarder,
+    /// The upload draft of the upload tools (one at a time).
+    pub drafts: crate::upload::drafts::Drafts,
 }
 
 struct Tool {
@@ -78,6 +80,28 @@ fn upload_check_schema() -> Value {
         "source_url": {"type": "string", "description": "Optional address of the pack's publishing page."},
         "update_modpack_id": {"type": "string", "description": "Upload a new version of this existing pack (an id from list_my_modpacks) instead of a new pack."}},
         "required": ["path"], "additionalProperties": false})
+}
+fn draft_id_schema() -> Value {
+    json!({"type": "object", "properties": {"draft_id": {"type": "string", "description": "The draft_id from upload_modpack_check."}},
+        "required": ["draft_id"], "additionalProperties": false})
+}
+fn upload_edit_schema() -> Value {
+    let categories: Vec<String> = crate::upload::draft::CATEGORIES.iter().map(|(name, label)| format!("{name} ({label})")).collect();
+    json!({"type": "object", "properties": {
+        "draft_id": {"type": "string", "description": "The draft_id from upload_modpack_check."},
+        "name": {"type": "string", "description": "Modpack name of a new pack."},
+        "version": {"type": "string", "description": "Version name. Spaces become underscores."},
+        "categories": {"type": "array", "items": {"type": "string"}, "description": format!("1 to 4 category names for a new pack: {}", categories.join(", "))},
+        "info": {"type": "string", "description": "Short introduction (简介) of a new pack, 10 to 100 characters."},
+        "icon_url": {"type": "string", "description": "Icon image address of a new pack."},
+        "source_url": {"type": "string", "description": "Optional address of the pack's publishing page."},
+        "mod_sides": {"type": "array", "description": "Sides to set. Mods whose side_locked is true cannot change.",
+            "items": {"type": "object", "properties": {
+                "mod": {"type": "string", "description": "The mod's id from get_upload_draft, or its slug when no other mod has it."},
+                "side": {"type": "string", "enum": ["client", "server", "both"], "description": "client: only players' games load it; server: only the host (房间) server; both: both."}},
+                "required": ["mod", "side"], "additionalProperties": false}},
+        "server_pack_path": {"type": "string", "description": "Full path of the pack's server files (服务端整合包, a .zip or folder holding mods). A launcher task reads it and merges its mods into the draft; follow it with get_task."}},
+        "required": ["draft_id"], "additionalProperties": false})
 }
 fn stop_game_schema() -> Value {
     json!({"type": "object", "properties": {
@@ -154,8 +178,28 @@ const TOOLS: &[Tool] = &[
     },
     Tool {
         name: "upload_modpack_check",
-        description: "Check a modpack (整合包) on this computer before uploading it: reads the pack, fills the upload form from it, lists every problem in the form and, when there is none, asks the server whether the upload would be accepted. Uploads nothing. The upload itself is not available yet.",
+        description: "Start an upload draft (上传草稿) for a modpack (整合包) on this computer: fills the upload form from the pack, lists every problem in the form, asks the server whether such an upload would be accepted when there is none, and starts a launcher task that reads the whole pack (its mods and their sides, resource and shader packs). Returns draft_id and the reading task; follow the task with get_task, then call get_upload_draft. Uploads nothing. A new check replaces the previous draft. The upload itself is not available yet.",
         schema: upload_check_schema,
+    },
+    Tool {
+        name: "get_upload_draft",
+        description: "The upload draft (上传草稿): form, problems, server check and, once the pack is read, every mod with its side (client, server or both), the mod id and version read from its jar, and `jar`, the full path of the mod's jar on this computer (null until downloaded, see upload_modpack_download_mods; the file sits in the launcher's cache under a digest name without the .jar extension, which the JDK's jar and javap -cp accept as it is; do not move or change it). The sides come from the mod authors' tags, which are often wrong. Decide each side from the jar itself: inspect its classes with the JDK (javap, jar) or by reading the class files, for example whether its code needs client-only classes (net.minecraft.client, rendering, screens) or the server, then set the sides with upload_modpack_edit.",
+        schema: draft_id_schema,
+    },
+    Tool {
+        name: "upload_modpack_edit",
+        description: "Change an upload draft (上传草稿): form fields, mod sides and an optional server pack. Form fields are checked again, with the server once the form is complete. Returns the changed draft as get_upload_draft does.",
+        schema: upload_edit_schema,
+    },
+    Tool {
+        name: "upload_modpack_download_mods",
+        description: "Download into the launcher's cache the jars of the draft's mods that are not on this computer yet, so that every jar can be inspected. Returns a task id to follow with get_task, or `complete` when nothing is missing.",
+        schema: draft_id_schema,
+    },
+    Tool {
+        name: "upload_modpack_discard",
+        description: "Throw away the upload draft (上传草稿) and its temporary files.",
+        schema: draft_id_schema,
     },
     Tool {
         name: "stop_game",
@@ -196,6 +240,10 @@ pub async fn call(context: &Context, name: &str, arguments: &Value) -> Result<Va
         "stop_game" => stop_game(context, arguments),
         "list_my_modpacks" => list_my_modpacks(context).await,
         "upload_modpack_check" => upload_modpack_check(context, arguments).await,
+        "get_upload_draft" => get_upload_draft(context, arguments).await,
+        "upload_modpack_edit" => upload_modpack_edit(context, arguments).await,
+        "upload_modpack_download_mods" => upload_modpack_download_mods(context, arguments).await,
+        "upload_modpack_discard" => upload_modpack_discard(context, arguments),
         "game_tools" => game_tools(context, arguments).await,
         // The game's own result goes back as it is, images and `isError` included.
         "game_call" => match game_call(context, arguments).await {
@@ -595,25 +643,132 @@ async fn upload_modpack_check(context: &Context, arguments: &Value) -> Result<Va
         info: optional_string(arguments, "info")?.unwrap_or_default().to_owned(),
     };
     let account = signed_in(context).await?;
-    let check = crate::upload::check(&account.api, crate::upload::Request { path, draft, update_modpack_id: update }).await?;
-    let (preflight, ready) = match &check.preflight {
-        None => (json!("not_run"), false),
-        Some(Ok(())) => (json!("passed"), true),
-        Some(Err(message)) => (json!({"failed": message}), false),
+    let check = crate::upload::check(&account.api, crate::upload::Request { path: path.clone(), draft, update_modpack_id: update }).await?;
+    let deps = install_deps(context).await?;
+    let (id, dropped) = context.drafts.create(check, path, deps.store.root.clone());
+    cancel_dropped(context, dropped);
+    let task = context.drafts.start_read(deps, &id)?;
+    let mut view = draft_view(context, &id).await?;
+    view["reading_task_id"] = json!(task);
+    view["next"] = json!("Follow reading_task_id with get_task, then call get_upload_draft.");
+    view["note"] = json!(UPLOAD_NOT_YET);
+    Ok(view)
+}
+
+const UPLOAD_NOT_YET: &str = "The upload itself (with the required client and server test runs) is not available yet.";
+
+async fn install_deps(context: &Context) -> Result<crate::pack_install::Deps> {
+    let kit = context.bridge.install().await?.context(NOT_SIGNED_IN)?;
+    tokio::task::spawn_blocking(kit.deps).await.context("准备读取整合包失败")
+}
+
+/// A replaced or discarded draft whose pack is still being read: its task stops and removes
+/// the work folder.
+fn cancel_dropped(context: &Context, dropped: crate::upload::drafts::Dropped) {
+    if let Some(task) = dropped.0 {
+        context.tasks.cancel(&task);
+    }
+}
+
+fn draft_id(arguments: &Value) -> Result<&str> {
+    string_arg(arguments, "draft_id")
+}
+
+/// The draft as the tools return it. The first view of a read pack opens every jar, so it runs
+/// on a blocking thread.
+async fn draft_view(context: &Context, id: &str) -> Result<Value> {
+    let (drafts, id) = (context.drafts.clone(), id.to_owned());
+    tokio::task::spawn_blocking(move || drafts.with(&id, |draft| Ok(draft.view()))).await.context("读取上传草稿失败")?
+}
+
+async fn get_upload_draft(context: &Context, arguments: &Value) -> Result<Value> {
+    let mut view = draft_view(context, draft_id(arguments)?).await?;
+    view["note"] = json!(UPLOAD_NOT_YET);
+    Ok(view)
+}
+
+fn mod_sides(arguments: &Value) -> Result<Vec<(String, crate::pack_install::mods::Side)>> {
+    let items = match arguments.get("mod_sides") {
+        None | Some(Value::Null) => return Ok(vec![]),
+        Some(Value::Array(items)) => items,
+        Some(_) => bail!("参数mod_sides必须是数组"),
     };
-    let s = &check.summary;
-    Ok(json!({
-        "pack": {"format": s.kind.name(), "name": s.name, "version": s.version,
-            "minecraft": crate::import::scanner::version_label(&s.mc_version), "loader": s.loader},
-        "upload_as": match &check.update {
-            Some(target) => json!({"new_version_of": {"id": target.id, "name": target.name}}),
-            None => json!("new_modpack"),
-        },
-        "form": {"name": check.draft.name, "version": check.draft.version, "categories": check.draft.categories,
-            "info": check.draft.info, "icon_url": check.draft.icon_url, "source_url": check.draft.source_url},
-        "problems": check.problems,
-        "preflight": preflight,
-        "ready": ready,
-        "note": "The upload itself (with the required client and server test runs) is not available yet.",
-    }))
+    items
+        .iter()
+        .map(|item| {
+            let name = item.get("mod").and_then(Value::as_str).map(str::trim).filter(|s| !s.is_empty()).context("mod_sides的每一项都需要mod")?;
+            let side = item.get("side").and_then(Value::as_str).context("mod_sides的每一项都需要side")?;
+            Ok((name.to_owned(), crate::upload::drafts::parse_side(side)?))
+        })
+        .collect()
+}
+
+async fn upload_modpack_edit(context: &Context, arguments: &Value) -> Result<Value> {
+    let id = draft_id(arguments)?.to_owned();
+    let change = crate::upload::FormChange {
+        name: optional_string(arguments, "name")?.map(str::to_owned),
+        version: optional_string(arguments, "version")?.map(str::to_owned),
+        categories: arguments.get("categories").filter(|v| !v.is_null()).map(|_| string_list(arguments, "categories")).transpose()?,
+        icon_url: optional_string(arguments, "icon_url")?.map(str::to_owned),
+        source_url: optional_string(arguments, "source_url")?.map(str::to_owned),
+        info: optional_string(arguments, "info")?.map(str::to_owned),
+    };
+    let sides = mod_sides(arguments)?;
+    let server_pack = optional_string(arguments, "server_pack_path")?.map(std::path::PathBuf::from);
+    if server_pack.as_ref().is_some_and(|p| !p.is_absolute()) {
+        bail!("请提供服务端整合包的完整路径");
+    }
+    let changed_sides = if sides.is_empty() { None } else { Some(context.drafts.with(&id, |draft| draft.set_sides(&sides))?) };
+    if !change.is_empty() {
+        let account = signed_in(context).await?;
+        let (form, summary, update) = context.drafts.with(&id, |draft| {
+            change.apply(&mut draft.form, draft.update.is_some());
+            Ok((draft.form.clone(), draft.summary.clone(), draft.update.clone()))
+        })?;
+        let (problems, preflight) = crate::upload::validate(&account.api, &form, &summary, update.as_ref()).await;
+        context.drafts.with(&id, |draft| {
+            // A later edit may have changed the form while the server answered.
+            if draft.form == form {
+                draft.problems = problems;
+                draft.preflight = preflight;
+            }
+            Ok(())
+        })?;
+    }
+    let server_task = match server_pack {
+        Some(file) => {
+            let deps = install_deps(context).await?;
+            Some(context.drafts.start_server_read(deps, &id, file)?)
+        }
+        None => None,
+    };
+    let mut view = draft_view(context, &id).await?;
+    if let Some(count) = changed_sides {
+        view["sides_changed"] = json!(count);
+    }
+    if let Some(task) = server_task {
+        view["server_pack_task_id"] = json!(task);
+    }
+    view["note"] = json!(UPLOAD_NOT_YET);
+    Ok(view)
+}
+
+async fn upload_modpack_download_mods(context: &Context, arguments: &Value) -> Result<Value> {
+    let id = draft_id(arguments)?.to_owned();
+    // The draft is checked before asking the UI thread for the deps.
+    context.drafts.with(&id, |_| Ok(()))?;
+    let deps = install_deps(context).await?;
+    let drafts = context.drafts.clone();
+    let started = tokio::task::spawn_blocking(move || drafts.start_download(deps, &id)).await.context("开始下载Mod失败")??;
+    Ok(match started {
+        None => json!({"result": "complete", "next": "Every jar is on this computer; see get_upload_draft."}),
+        Some((task, count)) => json!({"result": "started", "task_id": task, "mods": count,
+            "next": "Follow the task with get_task, then call get_upload_draft for the jar paths."}),
+    })
+}
+
+fn upload_modpack_discard(context: &Context, arguments: &Value) -> Result<Value> {
+    let dropped = context.drafts.discard(draft_id(arguments)?)?;
+    cancel_dropped(context, dropped);
+    Ok(json!({"result": "discarded"}))
 }

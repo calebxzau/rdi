@@ -21,6 +21,7 @@ impl McpUi {
             versions: crate::local_packs::versions_dir(),
             java: crate::java_runtime::state,
             game: mcp::game::Forwarder::new(),
+            drafts: crate::upload::drafts::Drafts::launcher(),
         };
         let this = Rc::new(RefCell::new(Self { controller: Controller::new(mcp::settings_path(), runtime, context), requests }));
         let weak = Rc::downgrade(&this);

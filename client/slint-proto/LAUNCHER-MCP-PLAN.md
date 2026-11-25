@@ -368,6 +368,8 @@ Kotlin bugs found on the way are noted here and not fixed.
 | E5 | Which encoders for the upload archive? Kotlin needs two: Opus (24 kHz, 48 kbps, stereo) and AV1 for PNG files over 50KB (`PngCompression.kt` writes AVIF under the unchanged `.png` name, so other mods need no code change). | **Answered 2026-11-25: the game's slim FFmpeg natives** with a small C shim built in `client/mediaproc/ffmpeg/build-natives.sh` (flat functions, called through `libloading`); same encoders and settings as Kotlin. Needs a new natives release |
 | E6 | One `upload_modpack` call, or a draft with several steps? Compose is interactive (mod sides, missing mods, test again after a failure, optional server pack). | **Answered 2026-11-25: a draft.** `upload_modpack_check` returns a `draft_id`; tools set mod sides, start the client and server tests (tasks), take an optional `server_pack_path`; `upload_modpack { draft_id, ... }` submits. Test results expire when the mod list changes (Kotlin `testedModsSignature`) |
 | E7 | Stage order | **Answered 2026-11-25: A2, A3, A5, A4, A6.** Upload and publish are proven against the local master before the encoders; `upload_modpack` is not registered until A4 and A6 are done. A6 also needs the test server install (`McInstall` `--installServer`, Fabric server runtime), which Rust `mc_install` does not have |
+| E8 | How is stage A5 tested live before the tests of A6 exist? | **Answered 2026-11-25: as Kotlin's `rdi.ignoreModpackTest`.** The environment variable `RDI_IGNORE_MODPACK_TEST=1` registers `upload_modpack` and lifts the test requirement; without it the tool stays unregistered until A6 |
+| E9 | What is the agent upload for? | **Owner, 2026-11-25:** to tell client and server mods apart properly. Authors' side tags are often wrong (new authors mislabel them), so the agent inspects each mod jar's bytecode with the JDK instead of trusting the tags. The draft tools therefore give every mod's jar path, the mod id and version from the jar, and a download of the jars that are not local yet |
 | E2 | Are confirmation dialogs wanted before destructive tools are added later? | Destructive tools stay out (D1) |
 | E3 | Should a stdio bridge exist for agents without HTTP MCP support? | No |
 
@@ -642,3 +644,34 @@ Kotlin bugs found on the way are noted here and not fixed.
   jobs passed); `client/gradle/ffmpeg-natives.gradle.kts` uses it (3c934172). The released
   Windows jar passes `upload::media` with the same output sizes as the local shim. `dev` is
   still not pushed. Next: stage A5.
+- 2026-11-25 M4 stage A5 planned with the owner: A5a drafts and draft tools, A5b chunked upload
+  and publish (`save_import::upload` is Kotlin `ChunkedUploader` with the same constants), A5c
+  local install from the built archive (`pack_install` gains the layered mapping of
+  `extractClientPackArchiveToDir`), A5d the task `上传并安装整合包` and `upload_modpack`;
+  decisions E8 and E9 in section 8.
+- 2026-11-25 M4 stage A5a done: `upload::drafts` (one draft at a time, idle for an hour it goes;
+  work folders `pack-proc/upload-draft-<id>`, removed on replace, discard, expiry, or at the
+  next launcher start). `upload_modpack_check` now also makes the draft and starts the task
+  `读取整合包 {name}` (`prepare::client`); new tools `get_upload_draft`, `upload_modpack_edit`
+  (form fields checked again with the server, `mod_sides` all or nothing, by `id` =
+  `modStableKey` or a unique slug, Fabric mods whose jar declares `client` or `server` locked
+  as Kotlin `fabricEnvironmentSide`, `server_pack_path` read by the task
+  `读取服务端整合包`), `upload_modpack_download_mods` (task `下载{n}个Mod`, eight at a time,
+  into the content store) and `upload_modpack_discard`. Each mod in the draft has its side, the
+  mod id and version from its jar, and `jar`, the cache file (a digest name without `.jar`;
+  the JDK's `jar tf` and `javap -cp` read it as it is, checked live). 7 new tests; launcher
+  tests 417 pass, 9 ignored; clippy has no new warnings. The MCP test
+  `token_origin_host_type_and_size_are_checked` failed once under the full suite (raw socket
+  read 0 instead of 413) and passed alone three times and in the next full run: flaky, not
+  from this change. Live against the local master (launcher from `run-built.ps1`, MCP started
+  through the Slint MCP click): `Sky Frogs-1.8.1` read in ~15 s (156 CurseForge mods, none
+  local), the download task fetched all 156 jars, then every mod had a jar, mod id and
+  version; side edits by id and slug applied, a call with one unknown mod changed nothing;
+  preflight answered 请先绑定微软账号，再上传整合包或新版本 for test account 11111, so the
+  local account needs a Microsoft binding before the A5b/A5d live upload. Fabric
+  `Alex 2.0 dev 6.1`: 299 mods, 71 locked (an edit of `3dskinlayers` refused), edits refused
+  while reading; with its server zip 211 server mods + 819 extra files, 304 merged, as in the
+  A2 comparison. A draft replaced while reading: its task ended 任务已取消 and its folder went;
+  discard while reading did the same. Kotlin's `validateRuntime` (the Java of the JVM that runs
+  the launcher) has no meaning in Rust and is left out; the test runs of A6 need Java anyway.
+  Next: A5b.
