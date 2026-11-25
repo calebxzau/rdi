@@ -85,6 +85,10 @@ fn load(work: &Path, input: &Path, answer: impl Fn(&str, bool, &Value) -> Value 
     with_ctx(work, answer, |ctx| reader::load(ctx, input))
 }
 
+fn left_in_order(dir: &Path) -> Vec<String> {
+    reader::walk_files(dir).unwrap().iter().map(|f| reader::relative(dir, f)).collect()
+}
+
 fn left_in(dir: &Path) -> Vec<String> {
     let mut names: Vec<String> = reader::walk_files(dir).unwrap().iter().map(|f| reader::relative(dir, f)).collect();
     names.sort();
@@ -126,6 +130,18 @@ fn skip_rules_and_save_regions_follow_kotlin() {
     // A `level.dat` at the root makes the whole tree a save.
     assert!(SaveRegions::of(["level.dat"]).is_save_region("region/r.0.0.mca", false));
     assert!(!SaveRegions::of([]).is_save_region("region/r.0.0.mca", false));
+}
+
+#[test]
+fn folders_are_walked_in_the_order_kotlin_sees_on_windows() {
+    let dir = TestDir::new("rdi-upload-reader");
+    for name in ["[lib] z.jar", "_under.jar", "b.jar", "Alpha.jar", "sub/c.jar", "Zeta/d.jar", "材质.jar"] {
+        let file = dir.join(name);
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(file, b"x").unwrap();
+    }
+    // Upper case order: letters, then `[`, then `_`; a folder is entered where it stands.
+    assert_eq!(left_in_order(&dir), ["Alpha.jar", "b.jar", "sub/c.jar", "Zeta/d.jar", "[lib] z.jar", "_under.jar", "材质.jar"]);
 }
 
 #[test]

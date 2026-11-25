@@ -110,7 +110,24 @@ fn name_of(path: &Path) -> String {
     path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()
 }
 
-/// Entries of `dir` in name order without regard to case, as NTFS lists them; links are left out.
+/// The order NTFS lists names in, which Kotlin's `listFiles` and `walkTopDown` follow on
+/// Windows: by the UTF-16 units of the upper case name, so `[` and `_` come after the letters.
+fn ntfs_key(name: &str) -> Vec<u16> {
+    let upper: String = name
+        .chars()
+        .map(|c| {
+            // NTFS maps one character to one; `ß` and the like stay as they are.
+            let mut mapped = c.to_uppercase();
+            match (mapped.next(), mapped.next()) {
+                (Some(single), None) => single,
+                _ => c,
+            }
+        })
+        .collect();
+    upper.encode_utf16().collect()
+}
+
+/// Entries of `dir` in NTFS order; links are left out.
 pub(super) fn children(dir: &Path) -> Result<Vec<(PathBuf, bool)>> {
     let mut out = Vec::new();
     for entry in std::fs::read_dir(dir).with_context(|| format!("读取{}失败", dir.display()))? {
@@ -120,7 +137,7 @@ pub(super) fn children(dir: &Path) -> Result<Vec<(PathBuf, bool)>> {
             out.push((entry.path(), kind.is_dir()));
         }
     }
-    out.sort_by_cached_key(|(path, _)| (name_of(path).to_lowercase(), name_of(path)));
+    out.sort_by_cached_key(|(path, _)| (ntfs_key(&name_of(path)), name_of(path)));
     Ok(out)
 }
 

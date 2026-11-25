@@ -527,3 +527,24 @@ Kotlin bugs found on the way are noted here and not fixed.
   (sets the console to UTF-8, one log and dump per pack). A full `cargo test` through WSL
   `pwsh.exe` may finish and still not return (see the J5c note); read the log file.
   Left of A2: the comparison with Kotlin.
+- 2026-11-25 M4 stage A2 compared with Kotlin: `client/pack-proc`
+  `UploadPackDumpTest` (does nothing without `RDI_UPLOAD_SAMPLE`, pack paths separated by `|`,
+  and `RDI_UPLOAD_DUMP`, a folder for `kotlin-<n>.json`) dumps `LoadedLocalModpack`; run from
+  `client/ui` with `.\gradlew.bat :pack-proc:cleanTest :pack-proc:test --tests
+  "calebxzau.rdi.client.packproc.UploadPackDumpTest"` (2 min 45 s for four packs; IntelliJ MCP
+  did not connect, so Windows `pwsh.exe` was used). Helper scripts in `%TEMP%`:
+  `rdi-m4-kotlin.ps1 -Packs`, `rdi-m4-live.ps1 -Packs`, `rdi-m4-diff.py <temp> 1 2 3 4`.
+  Result for the Modrinth sample pack (161 mods, 19 extras), CurseForge `Sky Frogs-1.8.1`
+  (157 mods), `After The Nukes` (29 mods, 2 extras, save regions) and the Fabric `Alex 2.0 dev
+  6.1` (301 embedded mods, 49 embedded packs): mods (order, sides, addresses, marks), extras,
+  embedded names and the 地图模板 flag are equal. The first run differed on the Alex pack in two
+  ways: folder order (fixed: entries are sorted as NTFS lists them, by the upper case name, so
+  `[` and `_` come after letters; test added), and the Modrinth version id of two jars whose
+  SHA-1 belongs to two versions of one project, where the mirror and the official API answer
+  differently (not a code difference; equal on the second run). Launcher tests 405 pass,
+  8 ignored; clippy has no new warnings. **Stage A2 is done** except its wiring into the draft
+  tools (E6), which comes with stage A5. Next: stage A3, the archive builder
+  (`buildUploadArchiveInternal`, `writeProcessedEntry`, `processNestedZip`,
+  `readResourcepackEntry`, the shader config and shadowed source rules), with the encoders
+  behind a trait until A4; `rdipack2::append` is the tar writer and `upload::policy` has the
+  skip rules. Compare file lists with Kotlin through a second dump test.
