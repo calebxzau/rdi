@@ -348,6 +348,47 @@ as in Compose (E1).
 
 Kotlin bugs found on the way are noted here and not fixed.
 
+### A6 design
+
+Written 2026-11-25 after reading `client/modpack-test` (`ModpackTestSession.kt`,
+`ModpackTestContract.kt`), `ModpackTestAdapter.kt`, `McLaunchAdapter.startServerDesktop`,
+`MinecraftLauncher.launchServer`, `McInstallerBootstrapper.runServerInstallerBootstrapper` and the
+test server parts of `McInstall.kt`. Owner decisions E10 to E12 in section 8.
+
+**Facts.**
+
+- The client test is not automatic in Kotlin: the pack starts without the RDI core (so without
+  RMCP) and the page says 创建单机存档，在聊天框发送开始运行客户端测试. The test passes when a game
+  line contains `开始运行客户端测试`, which only the chat line of that message gives; no mod prints
+  it. The RDI core cannot simply join the test mods: without `-Drdi.play` its `RDI` class throws.
+- The server test passes on `Done (<s>s)! For help` and needs the test server once:
+  Forge/NeoForge: the vanilla server jar at the install profile's `serverJarPath`, the server
+  Mojmap, then `java -jar <installer> --installServer <mc dir>`; installed when
+  `libraries/<loader path>/<loader id>/<win|unix>_args.txt` exists. Fabric 1.20.1: fabric-installer
+  1.1.2 `server -dir <staging> -mcversion 1.20.1 -loader 0.19.5 -downloadMinecraft` into
+  `mc/server-runtimes/1.20.1/fabric-0.19.5/runtime-*`, with the file list `.rdi-runtime-files`
+  and `.rdi-runtime-ready`, copied into every test folder with SHA-1 checks.
+- Upload gate (`submitUpload`): without a server pack and without ignore/DEBUG both tests must
+  be PASSED.
+
+**Stages** (one commit each):
+
+| Stage | Content | Kotlin |
+|---|---|---|
+| A6a | `mc_install::server`: the Forge/NeoForge test server (server jar, server Mojmap, `--installServer`) and the Fabric runtime cache (installer, file list, ready file, staging copy); the installed check; task `下载测试服务端 {mc} {loader}` with Kotlin's step names | `downloadTestServerTask2`, `isTestServerInstalled`, `installFabricTestServer`, `findFabricServerRuntime`, `stageFabricServerRuntime` |
+| A6b | `upload::testrun` without processes: test folders (copy and hard link rules, mods by side, the `C$$_` prefix, `.rdi-mod-sources`, client extras, options), line rules (marker, server regex, crash words, `Error: could not open` hint), states and the mods signature | file functions of `ModpackTestSession.kt` |
+| A6c | Processes: the client through `mc_install::prepare_for_launch` and `mc_launch::command` with the game runtime (Kotlin `rdiRuntime = true`), the RDI account, no core; the server with Java 25 `-Xmx6G -Xms6G`, the args file or the Fabric launcher, `eula.txt`; stop: Fabric `stop` and 20 s, otherwise kill, 5 s to confirm | `McModpackTestLauncher`, `launchServer`, `DesktopModpackTestProcess` |
+| A6d | Draft and MCP: tool `upload_modpack_test { draft_id, target }` returning a task id; `cancel_task` stops a test; `get_upload_draft` gets `tests.client` / `tests.server` (status, pass seconds, error, task id, last 40 lines); side edits and a server pack reset PASSED; `upload_modpack` needs PASSED with an equal mods signature, and is always listed (`RDI_IGNORE_MODPACK_TEST` stays a waiver) | `startClientTest`, `startServerTest`, `replaceTesters`, `onModsChanged`, `submitUpload` |
+
+Test folders live in the draft's work folder (`pack-proc/upload-draft-<id>/`) and go with the
+draft; they are removed only after the process is known to have exited (Kotlin `close()`).
+Discarding, replacing or expiring a draft and quitting the launcher stop its tests.
+
+Kotlin bugs noted, not fixed: every test run makes a new test folder in `pack-proc` and only the
+last one is removed when the page closes; a side edit during a running test still leaves the old
+mods' result PASSED (Rust compares the signature at submit, as E6 says). Not ported: the server
+test task's parse step rewrites the loader's version JSON in Kotlin; Rust reads the installer only.
+
 ## 7. Validation rules
 
 - `cargo test` from `client/slint-proto`; WSL native test recipe and known false failures are in
@@ -370,6 +411,9 @@ Kotlin bugs found on the way are noted here and not fixed.
 | E7 | Stage order | **Answered 2026-11-25: A2, A3, A5, A4, A6.** Upload and publish are proven against the local master before the encoders; `upload_modpack` is not registered until A4 and A6 are done. A6 also needs the test server install (`McInstall` `--installServer`, Fabric server runtime), which Rust `mc_install` does not have |
 | E8 | How is stage A5 tested live before the tests of A6 exist? | **Answered 2026-11-25: as Kotlin's `rdi.ignoreModpackTest`.** The environment variable `RDI_IGNORE_MODPACK_TEST=1` registers `upload_modpack` and lifts the test requirement; without it the tool stays unregistered until A6 |
 | E9 | What is the agent upload for? | **Owner, 2026-11-25:** to tell client and server mods apart properly. Authors' side tags are often wrong (new authors mislabel them), so the agent inspects each mod jar's bytecode with the JDK instead of trusting the tags. The draft tools therefore give every mod's jar path, the mod id and version from the jar, and a download of the jars that are not local yet |
+| E10 | Who completes the client test? Kotlin starts the pack without the RDI core and the player sends the marker in chat | **Answered 2026-11-25: as Kotlin.** The agent asks the player to create a singleplayer world and send 开始运行客户端测试, then polls `get_upload_draft`. Starting with the RDI core (agent-driven through game tools) was not chosen |
+| E11 | A test while mods are missing? Kotlin asks to download them first | **Answered 2026-11-25:** the test refuses to start and names `upload_modpack_download_mods` |
+| E12 | How does the agent read a test's console? | **Answered 2026-11-25:** `get_upload_draft` carries the last 40 lines of each test |
 | E2 | Are confirmation dialogs wanted before destructive tools are added later? | Destructive tools stay out (D1) |
 | E3 | Should a stdio bridge exist for agents without HTTP MCP support? | No |
 
@@ -736,3 +780,34 @@ Kotlin bugs found on the way are noted here and not fixed.
   clippy has no new warnings. Checked on the release build through the Slint MCP: off, on with
   the guide, connected as claude-code (capsule with the round Claude icon), switched off (red,
   menu open), on again, an unknown client (name only).
+- 2026-11-25 M4 stage A6 done (owner approved the A6 design with E10 to E12 the same day),
+  committed as A6a to A6d. A6a `mc_install::server` (`ServerRuntime`, `installed`, `install`, the Fabric
+  runtime cache with `.rdi-runtime-files` and `.rdi-runtime-ready`, `stage_fabric_runtime`);
+  `loader.rs` shares `ensure_installer`, `run_tool` (spawn error only on a failed start, an
+  interval tick so steady output cannot starve the cancel check) and `install_lock` with it;
+  `VersionDownloads` gained `server` and `server_mappings`. Live (ignored test
+  `real_test_server_install`, scratch mc folder `%TEMP%\rdi-a6a-mc`, Java 25 from the Gradle
+  JDKs): Fabric 1.20.1 installed in 57 s (again in 1 s from the cache check), Forge 1.20.1 in
+  168 s, NeoForge 1.21.1 in 151 s; both args files present; the Fabric runtime staged into a
+  test folder. A6b `upload::testrun` (folders, line rules, `State`, signature). A6c
+  `upload::tester` (`Tests`, `Proc`, `start`: one launcher task per run, steps 准备测试客户端 /
+  运行客户端测试 and 下载测试服务端 / 准备测试服务器 / 运行服务端测试; the server is installed
+  inline when `installed` is false; `mc_launch::spawn_with_input` for the Fabric `stop`). A6d:
+  `Draft.tests`, `Drafts::start_test` (E11 refusal, unsupported server), side edits call
+  `mods_changed`, a server pack read is refused while a test runs and `reset`s both tests,
+  drafts with a running test neither expire nor upload, closing a draft stops its tests and
+  removes the folder once their processes exited (60 s, else kept and logged);
+  `submit::test_gate` (running tests, then both passed with an equal signature unless a server
+  pack, waived by `RDI_IGNORE_MODPACK_TEST`); tool `upload_modpack_test`, `get_upload_draft`
+  shows `tests`, `upload_modpack` is always listed. 23 new tests; launcher tests 456 pass, 10
+  ignored; clippy has no new warnings. Live on the release build against the local master
+  (account 11111, launcher MCP), `Sky Frogs-1.8.1` (NeoForge 1.21.1, 156 mods, every jar
+  local): the server test installed the NeoForge test server inside its task (安装成功), staged
+  156 mods and passed on `Done (4.227s)` (ModernFix: 35.9 s), its process was gone afterwards;
+  the client test opened the game (59 s to the menu), the owner created a world and sent the
+  marker, the test passed (服务端/客户端测试通过 tasks done) and the game closed; a side edit put
+  both tests back to not_run; a second server test cancelled with `cancel_task` while the server
+  ran ended cancelled, state stopped with 已发送停止测试服务器指令, no server process left;
+  `upload_modpack_discard` removed the draft folder with both test folders. Not covered live: a
+  Fabric test server start, a crash failing a run, and an upload after passed tests (the form
+  problems come first; the gate is covered by unit tests).

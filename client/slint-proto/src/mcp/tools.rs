@@ -87,6 +87,12 @@ fn draft_id_schema() -> Value {
     json!({"type": "object", "properties": {"draft_id": {"type": "string", "description": "The draft_id from upload_modpack_check."}},
         "required": ["draft_id"], "additionalProperties": false})
 }
+fn upload_test_schema() -> Value {
+    json!({"type": "object", "properties": {
+        "draft_id": {"type": "string", "description": "The draft_id from upload_modpack_check."},
+        "target": {"type": "string", "enum": ["client", "server"], "description": "Which test to start."}},
+        "required": ["draft_id", "target"], "additionalProperties": false})
+}
 fn upload_edit_schema() -> Value {
     let categories: Vec<String> = crate::upload::draft::CATEGORIES.iter().map(|(name, label)| format!("{name} ({label})")).collect();
     json!({"type": "object", "properties": {
@@ -180,12 +186,12 @@ const TOOLS: &[Tool] = &[
     },
     Tool {
         name: "upload_modpack_check",
-        description: "Start an upload draft (上传草稿) for a modpack (整合包) on this computer: fills the upload form from the pack, lists every problem in the form, asks the server whether such an upload would be accepted when there is none, and starts a launcher task that reads the whole pack (its mods and their sides, resource and shader packs). Returns draft_id and the reading task; follow the task with get_task, then call get_upload_draft. Uploads nothing. A new check replaces the previous draft. The upload itself is not available yet.",
+        description: "Start an upload draft (上传草稿) for a modpack (整合包) on this computer: fills the upload form from the pack, lists every problem in the form, asks the server whether such an upload would be accepted when there is none, and starts a launcher task that reads the whole pack (its mods and their sides, resource and shader packs). Returns draft_id and the reading task; follow the task with get_task, then call get_upload_draft. Uploads nothing. A new check replaces the previous draft.",
         schema: upload_check_schema,
     },
     Tool {
         name: "get_upload_draft",
-        description: "The upload draft (上传草稿): form, problems, server check and, once the pack is read, every mod with its side (client, server or both), the mod id and version read from its jar, and `jar`, the full path of the mod's jar on this computer (null until downloaded, see upload_modpack_download_mods; the file sits in the launcher's cache under a digest name without the .jar extension, which the JDK's jar and javap -cp accept as it is; do not move or change it). The sides come from the mod authors' tags, which are often wrong. Decide each side from the jar itself: inspect its classes with the JDK (javap, jar) or by reading the class files, for example whether its code needs client-only classes (net.minecraft.client, rendering, screens) or the server, then set the sides with upload_modpack_edit.",
+        description: "The upload draft (上传草稿): form, problems, server check and, once the pack is read, every mod with its side (client, server or both), the mod id and version read from its jar, and `jar`, the full path of the mod's jar on this computer (null until downloaded, see upload_modpack_download_mods; the file sits in the launcher's cache under a digest name without the .jar extension, which the JDK's jar and javap -cp accept as it is; do not move or change it). The sides come from the mod authors' tags, which are often wrong. Decide each side from the jar itself: inspect its classes with the JDK (javap, jar) or by reading the class files, for example whether its code needs client-only classes (net.minecraft.client, rendering, screens) or the server, then set the sides with upload_modpack_edit. `tests` shows the client and server test runs (status not_run, running, passed, failed or stopped, the error and the last 40 console lines).",
         schema: draft_id_schema,
     },
     Tool {
@@ -199,8 +205,13 @@ const TOOLS: &[Tool] = &[
         schema: draft_id_schema,
     },
     Tool {
+        name: "upload_modpack_test",
+        description: "Start the client or the server test (客户端测试, 服务端测试) of an upload draft as a launcher task; every mod jar must be downloaded first. The server test installs the local test server the first time (a large download) and passes by itself once the server has started. The client test opens the modpack in a game window and passes only when the player creates a singleplayer world (单机存档) and sends 开始运行客户端测试 in chat: tell the player to do that, then poll get_upload_draft (tests.client). A crash fails a test; cancel_task stops one. Changing mod sides or adding a server pack makes passed tests count no more. Returns the task id.",
+        schema: upload_test_schema,
+    },
+    Tool {
         name: "upload_modpack",
-        description: "Upload the draft's modpack (整合包) to the RDI server and install it on this computer: builds the upload archive, uploads it, publishes the new pack or the new version, downloads missing client mods and installs the pack. Returns a task id; follow it with get_task. Uses the draft up. Call it only after the player agreed to the form and the mod sides.",
+        description: "Upload the draft's modpack (整合包) to the RDI server and install it on this computer: builds the upload archive, uploads it, publishes the new pack or the new version, downloads missing client mods and installs the pack. Without a server pack the client and the server test (upload_modpack_test) must have passed with the current mod sides. Returns a task id; follow it with get_task. Uses the draft up. Call it only after the player agreed to the form and the mod sides.",
         schema: draft_id_schema,
     },
     Tool {
@@ -215,17 +226,10 @@ const TOOLS: &[Tool] = &[
     },
 ];
 
-/// `upload_modpack` waits for the client and server test runs of stage A6; before them only a
-/// run with `RDI_IGNORE_MODPACK_TEST` has it (owner decision E8).
-fn listed(tool: &Tool) -> bool {
-    tool.name != "upload_modpack" || crate::upload::submit::tests_waived()
-}
-
 /// The `tools/list` result.
 pub fn list() -> Value {
     let tools: Vec<Value> = TOOLS
         .iter()
-        .filter(|t| listed(t))
         .map(|t| json!({"name": t.name, "description": t.description, "inputSchema": (t.schema)()}))
         .collect();
     json!({"tools": tools})
@@ -233,7 +237,7 @@ pub fn list() -> Value {
 
 /// The `tools/call` result. An unknown tool is a protocol error, as in the game's RMCP.
 pub async fn call(context: &Context, name: &str, arguments: &Value) -> Result<Value, RpcError> {
-    if !TOOLS.iter().any(|t| t.name == name && listed(t)) {
+    if !TOOLS.iter().any(|t| t.name == name) {
         return Err(RpcError::invalid_params(format!("unknown tool: {name}")));
     }
     if !arguments.is_object() {
@@ -258,6 +262,7 @@ pub async fn call(context: &Context, name: &str, arguments: &Value) -> Result<Va
         "upload_modpack_edit" => upload_modpack_edit(context, arguments).await,
         "upload_modpack_download_mods" => upload_modpack_download_mods(context, arguments).await,
         "upload_modpack_discard" => upload_modpack_discard(context, arguments),
+        "upload_modpack_test" => upload_modpack_test(context, arguments).await,
         "upload_modpack" => upload_modpack(context, arguments).await,
         "game_tools" => game_tools(context, arguments).await,
         // The game's own result goes back as it is, images and `isError` included.
@@ -666,11 +671,11 @@ async fn upload_modpack_check(context: &Context, arguments: &Value) -> Result<Va
     let mut view = draft_view(context, &id).await?;
     view["reading_task_id"] = json!(task);
     view["next"] = json!("Follow reading_task_id with get_task, then call get_upload_draft.");
-    view["note"] = json!(UPLOAD_NOT_YET);
+    view["note"] = json!(UPLOAD_FLOW);
     Ok(view)
 }
 
-const UPLOAD_NOT_YET: &str = "The upload itself (upload_modpack) needs the client and server test runs, which are not available yet.";
+const UPLOAD_FLOW: &str = "Steps: wait for the reading task; download the missing jars (upload_modpack_download_mods); inspect the jars and set the mod sides (upload_modpack_edit); run the server and the client test (upload_modpack_test; the client test needs the player in the game window); then upload_modpack, once the player agreed.";
 
 async fn install_deps(context: &Context) -> Result<crate::pack_install::Deps> {
     let kit = context.bridge.install().await?.context(NOT_SIGNED_IN)?;
@@ -698,7 +703,7 @@ async fn draft_view(context: &Context, id: &str) -> Result<Value> {
 
 async fn get_upload_draft(context: &Context, arguments: &Value) -> Result<Value> {
     let mut view = draft_view(context, draft_id(arguments)?).await?;
-    view["note"] = json!(UPLOAD_NOT_YET);
+    view["note"] = json!(UPLOAD_FLOW);
     Ok(view)
 }
 
@@ -764,7 +769,7 @@ async fn upload_modpack_edit(context: &Context, arguments: &Value) -> Result<Val
     if let Some(task) = server_task {
         view["server_pack_task_id"] = json!(task);
     }
-    view["note"] = json!(UPLOAD_NOT_YET);
+    view["note"] = json!(UPLOAD_FLOW);
     Ok(view)
 }
 
@@ -798,6 +803,27 @@ async fn upload_modpack(context: &Context, arguments: &Value) -> Result<Value> {
             "next": "Follow the task with get_task: it uploads, publishes and installs the pack (上传并安装整合包)."}),
         crate::upload::submit::Started::Running(task) => json!({"result": "already_running", "task_id": task}),
     })
+}
+
+async fn upload_modpack_test(context: &Context, arguments: &Value) -> Result<Value> {
+    let id = draft_id(arguments)?.to_owned();
+    let target = crate::upload::testrun::Target::parse(string_arg(arguments, "target")?)?;
+    // The draft is checked before asking the UI thread for the deps.
+    context.drafts.with(&id, |_| Ok(()))?;
+    let kit = context.bridge.room().await?.context(NOT_SIGNED_IN)?;
+    let window = kit.window;
+    let room = tokio::task::spawn_blocking(kit.deps).await.context("准备整合包测试失败")?;
+    let drafts = context.drafts.clone();
+    let needs = crate::upload::tester::Needs { room, window };
+    let task = tokio::task::spawn_blocking(move || drafts.start_test(&id, target, needs)).await.context("开始整合包测试失败")??;
+    let next = match target {
+        crate::upload::testrun::Target::Client => format!(
+            "A game window opens once the client is prepared. Ask the player to {}, then poll get_upload_draft until tests.client.status is passed or failed.",
+            "create a singleplayer world (单机存档) and send 开始运行客户端测试 in chat"
+        ),
+        crate::upload::testrun::Target::Server => "Poll get_upload_draft (tests.server) or follow the task with get_task; the test passes once the server has started.".to_owned(),
+    };
+    Ok(json!({"result": "started", "task_id": task, "next": next}))
 }
 
 fn upload_modpack_discard(context: &Context, arguments: &Value) -> Result<Value> {

@@ -42,6 +42,8 @@ mod reader_tests;
 #[cfg(test)]
 mod server_pack_tests;
 #[cfg(test)]
+mod tester_tests;
+#[cfg(test)]
 mod testrun_tests;
 #[cfg(test)]
 mod tests;

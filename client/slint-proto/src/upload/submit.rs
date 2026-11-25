@@ -2,9 +2,9 @@
 //! `createUploadModpackTask2`: the task `上传并安装整合包 {name} {version}` with the steps 上传整合包
 //! (archive, chunked upload, publish), 下载剩余客户端Mod and 本地安装整合包.
 //!
-//! The client and server test runs come with stage A6. Until then an upload needs a server pack
-//! or `RDI_IGNORE_MODPACK_TEST=1` (owner decision E8, Kotlin `rdi.ignoreModpackTest`), and the
-//! MCP lists `upload_modpack` only with that variable.
+//! Stage A6: without a server pack the client and server tests must have passed with the draft's
+//! current mods and sides (owner decision E1), unless `RDI_IGNORE_MODPACK_TEST=1` waives them
+//! (owner decision E8, Kotlin `rdi.ignoreModpackTest`).
 use super::drafts::{self, Draft, Drafts};
 use super::publish::{self, HttpPublishApi, NewPack, Run, Target};
 use super::{archive, media, prepare};
@@ -40,6 +40,35 @@ pub fn check_runtime(mc_version: &str, loader: &str) -> Result<()> {
     Ok(())
 }
 
+/// What the test checks of `submitUpload` look at.
+pub struct TestGate {
+    pub has_server: bool,
+    pub mods: Vec<crate::pack_install::mods::Mod>,
+    pub fabric: bool,
+}
+
+/// `uploadDisabledReason` (tests running) and the test checks of `submitUpload`: without a server
+/// pack both tests must have passed, with the current mods and sides (`testedModsSignature`).
+pub fn test_gate(gate: &TestGate, tests: &super::tester::Tests) -> Result<()> {
+    use super::testrun::Target;
+    if tests.running(Target::Server) {
+        bail!("服务端测试进行中");
+    }
+    if tests.running(Target::Client) {
+        bail!("客户端测试进行中");
+    }
+    if gate.has_server {
+        return Ok(());
+    }
+    if !tests.state(Target::Client).passed_for(&gate.mods, gate.fabric) {
+        bail!("请先完成客户端测试并通过");
+    }
+    if !tests.state(Target::Server).passed_for(&gate.mods, gate.fabric) {
+        bail!("请先完成服务端测试并通过");
+    }
+    Ok(())
+}
+
 /// What `upload_modpack` needs beyond the draft.
 pub struct Needs {
     pub api: crate::api::Client,
@@ -57,10 +86,10 @@ pub enum Started {
 
 /// `submitUpload` from the draft checks on, then `queueUpload`.
 pub async fn start(drafts: &Drafts, id: &str, needs: Needs) -> Result<Started> {
-    let (form, summary, update, has_server) = drafts.with(id, |draft| {
+    let (form, summary, update, gate, tests) = drafts.with(id, |draft| {
         let pack = draft.pack_mut()?;
-        let has_server = pack.server.is_some();
-        Ok((draft.form.clone(), draft.summary.clone(), draft.update.clone(), has_server))
+        let gate = TestGate { has_server: pack.server.is_some(), mods: pack.mods.clone(), fabric: pack.fabric };
+        Ok((draft.form.clone(), draft.summary.clone(), draft.update.clone(), gate, draft.tests.clone()))
     })?;
     if form.name.trim().is_empty() {
         bail!("整合包名称不能为空");
@@ -72,8 +101,8 @@ pub async fn start(drafts: &Drafts, id: &str, needs: Needs) -> Result<Started> {
     if let Some(first) = problems.first() {
         bail!("{first}");
     }
-    if !has_server && !tests_waived() {
-        bail!("请先完成客户端测试并通过");
+    if !tests_waived() {
+        test_gate(&gate, &tests)?;
     }
     let key = task_key(update.as_ref().map(|t| t.id.as_str()), &form.name, &form.version);
     if let Some(running) = needs.deps.tasks.active(&key) {

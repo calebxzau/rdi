@@ -13,10 +13,12 @@
 use super::reader::{self, Loaded};
 use super::server_pack::LoadedServer;
 use super::source::Summary;
+use super::tester::{self, Tests};
+use super::testrun::Target;
 use super::{api, draft, jar_meta, manifest, platform, prepare};
 use crate::pack_install::Deps;
 use crate::pack_install::mods::{Mod, Side};
-use anyhow::{Result, bail};
+use anyhow::{Result, bail, ensure};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -29,6 +31,9 @@ pub const GONE: &str = "上传草稿不存在或已过期，请重新调用uploa
 /// `MODPACK_UPLOAD_MCA_WARNING`.
 pub const MCA_WARNING: &str = "可能含有内置地图，请创建地图模板，详见说明书。";
 const READING: &str = "整合包正在读取中，请等读取任务完成后再试";
+/// How long a closed draft waits for its test processes before its folder is removed anyway
+/// (it is kept when they do not exit, as Kotlin `close` keeps the test folder).
+const TEST_EXIT_WAIT: Duration = Duration::from_secs(60);
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Phase {
@@ -115,6 +120,8 @@ pub struct Draft {
     pub notice: Option<String>,
     /// The content store's folder, where the jars are.
     pub cache: PathBuf,
+    /// The client and server test runs (stage A6).
+    pub tests: Tests,
     touched: Instant,
 }
 
@@ -177,7 +184,12 @@ impl Draft {
             pack.mods[*index].side = *side;
         }
         let touched: BTreeSet<usize> = found.iter().map(|(index, _)| *index).collect();
-        Ok(touched.into_iter().filter(|index| pack.mods[*index].side != before[*index]).count())
+        let changed = touched.into_iter().filter(|index| pack.mods[*index].side != before[*index]).count();
+        if changed > 0 {
+            // `onModsChanged`: a passed test no longer counts.
+            self.tests.mods_changed();
+        }
+        Ok(changed)
     }
 
     /// The draft for the agent. Jar facts are read here once per jar that is local.
@@ -209,6 +221,7 @@ impl Draft {
             "problems": self.problems,
             "preflight": preflight,
             "notice": self.notice,
+            "tests": self.tests.view(),
         });
         if let Some(pack) = &mut self.pack {
             let mut missing = 0;
@@ -268,6 +281,26 @@ fn remove_dir(path: &Path) {
     reader::remove_tree(path);
 }
 
+/// The draft's work folder goes. Running tests are stopped first, and the folder is removed only
+/// once their processes have exited (`ModpackTestSession.close`).
+fn retire(work_dir: PathBuf, tests: Tests) {
+    if !tests.busy() {
+        tests.close(Duration::ZERO);
+        remove_dir(&work_dir);
+        return;
+    }
+    let cleanup = std::thread::Builder::new().name("modpack-test-cleanup".into()).spawn(move || {
+        if tests.close(TEST_EXIT_WAIT) {
+            remove_dir(&work_dir);
+        } else {
+            tracing::warn!(path = %work_dir.display(), "测试进程未确认退出，保留测试目录以避免影响世界保存");
+        }
+    });
+    if let Err(error) = cleanup {
+        tracing::warn!(%error, "清理整合包测试失败");
+    }
+}
+
 impl Drafts {
     pub fn new(root: PathBuf) -> Self {
         Self { slot: Arc::new(Mutex::new(None)), root }
@@ -289,10 +322,10 @@ impl Drafts {
 
     fn lock(&self) -> MutexGuard<'_, Option<Draft>> {
         let mut slot = self.slot.lock().unwrap_or_else(PoisonError::into_inner);
-        let idle = slot.as_ref().is_some_and(|d| d.touched.elapsed() > IDLE && !matches!(d.phase, Phase::Reading { .. }));
+        let idle = slot.as_ref().is_some_and(|d| d.touched.elapsed() > IDLE && !matches!(d.phase, Phase::Reading { .. }) && !d.tests.busy());
         if idle && let Some(draft) = slot.take() {
             tracing::info!(draft = %draft.id, "上传草稿已过期");
-            remove_dir(&draft.work_dir);
+            retire(draft.work_dir, draft.tests);
         }
         slot
     }
@@ -301,7 +334,7 @@ impl Drafts {
         match draft.phase {
             Phase::Reading { task, .. } => Dropped(Some(task)),
             _ => {
-                remove_dir(&draft.work_dir);
+                retire(draft.work_dir, draft.tests);
                 Dropped(None)
             }
         }
@@ -323,6 +356,7 @@ impl Drafts {
             pack: None,
             notice: None,
             cache,
+            tests: Tests::default(),
             touched: Instant::now(),
         };
         let old = self.lock().replace(draft);
@@ -351,7 +385,11 @@ impl Drafts {
                 if draft.form != *form {
                     bail!("上传信息已更改，请重新提交");
                 }
-                Ok(slot.take().expect("checked above"))
+                // The upload task removes the work folder, test folders included.
+                ensure!(!draft.tests.busy(), "整合包测试进行中，请等测试结束或取消测试任务后再上传");
+                let draft = slot.take().expect("checked above");
+                draft.tests.close(Duration::ZERO);
+                Ok(draft)
             }
             _ => bail!(GONE),
         }
@@ -421,6 +459,8 @@ impl Drafts {
             Some(draft) if draft.id == id => draft,
             _ => bail!(GONE),
         };
+        // `canSelectServerPack`: not while a test runs.
+        ensure!(!draft.tests.busy(), "整合包测试进行中，请等测试结束后再选择服务端整合包");
         let pack = draft.pack_mut()?;
         let (client_mods, fabric) = (pack.mods.clone(), pack.fabric);
         let (work_dir, this, draft_id) = (draft.work_dir.clone(), self.clone(), draft.id.clone());
@@ -439,6 +479,8 @@ impl Drafts {
                         if let Some(pack) = &mut draft.pack {
                             pack.apply_server(&cache, loaded, merged);
                         }
+                        // `replaceTesters`: both tests start over with the merged mods.
+                        draft.tests.reset();
                     }
                     Err(_) => draft.notice = failed.clone(),
                 }
@@ -453,6 +495,42 @@ impl Drafts {
         });
         draft.phase = Phase::Reading { task: task.clone(), server: true };
         Ok(task)
+    }
+
+    /// Starts the client or server test of a read draft as a launcher task (`startClientTest`,
+    /// `startServerTest`). Missing jars are not downloaded here (owner decision E11).
+    pub fn start_test(&self, id: &str, target: Target, needs: tester::Needs) -> Result<String> {
+        let (input, tests) = self.test_input(id, target)?;
+        tester::start(&tests, input, needs)
+    }
+
+    /// The checks of `start_test` and what its run needs from the draft.
+    pub(super) fn test_input(&self, id: &str, target: Target) -> Result<(tester::Input, Tests)> {
+        self.with(id, |draft| {
+            let (summary, work, cache, tests, draft_id) = (draft.summary.clone(), draft.work_dir.join("tests"), draft.cache.clone(), draft.tests.clone(), draft.id.clone());
+            let pack = draft.pack_mut()?;
+            let label = target.label();
+            let missing = prepare::missing_mods(&cache, &pack.mods).len();
+            ensure!(missing == 0, "{label}需要先下载缺失Mod{missing}个，请先用upload_modpack_download_mods下载");
+            let mc_version = crate::import::scanner::version_label(&summary.mc_version).to_owned();
+            if target == Target::Server && crate::mc_install::server::ServerRuntime::resolve(&mc_version, &summary.loader).is_none() {
+                bail!("不支持{mc_version} {}测试服务端", summary.loader);
+            }
+            let input = tester::Input {
+                target,
+                draft_id,
+                name: summary.name.clone(),
+                source: pack.loaded.source_dir.clone(),
+                work,
+                mods: pack.mods.clone(),
+                fabric: pack.fabric,
+                extras: pack.loaded.extras.clone(),
+                mc_label: summary.mc_version.clone(),
+                mc_version,
+                loader: summary.loader.clone(),
+            };
+            Ok((input, tests))
+        })
     }
 
     /// Starts a download of the jars the content store does not hold yet, so the agent can
