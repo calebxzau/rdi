@@ -179,7 +179,7 @@ class RustParityFixtureTest {
         case("most-least", "single", "{OwnerMost: ${pcl.mostSignificantBits}L, OwnerLeast: ${pcl.leastSignificantBits}L, \"xMost\": ${pcl.mostSignificantBits}, \"xLeast\": ${pcl.leastSignificantBits}, yMost: 1L, yLeast: 2L, zMost: 99999999999999999999, zLeast: 1}".toByteArray())
         case("swap", "swap", "${pcl} ${online} ${ints(online).joinToString(",", "[I;", "]")}".toByteArray())
         case("gbk", "single", "玩家 ${pcl}".toByteArray(charset("GBK")))
-        case("nul", "single", "a\u0000b".toByteArray())
+        case("nul-byte", "single", "a\u0000b".toByteArray())
         case("empty", "single", ByteArray(0))
         case("overlong", "single", byteArrayOf(0xC0.toByte(), 0xAF.toByte()))
         case("surrogate", "single", byteArrayOf(0xED.toByte(), 0xA0.toByte(), 0x80.toByte()))
