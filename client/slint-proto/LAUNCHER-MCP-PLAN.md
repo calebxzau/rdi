@@ -570,3 +570,56 @@ Kotlin bugs found on the way are noted here and not fixed.
   Next: stage A5 (chunked upload, publish, missing mods, local install, the draft tools of E6)
   against the local master, and in parallel stage A4's C shim in
   `client/mediaproc/ffmpeg/build-natives.sh`, which ends in a new natives release.
+- 2026-11-25 **handoff** (the owner stopped this session during stage A4; another session
+  continues). State:
+  - Owner decision the same day: the agent itself runs
+    `client/mediaproc/ffmpeg/publish-natives.sh <run id>` for the natives release with the shim
+    (「你来跑吧」). This covers that release only. Pushing `dev` is not covered: it holds other
+    unpushed work.
+  - Committed on `dev`, unpushed: A2 and A3 (05dbea89, 00267068, 27a74e52, a2624278, a1e90b89,
+    445ad629) and the shim bec0694a: `client/mediaproc/ffmpeg/rdimedia.c` (`rdi_media_abi`,
+    `rdi_media_free`, `rdi_ogg_to_opus` by file paths, `rdi_rgba_to_avif` in memory; the Kotlin
+    encoders call for call), built and packed by `build-natives.sh` as `rdimedia.dll` /
+    `librdimedia.so` / `librdimedia.dylib` beside the FFmpeg libraries, jar revision `rdi2`,
+    checked by `check-natives.py`, and called on each platform in CI by `test-shim.py`.
+  - Pushed: branch `natives-rdimedia` (5a2e602a), which is `origin/dev` plus only the shim
+    commit, made with a temporary index (`git read-tree origin/dev`, `git update-index
+    --cacheinfo` for the files under `client/mediaproc/ffmpeg` and the workflow, `git
+    commit-tree`). It started `ffmpeg-natives` run 45536278803, still building when this was
+    written. If it succeeds: `publish-natives.sh 45536278803` (prerelease
+    `ffmpeg-natives-8.0.1-rdi2`), then the new version and the hashes of its `SHA256SUMS` go
+    into `client/gradle/ffmpeg-natives.gradle.kts`. If it fails: fix on `dev`, build the branch
+    again the same way, push, and use the new run.
+  - Local check of the shim before the push: compiled with the Windows zig 0.14.1 against the
+    libraries of the cached `rdi1` jars and FFmpeg 8.0.1 headers, for all three platforms,
+    without warnings; `test-shim.py` passes on Windows and, natively in WSL, on Linux (AVIF
+    with and without alpha, Opus through paths outside ASCII, too long, bad input). The builds
+    are in `%TEMP%\rdi-m4-shim\{win,linux,mac}`; `win` is a complete natives folder for
+    `RDI_MEDIA_NATIVES`.
+  - **Not committed and not yet compiled**: `src/upload/media.rs` (`media::Encoders`: loads the
+    FFmpeg libraries in dependency order and `rdimedia` through `libloading`, implements
+    `archive::Media`, `ready()` is `ensureAudioReady`), `libloading = "=0.8.9"` in `Cargo.toml`,
+    `pub mod media` in `src/upload/mod.rs`. The first test run was stopped while compiling.
+    Run `cargo test --bin rdi-slint-proto upload::media -- --include-ignored --nocapture` with
+    `RDI_MEDIA_NATIVES=%TEMP%\rdi-m4-shim\win`, fix what it shows, run clippy, commit.
+  - Next, in order: (1) the item above; (2) make the ignored test `real_pack_read` use
+    `media::Encoders` when `RDI_MEDIA_NATIVES` is set and compare the sizes of pictures and
+    sounds with the Kotlin dumps (`rdi-m4-diff-archive.py`; AVIF output is the same on Windows
+    and Linux, Ogg serial numbers are random, so sounds will be near, not equal); known
+    differences to expect: pictures taller than 720 pixels are shrunk with Catmull-Rom on
+    straight alpha (Kotlin: Java2D bicubic on premultiplied alpha), grey PNG files are not
+    brightened as Java's `getRGB` does; (3) the release and the Gradle version; the launcher
+    gets the natives folder from `play::runtime::Runtime::prepare_media_natives`, and natives
+    without `rdimedia` are refused with 音频处理模块损坏，请更新客户端; (4) stage A5: chunked
+    upload, publish, missing mods, local install and the draft tools of E6 against the local
+    master (Kotlin `ModpackUploadService.kt`, `ModpackUploadApi.kt`,
+    `ModpackChunkedUploader.kt`, `ParallelModpackUploader.kt`; Rust `save_import::upload`),
+    with `upload_modpack` unregistered until A6; (5) stage A6: the tests and the test server
+    install.
+  - Environment: a full `cargo test` or Gradle run through WSL `pwsh.exe` can finish and not
+    return, so wrap it in `timeout` and read the log file; IntelliJ MCP did not connect in this
+    session, so Gradle ran through `pwsh.exe` and `client/ui\gradlew.bat`; the local master
+    (`server/master` `run`, started 01:32) was left running; `AGENTS.md` has an uncommitted
+    change that is not from this work; the helper scripts are in `%TEMP%` (`rdi-m4-live.ps1`,
+    `rdi-m4-kotlin.ps1`, `rdi-m4-diff.py`, `rdi-m4-diff-archive.py`), with the Kotlin dumps in
+    `%TEMP%\rdi-m4-kotlin`.
