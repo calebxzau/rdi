@@ -72,9 +72,7 @@ pub struct EmbeddedExtra {
 #[derive(Debug)]
 pub struct Loaded {
     pub summary: Summary,
-    /// The pack copied or extracted into the work folder, without its recognised jars. The
-    /// archive builder reads it (stage A5d).
-    #[allow(dead_code)]
+    /// The pack copied or extracted into the work folder, without its recognised jars.
     pub source_dir: PathBuf,
     pub mods: Vec<Mod>,
     /// `Mod.fileName` to the jar's name in the pack.

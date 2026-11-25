@@ -35,10 +35,11 @@ pub trait Media: Sync {
     fn ogg(&self, bytes: Vec<u8>, name: &str) -> Result<Vec<u8>>;
 }
 
-/// Leaves pictures and sounds as they are. For tests and for the stages before A4; an upload
-/// never uses it.
+/// Leaves pictures and sounds as they are, for tests; an upload uses `media::Encoders`.
+#[cfg(test)]
 pub struct Unprocessed;
 
+#[cfg(test)]
 impl Media for Unprocessed {
     fn png(&self, bytes: Vec<u8>, _: &str) -> Vec<u8> {
         bytes

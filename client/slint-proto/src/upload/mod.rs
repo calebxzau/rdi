@@ -5,27 +5,24 @@
 //!
 //! Stage A1: the draft rules, the first look at a pack (`source`) and the server checks before
 //! upload (`api`). A2 to A4: the pack readers, the archive builder and the encoders. A5a: the
-//! drafts of the MCP tools (`drafts`), which wire the readers.
+//! drafts of the MCP tools (`drafts`), which wire the readers. A5b to A5d: publishing
+//! (`publish`), the local install (`pack_install::install_local`) and the upload task (`submit`).
 pub mod api;
 pub mod draft;
 pub mod drafts;
-// The archive builder and the encoders are wired by the upload task (A5d).
-#[allow(dead_code)]
 pub mod archive;
 pub mod jar_meta;
 pub mod manifest;
-#[allow(dead_code)]
 pub mod media;
 pub mod mods;
 pub mod platform;
 pub mod policy;
 pub mod prepare;
-// Wired by the upload task (A5d).
-#[allow(dead_code)]
 pub mod publish;
 pub mod reader;
 pub mod server_pack;
 pub mod source;
+pub mod submit;
 #[cfg(test)]
 mod archive_tests;
 #[cfg(test)]

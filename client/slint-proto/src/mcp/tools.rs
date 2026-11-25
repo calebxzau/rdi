@@ -197,6 +197,11 @@ const TOOLS: &[Tool] = &[
         schema: draft_id_schema,
     },
     Tool {
+        name: "upload_modpack",
+        description: "Upload the draft's modpack (整合包) to the RDI server and install it on this computer: builds the upload archive, uploads it, publishes the new pack or the new version, downloads missing client mods and installs the pack. Returns a task id; follow it with get_task. Uses the draft up. Call it only after the player agreed to the form and the mod sides.",
+        schema: draft_id_schema,
+    },
+    Tool {
         name: "upload_modpack_discard",
         description: "Throw away the upload draft (上传草稿) and its temporary files.",
         schema: draft_id_schema,
@@ -208,10 +213,17 @@ const TOOLS: &[Tool] = &[
     },
 ];
 
+/// `upload_modpack` waits for the client and server test runs of stage A6; before them only a
+/// run with `RDI_IGNORE_MODPACK_TEST` has it (owner decision E8).
+fn listed(tool: &Tool) -> bool {
+    tool.name != "upload_modpack" || crate::upload::submit::tests_waived()
+}
+
 /// The `tools/list` result.
 pub fn list() -> Value {
     let tools: Vec<Value> = TOOLS
         .iter()
+        .filter(|t| listed(t))
         .map(|t| json!({"name": t.name, "description": t.description, "inputSchema": (t.schema)()}))
         .collect();
     json!({"tools": tools})
@@ -219,7 +231,7 @@ pub fn list() -> Value {
 
 /// The `tools/call` result. An unknown tool is a protocol error, as in the game's RMCP.
 pub async fn call(context: &Context, name: &str, arguments: &Value) -> Result<Value, RpcError> {
-    if !TOOLS.iter().any(|t| t.name == name) {
+    if !TOOLS.iter().any(|t| t.name == name && listed(t)) {
         return Err(RpcError::invalid_params(format!("unknown tool: {name}")));
     }
     if !arguments.is_object() {
@@ -244,6 +256,7 @@ pub async fn call(context: &Context, name: &str, arguments: &Value) -> Result<Va
         "upload_modpack_edit" => upload_modpack_edit(context, arguments).await,
         "upload_modpack_download_mods" => upload_modpack_download_mods(context, arguments).await,
         "upload_modpack_discard" => upload_modpack_discard(context, arguments),
+        "upload_modpack" => upload_modpack(context, arguments).await,
         "game_tools" => game_tools(context, arguments).await,
         // The game's own result goes back as it is, images and `isError` included.
         "game_call" => match game_call(context, arguments).await {
@@ -655,7 +668,7 @@ async fn upload_modpack_check(context: &Context, arguments: &Value) -> Result<Va
     Ok(view)
 }
 
-const UPLOAD_NOT_YET: &str = "The upload itself (with the required client and server test runs) is not available yet.";
+const UPLOAD_NOT_YET: &str = "The upload itself (upload_modpack) needs the client and server test runs, which are not available yet.";
 
 async fn install_deps(context: &Context) -> Result<crate::pack_install::Deps> {
     let kit = context.bridge.install().await?.context(NOT_SIGNED_IN)?;
@@ -764,6 +777,24 @@ async fn upload_modpack_download_mods(context: &Context, arguments: &Value) -> R
         None => json!({"result": "complete", "next": "Every jar is on this computer; see get_upload_draft."}),
         Some((task, count)) => json!({"result": "started", "task_id": task, "mods": count,
             "next": "Follow the task with get_task, then call get_upload_draft for the jar paths."}),
+    })
+}
+
+async fn upload_modpack(context: &Context, arguments: &Value) -> Result<Value> {
+    let id = draft_id(arguments)?.to_owned();
+    context.drafts.with(&id, |_| Ok(()))?;
+    let account = signed_in(context).await?;
+    let deps = install_deps(context).await?;
+    let needs = crate::upload::submit::Needs {
+        api: account.api,
+        deps,
+        runtime_dir: crate::play::runtime::default_dir(),
+        tools: crate::paths::data_dir().join("tools"),
+    };
+    Ok(match crate::upload::submit::start(&context.drafts, &id, needs).await? {
+        crate::upload::submit::Started::Task(task) => json!({"result": "started", "task_id": task,
+            "next": "Follow the task with get_task: it uploads, publishes and installs the pack (上传并安装整合包)."}),
+        crate::upload::submit::Started::Running(task) => json!({"result": "already_running", "task_id": task}),
     })
 }
 

@@ -174,8 +174,6 @@ struct LocalSource {
 }
 
 /// An upload archive to install where it was built (`installBuiltClientZipTask2`).
-// The upload task (M4 stage A5d) builds it.
-#[allow(dead_code)]
 pub struct LocalInstall {
     pub modpack_id: String,
     pub version: String,
@@ -191,7 +189,6 @@ pub struct LocalInstall {
 
 /// `installBuiltClientZipTask2` inside a running task: the steps after the download, with the
 /// archive extracted in layers and embedded mods under their names in the pack.
-#[allow(dead_code)]
 pub fn install_local(deps: &Deps, ctx: &Context, request: LocalInstall) -> Result<()> {
     let modpack_id = request.modpack_id.to_ascii_lowercase();
     check_ids(&modpack_id, &request.version)?;

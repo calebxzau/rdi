@@ -697,3 +697,27 @@ Kotlin bugs found on the way are noted here and not fixed.
   no slug alias is placed under its name in the pack (`targetRelativePath` with
   `embeddedModOriginalFileNames`). The flat extract of master's client pack is unchanged. 3 new
   tests; launcher tests 428 pass, 9 ignored; clippy has no new warnings.
+- 2026-11-25 M4 stage A5d done, **stage A5 complete**: `upload::submit` (Kotlin `submitUpload`
+  from the draft checks on, `queueUpload`, `createUploadModpackTask2`) and the tool
+  `upload_modpack { draft_id }`, listed only with `RDI_IGNORE_MODPACK_TEST=1` until A6 (E8);
+  without it an upload also needs a server pack, as Kotlin. Checks: name and version, the draft
+  rules, `requireModpackUploadRuntime` (1.21.1 NeoForge, 1.20.1 Forge or Fabric), the encoders
+  (`ensureAudioReady`: natives from `GameRuntime::prepare_media_natives`, else
+  音频处理模块损坏，请更新客户端), the icon and `modpack/preflight` again, and Kotlin's dedupe key.
+  The draft is taken by the task `上传并安装整合包 {name} {version}` with the steps 上传整合包
+  (archive with the real encoders, `publish::send`, the new pack's id), 下载剩余客户端Mod and
+  本地安装整合包 (`install_local`); the archive and the work folder go whatever happens. Launcher
+  tests 430 pass, 9 ignored; clippy has no new warnings. The dev game runtime was regenerated
+  (`:ui-service:gameRuntime`): Gradle downloaded `ffmpeg-8.0.1-rdi2` from the release and the
+  hash matched. Live against the local master with account 11111 (given the test msid
+  `00000000-0000-7000-8000-0000000a5d01` in the local Mongo, owner approved): `Sky Frogs-1.8.1`
+  as the new pack 「A5测试 Sky Frogs」 (1 part; trashslot set to client by the draft, so master
+  downloaded 146 server mods; master build finished), the 七七 pack as 「A5测试 七七」 (8 parts of
+  4MiB, 150 client mods downloaded by step 2, master build finished), a new version `1.8.2_a5`
+  of the Sky Frogs pack through `update_modpack_id`; each installed into `mc/versions` (156 mods
+  for Sky Frogs, options and fancymenu written) and listed by `list_modpacks`. Cancel: during
+  the local install of 七七 `1.0.1` (published already, as Kotlin; the staging folder went),
+  and during the archive build of `1.0.2` (no session, nothing published, work folder gone). Not
+  covered live: a cancel while parts upload (session delete; unit tests only) and an in-game
+  start of the installed packs. Next: A6 (client and server test runs, test server install);
+  the owner asked for the AI assistant icon work (MCP logo, agent brand capsule) before it.

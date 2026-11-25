@@ -43,8 +43,7 @@ pub enum Phase {
 pub struct ServerPack {
     /// `buildServerPackName`.
     pub name: String,
-    /// Its extra files go into the archive (stage A5d).
-    #[allow(dead_code)]
+    /// Its extra files go into the archive under `server/`.
     pub loaded: LoadedServer,
 }
 
@@ -139,7 +138,7 @@ pub fn parse_side(text: &str) -> Result<Side> {
 }
 
 impl Draft {
-    fn pack_mut(&mut self) -> Result<&mut Pack> {
+    pub(super) fn pack_mut(&mut self) -> Result<&mut Pack> {
         match &self.phase {
             Phase::Reading { .. } => bail!(READING),
             Phase::Failed(reason) => bail!("读取整合包失败：{reason}，请重新调用upload_modpack_check"),
@@ -342,6 +341,22 @@ impl Drafts {
         }
     }
 
+    /// Hands a ready draft to the upload task, which owns its work folder from then on. `form`
+    /// is the form the caller checked (`isCurrentUploadSubmission`).
+    pub fn take(&self, id: &str, form: &draft::Draft) -> Result<Draft> {
+        let mut slot = self.lock();
+        match slot.as_mut() {
+            Some(draft) if draft.id == id => {
+                draft.pack_mut()?;
+                if draft.form != *form {
+                    bail!("上传信息已更改，请重新提交");
+                }
+                Ok(slot.take().expect("checked above"))
+            }
+            _ => bail!(GONE),
+        }
+    }
+
     pub fn discard(&self, id: &str) -> Result<Dropped> {
         let mut slot = self.lock();
         match slot.as_ref() {
@@ -456,7 +471,7 @@ impl Drafts {
 }
 
 /// Runs a pack reader with the launcher's catalog; returns the reader's warnings too.
-fn read<T>(deps: &Deps, ctx: &crate::tasks::Context, work_dir: &Path, run: impl FnOnce(&reader::Context) -> Result<T>) -> (Result<T>, Vec<String>) {
+pub(super) fn read<T>(deps: &Deps, ctx: &crate::tasks::Context, work_dir: &Path, run: impl FnOnce(&reader::Context) -> Result<T>) -> (Result<T>, Vec<String>) {
     let warnings = Mutex::new(Vec::new());
     let progress = |p: reader::Progress| match p {
         reader::Progress::Phase(text) => ctx.progress(text, None),
@@ -481,7 +496,7 @@ fn read<T>(deps: &Deps, ctx: &crate::tasks::Context, work_dir: &Path, run: impl 
 }
 
 /// `createUploadClientModDownloadTask2`: the jars into the content store, eight at a time.
-fn download(deps: &Deps, ctx: &crate::tasks::Context, mods: Vec<Mod>) -> Result<()> {
+pub(super) fn download(deps: &Deps, ctx: &crate::tasks::Context, mods: Vec<Mod>) -> Result<()> {
     ctx.progress(format!("开始下载剩余Mod，共{}个", mods.len()), Some(0.));
     let requests = crate::pack_install::mod_download_requests(deps, &mods)?;
     let total = requests.len();
