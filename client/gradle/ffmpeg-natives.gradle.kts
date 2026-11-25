@@ -10,11 +10,11 @@ import java.nio.file.Files
 import java.nio.file.StandardCopyOption
 import java.security.MessageDigest
 
-val ffmpegNativesVersion = "8.0.1-rdi1"
+val ffmpegNativesVersion = "8.0.1-rdi2"
 val ffmpegNativesSha256 = mapOf(
-    "windows-x86_64-gpl" to "1c55ad27bf5f2872623b4f4de822078199b2d177a48174b57d9c7eead0496636",
-    "linux-x86_64-gpl" to "7346cae44b84cc6cf5f74a24c8685043d0974e55e53eab88628bd23b116fad8b",
-    "macosx-arm64-gpl" to "31fc703fb8ee548cfba44ed16ee73c2f71dc62aa585d5e79d19e78e4b8f2573f",
+    "windows-x86_64-gpl" to "6079b89c55de7605144905186515de253397069672f04171dc070d1d57565c6b",
+    "linux-x86_64-gpl" to "bcdfb4e3ea3214864d9d25f510863b12d64f3e6499d444544ec02405d27b0575",
+    "macosx-arm64-gpl" to "661b943bb45226b6d48796bbaf149259599abca69edacbdd6196b9759c16457f",
 )
 
 fun sha256(file: File): String {
