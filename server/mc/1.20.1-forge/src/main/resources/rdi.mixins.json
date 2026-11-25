@@ -29,7 +29,9 @@
     "mReadTimeout",
     "mRedundantTeamJoin",
     "mSaveBandwidth",
-    "mServerLoginPacketListener"
+    "mServerLoginPacketListener",
+    "mXiaoxiangStorageButtons",
+    "mXiaoxiangFurnaceButtons"
   ],
   "client": [
   ]
