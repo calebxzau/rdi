@@ -510,3 +510,20 @@ Kotlin bugs found on the way are noted here and not fixed.
   comparison with Kotlin on the sample pack: run the ignored test `real_pack_read` with
   `RDI_UPLOAD_DUMP=<file>` and compare with a dump of `LoadedLocalModpack` from a small Kotlin
   test in `client/pack-proc`.
+- 2026-11-25 M4 stage A2 part 2d: `upload::prepare` (the gateway steps: recognised jars and
+  packs committed to the content store after a hash check, unknown CurseForge sides default to
+  both, Fabric sides from cached jars, `processUploadMods`, `findMissingMods`,
+  `mergeClientAndServerMods` with `mergeAsBoth`, `prepareServerPack`). The Compose page keeps no
+  local file per mod, so a mod's jar is the cache file of its digest (not hashed again when
+  read). 3 new tests; launcher tests 404 pass, 8 ignored; clippy has no new warnings. Live, real
+  packs from the owner's Downloads: CurseForge `Sky Frogs-1.8.1` (1.21.1 NeoForge, 157 mods),
+  `The-Winter-Rescue-0.6.0-rc8` (1.20.1 Forge, 60 mods), `After The Nukes` (29 mods, 2 resource
+  packs, save regions found); the Fabric pair `Alex 2.0 dev 6.1` client and server (ignored test
+  `real_server_pack` with `RDI_UPLOAD_SERVER_SAMPLE`): 307 embedded jars, 301 recognised and
+  committed, server pack 211 mods of which only 17 needed the platforms (the rest matched a
+  client mod by mod id and bytes), 7 unknown jars kept as server files, 304 mods merged, 52 s.
+  Not ported: the Java check (`validateRuntime`), which belongs to the tests of stage A6.
+  Live-run helper: `%TEMP%\rdi-m4-live.ps1 -Packs "a.zip|b.zip" [-Server s.zip] [-Test name]`
+  (sets the console to UTF-8, one log and dump per pack). A full `cargo test` through WSL
+  `pwsh.exe` may finish and still not return (see the J5c note); read the log file.
+  Left of A2: the comparison with Kotlin.

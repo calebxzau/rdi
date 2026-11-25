@@ -54,6 +54,10 @@ fn locks(digests: &[Digest], target: Option<&Path>) -> Vec<Arc<tokio::sync::Mute
 pub fn digest_lock(digest: &Digest) -> Arc<tokio::sync::Mutex<()>> {
     locks(std::slice::from_ref(digest), None).remove(0)
 }
+/// Where the cache under `root` keeps the file of a digest.
+pub fn cache_file(root: &Path, d: &Digest) -> PathBuf {
+    root.join(format!("{}.{}", d.value, d.algorithm.suffix()))
+}
 /// U4b2 导入rdipack2: blocking. Puts an already verified file into the cache under each digest
 /// it lacks, linked when possible, as `materialize` would after a download. Each entry is
 /// written under its digest lock and renamed into place, so readers never see a partial file.
@@ -172,8 +176,7 @@ fn link_or_copy(source: &Path, target: &Path) -> Result<()> {
 }
 impl Store {
     pub fn cache_path(&self, d: &Digest) -> PathBuf {
-        self.root
-            .join(format!("{}.{}", d.value, d.algorithm.suffix()))
+        cache_file(&self.root, d)
     }
     pub async fn materialize(
         &self,
