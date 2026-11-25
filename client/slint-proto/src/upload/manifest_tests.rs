@@ -14,13 +14,13 @@ use std::sync::{Arc, Mutex};
 type Answer = Box<dyn Fn(&str, bool, &Value) -> Value + Send + Sync>;
 
 /// Answers by path; records `(path, official, body or query)`.
-struct Fake {
+pub(super) struct Fake {
     calls: Mutex<Vec<(String, bool, Value)>>,
     answer: Answer,
 }
 
 impl Fake {
-    fn platforms(answer: impl Fn(&str, bool, &Value) -> Value + Send + Sync + 'static) -> (Platforms, Arc<Fake>) {
+    pub(super) fn platforms(answer: impl Fn(&str, bool, &Value) -> Value + Send + Sync + 'static) -> (Platforms, Arc<Fake>) {
         let fake = Arc::new(Fake { calls: Mutex::new(vec![]), answer: Box::new(answer) });
         (Platforms::new(fake.clone()), fake)
     }
@@ -29,7 +29,7 @@ impl Fake {
         self.calls.lock().unwrap().push((path.to_owned(), official, sent.clone()));
         (self.answer)(path, official, &sent)
     }
-    fn paths(&self) -> Vec<(String, bool)> {
+    pub(super) fn paths(&self) -> Vec<(String, bool)> {
         self.calls.lock().unwrap().iter().map(|c| (c.0.clone(), c.1)).collect()
     }
 }

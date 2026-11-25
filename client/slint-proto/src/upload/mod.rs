@@ -7,7 +7,7 @@
 //! upload (`api`).
 pub mod api;
 pub mod draft;
-// A2 parts 1 and 2a: the pieces the pack reader (next A2 commit) builds on.
+// A2 parts 1, 2a and 2b: the pack reader and its pieces; the draft (stage A5) wires them.
 #[allow(dead_code)]
 pub mod jar_meta;
 #[allow(dead_code)]
@@ -16,9 +16,15 @@ pub mod manifest;
 pub mod mods;
 #[allow(dead_code)]
 pub mod platform;
+#[allow(dead_code)]
+pub mod policy;
+#[allow(dead_code)]
+pub mod reader;
 pub mod source;
 #[cfg(test)]
 mod manifest_tests;
+#[cfg(test)]
+mod reader_tests;
 #[cfg(test)]
 mod tests;
 

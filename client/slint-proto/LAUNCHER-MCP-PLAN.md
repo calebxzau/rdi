@@ -478,3 +478,21 @@ Kotlin bugs found on the way are noted here and not fixed.
   through `matchLocalModFiles` and `getInfosFromHash`, client override marking, staging,
   `matchEmbeddedClientExtras` / `mergeEmbeddedClientExtras`, `containsExcludedMcaFiles`), then
   `loadServerPack`, then the comparison with Kotlin on the sample pack.
+- 2026-11-25 M4 stage A2 part 2b: `upload::reader` (`loadLocalModpack`: copy or extract into
+  the work folder, strict manifest parse, embedded jars through Modrinth then CurseForge,
+  client override marking, staging under content store names, embedded resource and shader
+  packs, the 地图模板 flag) and `upload::policy` (`shouldSkipEntry` with its lists,
+  `SaveRegionPaths`, `isDisabledFile`; stage A3 reuses them). The reader is blocking and takes
+  a runtime handle for the platform requests, so callers use `spawn_blocking`. 3 new tests;
+  launcher tests 399 pass, 7 ignored; clippy has no new warnings. Live (ignored test
+  `real_pack_read`, the launcher's catalog for transport and slug map): the sample pack reads
+  in 20 s as 161 mods (93 both, 53 client, 9 server, 6 unknown), 19 extras, 11 embedded jars
+  that neither platform knows (they stay in the pack copy), no save regions.
+  `RDI_UPLOAD_DUMP=<file>` makes that test write the lists as JSON for the Kotlin comparison.
+  Differences noted: the structure and manifest checks run before the extraction (Kotlin
+  reports manifest errors after it, same words); folders are walked in name order and links are
+  skipped (Kotlin follows `listFiles` order and links); only zip archives are read (Kotlin also
+  takes `.tar.zst`). Still not wired. Next: `loadServerPack` (A2 part 2c), the gateway steps of
+  `prepareClientPack` (content store commit, unknown CurseForge sides, Fabric sides,
+  `processUploadMods`, Java check), then the Kotlin comparison on the sample pack (a small
+  Kotlin test in `client/pack-proc` that dumps `LoadedLocalModpack` as JSON).

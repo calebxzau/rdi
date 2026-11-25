@@ -36,7 +36,7 @@ pub enum Side {
 fn yes() -> bool {
     true
 }
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Content {
     pub platform: Platform,
@@ -56,7 +56,8 @@ pub struct Content {
 }
 
 impl Content {
-    fn target(&self) -> Result<String> {
+    /// `targetRelativePath`.
+    pub(crate) fn target(&self) -> Result<String> {
         if let Some(path) = &self.path {
             return Ok(path.clone());
         }
