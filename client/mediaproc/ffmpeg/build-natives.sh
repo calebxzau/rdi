@@ -75,10 +75,15 @@ fi
 rm -rf "$SOURCES/ffmpeg-$FFMPEG_VERSION" "$SOURCES/ffmpeg-build"
 mkdir -p "$SOURCES" "$PREFIX"
 
+# Callers take the path through $(...), where set -e does not stop the function: fail explicitly.
 fetch() { # <url> <sha256> -> path on stdout
     local file=$DOWNLOADS/$(basename "$1")
-    [ -f "$file" ] || curl -fsSL --retry 3 -o "$file.part" "$1" && { [ ! -f "$file.part" ] || mv "$file.part" "$file"; }
-    echo "$2  $file" | sha256sum -c --quiet - >&2
+    if [ ! -f "$file" ]; then
+        # Maven Central answers 429 to busy CI runners for a while; wait between the tries.
+        curl -fsSL --retry 6 --retry-delay 20 -o "$file.part" "$1" || return 1
+        mv "$file.part" "$file"
+    fi
+    echo "$2  $file" | sha256sum -c --quiet - >&2 || return 1
     echo "$file"
 }
 
@@ -229,8 +234,13 @@ SHIM_LIBS=(-L"$PREFIX/lib" -lavformat -lavcodec -lswresample -lswscale -lavutil)
 case "$PLATFORM" in
     windows-x64)
         SHIM=$SHIM_DIR/rdimedia.dll
-        # Without import libraries the linker takes the DLLs themselves.
-        [ -f "$PREFIX/lib/libavcodec.dll.a" ] || SHIM_LIBS=("$PREFIX"/bin/av*.dll "$PREFIX"/bin/sw*.dll)
+        # zig's -l looks for name.dll, name.lib and libname.a, not the libname.dll.a import
+        # libraries FFmpeg installs, so they go to the linker as files; without them, the DLLs.
+        if [ -f "$PREFIX/lib/libavcodec.dll.a" ]; then
+            SHIM_LIBS=("$PREFIX"/lib/lib{avformat,avcodec,swresample,swscale,avutil}.dll.a)
+        else
+            SHIM_LIBS=("$PREFIX"/bin/av*.dll "$PREFIX"/bin/sw*.dll)
+        fi
         "$TOOLS/cc" "${SHIM_FLAGS[@]}" -o "$SHIM" "${SHIM_LIBS[@]}" -s
         ;;
     linux-x64)
