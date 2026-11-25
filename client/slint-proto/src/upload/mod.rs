@@ -16,6 +16,8 @@ pub mod jar_meta;
 #[allow(dead_code)]
 pub mod manifest;
 #[allow(dead_code)]
+pub mod media;
+#[allow(dead_code)]
 pub mod mods;
 #[allow(dead_code)]
 pub mod platform;

@@ -60,6 +60,10 @@ http-body-util = "=0.1.5"
 # Launcher MCP token: 32 bytes from the OS random source; already in the lock file.
 getrandom = "=0.3.4"
 
+# M4 A4: the upload's encoders are C functions in the FFmpeg natives (rdimedia); already in the
+# lock file.
+libloading = "=0.8.9"
+
 # U4b1: QQ mail operation codes, the same AES-256-GCM as Kotlin CryptoManager.
 aes-gcm = "=0.10.3"
 # U4b2: 清除无效整合包 moves folders to the system recycle bin, as Compose moveToOsTrash.
