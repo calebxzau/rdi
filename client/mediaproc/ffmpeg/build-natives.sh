@@ -79,8 +79,18 @@ mkdir -p "$SOURCES" "$PREFIX"
 fetch() { # <url> <sha256> -> path on stdout
     local file=$DOWNLOADS/$(basename "$1")
     if [ ! -f "$file" ]; then
-        # Maven Central answers 429 to busy CI runners for a while; wait between the tries.
-        curl -fsSL --retry 6 --retry-delay 20 -o "$file.part" "$1" || return 1
+        # Maven Central answers 429 to CI runners for many minutes at a time; Google's mirror of
+        # it serves the same files, and the checksum below holds either way.
+        local urls=("$1")
+        case "$1" in
+            https://repo1.maven.org/maven2/*) urls+=("https://maven-central.storage-download.googleapis.com/maven2/${1#https://repo1.maven.org/maven2/}") ;;
+        esac
+        local url
+        for url in "${urls[@]}"; do
+            curl -fsSL --retry 3 --retry-delay 10 -o "$file.part" "$url" && break
+            rm -f "$file.part"
+        done
+        [ -f "$file.part" ] || return 1
         mv "$file.part" "$file"
     fi
     echo "$2  $file" | sha256sum -c --quiet - >&2 || return 1
