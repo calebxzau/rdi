@@ -623,3 +623,22 @@ Kotlin bugs found on the way are noted here and not fixed.
     change that is not from this work; the helper scripts are in `%TEMP%` (`rdi-m4-live.ps1`,
     `rdi-m4-kotlin.ps1`, `rdi-m4-diff.py`, `rdi-m4-diff-archive.py`), with the Kotlin dumps in
     `%TEMP%\rdi-m4-kotlin`.
+- 2026-11-25 M4 stage A4 done (the session that took over the handoff). `src/upload/media.rs`
+  compiled and passes (5bc002cb): the first live run refused the natives folder because
+  `rdimedia.lib` matched next to `rdimedia.dll`; only shared library names are taken now
+  (`library_index`, with a test for the names of the three platforms). `real_pack_read` encodes
+  with `media::Encoders` when `RDI_MEDIA_NATIVES` is set (695333e3). Compared with Kotlin on
+  the Modrinth sample pack, `Sky Frogs-1.8.1` and `After The Nukes - RELEASE 1.1.0`: entry
+  paths, order, plain file sizes and nested names are still equal; every picture up to 720
+  pixels tall gives AVIF of exactly Kotlin's size (12 of them), the taller ones are 6-20%
+  smaller because of the shrink filter (Catmull-Rom against Java2D bicubic). No pack held a
+  short real sound (the only OGG became the empty sound on both sides), so Opus from real packs
+  is not compared yet. CI fixes on `dev`: the Windows shim links the `lib*.dll.a` import
+  libraries as files (zig's `-l` does not look for them; 12dec37a); `fetch` fails properly and
+  falls back to Google's Maven Central mirror after 429 answers (12dec37a, 6dc918d8); the text
+  fixture `nul.in` of anvilrw-rs became `nul-byte.in`, since Windows cannot check out `NUL`
+  (24144e82). Branch `natives-rdimedia` is now ad38493a (origin/dev plus these commits only).
+  Released `ffmpeg-natives-8.0.1-rdi2` from run 45540715997 (all builds and the four test
+  jobs passed); `client/gradle/ffmpeg-natives.gradle.kts` uses it (3c934172). The released
+  Windows jar passes `upload::media` with the same output sizes as the local shim. `dev` is
+  still not pushed. Next: stage A5.
