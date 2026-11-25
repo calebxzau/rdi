@@ -32,6 +32,11 @@ pub struct Arguments {
 pub struct VersionDownloads {
     pub client: Option<Artifact>,
     pub client_mappings: Option<Artifact>,
+    /// The test server of the upload tests (`McInstall.downloadServerTask2`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub server: Option<Artifact>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub server_mappings: Option<Artifact>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]

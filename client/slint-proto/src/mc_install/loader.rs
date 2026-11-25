@@ -13,6 +13,9 @@ use std::sync::{Arc, LazyLock, Mutex};
 #[derive(Clone, Debug, Default, Deserialize)]
 #[serde(default)]
 pub struct InstallProfile {
+    /// Where `--installServer` looks for the vanilla server jar (`{LIBRARY_DIR}`, `{MINECRAFT_VERSION}`).
+    #[serde(rename = "serverJarPath")]
+    pub server_jar_path: Option<String>,
     pub libraries: Vec<Library>,
     pub data: BTreeMap<String, InstallData>,
 }
@@ -37,7 +40,7 @@ fn version_json(deps: &Deps, version: &LoaderVersion) -> PathBuf {
     deps.versions().join(version.dir_name).join(format!("{}.json", version.dir_name))
 }
 
-fn read_entry(installer: &Path, name: &str) -> Result<Option<String>> {
+pub(super) fn read_entry(installer: &Path, name: &str) -> Result<Option<String>> {
     let mut zip = zip::ZipArchive::new(std::fs::File::open(installer)?)?;
     let Ok(mut entry) = zip.by_name(name) else {
         return Ok(None);
@@ -87,7 +90,7 @@ pub fn libraries_ready(deps: &Deps, libraries: &[Library]) -> bool {
     })
 }
 
-fn bracketed(raw: Option<&str>) -> Option<String> {
+pub(super) fn bracketed(raw: Option<&str>) -> Option<String> {
     let t = raw?.trim();
     t.strip_prefix('[')?.strip_suffix(']').map(|s| s.trim().to_owned()).filter(|s| !s.is_empty())
 }
@@ -123,6 +126,13 @@ fn ready(deps: &Deps, version: &LoaderVersion) -> bool {
 /// One install per loader at a time, across all sessions (`McInstall.loaderInstalls`).
 static INSTALLS: LazyLock<Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>> = LazyLock::new(Default::default);
 
+/// The lock of one loader's installs; the test server install takes it too, since both installers
+/// write the shared `libraries`.
+pub(super) fn install_lock(version: &LoaderVersion) -> Arc<tokio::sync::Mutex<()>> {
+    let key = format!("{}|{}", version.mc_version, version.loader);
+    INSTALLS.lock().unwrap().entry(key).or_default().clone()
+}
+
 /// `ensureDesktopLaunchLoader`.
 pub async fn ensure(deps: &Deps, version: &LoaderVersion, cancel: &Cancellation, progress: Progress<'_>) -> Result<()> {
     ensure_not_cancelled(cancel)?;
@@ -130,8 +140,7 @@ pub async fn ensure(deps: &Deps, version: &LoaderVersion, cancel: &Cancellation,
     if tokio::task::spawn_blocking(move || ready(&d, &v)).await? {
         return Ok(());
     }
-    let key = format!("{}|{}", version.mc_version, version.loader);
-    let lock = INSTALLS.lock().unwrap().entry(key).or_default().clone();
+    let lock = install_lock(version);
     let guard = match lock.try_lock() {
         Ok(guard) => guard,
         Err(_) => {
@@ -161,10 +170,10 @@ fn library_key(library: &Library) -> String {
     format!("{}|{path}|{classifiers}", library.name)
 }
 
-/// `downloadLoaderTask2`: installer, parse, libraries, Mojmap, then the installer process.
-async fn install(deps: &Deps, version: &LoaderVersion, cancel: &Cancellation, progress: Progress<'_>) -> Result<()> {
+/// `prepareInstallerTask2`: `launcher_profiles.json`, the bootstrapper and the verified installer.
+/// Returns the bootstrapper and the installer.
+pub(super) async fn ensure_installer(deps: &Deps, version: &LoaderVersion, cancel: &Cancellation, progress: Progress<'_>) -> Result<(PathBuf, PathBuf)> {
     let loader = version.loader;
-    // 下载安装器
     std::fs::create_dir_all(&deps.mc_dir)?;
     std::fs::write(deps.mc_dir.join("launcher_profiles.json"), meta::LAUNCHER_PROFILES)?;
     let booter = deps.mc_dir.join("forge-install-bootstrapper.jar");
@@ -181,6 +190,13 @@ async fn install(deps: &Deps, version: &LoaderVersion, cancel: &Cancellation, pr
             .await
             .context("安装器下载失败")?;
     }
+    Ok((booter, installer))
+}
+
+/// `downloadLoaderTask2`: installer, parse, libraries, Mojmap, then the installer process.
+async fn install(deps: &Deps, version: &LoaderVersion, cancel: &Cancellation, progress: Progress<'_>) -> Result<()> {
+    // 下载安装器
+    let (booter, installer) = ensure_installer(deps, version, cancel, progress).await?;
     ensure_not_cancelled(cancel)?;
     // 解析安装器
     let profile_text = read_entry(&installer, "install_profile.json")?.context("安装器中缺少 install_profile.json")?;
@@ -284,11 +300,34 @@ async fn run_installer(deps: &Deps, booter: &Path, installer: &Path, cancel: &Ca
         "com.bangbang93.ForgeInstaller".into(),
         deps.mc_dir.to_string_lossy().into_owned(),
     ];
+    match run_tool(&command, &deps.mc_dir, "无法启动mod载入器安装程序", cancel, None, progress).await? {
+        Some(0) => {
+            progress("安装成功".into());
+            Ok(())
+        }
+        code => bail!("mod载入器安装失败: {}", code.unwrap_or(-1)),
+    }
+}
+
+/// Runs an installer process in `dir`, every output line to `progress`, and returns its exit code.
+/// `start_error` names a failed start; a cancel kills it with 「Minecraft安装已取消」, and so does
+/// `timeout` with its message.
+pub(super) async fn run_tool(
+    command: &[String],
+    dir: &Path,
+    start_error: &str,
+    cancel: &Cancellation,
+    timeout: Option<(std::time::Duration, &str)>,
+    progress: Progress<'_>,
+) -> Result<Option<i32>> {
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-    let mut started = crate::mc_launch::spawn(&command, &deps.mc_dir, move |line| {
+    let mut started = crate::mc_launch::spawn(command, dir, move |line| {
         let _ = tx.send(line);
     })
-    .context("无法启动mod载入器安装程序")?;
+    .context(start_error.to_owned())?;
+    let deadline = timeout.map(|(t, message)| (std::time::Instant::now() + t, message));
+    // An interval, not a fresh sleep per line, so steady output cannot starve the checks.
+    let mut tick = tokio::time::interval(std::time::Duration::from_millis(200));
     loop {
         tokio::select! {
             line = rx.recv() => match line {
@@ -298,23 +337,21 @@ async fn run_installer(deps: &Deps, booter: &Path, installer: &Path, cancel: &Ca
                 }
                 _ => break,
             },
-            _ = tokio::time::sleep(std::time::Duration::from_millis(200)) => {
-                if cancel.cancelled() {
+            _ = tick.tick() => {
+                let expired = deadline.filter(|(at, _)| std::time::Instant::now() >= *at).map(|(_, m)| m);
+                if cancel.cancelled() || expired.is_some() {
                     if let Err(error) = started.child.kill() {
-                        tracing::warn!(%error, "结束mod载入器安装程序失败");
+                        tracing::warn!(%error, "结束安装程序失败");
                     }
                     let _ = started.child.wait();
-                    bail!("Minecraft安装已取消");
+                    match expired {
+                        Some(message) if !cancel.cancelled() => bail!("{message}"),
+                        _ => bail!("Minecraft安装已取消"),
+                    }
                 }
             }
         }
     }
     let status = tokio::task::spawn_blocking(move || started.child.wait()).await??;
-    match status.code() {
-        Some(0) => {
-            progress("安装成功".into());
-            Ok(())
-        }
-        code => bail!("mod载入器安装失败: {}", code.unwrap_or(-1)),
-    }
+    Ok(status.code())
 }

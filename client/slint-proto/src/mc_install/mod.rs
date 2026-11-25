@@ -9,6 +9,9 @@ pub mod assets;
 pub mod fabric;
 pub mod loader;
 pub mod meta;
+pub mod server;
+#[cfg(test)]
+mod server_tests;
 #[cfg(test)]
 mod tests;
 
