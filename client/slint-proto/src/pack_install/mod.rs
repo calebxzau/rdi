@@ -596,6 +596,12 @@ pub fn mod_download_requests(deps: &Deps, mods: &[mods::Mod]) -> Result<Vec<Requ
     requests_for(deps, mods, &Headers(deps))
 }
 
+/// Download requests for a pack's client extras outside a pack install (the upload's client
+/// test), each at its target path. Blocks on CurseForge lookups like `mod_download_requests`.
+pub fn extra_download_requests(deps: &Deps, extras: &[extras::Content]) -> Result<Vec<Request>> {
+    extra_requests(deps, extras, &Headers(deps))
+}
+
 fn requests_for(deps: &Deps, list: &[mods::Mod], headers: &Headers) -> Result<Vec<Request>> {
     // Look up real CurseForge URLs once, only for mods the cache does not already hold.
     let mut lookups = vec![];

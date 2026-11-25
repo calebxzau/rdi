@@ -698,7 +698,7 @@ async fn run(deps: &Deps, session: &str, request: &LocalStart, account: &Account
 }
 
 /// The start of `launchInternal`: GTNH's lwjgl3ify mod into `mods`, then every library checked.
-async fn check_launch(launch: &crate::mc_install::Launch, version_dir: &Path, dirs: &mc_launch::Directories, host: &mc_launch::manifest::Host) -> Result<()> {
+pub(crate) async fn check_launch(launch: &crate::mc_install::Launch, version_dir: &Path, dirs: &mc_launch::Directories, host: &mc_launch::manifest::Host) -> Result<()> {
     let (m, l, libraries, h) = (launch.manifest.clone(), launch.loader.clone(), dirs.libraries.clone(), host.clone());
     let (root, dir) = (launch.gtnh_root.clone(), version_dir.to_owned());
     tokio::task::spawn_blocking(move || {
@@ -753,7 +753,7 @@ fn spawn_and_watch(sessions: &Sessions, session: &str, command: &[String], versi
     Ok(())
 }
 
-fn free_memory_mb() -> u64 {
+pub(crate) fn free_memory_mb() -> u64 {
     match sysinfo::System::new() {
         Ok(mut system) => {
             system.refresh_memory();

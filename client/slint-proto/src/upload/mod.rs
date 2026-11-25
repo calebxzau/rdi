@@ -7,8 +7,8 @@
 //! upload (`api`). A2 to A4: the pack readers, the archive builder and the encoders. A5a: the
 //! drafts of the MCP tools (`drafts`), which wire the readers. A5b to A5d: publishing
 //! (`publish`), the local install (`pack_install::install_local`) and the upload task (`submit`).
-//! A6: the client and server test runs (`testrun` for folders and line rules), with the test
-//! server of `mc_install::server`.
+//! A6: the client and server test runs (`testrun` for folders and line rules, `tester` for the
+//! processes), with the test server of `mc_install::server`.
 pub mod api;
 pub mod draft;
 pub mod drafts;
@@ -25,6 +25,7 @@ pub mod reader;
 pub mod server_pack;
 pub mod source;
 pub mod submit;
+pub mod tester;
 pub mod testrun;
 #[cfg(test)]
 mod archive_tests;

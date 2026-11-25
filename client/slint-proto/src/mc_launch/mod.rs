@@ -12,8 +12,8 @@ use anyhow::{Context, Result, bail, ensure};
 use manifest::{Host, Library, Manifest};
 use std::path::{Path, PathBuf};
 
-const JAVA4SHELL_MITIGATION: &str = "-XX:-UseBASE64Intrinsics";
-const UTF8_LOGGING: [&str; 3] = ["-Dfile.encoding=UTF-8", "-Dsun.stdout.encoding=UTF-8", "-Dsun.stderr.encoding=UTF-8"];
+pub const JAVA4SHELL_MITIGATION: &str = "-XX:-UseBASE64Intrinsics";
+pub const UTF8_LOGGING: [&str; 3] = ["-Dfile.encoding=UTF-8", "-Dsun.stdout.encoding=UTF-8", "-Dsun.stderr.encoding=UTF-8"];
 
 #[derive(Clone, Debug)]
 pub struct Directories {
@@ -372,12 +372,30 @@ pub fn spawn(
     working_dir: &Path,
     on_line: impl Fn(String) + Send + 'static,
 ) -> Result<Started> {
+    spawn_with(command, working_dir, std::process::Stdio::null(), on_line)
+}
+
+/// `spawn` with standard input piped, for a server that is stopped with its `stop` command.
+pub fn spawn_with_input(
+    command: &[String],
+    working_dir: &Path,
+    on_line: impl Fn(String) + Send + 'static,
+) -> Result<Started> {
+    spawn_with(command, working_dir, std::process::Stdio::piped(), on_line)
+}
+
+fn spawn_with(
+    command: &[String],
+    working_dir: &Path,
+    stdin: std::process::Stdio,
+    on_line: impl Fn(String) + Send + 'static,
+) -> Result<Started> {
     let (reader, writer) = std::io::pipe().context("创建游戏输出管道失败")?;
     let mut process = std::process::Command::new(&command[0]);
     process
         .args(&command[1..])
         .current_dir(working_dir)
-        .stdin(std::process::Stdio::null())
+        .stdin(stdin)
         .stdout(writer.try_clone().context("创建游戏输出管道失败")?)
         .stderr(writer);
     #[cfg(windows)]

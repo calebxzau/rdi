@@ -234,6 +234,10 @@ impl Manager {
             e.cancel.cancel();
         }
     }
+    /// The cancellation of a task, so its owner can stop it later without its id.
+    pub fn cancellation(&self, id: &str) -> Option<Cancellation> {
+        self.0.lock().unwrap().iter().find(|e| e.id == id).map(|e| e.cancel.clone())
+    }
     /// The run id of the unfinished task with this dedupe key.
     pub fn active(&self, dedupe: &str) -> Option<String> {
         self.0
