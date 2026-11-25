@@ -345,12 +345,22 @@ fn real_pack_read() {
                 "hash": c.hash, "path": c.path, "required": c.required, "downloadUrls": c.download_urls}))
             .collect();
         let mut value = json!({"mods": loaded.mods, "extras": extras, "embeddedNames": loaded.embedded_names, "containsMca": loaded.contains_mca});
-        // `RDI_UPLOAD_ARCHIVE`: build the archive too (encoders left out) and list its entries.
+        // `RDI_UPLOAD_ARCHIVE`: build the archive too and list its entries. The pictures and
+        // sounds are encoded when `RDI_MEDIA_NATIVES` names a natives folder with rdimedia.
         if std::env::var("RDI_UPLOAD_ARCHIVE").is_ok_and(|v| !v.trim().is_empty()) {
             use std::io::Read;
             let started = std::time::Instant::now();
             let input = super::archive::Input { root: &loaded.source_dir, base_name: &loaded.summary.name, server_extras: &[], excluded: &loaded.embedded_extras, client_extras: &loaded.extras };
-            let built = super::archive::build(&ctx, &super::archive::Unprocessed, &input).unwrap();
+            let encoders = std::env::var("RDI_MEDIA_NATIVES").ok().filter(|v| !v.trim().is_empty()).map(|natives| {
+                let encoders = super::media::Encoders::load(Path::new(&natives), &dir.join("media")).unwrap();
+                encoders.ready().unwrap();
+                encoders
+            });
+            let media: &dyn super::archive::Media = match &encoders {
+                Some(encoders) => encoders,
+                None => &super::archive::Unprocessed,
+            };
+            let built = super::archive::build(&ctx, media, &input).unwrap();
             let mut entries: Vec<Value> = Vec::new();
             let mut archive = tar::Archive::new(zstd::stream::read::Decoder::new(std::fs::File::open(&built).unwrap()).unwrap());
             for entry in archive.entries().unwrap() {
