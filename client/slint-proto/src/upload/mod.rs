@@ -20,11 +20,15 @@ pub mod platform;
 pub mod policy;
 #[allow(dead_code)]
 pub mod reader;
+#[allow(dead_code)]
+pub mod server_pack;
 pub mod source;
 #[cfg(test)]
 mod manifest_tests;
 #[cfg(test)]
 mod reader_tests;
+#[cfg(test)]
+mod server_pack_tests;
 #[cfg(test)]
 mod tests;
 

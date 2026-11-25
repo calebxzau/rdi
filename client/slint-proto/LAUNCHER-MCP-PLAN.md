@@ -496,3 +496,17 @@ Kotlin bugs found on the way are noted here and not fixed.
   `prepareClientPack` (content store commit, unknown CurseForge sides, Fabric sides,
   `processUploadMods`, Java check), then the Kotlin comparison on the sample pack (a small
   Kotlin test in `client/pack-proc` that dumps `LoadedLocalModpack` as JSON).
+- 2026-11-25 M4 stage A2 part 2c: `upload::server_pack` (`loadServerPack`: a folder read in
+  place or a zip extracted with the modpack limits and the duplicate and conflict checks, the
+  Bukkit refusal, newest jar per mod, client mods recognised by mod id and bytes before the
+  platforms are asked, the server file rules, the 地图模板 flag, staging). Folder walks now follow
+  `walkTopDown` (a folder's entries by name without regard to case, folders entered where they
+  stand). 2 new tests; launcher tests 401 pass, 7 ignored; clippy has no new warnings. Kept as
+  in Kotlin: a zip refused after its extraction stays in the work folder until the upload's
+  cleanup. Not wired yet. Left of A2: the gateway steps of `prepareClientPack` and
+  `prepareServerPack` in `ModpackUploadViewModel.kt` (content store commit of staged jars and
+  extras, default sides for unknown CurseForge mods, Fabric sides from jars,
+  `processUploadMods`, the Java check, merging server mods into the client list), then the
+  comparison with Kotlin on the sample pack: run the ignored test `real_pack_read` with
+  `RDI_UPLOAD_DUMP=<file>` and compare with a dump of `LoadedLocalModpack` from a small Kotlin
+  test in `client/pack-proc`.

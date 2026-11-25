@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 /// A zip in memory; names ending in `/` are folders.
-fn zip_bytes(files: &[(&str, &[u8])]) -> Vec<u8> {
+pub(super) fn zip_bytes(files: &[(&str, &[u8])]) -> Vec<u8> {
     let mut out = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
     for (entry, bytes) in files {
         if entry.ends_with('/') {
@@ -27,11 +27,11 @@ fn zip_bytes(files: &[(&str, &[u8])]) -> Vec<u8> {
 }
 
 /// A jar that is a valid zip and differs by `text`.
-fn jar(text: &str) -> Vec<u8> {
+pub(super) fn jar(text: &str) -> Vec<u8> {
     zip_bytes(&[("marker.txt", text.as_bytes())])
 }
 
-fn sha1(bytes: &[u8]) -> String {
+pub(super) fn sha1(bytes: &[u8]) -> String {
     format!("{:x}", sha1::Sha1::digest(bytes))
 }
 
@@ -40,7 +40,7 @@ fn hex(c: char) -> String {
 }
 
 /// Modrinth as a fake: `known` maps a SHA-1 to `(version, project, slug, client, server)`.
-fn modrinth(known: Vec<(String, [&'static str; 5])>) -> impl Fn(&str, bool, &Value) -> Value + Send + Sync + 'static {
+pub(super) fn modrinth(known: Vec<(String, [&'static str; 5])>) -> impl Fn(&str, bool, &Value) -> Value + Send + Sync + 'static {
     move |path, _, sent| match path {
         "version_files" => {
             let asked: Vec<String> = serde_json::from_value(sent["hashes"].clone()).unwrap();
@@ -67,16 +67,22 @@ fn modrinth(known: Vec<(String, [&'static str; 5])>) -> impl Fn(&str, bool, &Val
     }
 }
 
-fn load(work: &Path, input: &Path, answer: impl Fn(&str, bool, &Value) -> Value + Send + Sync + 'static) -> (anyhow::Result<Loaded>, Vec<Progress>, Vec<String>) {
+/// Runs `run` with a reader context on a fake transport; returns its result, the progress and
+/// the request paths.
+pub(super) fn with_ctx<T>(work: &Path, answer: impl Fn(&str, bool, &Value) -> Value + Send + Sync + 'static, run: impl FnOnce(&Context) -> T) -> (T, Vec<Progress>, Vec<String>) {
     let (platforms, fake) = Fake::platforms(answer);
     let runtime = tokio::runtime::Builder::new_multi_thread().worker_threads(1).enable_all().build().unwrap();
     let seen = Mutex::new(Vec::new());
     let progress = |p: Progress| seen.lock().unwrap().push(p);
     let slugs = |_: &BTreeSet<String>| BTreeMap::new();
     let ctx = Context { runtime: runtime.handle().clone(), platforms, work_dir: work.to_path_buf(), cancel: Default::default(), progress: &progress, mr_slugs: &slugs };
-    let loaded = reader::load(&ctx, input);
+    let result = run(&ctx);
     let paths = fake.paths().into_iter().map(|(p, _)| p).collect();
-    (loaded, seen.into_inner().unwrap(), paths)
+    (result, seen.into_inner().unwrap(), paths)
+}
+
+fn load(work: &Path, input: &Path, answer: impl Fn(&str, bool, &Value) -> Value + Send + Sync + 'static) -> (anyhow::Result<Loaded>, Vec<Progress>, Vec<String>) {
+    with_ctx(work, answer, |ctx| reader::load(ctx, input))
 }
 
 fn left_in(dir: &Path) -> Vec<String> {

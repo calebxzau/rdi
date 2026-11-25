@@ -110,8 +110,8 @@ fn name_of(path: &Path) -> String {
     path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()
 }
 
-/// Entries of `dir` by name; links are left out.
-fn children(dir: &Path) -> Result<Vec<(PathBuf, bool)>> {
+/// Entries of `dir` in name order without regard to case, as NTFS lists them; links are left out.
+pub(super) fn children(dir: &Path) -> Result<Vec<(PathBuf, bool)>> {
     let mut out = Vec::new();
     for entry in std::fs::read_dir(dir).with_context(|| format!("读取{}失败", dir.display()))? {
         let entry = entry?;
@@ -120,21 +120,21 @@ fn children(dir: &Path) -> Result<Vec<(PathBuf, bool)>> {
             out.push((entry.path(), kind.is_dir()));
         }
     }
-    out.sort();
+    out.sort_by_cached_key(|(path, _)| (name_of(path).to_lowercase(), name_of(path)));
     Ok(out)
 }
 
-/// The files below `root`, parents first (`walkTopDown`), in name order.
+/// The files below `root` in `walkTopDown` order: a folder's entries by name, each folder
+/// entered where it stands.
 pub(super) fn walk_files(root: &Path) -> Result<Vec<PathBuf>> {
-    let mut files = Vec::new();
-    let mut stack = vec![root.to_path_buf()];
-    while let Some(dir) = stack.pop() {
-        let mut folders = Vec::new();
-        for (path, is_dir) in children(&dir)? {
-            if is_dir { folders.push(path) } else { files.push(path) }
+    fn visit(dir: &Path, files: &mut Vec<PathBuf>) -> Result<()> {
+        for (path, is_dir) in children(dir)? {
+            if is_dir { visit(&path, files)? } else { files.push(path) }
         }
-        stack.extend(folders.into_iter().rev());
+        Ok(())
     }
+    let mut files = Vec::new();
+    visit(root, &mut files)?;
     Ok(files)
 }
 
